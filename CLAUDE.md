@@ -22,17 +22,17 @@ Control Plane (Go binary, single process)
     │ gRPC (mTLS)
     ▼
 Host Agent (Go binary, one per physical machine)
-    ├── VM Manager (Firecracker Go SDK + jailer)
+    ├── VM Manager (Firecracker HTTP API via Unix socket)
     ├── Network Manager (TAP devices, NAT, IP allocator)
     ├── Filesystem Manager (CoW rootfs clones)
-    ├── Envd Client (vsock gRPC to guest agent)
+    ├── Envd Client (HTTP/Connect RPC to guest agent via TAP network)
     ├── Snapshot Manager (pause/hibernate/resume)
     ├── Metrics Exporter (Prometheus)
     └── gRPC server (listens for control plane)
     │
-    │ vsock (AF_VSOCK, through Firecracker)
+    │ HTTP over TAP network (veth + namespace isolation)
     ▼
-envd (Go binary, runs inside each microVM as PID 1)
+envd (Go binary, runs inside each microVM via wrenn-init)
     ├── ProcessService (exec commands, stream stdout/stderr)
     ├── FilesystemService (read/write/list files)
     └── Terminal (PTY handling for interactive sessions)
@@ -133,7 +133,7 @@ wrenn-sandbox/
 │   │
 │   ├── envdclient/
 │   │   ├── client.go                  # gRPC client wrapper for envd
-│   │   ├── dialer.go                  # vsock CONNECT handshake dialer
+│   │   ├── dialer.go                  # HTTP transport to envd via TAP network
 │   │   └── health.go                  # Health check with retry
 │   │
 │   ├── snapshot/
@@ -414,7 +414,7 @@ POST   /v1/keys                         Create API key (admin)
 - API keys: `wrn_` prefix + 32 random chars
 - Host IDs: hostname or `host-` prefix + 8 hex chars
 - TAP devices: `tap-` + first 8 chars of sandbox ID
-- vsock CIDs: allocated from pool starting at 3
+- Network slot index: 1-based, determines all per-sandbox IPs
 
 ### Error Responses
 ```json
@@ -436,7 +436,7 @@ POST   /v1/keys                         Create API key (admin)
 
 envd is a **completely independent Go project**. It has its own `go.mod`, its own dependencies, and its own build. It is never imported by the control plane or host agent as a Go package. The only connection is the protobuf contract — both envd and the host agent generate code from the same `.proto` files.
 
-**Why standalone:** envd runs inside microVMs. It gets compiled once as a static binary, baked into rootfs images, and then used across thousands of sandboxes. It has zero runtime dependency on the rest of the Wrenn codebase. The host agent talks to it over vsock gRPC — same as talking to any remote service.
+**Why standalone:** envd runs inside microVMs. It gets compiled once as a static binary, baked into rootfs images, and then used across thousands of sandboxes. It has zero runtime dependency on the rest of the Wrenn codebase. The host agent talks to it over HTTP/Connect RPC via TAP networking — same as talking to any remote service.
 
 **envd's own structure:**
 ```
@@ -763,7 +763,7 @@ open http://localhost:8000/admin/
 1. Build envd static binary
 2. Create minimal rootfs with envd baked in
 3. Write `internal/vm/` — boot Firecracker
-4. Write `internal/envdclient/` — connect to envd over vsock
+4. Write `internal/envdclient/` — connect to envd over TAP network
 5. Test: boot VM, run "echo hello", get output back
 
 ### Phase 2: Host Agent
@@ -813,7 +813,7 @@ github.com/go-chi/chi/v5
 github.com/jackc/pgx/v5
 github.com/pressly/goose/v3
 github.com/firecracker-microvm/firecracker-go-sdk
-github.com/mdlayher/vsock
+github.com/vishvananda/netlink
 google.golang.org/grpc
 google.golang.org/protobuf
 github.com/prometheus/client_golang
@@ -826,7 +826,7 @@ golang.org/x/crypto
 ```
 google.golang.org/grpc
 google.golang.org/protobuf
-github.com/mdlayher/vsock
+github.com/vishvananda/netlink
 ```
 
 ### External services

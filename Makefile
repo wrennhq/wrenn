@@ -84,12 +84,8 @@ migrate-reset:
 generate: proto sqlc
 
 proto:
-	protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		proto/hostagent/hostagent.proto
-	protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		proto/envd/process.proto proto/envd/filesystem.proto
+	cd proto/envd && buf generate
+	cd $(ENVD_DIR)/spec && buf generate
 
 sqlc:
 	@if command -v sqlc > /dev/null; then sqlc generate; \
