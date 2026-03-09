@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package hostagent.v1;
+
+// HostAgentService manages sandbox VMs on a single physical host.
+// The control plane calls these RPCs to orchestrate sandbox lifecycle.
+service HostAgentService {
+  // CreateSandbox boots a new microVM with the given configuration.
+  rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
+
+  // DestroySandbox stops and cleans up a sandbox (VM, network, rootfs).
+  rpc DestroySandbox(DestroySandboxRequest) returns (DestroySandboxResponse);
+
+  // PauseSandbox pauses a running sandbox's VM.
+  rpc PauseSandbox(PauseSandboxRequest) returns (PauseSandboxResponse);
+
+  // ResumeSandbox resumes a paused sandbox's VM.
+  rpc ResumeSandbox(ResumeSandboxRequest) returns (ResumeSandboxResponse);
+
+  // Exec runs a command inside a sandbox and returns the collected output.
+  rpc Exec(ExecRequest) returns (ExecResponse);
+
+  // ListSandboxes returns all sandboxes managed by this host agent.
+  rpc ListSandboxes(ListSandboxesRequest) returns (ListSandboxesResponse);
+}
+
+message CreateSandboxRequest {
+  // Template name (e.g., "minimal", "python311"). Determines base rootfs.
+  string template = 1;
+
+  // Number of virtual CPUs (default: 1).
+  int32 vcpus = 2;
+
+  // Memory in MB (default: 512).
+  int32 memory_mb = 3;
+
+  // TTL in seconds. Sandbox is auto-destroyed after this duration of
+  // inactivity. 0 means no auto-destroy.
+  int32 timeout_sec = 4;
+}
+
+message CreateSandboxResponse {
+  string sandbox_id = 1;
+  string status = 2;
+  string host_ip = 3;
+}
+
+message DestroySandboxRequest {
+  string sandbox_id = 1;
+}
+
+message DestroySandboxResponse {}
+
+message PauseSandboxRequest {
+  string sandbox_id = 1;
+}
+
+message PauseSandboxResponse {}
+
+message ResumeSandboxRequest {
+  string sandbox_id = 1;
+}
+
+message ResumeSandboxResponse {}
+
+message ExecRequest {
+  string sandbox_id = 1;
+  string cmd = 2;
+  repeated string args = 3;
+  // Timeout for the command in seconds (default: 30).
+  int32 timeout_sec = 4;
+}
+
+message ExecResponse {
+  bytes stdout = 1;
+  bytes stderr = 2;
+  int32 exit_code = 3;
+}
+
+message ListSandboxesRequest {}
+
+message ListSandboxesResponse {
+  repeated SandboxInfo sandboxes = 1;
+}
+
+message SandboxInfo {
+  string sandbox_id = 1;
+  string status = 2;
+  string template = 3;
+  int32 vcpus = 4;
+  int32 memory_mb = 5;
+  string host_ip = 6;
+  int64 created_at_unix = 7;
+  int64 last_active_at_unix = 8;
+  int32 timeout_sec = 9;
+}

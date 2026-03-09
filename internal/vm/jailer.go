@@ -30,7 +30,10 @@ type process struct {
 //  5. ip netns exec <ns>: enters the network namespace where TAP is configured
 //  6. exec firecracker with the API socket path
 func startProcess(ctx context.Context, cfg *VMConfig) (*process, error) {
-	execCtx, cancel := context.WithCancel(ctx)
+	// Use a background context for the long-lived Firecracker process.
+	// The request context (ctx) is only used for the startup phase — we must
+	// not tie the VM's lifetime to the HTTP request that created it.
+	execCtx, cancel := context.WithCancel(context.Background())
 
 	script := buildStartScript(cfg)
 

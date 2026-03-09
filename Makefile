@@ -21,7 +21,7 @@ build-agent:
 
 build-envd:
 	cd $(ENVD_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS)" -o ../$(GOBIN)/envd .
+		go build -ldflags="$(LDFLAGS)" -o $(GOBIN)/envd .
 	@file $(GOBIN)/envd | grep -q "statically linked" || \
 		(echo "ERROR: envd is not statically linked!" && exit 1)
 
@@ -85,6 +85,7 @@ generate: proto sqlc
 
 proto:
 	cd proto/envd && buf generate
+	cd proto/hostagent && buf generate
 	cd $(ENVD_DIR)/spec && buf generate
 
 sqlc:

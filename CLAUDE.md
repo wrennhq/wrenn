@@ -770,8 +770,8 @@ open http://localhost:8000/admin/
 1. Write `internal/network/` — TAP + NAT per sandbox
 2. Write `internal/filesystem/` — CoW rootfs clones
 3. Define hostagent.proto, generate stubs
-4. Write host agent gRPC server
-5. Test: grpcurl to create/exec/destroy
+4. Write host agent rpc server
+5. Test: curl to create/exec/destroy
 
 ### Phase 3: Control Plane
 1. Set up PostgreSQL, write goose migrations
