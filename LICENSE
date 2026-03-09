@@ -1,0 +1,97 @@
+Wrenn Sandbox License
+
+Business Source License 1.1
+
+Copyright (c) 2026 M/S Omukk, Bangladesh
+
+---
+
+Licensor
+
+M/S Omukk, Bangladesh
+
+Contact: [contact@omukk.dev](mailto:contact@omukk.dev)
+
+---
+
+Licensed Work
+
+The Licensed Work is the software project known as "Wrenn Sandbox", including all source code and associated files in this repository, except the directory `envd/`, which is licensed separately under the Apache License Version 2.0.
+
+Initial development of the Licensed Work began in March 2026.
+
+---
+
+Change Date
+
+January 1, 2030
+
+---
+
+Change License
+
+On the Change Date, the Licensed Work will automatically become available under the terms of the GNU General Public License, Version 3 (GPL-3.0).
+
+---
+
+Additional Use Grant (SaaS Restriction)
+
+The Licensor grants you the right to copy, modify, create derivative works, redistribute, and make non-production use of the Licensed Work, provided that you comply with the limitations of this License.
+
+You may:
+
+* Use the software for personal use
+* Use the software internally within your organization
+* Modify the source code
+* Experiment, test, and evaluate the software
+* Distribute unmodified copies of the source code for evaluation
+
+You may not:
+
+Provide the Licensed Work to third parties as a managed service, hosted service, software-as-a-service (SaaS), platform service, or any similar commercial offering where the primary value of the service derives from the Licensed Work.
+
+You may not sell the Licensed Work or offer paid services primarily based on the Licensed Work without a commercial license from M/S Omukk.
+
+Commercial licenses may be obtained by contacting:
+
+[contact@omukk.dev](mailto:contact@omukk.dev)
+
+---
+
+Contributions
+
+Unless otherwise stated, any Contribution intentionally submitted for inclusion in the Licensed Work shall be licensed under the terms of this Business Source License 1.1.
+
+---
+
+Business Source License Terms
+
+Use of the Licensed Work is governed by the Business Source License included in this file.
+
+The Business Source License is not an Open Source license. However, the Licensed Work will automatically become available under the Change License on the Change Date.
+
+Licensor grants you a non-exclusive, worldwide, royalty-free license to use, copy, modify, create derivative works, redistribute, and make non-production use of the Licensed Work, provided that you comply with the limitations stated in this License.
+
+All copies of the Licensed Work must include this License file.
+
+Any use of the Licensed Work in violation of this License will automatically terminate your rights under this License.
+
+---
+
+Disclaimer of Warranty
+
+THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+---
+
+Limitation of Liability
+
+IN NO EVENT SHALL THE LICENSOR OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THE LICENSED WORK.
+
+---
+
+Third-Party Components
+
+Portions of this project include software licensed under separate open-source licenses.
+
+See the NOTICE file and THIRD_PARTY_LICENSES directory for details.

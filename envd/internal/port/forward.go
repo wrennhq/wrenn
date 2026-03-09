@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // portf (port forward) periodaically scans opened TCP ports on the 127.0.0.1 (or localhost)
 // and launches `socat` process for every such port in the background.
 // socat forward traffic from `sourceIP`:port to the 127.0.0.1:port.
