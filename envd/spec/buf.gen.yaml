@@ -1,14 +1,15 @@
-version: v1
+version: v2
 plugins:
-  - plugin: go
+  - protoc_builtin: go
     out: ../internal/services/spec
     opt: paths=source_relative
-  - plugin: connect-go
+  - local: protoc-gen-connect-go
     out: ../internal/services/spec
     opt: paths=source_relative
-
+inputs:
+  - directory: ../../proto/envd
 managed:
   enabled: true
-  optimize_for: SPEED
-  go_package_prefix:
-    default: git.omukk.dev/wrenn/sandbox/envd/internal/services/spec
+  override:
+    - file_option: go_package_prefix
+      value: git.omukk.dev/wrenn/sandbox/envd/internal/services/spec
