@@ -239,6 +239,143 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/sandboxes/{id}/exec/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Stream command execution via WebSocket
+      operationId: execStream
+      description: |
+        Opens a WebSocket connection for streaming command execution.
+
+        **Client sends** (first message to start the process):
+        ```json
+        {"type": "start", "cmd": "tail", "args": ["-f", "/var/log/syslog"]}
+        ```
+
+        **Client sends** (to stop the process):
+        ```json
+        {"type": "stop"}
+        ```
+
+        **Server sends** (process events as they arrive):
+        ```json
+        {"type": "start", "pid": 1234}
+        {"type": "stdout", "data": "line of output\n"}
+        {"type": "stderr", "data": "warning message\n"}
+        {"type": "exit", "exit_code": 0}
+        {"type": "error", "data": "description of error"}
+        ```
+
+        The connection closes automatically after the process exits.
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/stream/write:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Upload a file (streaming)
+      operationId: streamUploadFile
+      description: |
+        Streams file content to the sandbox without buffering in memory.
+        Suitable for large files. Uses the same multipart/form-data format
+        as the non-streaming upload endpoint.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [path, file]
+              properties:
+                path:
+                  type: string
+                  description: Absolute destination path inside the sandbox
+                file:
+                  type: string
+                  format: binary
+                  description: File content
+      responses:
+        "204":
+          description: File uploaded
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/stream/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Download a file (streaming)
+      operationId: streamDownloadFile
+      description: |
+        Streams file content from the sandbox without buffering in memory.
+        Suitable for large files. Returns raw bytes with chunked transfer encoding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReadFileRequest"
+      responses:
+        "200":
+          description: File content streamed in chunks
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Sandbox or file not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   schemas:
     CreateSandboxRequest:

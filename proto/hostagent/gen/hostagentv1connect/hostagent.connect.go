@@ -56,6 +56,15 @@ const (
 	// HostAgentServiceReadFileProcedure is the fully-qualified name of the HostAgentService's ReadFile
 	// RPC.
 	HostAgentServiceReadFileProcedure = "/hostagent.v1.HostAgentService/ReadFile"
+	// HostAgentServiceExecStreamProcedure is the fully-qualified name of the HostAgentService's
+	// ExecStream RPC.
+	HostAgentServiceExecStreamProcedure = "/hostagent.v1.HostAgentService/ExecStream"
+	// HostAgentServiceWriteFileStreamProcedure is the fully-qualified name of the HostAgentService's
+	// WriteFileStream RPC.
+	HostAgentServiceWriteFileStreamProcedure = "/hostagent.v1.HostAgentService/WriteFileStream"
+	// HostAgentServiceReadFileStreamProcedure is the fully-qualified name of the HostAgentService's
+	// ReadFileStream RPC.
+	HostAgentServiceReadFileStreamProcedure = "/hostagent.v1.HostAgentService/ReadFileStream"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -76,6 +85,13 @@ type HostAgentServiceClient interface {
 	WriteFile(context.Context, *connect.Request[gen.WriteFileRequest]) (*connect.Response[gen.WriteFileResponse], error)
 	// ReadFile reads a file from inside a sandbox.
 	ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error)
+	// ExecStream runs a command inside a sandbox and streams output events as they arrive.
+	ExecStream(context.Context, *connect.Request[gen.ExecStreamRequest]) (*connect.ServerStreamForClient[gen.ExecStreamResponse], error)
+	// WriteFileStream writes a file to a sandbox using chunked streaming.
+	// First message must contain metadata (sandbox_id, path). Subsequent messages contain data chunks.
+	WriteFileStream(context.Context) *connect.ClientStreamForClient[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse]
+	// ReadFileStream reads a file from a sandbox and streams it back in chunks.
+	ReadFileStream(context.Context, *connect.Request[gen.ReadFileStreamRequest]) (*connect.ServerStreamForClient[gen.ReadFileStreamResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -137,19 +153,40 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("ReadFile")),
 			connect.WithClientOptions(opts...),
 		),
+		execStream: connect.NewClient[gen.ExecStreamRequest, gen.ExecStreamResponse](
+			httpClient,
+			baseURL+HostAgentServiceExecStreamProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("ExecStream")),
+			connect.WithClientOptions(opts...),
+		),
+		writeFileStream: connect.NewClient[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse](
+			httpClient,
+			baseURL+HostAgentServiceWriteFileStreamProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("WriteFileStream")),
+			connect.WithClientOptions(opts...),
+		),
+		readFileStream: connect.NewClient[gen.ReadFileStreamRequest, gen.ReadFileStreamResponse](
+			httpClient,
+			baseURL+HostAgentServiceReadFileStreamProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("ReadFileStream")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // hostAgentServiceClient implements HostAgentServiceClient.
 type hostAgentServiceClient struct {
-	createSandbox  *connect.Client[gen.CreateSandboxRequest, gen.CreateSandboxResponse]
-	destroySandbox *connect.Client[gen.DestroySandboxRequest, gen.DestroySandboxResponse]
-	pauseSandbox   *connect.Client[gen.PauseSandboxRequest, gen.PauseSandboxResponse]
-	resumeSandbox  *connect.Client[gen.ResumeSandboxRequest, gen.ResumeSandboxResponse]
-	exec           *connect.Client[gen.ExecRequest, gen.ExecResponse]
-	listSandboxes  *connect.Client[gen.ListSandboxesRequest, gen.ListSandboxesResponse]
-	writeFile      *connect.Client[gen.WriteFileRequest, gen.WriteFileResponse]
-	readFile       *connect.Client[gen.ReadFileRequest, gen.ReadFileResponse]
+	createSandbox   *connect.Client[gen.CreateSandboxRequest, gen.CreateSandboxResponse]
+	destroySandbox  *connect.Client[gen.DestroySandboxRequest, gen.DestroySandboxResponse]
+	pauseSandbox    *connect.Client[gen.PauseSandboxRequest, gen.PauseSandboxResponse]
+	resumeSandbox   *connect.Client[gen.ResumeSandboxRequest, gen.ResumeSandboxResponse]
+	exec            *connect.Client[gen.ExecRequest, gen.ExecResponse]
+	listSandboxes   *connect.Client[gen.ListSandboxesRequest, gen.ListSandboxesResponse]
+	writeFile       *connect.Client[gen.WriteFileRequest, gen.WriteFileResponse]
+	readFile        *connect.Client[gen.ReadFileRequest, gen.ReadFileResponse]
+	execStream      *connect.Client[gen.ExecStreamRequest, gen.ExecStreamResponse]
+	writeFileStream *connect.Client[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse]
+	readFileStream  *connect.Client[gen.ReadFileStreamRequest, gen.ReadFileStreamResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -192,6 +229,21 @@ func (c *hostAgentServiceClient) ReadFile(ctx context.Context, req *connect.Requ
 	return c.readFile.CallUnary(ctx, req)
 }
 
+// ExecStream calls hostagent.v1.HostAgentService.ExecStream.
+func (c *hostAgentServiceClient) ExecStream(ctx context.Context, req *connect.Request[gen.ExecStreamRequest]) (*connect.ServerStreamForClient[gen.ExecStreamResponse], error) {
+	return c.execStream.CallServerStream(ctx, req)
+}
+
+// WriteFileStream calls hostagent.v1.HostAgentService.WriteFileStream.
+func (c *hostAgentServiceClient) WriteFileStream(ctx context.Context) *connect.ClientStreamForClient[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse] {
+	return c.writeFileStream.CallClientStream(ctx)
+}
+
+// ReadFileStream calls hostagent.v1.HostAgentService.ReadFileStream.
+func (c *hostAgentServiceClient) ReadFileStream(ctx context.Context, req *connect.Request[gen.ReadFileStreamRequest]) (*connect.ServerStreamForClient[gen.ReadFileStreamResponse], error) {
+	return c.readFileStream.CallServerStream(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -210,6 +262,13 @@ type HostAgentServiceHandler interface {
 	WriteFile(context.Context, *connect.Request[gen.WriteFileRequest]) (*connect.Response[gen.WriteFileResponse], error)
 	// ReadFile reads a file from inside a sandbox.
 	ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error)
+	// ExecStream runs a command inside a sandbox and streams output events as they arrive.
+	ExecStream(context.Context, *connect.Request[gen.ExecStreamRequest], *connect.ServerStream[gen.ExecStreamResponse]) error
+	// WriteFileStream writes a file to a sandbox using chunked streaming.
+	// First message must contain metadata (sandbox_id, path). Subsequent messages contain data chunks.
+	WriteFileStream(context.Context, *connect.ClientStream[gen.WriteFileStreamRequest]) (*connect.Response[gen.WriteFileStreamResponse], error)
+	// ReadFileStream reads a file from a sandbox and streams it back in chunks.
+	ReadFileStream(context.Context, *connect.Request[gen.ReadFileStreamRequest], *connect.ServerStream[gen.ReadFileStreamResponse]) error
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -267,6 +326,24 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("ReadFile")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServiceExecStreamHandler := connect.NewServerStreamHandler(
+		HostAgentServiceExecStreamProcedure,
+		svc.ExecStream,
+		connect.WithSchema(hostAgentServiceMethods.ByName("ExecStream")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceWriteFileStreamHandler := connect.NewClientStreamHandler(
+		HostAgentServiceWriteFileStreamProcedure,
+		svc.WriteFileStream,
+		connect.WithSchema(hostAgentServiceMethods.ByName("WriteFileStream")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceReadFileStreamHandler := connect.NewServerStreamHandler(
+		HostAgentServiceReadFileStreamProcedure,
+		svc.ReadFileStream,
+		connect.WithSchema(hostAgentServiceMethods.ByName("ReadFileStream")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -285,6 +362,12 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceWriteFileHandler.ServeHTTP(w, r)
 		case HostAgentServiceReadFileProcedure:
 			hostAgentServiceReadFileHandler.ServeHTTP(w, r)
+		case HostAgentServiceExecStreamProcedure:
+			hostAgentServiceExecStreamHandler.ServeHTTP(w, r)
+		case HostAgentServiceWriteFileStreamProcedure:
+			hostAgentServiceWriteFileStreamHandler.ServeHTTP(w, r)
+		case HostAgentServiceReadFileStreamProcedure:
+			hostAgentServiceReadFileStreamHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -324,4 +407,16 @@ func (UnimplementedHostAgentServiceHandler) WriteFile(context.Context, *connect.
 
 func (UnimplementedHostAgentServiceHandler) ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ReadFile is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) ExecStream(context.Context, *connect.Request[gen.ExecStreamRequest], *connect.ServerStream[gen.ExecStreamResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ExecStream is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) WriteFileStream(context.Context, *connect.ClientStream[gen.WriteFileStreamRequest]) (*connect.Response[gen.WriteFileStreamResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.WriteFileStream is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) ReadFileStream(context.Context, *connect.Request[gen.ReadFileStreamRequest], *connect.ServerStream[gen.ReadFileStreamResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ReadFileStream is not implemented"))
 }

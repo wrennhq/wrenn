@@ -42,6 +42,11 @@ func New(hostIP string) *Client {
 	}
 }
 
+// BaseURL returns the HTTP base URL for reaching envd.
+func (c *Client) BaseURL() string {
+	return c.base
+}
+
 // ExecResult holds the output of a command execution.
 type ExecResult struct {
 	Stdout   []byte
@@ -108,6 +113,83 @@ func (c *Client) Exec(ctx context.Context, cmd string, args ...string) (*ExecRes
 	}
 
 	return result, nil
+}
+
+// ExecStreamEvent represents a single event from a streaming exec.
+type ExecStreamEvent struct {
+	Type     string // "start", "stdout", "stderr", "end"
+	PID      uint32
+	Data     []byte
+	ExitCode int32
+	Error    string
+}
+
+// ExecStream runs a command inside the sandbox and returns a channel of output events.
+// The channel is closed when the process ends or the context is cancelled.
+func (c *Client) ExecStream(ctx context.Context, cmd string, args ...string) (<-chan ExecStreamEvent, error) {
+	stdin := false
+	req := connect.NewRequest(&envdpb.StartRequest{
+		Process: &envdpb.ProcessConfig{
+			Cmd:  cmd,
+			Args: args,
+		},
+		Stdin: &stdin,
+	})
+
+	stream, err := c.process.Start(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("start process: %w", err)
+	}
+
+	ch := make(chan ExecStreamEvent, 16)
+	go func() {
+		defer close(ch)
+		defer stream.Close()
+
+		for stream.Receive() {
+			msg := stream.Msg()
+			if msg.Event == nil {
+				continue
+			}
+
+			var ev ExecStreamEvent
+			event := msg.Event.GetEvent()
+			switch e := event.(type) {
+			case *envdpb.ProcessEvent_Start:
+				ev = ExecStreamEvent{Type: "start", PID: e.Start.GetPid()}
+
+			case *envdpb.ProcessEvent_Data:
+				output := e.Data.GetOutput()
+				switch o := output.(type) {
+				case *envdpb.ProcessEvent_DataEvent_Stdout:
+					ev = ExecStreamEvent{Type: "stdout", Data: o.Stdout}
+				case *envdpb.ProcessEvent_DataEvent_Stderr:
+					ev = ExecStreamEvent{Type: "stderr", Data: o.Stderr}
+				}
+
+			case *envdpb.ProcessEvent_End:
+				ev = ExecStreamEvent{Type: "end", ExitCode: e.End.GetExitCode()}
+				if e.End.Error != nil {
+					ev.Error = e.End.GetError()
+				}
+
+			case *envdpb.ProcessEvent_Keepalive:
+				continue
+			}
+
+			select {
+			case ch <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		if err := stream.Err(); err != nil && err != io.EOF {
+			slog.Debug("exec stream error", "error", err)
+		}
+	}()
+
+	return ch, nil
 }
 
 // WriteFile writes content to a file inside the sandbox via envd's REST endpoint.

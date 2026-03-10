@@ -26,7 +26,9 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *
 
 	sandbox := newSandboxHandler(queries, agent)
 	exec := newExecHandler(queries, agent)
+	execStream := newExecStreamHandler(queries, agent)
 	files := newFilesHandler(queries, agent)
+	filesStream := newFilesStreamHandler(queries, agent)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -41,10 +43,13 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *
 			r.Get("/", sandbox.Get)
 			r.Delete("/", sandbox.Destroy)
 			r.Post("/exec", exec.Exec)
+			r.Get("/exec/stream", execStream.ExecStream)
 			r.Post("/pause", sandbox.Pause)
 			r.Post("/resume", sandbox.Resume)
 			r.Post("/files/write", files.Upload)
 			r.Post("/files/read", files.Download)
+			r.Post("/files/stream/write", filesStream.StreamUpload)
+			r.Post("/files/stream/read", filesStream.StreamDownload)
 		})
 	})
 

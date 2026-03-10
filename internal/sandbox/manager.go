@@ -262,6 +262,24 @@ func (m *Manager) Exec(ctx context.Context, sandboxID string, cmd string, args .
 	return sb.client.Exec(ctx, cmd, args...)
 }
 
+// ExecStream runs a command inside a sandbox and returns a channel of streaming events.
+func (m *Manager) ExecStream(ctx context.Context, sandboxID string, cmd string, args ...string) (<-chan envdclient.ExecStreamEvent, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+
+	if sb.Status != models.StatusRunning {
+		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.ExecStream(ctx, cmd, args...)
+}
+
 // List returns all sandboxes.
 func (m *Manager) List() []models.Sandbox {
 	m.mu.RLock()
