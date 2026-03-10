@@ -57,8 +57,11 @@ func New(cfg Config) *Manager {
 }
 
 // Create boots a new sandbox: clone rootfs, set up network, start VM, wait for envd.
-func (m *Manager) Create(ctx context.Context, template string, vcpus, memoryMB, timeoutSec int) (*models.Sandbox, error) {
-	sandboxID := id.NewSandboxID()
+// If sandboxID is empty, a new ID is generated.
+func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus, memoryMB, timeoutSec int) (*models.Sandbox, error) {
+	if sandboxID == "" {
+		sandboxID = id.NewSandboxID()
+	}
 
 	if vcpus <= 0 {
 		vcpus = 1
@@ -278,6 +281,18 @@ func (m *Manager) Get(sandboxID string) (*models.Sandbox, error) {
 		return nil, err
 	}
 	return &sb.Sandbox, nil
+}
+
+// GetClient returns the envd client for a sandbox.
+func (m *Manager) GetClient(sandboxID string) (*envdclient.Client, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if sb.Status != models.StatusRunning {
+		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+	return sb.client, nil
 }
 
 func (m *Manager) get(sandboxID string) (*sandboxState, error) {

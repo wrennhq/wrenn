@@ -30,7 +30,7 @@ func (s *Server) CreateSandbox(
 ) (*connect.Response[pb.CreateSandboxResponse], error) {
 	msg := req.Msg
 
-	sb, err := s.mgr.Create(ctx, msg.Template, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec))
+	sb, err := s.mgr.Create(ctx, msg.SandboxId, msg.Template, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create sandbox: %w", err))
 	}
@@ -96,6 +96,43 @@ func (s *Server) Exec(
 		Stderr:   result.Stderr,
 		ExitCode: result.ExitCode,
 	}), nil
+}
+
+func (s *Server) WriteFile(
+	ctx context.Context,
+	req *connect.Request[pb.WriteFileRequest],
+) (*connect.Response[pb.WriteFileResponse], error) {
+	msg := req.Msg
+
+	client, err := s.mgr.GetClient(msg.SandboxId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+
+	if err := client.WriteFile(ctx, msg.Path, msg.Content); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("write file: %w", err))
+	}
+
+	return connect.NewResponse(&pb.WriteFileResponse{}), nil
+}
+
+func (s *Server) ReadFile(
+	ctx context.Context,
+	req *connect.Request[pb.ReadFileRequest],
+) (*connect.Response[pb.ReadFileResponse], error) {
+	msg := req.Msg
+
+	client, err := s.mgr.GetClient(msg.SandboxId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+
+	content, err := client.ReadFile(ctx, msg.Path)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("read file: %w", err))
+	}
+
+	return connect.NewResponse(&pb.ReadFileResponse{Content: content}), nil
 }
 
 func (s *Server) ListSandboxes(

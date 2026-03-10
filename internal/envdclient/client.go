@@ -1,11 +1,14 @@
 package envdclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
+	"net/url"
 
 	"connectrpc.com/connect"
 
@@ -107,19 +110,80 @@ func (c *Client) Exec(ctx context.Context, cmd string, args ...string) (*ExecRes
 	return result, nil
 }
 
-// WriteFile writes content to a file inside the sandbox via envd's filesystem service.
+// WriteFile writes content to a file inside the sandbox via envd's REST endpoint.
+// envd expects POST /files?path=...&username=root with multipart/form-data (field name "file").
 func (c *Client) WriteFile(ctx context.Context, path string, content []byte) error {
-	// envd uses HTTP upload for files, not Connect RPC.
-	// POST /files with multipart form data.
-	// For now, use the filesystem MakeDir for directories.
-	// TODO: Implement file upload via envd's REST endpoint.
-	return fmt.Errorf("WriteFile not yet implemented")
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	part, err := writer.CreateFormFile("file", "upload")
+	if err != nil {
+		return fmt.Errorf("create multipart: %w", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		return fmt.Errorf("write multipart: %w", err)
+	}
+	writer.Close()
+
+	u := fmt.Sprintf("%s/files?%s", c.base, url.Values{
+		"path":     {path},
+		"username": {"root"},
+	}.Encode())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("write file %s: status %d: %s", path, resp.StatusCode, string(respBody))
+	}
+
+	slog.Debug("envd write file", "path", path, "status", resp.StatusCode, "response", string(respBody))
+	return nil
 }
 
-// ReadFile reads a file from inside the sandbox.
+// ReadFile reads a file from inside the sandbox via envd's REST endpoint.
+// envd expects GET /files?path=...&username=root.
 func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
-	// TODO: Implement file download via envd's REST endpoint.
-	return nil, fmt.Errorf("ReadFile not yet implemented")
+	u := fmt.Sprintf("%s/files?%s", c.base, url.Values{
+		"path":     {path},
+		"username": {"root"},
+	}.Encode())
+
+	slog.Debug("envd read file", "url", u, "path", path)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("read file %s: status %d: %s", path, resp.StatusCode, string(respBody))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read file body: %w", err)
+	}
+
+	return data, nil
 }
 
 // ListDir lists directory contents inside the sandbox.

@@ -1,0 +1,346 @@
+openapi: "3.1.0"
+info:
+  title: Wrenn Sandbox API
+  description: MicroVM-based code execution platform API.
+  version: "0.1.0"
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /v1/sandboxes:
+    post:
+      summary: Create a sandbox
+      operationId: createSandbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSandboxRequest"
+      responses:
+        "201":
+          description: Sandbox created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "502":
+          description: Host agent error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      summary: List all sandboxes
+      operationId: listSandboxes
+      responses:
+        "200":
+          description: List of sandboxes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Sandbox"
+
+  /v1/sandboxes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get sandbox details
+      operationId: getSandbox
+      responses:
+        "200":
+          description: Sandbox details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Destroy a sandbox
+      operationId: destroySandbox
+      responses:
+        "204":
+          description: Sandbox destroyed
+
+  /v1/sandboxes/{id}/exec:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Execute a command
+      operationId: execCommand
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecRequest"
+      responses:
+        "200":
+          description: Command output
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecResponse"
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/pause:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Pause a running sandbox
+      operationId: pauseSandbox
+      responses:
+        "200":
+          description: Sandbox paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/resume:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Resume a paused sandbox
+      operationId: resumeSandbox
+      responses:
+        "200":
+          description: Sandbox resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "409":
+          description: Sandbox not paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/write:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Upload a file
+      operationId: uploadFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [path, file]
+              properties:
+                path:
+                  type: string
+                  description: Absolute destination path inside the sandbox
+                file:
+                  type: string
+                  format: binary
+                  description: File content
+      responses:
+        "204":
+          description: File uploaded
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: File too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Download a file
+      operationId: downloadFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReadFileRequest"
+      responses:
+        "200":
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Sandbox or file not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  schemas:
+    CreateSandboxRequest:
+      type: object
+      properties:
+        template:
+          type: string
+          default: minimal
+        vcpus:
+          type: integer
+          default: 1
+        memory_mb:
+          type: integer
+          default: 512
+        timeout_sec:
+          type: integer
+          default: 300
+
+    Sandbox:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, paused, stopped, error]
+        template:
+          type: string
+        vcpus:
+          type: integer
+        memory_mb:
+          type: integer
+        timeout_sec:
+          type: integer
+        guest_ip:
+          type: string
+        host_ip:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_active_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_updated:
+          type: string
+          format: date-time
+
+    ExecRequest:
+      type: object
+      required: [cmd]
+      properties:
+        cmd:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        timeout_sec:
+          type: integer
+          default: 30
+
+    ExecResponse:
+      type: object
+      properties:
+        sandbox_id:
+          type: string
+        cmd:
+          type: string
+        stdout:
+          type: string
+        stderr:
+          type: string
+        exit_code:
+          type: integer
+        duration_ms:
+          type: integer
+        encoding:
+          type: string
+          enum: [utf-8, base64]
+          description: Output encoding. "base64" when stdout/stderr contain binary data.
+
+    ReadFileRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Absolute file path inside the sandbox
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string

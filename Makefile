@@ -28,10 +28,10 @@ build-envd:
 # ═══════════════════════════════════════════════════
 #  Development
 # ═══════════════════════════════════════════════════
-.PHONY: dev dev-cp dev-agent dev-envd dev-infra dev-down dev-seed
+.PHONY: dev dev-cp dev-agent dev-envd dev-infra dev-down
 
 ## One command to start everything for local dev
-dev: dev-infra migrate-up dev-seed dev-cp
+dev: dev-infra migrate-up dev-cp
 
 dev-infra:
 	docker compose -f deploy/docker-compose.dev.yml up -d
@@ -52,8 +52,6 @@ dev-agent:
 dev-envd:
 	cd $(ENVD_DIR) && go run . --debug --listen-tcp :3002
 
-dev-seed:
-	go run ./scripts/seed.go
 
 # ═══════════════════════════════════════════════════
 #  Database (goose)
@@ -89,8 +87,7 @@ proto:
 	cd $(ENVD_DIR)/spec && buf generate
 
 sqlc:
-	@if command -v sqlc > /dev/null; then sqlc generate; \
-	else echo "sqlc not installed, skipping"; fi
+	sqlc generate
 
 # ═══════════════════════════════════════════════════
 #  Quality & Testing
