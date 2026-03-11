@@ -278,9 +278,11 @@ func CreateNetwork(slot *Slot) error {
 	}
 
 	// MASQUERADE for outbound traffic from sandbox.
+	// After SNAT inside the namespace, outbound packets arrive on the host
+	// with source = vpeerIP, so we match on that (not hostIP).
 	if err := iptablesHost(
 		"-t", "nat", "-A", "POSTROUTING",
-		"-s", fmt.Sprintf("%s/32", slot.HostIP.String()),
+		"-s", fmt.Sprintf("%s/32", slot.VpeerIP.String()),
 		"-o", defaultIface,
 		"-j", "MASQUERADE",
 	); err != nil {
@@ -314,7 +316,7 @@ func RemoveNetwork(slot *Slot) error {
 		)
 		iptablesHost(
 			"-t", "nat", "-D", "POSTROUTING",
-			"-s", fmt.Sprintf("%s/32", slot.HostIP.String()),
+			"-s", fmt.Sprintf("%s/32", slot.VpeerIP.String()),
 			"-o", defaultIface,
 			"-j", "MASQUERADE",
 		)

@@ -19,5 +19,9 @@ mount -t cgroup2 cgroup2 /sys/fs/cgroup 2>/dev/null || true
 # Set hostname
 hostname sandbox
 
+# Configure DNS resolver.
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+
 # Exec envd as the main process (replaces this script, keeps PID 1).
 exec /usr/local/bin/envd
