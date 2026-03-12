@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
+//
+// Modifications by Omukk (Wrenn Sandbox): replaced errgroup with WaitGroup
+// + semaphore, replaced fdexit abstraction with pipe, integrated with
+// snapshot.Header-based DiffFileSource instead of block.ReadonlyDevice,
+// fixed EAGAIN handling in poll loop.
+
 package uffd
 
 /*

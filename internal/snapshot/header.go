@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
+
 // Package snapshot implements snapshot storage, header-based memory mapping,
 // and memory file processing for Firecracker VM snapshots.
 //
@@ -6,8 +9,6 @@
 // previous generation. A Header contains a sorted list of BuildMap entries
 // that together cover the entire memory address space, with each entry
 // pointing to a specific generation's diff file.
-//
-// Inspired by e2b's snapshot system (Apache 2.0, modified by Omukk).
 package snapshot
 
 import (

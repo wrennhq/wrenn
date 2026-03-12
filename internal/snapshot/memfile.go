@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
+
 package snapshot
 
 import (

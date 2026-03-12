@@ -5,9 +5,13 @@ This project includes software derived from the following project:
 
 Project: e2b infra
 Repository: https://github.com/e2b-dev/infra
-Original directory: packages/envd
 
-The envd/ directory and proto/envd/*.proto files in this repository contains code derived from the above project and is licensed under the Apache License Version 2.0.
+The following files and directories in this repository contain code derived from the above project and are licensed under the Apache License Version 2.0:
+
+- envd/
+- proto/envd/*.proto
+- internal/snapshot/
+- internal/uffd/
 
 Modifications to this code were made by M/S Omukk.
 

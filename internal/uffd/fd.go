@@ -1,9 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
+
 // Package uffd implements a userfaultfd-based memory server for Firecracker
 // snapshot restore. When a VM is restored from a snapshot, instead of loading
 // the entire memory file upfront, the UFFD handler intercepts page faults
 // and serves memory pages on demand from the snapshot's compact diff file.
-//
-// Inspired by e2b's UFFD implementation (Apache 2.0, modified by Omukk).
 package uffd
 
 /*

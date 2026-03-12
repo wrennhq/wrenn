@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
+//
+// Modifications by Omukk (Wrenn Sandbox): merged Region and Mapping into
+// single file, inlined shiftedOffset helper.
+
 package uffd
 
 import "fmt"

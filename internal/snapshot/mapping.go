@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
+
 package snapshot
 
 import "github.com/google/uuid"
@@ -6,8 +9,6 @@ import "github.com/google/uuid"
 // a sorted list of BuildMap entries. Consecutive dirty blocks are merged into
 // a single entry. BuildStorageOffset tracks the sequential position in the
 // compact diff file.
-//
-// Inspired by e2b's snapshot system (Apache 2.0, modified by Omukk).
 func CreateMapping(buildID uuid.UUID, dirty []bool, blockSize int64) []*BuildMap {
 	var mappings []*BuildMap
 	var runStart int64 = -1
