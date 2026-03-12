@@ -97,6 +97,17 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// If the template is a snapshot, use its baked-in vcpus/memory
+	// (they cannot be changed since the VM state is frozen).
+	if tmpl, err := h.db.GetTemplate(ctx, req.Template); err == nil && tmpl.Type == "snapshot" {
+		if tmpl.Vcpus.Valid {
+			req.VCPUs = tmpl.Vcpus.Int32
+		}
+		if tmpl.MemoryMb.Valid {
+			req.MemoryMB = tmpl.MemoryMb.Int32
+		}
+	}
 	sandboxID := id.NewSandboxID()
 
 	// Insert pending record.
@@ -182,6 +193,8 @@ func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Pause handles POST /v1/sandboxes/{id}/pause.
+// Pause = snapshot + destroy. The sandbox is frozen to disk and all running
+// resources are released. It can be resumed later.
 func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "id")
 	ctx := r.Context()
@@ -216,6 +229,7 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 }
 
 // Resume handles POST /v1/sandboxes/{id}/resume.
+// Resume restores a paused sandbox from snapshot using UFFD lazy memory loading.
 func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "id")
 	ctx := r.Context()
@@ -230,16 +244,24 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.agent.ResumeSandbox(ctx, connect.NewRequest(&pb.ResumeSandboxRequest{
+	resp, err := h.agent.ResumeSandbox(ctx, connect.NewRequest(&pb.ResumeSandboxRequest{
 		SandboxId: sandboxID,
-	})); err != nil {
+	}))
+	if err != nil {
 		status, code, msg := agentErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	sb, err = h.db.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
-		ID: sandboxID, Status: "running",
+	now := time.Now()
+	sb, err = h.db.UpdateSandboxRunning(ctx, db.UpdateSandboxRunningParams{
+		ID:      sandboxID,
+		HostIp:  resp.Msg.HostIp,
+		GuestIp: "",
+		StartedAt: pgtype.Timestamptz{
+			Time:  now,
+			Valid: true,
+		},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to update status")

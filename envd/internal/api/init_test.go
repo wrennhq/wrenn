@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"git.omukk.dev/wrenn/sandbox/envd/internal/execcontext"
-	"git.omukk.dev/wrenn/sandbox/envd/internal/utils"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/shared/keys"
 	utilsShared "git.omukk.dev/wrenn/sandbox/envd/internal/shared/utils"
+	"git.omukk.dev/wrenn/sandbox/envd/internal/utils"
 )
 
 func TestSimpleCases(t *testing.T) {

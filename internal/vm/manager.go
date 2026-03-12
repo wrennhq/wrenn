@@ -91,8 +91,10 @@ func configureVM(ctx context.Context, client *fcClient, cfg *VMConfig) error {
 		return fmt.Errorf("set boot source: %w", err)
 	}
 
-	// Root drive
-	if err := client.setRootfsDrive(ctx, "rootfs", cfg.RootfsPath, false); err != nil {
+	// Root drive — use the symlink path inside the mount namespace so that
+	// snapshots record a stable path that works on restore.
+	rootfsSymlink := cfg.SandboxDir + "/rootfs.ext4"
+	if err := client.setRootfsDrive(ctx, "rootfs", rootfsSymlink, false); err != nil {
 		return fmt.Errorf("set rootfs drive: %w", err)
 	}
 
@@ -160,6 +162,92 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 
 	slog.Info("VM destroyed", "sandbox", sandboxID)
 	return nil
+}
+
+// Snapshot creates a full VM snapshot. The VM must already be paused.
+// Produces a snapfile (VM state) and a memfile (full memory dump).
+func (m *Manager) Snapshot(ctx context.Context, sandboxID, snapPath, memPath string) error {
+	vm, ok := m.vms[sandboxID]
+	if !ok {
+		return fmt.Errorf("VM not found: %s", sandboxID)
+	}
+
+	if err := vm.client.createSnapshot(ctx, snapPath, memPath); err != nil {
+		return fmt.Errorf("create snapshot: %w", err)
+	}
+
+	slog.Info("VM snapshot created", "sandbox", sandboxID, "snap_path", snapPath)
+	return nil
+}
+
+// CreateFromSnapshot boots a new Firecracker VM by loading a snapshot
+// using UFFD for lazy memory loading. The network namespace and TAP
+// device must already be set up.
+//
+// No boot resources (kernel, drives, machine config) are configured —
+// the snapshot carries all that state. The rootfs path recorded in the
+// snapshot is resolved via a stable symlink at SandboxDir/rootfs.ext4
+// inside the mount namespace (created by the start script in jailer.go).
+//
+// The sequence is:
+//  1. Start FC process in mount+network namespace (creates tmpfs + rootfs symlink)
+//  2. Wait for API socket
+//  3. Load snapshot with UFFD backend
+//  4. Resume VM execution
+func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapPath, uffdSocketPath string) (*VM, error) {
+	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	os.Remove(cfg.SocketPath)
+
+	slog.Info("restoring VM from snapshot",
+		"sandbox", cfg.SandboxID,
+		"snap_path", snapPath,
+	)
+
+	// Step 1: Launch the Firecracker process.
+	// The start script creates a tmpfs at SandboxDir and symlinks
+	// rootfs.ext4 → cfg.RootfsPath, so the snapshot's recorded rootfs
+	// path (/fc-vm/rootfs.ext4) resolves to the new clone.
+	proc, err := startProcess(ctx, &cfg)
+	if err != nil {
+		return nil, fmt.Errorf("start process: %w", err)
+	}
+
+	// Step 2: Wait for the API socket.
+	if err := waitForSocket(ctx, cfg.SocketPath, proc); err != nil {
+		proc.stop()
+		return nil, fmt.Errorf("wait for socket: %w", err)
+	}
+
+	client := newFCClient(cfg.SocketPath)
+
+	// Step 3: Load the snapshot with UFFD backend.
+	// No boot resources are configured — the snapshot carries kernel,
+	// drive, network, and machine config state.
+	if err := client.loadSnapshotWithUffd(ctx, snapPath, uffdSocketPath); err != nil {
+		proc.stop()
+		return nil, fmt.Errorf("load snapshot: %w", err)
+	}
+
+	// Step 4: Resume the VM.
+	if err := client.resumeVM(ctx); err != nil {
+		proc.stop()
+		return nil, fmt.Errorf("resume VM: %w", err)
+	}
+
+	vm := &VM{
+		Config:  cfg,
+		process: proc,
+		client:  client,
+	}
+
+	m.vms[cfg.SandboxID] = vm
+
+	slog.Info("VM restored from snapshot", "sandbox", cfg.SandboxID)
+	return vm, nil
 }
 
 // Get returns a running VM by sandbox ID.

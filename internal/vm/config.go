@@ -70,7 +70,7 @@ func (c *VMConfig) applyDefaults() {
 		c.SocketPath = fmt.Sprintf("/tmp/fc-%s.sock", c.SandboxID)
 	}
 	if c.SandboxDir == "" {
-		c.SandboxDir = fmt.Sprintf("/tmp/fc-sandbox-%s", c.SandboxID)
+		c.SandboxDir = "/tmp/fc-vm"
 	}
 	if c.TapDevice == "" {
 		c.TapDevice = "tap0"

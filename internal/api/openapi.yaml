@@ -126,9 +126,13 @@ paths:
     post:
       summary: Pause a running sandbox
       operationId: pauseSandbox
+      description: |
+        Takes a snapshot of the sandbox (VM state + memory + rootfs), then
+        destroys all running resources. The sandbox exists only as files on
+        disk and can be resumed later.
       responses:
         "200":
-          description: Sandbox paused
+          description: Sandbox paused (snapshot taken, resources released)
           content:
             application/json:
               schema:
@@ -151,15 +155,98 @@ paths:
     post:
       summary: Resume a paused sandbox
       operationId: resumeSandbox
+      description: |
+        Restores a paused sandbox from its snapshot using UFFD for lazy
+        memory loading. Boots a fresh Firecracker process, sets up a new
+        network slot, and waits for envd to become ready.
       responses:
         "200":
-          description: Sandbox resumed
+          description: Sandbox resumed (new VM booted from snapshot)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Sandbox"
         "409":
           description: Sandbox not paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/snapshots:
+    post:
+      summary: Create a snapshot template
+      operationId: createSnapshot
+      description: |
+        Pauses a running sandbox, takes a full snapshot, copies the snapshot
+        files to the images directory as a reusable template, then destroys
+        the sandbox. The template can be used to create new sandboxes.
+      parameters:
+        - name: overwrite
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["true"]
+          description: Set to "true" to overwrite an existing snapshot with the same name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSnapshotRequest"
+      responses:
+        "201":
+          description: Snapshot created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "409":
+          description: Name already exists or sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      summary: List templates
+      operationId: listSnapshots
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [base, snapshot]
+          description: Filter by template type.
+      responses:
+        "200":
+          description: List of templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Template"
+
+  /v1/snapshots/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+
+    delete:
+      summary: Delete a snapshot template
+      operationId: deleteSnapshot
+      description: Removes the snapshot files from disk and deletes the database record.
+      responses:
+        "204":
+          description: Snapshot deleted
+        "404":
+          description: Template not found
           content:
             application/json:
               schema:
@@ -426,6 +513,38 @@ components:
           format: date-time
           nullable: true
         last_updated:
+          type: string
+          format: date-time
+
+    CreateSnapshotRequest:
+      type: object
+      required: [sandbox_id]
+      properties:
+        sandbox_id:
+          type: string
+          description: ID of the running sandbox to snapshot.
+        name:
+          type: string
+          description: Name for the snapshot template. Auto-generated if omitted.
+
+    Template:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [base, snapshot]
+        vcpus:
+          type: integer
+          nullable: true
+        memory_mb:
+          type: integer
+          nullable: true
+        size_bytes:
+          type: integer
+          format: int64
+        created_at:
           type: string
           format: date-time
 

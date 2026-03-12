@@ -16,8 +16,8 @@ import (
 	"git.omukk.dev/wrenn/sandbox/envd/internal/logs"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/permissions"
 	rpc "git.omukk.dev/wrenn/sandbox/envd/internal/services/spec/filesystem"
-	"git.omukk.dev/wrenn/sandbox/envd/internal/utils"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/shared/id"
+	"git.omukk.dev/wrenn/sandbox/envd/internal/utils"
 )
 
 type FileWatcher struct {

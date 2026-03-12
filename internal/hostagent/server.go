@@ -71,10 +71,39 @@ func (s *Server) ResumeSandbox(
 	ctx context.Context,
 	req *connect.Request[pb.ResumeSandboxRequest],
 ) (*connect.Response[pb.ResumeSandboxResponse], error) {
-	if err := s.mgr.Resume(ctx, req.Msg.SandboxId); err != nil {
+	sb, err := s.mgr.Resume(ctx, req.Msg.SandboxId)
+	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&pb.ResumeSandboxResponse{}), nil
+	return connect.NewResponse(&pb.ResumeSandboxResponse{
+		SandboxId: sb.ID,
+		Status:    string(sb.Status),
+		HostIp:    sb.HostIP.String(),
+	}), nil
+}
+
+func (s *Server) CreateSnapshot(
+	ctx context.Context,
+	req *connect.Request[pb.CreateSnapshotRequest],
+) (*connect.Response[pb.CreateSnapshotResponse], error) {
+	sizeBytes, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, req.Msg.Name)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create snapshot: %w", err))
+	}
+	return connect.NewResponse(&pb.CreateSnapshotResponse{
+		Name:      req.Msg.Name,
+		SizeBytes: sizeBytes,
+	}), nil
+}
+
+func (s *Server) DeleteSnapshot(
+	ctx context.Context,
+	req *connect.Request[pb.DeleteSnapshotRequest],
+) (*connect.Response[pb.DeleteSnapshotResponse], error) {
+	if err := s.mgr.DeleteSnapshot(req.Msg.Name); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("delete snapshot: %w", err))
+	}
+	return connect.NewResponse(&pb.DeleteSnapshotResponse{}), nil
 }
 
 func (s *Server) Exec(
@@ -352,15 +381,15 @@ func (s *Server) ListSandboxes(
 	infos := make([]*pb.SandboxInfo, len(sandboxes))
 	for i, sb := range sandboxes {
 		infos[i] = &pb.SandboxInfo{
-			SandboxId:       sb.ID,
-			Status:          string(sb.Status),
-			Template:        sb.Template,
-			Vcpus:           int32(sb.VCPUs),
-			MemoryMb:        int32(sb.MemoryMB),
-			HostIp:          sb.HostIP.String(),
-			CreatedAtUnix:   sb.CreatedAt.Unix(),
+			SandboxId:        sb.ID,
+			Status:           string(sb.Status),
+			Template:         sb.Template,
+			Vcpus:            int32(sb.VCPUs),
+			MemoryMb:         int32(sb.MemoryMB),
+			HostIp:           sb.HostIP.String(),
+			CreatedAtUnix:    sb.CreatedAt.Unix(),
 			LastActiveAtUnix: sb.LastActiveAt.Unix(),
-			TimeoutSec:      int32(sb.TimeoutSec),
+			TimeoutSec:       int32(sb.TimeoutSec),
 		}
 	}
 

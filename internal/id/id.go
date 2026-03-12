@@ -14,3 +14,12 @@ func NewSandboxID() string {
 	}
 	return "sb-" + hex.EncodeToString(b)
 }
+
+// NewSnapshotName generates a snapshot name in the format "template-" + 8 hex chars.
+func NewSnapshotName() string {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+	return "template-" + hex.EncodeToString(b)
+}

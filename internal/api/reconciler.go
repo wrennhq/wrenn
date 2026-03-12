@@ -62,10 +62,12 @@ func (rc *Reconciler) reconcile(ctx context.Context) {
 		alive[sb.SandboxId] = struct{}{}
 	}
 
-	// Get all DB sandboxes for this host that are running or paused.
+	// Get all DB sandboxes for this host that are running.
+	// Paused sandboxes are excluded: they are expected to not exist on the
+	// host agent because pause = snapshot + destroy resources.
 	dbSandboxes, err := rc.db.ListSandboxesByHostAndStatus(ctx, db.ListSandboxesByHostAndStatusParams{
 		HostID:  rc.hostID,
-		Column2: []string{"running", "paused"},
+		Column2: []string{"running"},
 	})
 	if err != nil {
 		slog.Warn("reconciler: failed to list DB sandboxes", "error", err)

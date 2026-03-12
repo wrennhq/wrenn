@@ -209,7 +209,7 @@ The main module (`go.mod`) and envd (`envd/go.mod`) are fully independent. `make
 - Kernel: `/var/lib/wrenn/kernels/vmlinux`
 - Base rootfs images: `/var/lib/wrenn/images/{template}.ext4`
 - Sandbox clones: `/var/lib/wrenn/sandboxes/`
-- Firecracker: `/usr/local/bin/firecracker`
+- Firecracker: `/usr/local/bin/firecracker` (e2b's fork of firecracker)
 
 ## Web UI Styling
 

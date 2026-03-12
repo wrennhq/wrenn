@@ -44,7 +44,7 @@ type wsStopMsg struct {
 
 // wsOutMsg is sent by the server for process events.
 type wsOutMsg struct {
-	Type     string `json:"type"`               // "start", "stdout", "stderr", "exit", "error"
+	Type     string `json:"type"`                // "start", "stdout", "stderr", "exit", "error"
 	PID      uint32 `json:"pid,omitempty"`       // only for "start"
 	Data     string `json:"data,omitempty"`      // only for "stdout", "stderr", "error"
 	ExitCode *int32 `json:"exit_code,omitempty"` // only for "exit"

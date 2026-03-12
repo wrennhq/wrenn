@@ -24,3 +24,12 @@ type Sandbox struct {
 	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
 	LastUpdated  pgtype.Timestamptz `json:"last_updated"`
 }
+
+type Template struct {
+	Name      string             `json:"name"`
+	Type      string             `json:"type"`
+	Vcpus     pgtype.Int4        `json:"vcpus"`
+	MemoryMb  pgtype.Int4        `json:"memory_mb"`
+	SizeBytes int64              `json:"size_bytes"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}

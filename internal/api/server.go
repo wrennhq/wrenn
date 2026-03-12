@@ -29,6 +29,7 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *
 	execStream := newExecStreamHandler(queries, agent)
 	files := newFilesHandler(queries, agent)
 	filesStream := newFilesStreamHandler(queries, agent)
+	snapshots := newSnapshotHandler(queries, agent)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -51,6 +52,13 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *
 			r.Post("/files/stream/write", filesStream.StreamUpload)
 			r.Post("/files/stream/read", filesStream.StreamDownload)
 		})
+	})
+
+	// Snapshot / template management.
+	r.Route("/v1/snapshots", func(r chi.Router) {
+		r.Post("/", snapshots.Create)
+		r.Get("/", snapshots.List)
+		r.Delete("/{name}", snapshots.Delete)
 	})
 
 	return &Server{router: r}

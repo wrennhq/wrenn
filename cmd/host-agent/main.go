@@ -33,11 +33,13 @@ func main() {
 	kernelPath := envOrDefault("AGENT_KERNEL_PATH", "/var/lib/wrenn/kernels/vmlinux")
 	imagesPath := envOrDefault("AGENT_IMAGES_PATH", "/var/lib/wrenn/images")
 	sandboxesPath := envOrDefault("AGENT_SANDBOXES_PATH", "/var/lib/wrenn/sandboxes")
+	snapshotsPath := envOrDefault("AGENT_SNAPSHOTS_PATH", "/var/lib/wrenn/snapshots")
 
 	cfg := sandbox.Config{
 		KernelPath:   kernelPath,
 		ImagesDir:    imagesPath,
 		SandboxesDir: sandboxesPath,
+		SnapshotsDir: snapshotsPath,
 	}
 
 	mgr := sandbox.New(cfg)
@@ -91,4 +93,3 @@ func envOrDefault(key, def string) string {
 	}
 	return def
 }
-

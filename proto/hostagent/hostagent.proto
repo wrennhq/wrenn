@@ -29,6 +29,13 @@ service HostAgentService {
   // ReadFile reads a file from inside a sandbox.
   rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
 
+  // CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
+  // template, and destroys the sandbox.
+  rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
+
+  // DeleteSnapshot removes a snapshot template from disk.
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+
   // ExecStream runs a command inside a sandbox and streams output events as they arrive.
   rpc ExecStream(ExecStreamRequest) returns (stream ExecStreamResponse);
 
@@ -80,7 +87,27 @@ message ResumeSandboxRequest {
   string sandbox_id = 1;
 }
 
-message ResumeSandboxResponse {}
+message ResumeSandboxResponse {
+  string sandbox_id = 1;
+  string status = 2;
+  string host_ip = 3;
+}
+
+message CreateSnapshotRequest {
+  string sandbox_id = 1;
+  string name = 2;
+}
+
+message CreateSnapshotResponse {
+  string name = 1;
+  int64 size_bytes = 2;
+}
+
+message DeleteSnapshotRequest {
+  string name = 1;
+}
+
+message DeleteSnapshotResponse {}
 
 message ExecRequest {
   string sandbox_id = 1;

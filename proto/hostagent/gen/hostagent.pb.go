@@ -369,6 +369,9 @@ func (x *ResumeSandboxRequest) GetSandboxId() string {
 
 type ResumeSandboxResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	HostIp        string                 `protobuf:"bytes,3,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -403,6 +406,211 @@ func (*ResumeSandboxResponse) Descriptor() ([]byte, []int) {
 	return file_hostagent_proto_rawDescGZIP(), []int{7}
 }
 
+func (x *ResumeSandboxResponse) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *ResumeSandboxResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ResumeSandboxResponse) GetHostIp() string {
+	if x != nil {
+		return x.HostIp
+	}
+	return ""
+}
+
+type CreateSnapshotRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateSnapshotRequest) Reset() {
+	*x = CreateSnapshotRequest{}
+	mi := &file_hostagent_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateSnapshotRequest) ProtoMessage() {}
+
+func (x *CreateSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*CreateSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CreateSnapshotRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *CreateSnapshotRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type CreateSnapshotResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	SizeBytes     int64                  `protobuf:"varint,2,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateSnapshotResponse) Reset() {
+	*x = CreateSnapshotResponse{}
+	mi := &file_hostagent_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateSnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateSnapshotResponse) ProtoMessage() {}
+
+func (x *CreateSnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateSnapshotResponse.ProtoReflect.Descriptor instead.
+func (*CreateSnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CreateSnapshotResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateSnapshotResponse) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+type DeleteSnapshotRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteSnapshotRequest) Reset() {
+	*x = DeleteSnapshotRequest{}
+	mi := &file_hostagent_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteSnapshotRequest) ProtoMessage() {}
+
+func (x *DeleteSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*DeleteSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *DeleteSnapshotRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type DeleteSnapshotResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteSnapshotResponse) Reset() {
+	*x = DeleteSnapshotResponse{}
+	mi := &file_hostagent_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteSnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteSnapshotResponse) ProtoMessage() {}
+
+func (x *DeleteSnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteSnapshotResponse.ProtoReflect.Descriptor instead.
+func (*DeleteSnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{11}
+}
+
 type ExecRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
@@ -416,7 +624,7 @@ type ExecRequest struct {
 
 func (x *ExecRequest) Reset() {
 	*x = ExecRequest{}
-	mi := &file_hostagent_proto_msgTypes[8]
+	mi := &file_hostagent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -428,7 +636,7 @@ func (x *ExecRequest) String() string {
 func (*ExecRequest) ProtoMessage() {}
 
 func (x *ExecRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[8]
+	mi := &file_hostagent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -441,7 +649,7 @@ func (x *ExecRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecRequest.ProtoReflect.Descriptor instead.
 func (*ExecRequest) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{8}
+	return file_hostagent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ExecRequest) GetSandboxId() string {
@@ -483,7 +691,7 @@ type ExecResponse struct {
 
 func (x *ExecResponse) Reset() {
 	*x = ExecResponse{}
-	mi := &file_hostagent_proto_msgTypes[9]
+	mi := &file_hostagent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -495,7 +703,7 @@ func (x *ExecResponse) String() string {
 func (*ExecResponse) ProtoMessage() {}
 
 func (x *ExecResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[9]
+	mi := &file_hostagent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -508,7 +716,7 @@ func (x *ExecResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecResponse.ProtoReflect.Descriptor instead.
 func (*ExecResponse) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{9}
+	return file_hostagent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ExecResponse) GetStdout() []byte {
@@ -540,7 +748,7 @@ type ListSandboxesRequest struct {
 
 func (x *ListSandboxesRequest) Reset() {
 	*x = ListSandboxesRequest{}
-	mi := &file_hostagent_proto_msgTypes[10]
+	mi := &file_hostagent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -552,7 +760,7 @@ func (x *ListSandboxesRequest) String() string {
 func (*ListSandboxesRequest) ProtoMessage() {}
 
 func (x *ListSandboxesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[10]
+	mi := &file_hostagent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -565,7 +773,7 @@ func (x *ListSandboxesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSandboxesRequest.ProtoReflect.Descriptor instead.
 func (*ListSandboxesRequest) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{10}
+	return file_hostagent_proto_rawDescGZIP(), []int{14}
 }
 
 type ListSandboxesResponse struct {
@@ -577,7 +785,7 @@ type ListSandboxesResponse struct {
 
 func (x *ListSandboxesResponse) Reset() {
 	*x = ListSandboxesResponse{}
-	mi := &file_hostagent_proto_msgTypes[11]
+	mi := &file_hostagent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -589,7 +797,7 @@ func (x *ListSandboxesResponse) String() string {
 func (*ListSandboxesResponse) ProtoMessage() {}
 
 func (x *ListSandboxesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[11]
+	mi := &file_hostagent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -602,7 +810,7 @@ func (x *ListSandboxesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSandboxesResponse.ProtoReflect.Descriptor instead.
 func (*ListSandboxesResponse) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{11}
+	return file_hostagent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListSandboxesResponse) GetSandboxes() []*SandboxInfo {
@@ -629,7 +837,7 @@ type SandboxInfo struct {
 
 func (x *SandboxInfo) Reset() {
 	*x = SandboxInfo{}
-	mi := &file_hostagent_proto_msgTypes[12]
+	mi := &file_hostagent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -641,7 +849,7 @@ func (x *SandboxInfo) String() string {
 func (*SandboxInfo) ProtoMessage() {}
 
 func (x *SandboxInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[12]
+	mi := &file_hostagent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -654,7 +862,7 @@ func (x *SandboxInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxInfo.ProtoReflect.Descriptor instead.
 func (*SandboxInfo) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{12}
+	return file_hostagent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SandboxInfo) GetSandboxId() string {
@@ -731,7 +939,7 @@ type WriteFileRequest struct {
 
 func (x *WriteFileRequest) Reset() {
 	*x = WriteFileRequest{}
-	mi := &file_hostagent_proto_msgTypes[13]
+	mi := &file_hostagent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -743,7 +951,7 @@ func (x *WriteFileRequest) String() string {
 func (*WriteFileRequest) ProtoMessage() {}
 
 func (x *WriteFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[13]
+	mi := &file_hostagent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -756,7 +964,7 @@ func (x *WriteFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileRequest.ProtoReflect.Descriptor instead.
 func (*WriteFileRequest) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{13}
+	return file_hostagent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *WriteFileRequest) GetSandboxId() string {
@@ -788,7 +996,7 @@ type WriteFileResponse struct {
 
 func (x *WriteFileResponse) Reset() {
 	*x = WriteFileResponse{}
-	mi := &file_hostagent_proto_msgTypes[14]
+	mi := &file_hostagent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -800,7 +1008,7 @@ func (x *WriteFileResponse) String() string {
 func (*WriteFileResponse) ProtoMessage() {}
 
 func (x *WriteFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[14]
+	mi := &file_hostagent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -813,7 +1021,7 @@ func (x *WriteFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileResponse.ProtoReflect.Descriptor instead.
 func (*WriteFileResponse) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{14}
+	return file_hostagent_proto_rawDescGZIP(), []int{18}
 }
 
 type ReadFileRequest struct {
@@ -826,7 +1034,7 @@ type ReadFileRequest struct {
 
 func (x *ReadFileRequest) Reset() {
 	*x = ReadFileRequest{}
-	mi := &file_hostagent_proto_msgTypes[15]
+	mi := &file_hostagent_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -838,7 +1046,7 @@ func (x *ReadFileRequest) String() string {
 func (*ReadFileRequest) ProtoMessage() {}
 
 func (x *ReadFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[15]
+	mi := &file_hostagent_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -851,7 +1059,7 @@ func (x *ReadFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFileRequest.ProtoReflect.Descriptor instead.
 func (*ReadFileRequest) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{15}
+	return file_hostagent_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ReadFileRequest) GetSandboxId() string {
@@ -877,7 +1085,7 @@ type ReadFileResponse struct {
 
 func (x *ReadFileResponse) Reset() {
 	*x = ReadFileResponse{}
-	mi := &file_hostagent_proto_msgTypes[16]
+	mi := &file_hostagent_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -889,7 +1097,7 @@ func (x *ReadFileResponse) String() string {
 func (*ReadFileResponse) ProtoMessage() {}
 
 func (x *ReadFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[16]
+	mi := &file_hostagent_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -902,7 +1110,7 @@ func (x *ReadFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFileResponse.ProtoReflect.Descriptor instead.
 func (*ReadFileResponse) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{16}
+	return file_hostagent_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ReadFileResponse) GetContent() []byte {
@@ -924,7 +1132,7 @@ type ExecStreamRequest struct {
 
 func (x *ExecStreamRequest) Reset() {
 	*x = ExecStreamRequest{}
-	mi := &file_hostagent_proto_msgTypes[17]
+	mi := &file_hostagent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -936,7 +1144,7 @@ func (x *ExecStreamRequest) String() string {
 func (*ExecStreamRequest) ProtoMessage() {}
 
 func (x *ExecStreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[17]
+	mi := &file_hostagent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -949,7 +1157,7 @@ func (x *ExecStreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecStreamRequest.ProtoReflect.Descriptor instead.
 func (*ExecStreamRequest) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{17}
+	return file_hostagent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ExecStreamRequest) GetSandboxId() string {
@@ -994,7 +1202,7 @@ type ExecStreamResponse struct {
 
 func (x *ExecStreamResponse) Reset() {
 	*x = ExecStreamResponse{}
-	mi := &file_hostagent_proto_msgTypes[18]
+	mi := &file_hostagent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1006,7 +1214,7 @@ func (x *ExecStreamResponse) String() string {
 func (*ExecStreamResponse) ProtoMessage() {}
 
 func (x *ExecStreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[18]
+	mi := &file_hostagent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1019,7 +1227,7 @@ func (x *ExecStreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecStreamResponse.ProtoReflect.Descriptor instead.
 func (*ExecStreamResponse) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{18}
+	return file_hostagent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ExecStreamResponse) GetEvent() isExecStreamResponse_Event {
@@ -1087,7 +1295,7 @@ type ExecStreamStart struct {
 
 func (x *ExecStreamStart) Reset() {
 	*x = ExecStreamStart{}
-	mi := &file_hostagent_proto_msgTypes[19]
+	mi := &file_hostagent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1099,7 +1307,7 @@ func (x *ExecStreamStart) String() string {
 func (*ExecStreamStart) ProtoMessage() {}
 
 func (x *ExecStreamStart) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[19]
+	mi := &file_hostagent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1112,7 +1320,7 @@ func (x *ExecStreamStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecStreamStart.ProtoReflect.Descriptor instead.
 func (*ExecStreamStart) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{19}
+	return file_hostagent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ExecStreamStart) GetPid() uint32 {
@@ -1135,7 +1343,7 @@ type ExecStreamData struct {
 
 func (x *ExecStreamData) Reset() {
 	*x = ExecStreamData{}
-	mi := &file_hostagent_proto_msgTypes[20]
+	mi := &file_hostagent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1147,7 +1355,7 @@ func (x *ExecStreamData) String() string {
 func (*ExecStreamData) ProtoMessage() {}
 
 func (x *ExecStreamData) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[20]
+	mi := &file_hostagent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1160,7 +1368,7 @@ func (x *ExecStreamData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecStreamData.ProtoReflect.Descriptor instead.
 func (*ExecStreamData) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{20}
+	return file_hostagent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ExecStreamData) GetOutput() isExecStreamData_Output {
@@ -1214,7 +1422,7 @@ type ExecStreamEnd struct {
 
 func (x *ExecStreamEnd) Reset() {
 	*x = ExecStreamEnd{}
-	mi := &file_hostagent_proto_msgTypes[21]
+	mi := &file_hostagent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1226,7 +1434,7 @@ func (x *ExecStreamEnd) String() string {
 func (*ExecStreamEnd) ProtoMessage() {}
 
 func (x *ExecStreamEnd) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[21]
+	mi := &file_hostagent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1239,7 +1447,7 @@ func (x *ExecStreamEnd) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecStreamEnd.ProtoReflect.Descriptor instead.
 func (*ExecStreamEnd) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{21}
+	return file_hostagent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ExecStreamEnd) GetExitCode() int32 {
@@ -1269,7 +1477,7 @@ type WriteFileStreamRequest struct {
 
 func (x *WriteFileStreamRequest) Reset() {
 	*x = WriteFileStreamRequest{}
-	mi := &file_hostagent_proto_msgTypes[22]
+	mi := &file_hostagent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1281,7 +1489,7 @@ func (x *WriteFileStreamRequest) String() string {
 func (*WriteFileStreamRequest) ProtoMessage() {}
 
 func (x *WriteFileStreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[22]
+	mi := &file_hostagent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1294,7 +1502,7 @@ func (x *WriteFileStreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileStreamRequest.ProtoReflect.Descriptor instead.
 func (*WriteFileStreamRequest) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{22}
+	return file_hostagent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *WriteFileStreamRequest) GetContent() isWriteFileStreamRequest_Content {
@@ -1348,7 +1556,7 @@ type WriteFileStreamMeta struct {
 
 func (x *WriteFileStreamMeta) Reset() {
 	*x = WriteFileStreamMeta{}
-	mi := &file_hostagent_proto_msgTypes[23]
+	mi := &file_hostagent_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1360,7 +1568,7 @@ func (x *WriteFileStreamMeta) String() string {
 func (*WriteFileStreamMeta) ProtoMessage() {}
 
 func (x *WriteFileStreamMeta) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[23]
+	mi := &file_hostagent_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1373,7 +1581,7 @@ func (x *WriteFileStreamMeta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileStreamMeta.ProtoReflect.Descriptor instead.
 func (*WriteFileStreamMeta) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{23}
+	return file_hostagent_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *WriteFileStreamMeta) GetSandboxId() string {
@@ -1398,7 +1606,7 @@ type WriteFileStreamResponse struct {
 
 func (x *WriteFileStreamResponse) Reset() {
 	*x = WriteFileStreamResponse{}
-	mi := &file_hostagent_proto_msgTypes[24]
+	mi := &file_hostagent_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1410,7 +1618,7 @@ func (x *WriteFileStreamResponse) String() string {
 func (*WriteFileStreamResponse) ProtoMessage() {}
 
 func (x *WriteFileStreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[24]
+	mi := &file_hostagent_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1423,7 +1631,7 @@ func (x *WriteFileStreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileStreamResponse.ProtoReflect.Descriptor instead.
 func (*WriteFileStreamResponse) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{24}
+	return file_hostagent_proto_rawDescGZIP(), []int{28}
 }
 
 type ReadFileStreamRequest struct {
@@ -1436,7 +1644,7 @@ type ReadFileStreamRequest struct {
 
 func (x *ReadFileStreamRequest) Reset() {
 	*x = ReadFileStreamRequest{}
-	mi := &file_hostagent_proto_msgTypes[25]
+	mi := &file_hostagent_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1448,7 +1656,7 @@ func (x *ReadFileStreamRequest) String() string {
 func (*ReadFileStreamRequest) ProtoMessage() {}
 
 func (x *ReadFileStreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[25]
+	mi := &file_hostagent_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1461,7 +1669,7 @@ func (x *ReadFileStreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFileStreamRequest.ProtoReflect.Descriptor instead.
 func (*ReadFileStreamRequest) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{25}
+	return file_hostagent_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ReadFileStreamRequest) GetSandboxId() string {
@@ -1487,7 +1695,7 @@ type ReadFileStreamResponse struct {
 
 func (x *ReadFileStreamResponse) Reset() {
 	*x = ReadFileStreamResponse{}
-	mi := &file_hostagent_proto_msgTypes[26]
+	mi := &file_hostagent_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1499,7 +1707,7 @@ func (x *ReadFileStreamResponse) String() string {
 func (*ReadFileStreamResponse) ProtoMessage() {}
 
 func (x *ReadFileStreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hostagent_proto_msgTypes[26]
+	mi := &file_hostagent_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1512,7 +1720,7 @@ func (x *ReadFileStreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFileStreamResponse.ProtoReflect.Descriptor instead.
 func (*ReadFileStreamResponse) Descriptor() ([]byte, []int) {
-	return file_hostagent_proto_rawDescGZIP(), []int{26}
+	return file_hostagent_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ReadFileStreamResponse) GetChunk() []byte {
@@ -1550,8 +1758,23 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x14PauseSandboxResponse\"5\n" +
 	"\x14ResumeSandboxRequest\x12\x1d\n" +
 	"\n" +
-	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"\x17\n" +
-	"\x15ResumeSandboxResponse\"s\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"g\n" +
+	"\x15ResumeSandboxResponse\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x17\n" +
+	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\"J\n" +
+	"\x15CreateSnapshotRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"K\n" +
+	"\x16CreateSnapshotResponse\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"+\n" +
+	"\x15DeleteSnapshotRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"\x18\n" +
+	"\x16DeleteSnapshotResponse\"s\n" +
 	"\vExecRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x10\n" +
@@ -1625,7 +1848,7 @@ const file_hostagent_proto_rawDesc = "" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\".\n" +
 	"\x16ReadFileStreamResponse\x12\x14\n" +
-	"\x05chunk\x18\x01 \x01(\fR\x05chunk2\xc0\a\n" +
+	"\x05chunk\x18\x01 \x01(\fR\x05chunk2\xfa\b\n" +
 	"\x10HostAgentService\x12X\n" +
 	"\rCreateSandbox\x12\".hostagent.v1.CreateSandboxRequest\x1a#.hostagent.v1.CreateSandboxResponse\x12[\n" +
 	"\x0eDestroySandbox\x12#.hostagent.v1.DestroySandboxRequest\x1a$.hostagent.v1.DestroySandboxResponse\x12U\n" +
@@ -1634,7 +1857,9 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x04Exec\x12\x19.hostagent.v1.ExecRequest\x1a\x1a.hostagent.v1.ExecResponse\x12X\n" +
 	"\rListSandboxes\x12\".hostagent.v1.ListSandboxesRequest\x1a#.hostagent.v1.ListSandboxesResponse\x12L\n" +
 	"\tWriteFile\x12\x1e.hostagent.v1.WriteFileRequest\x1a\x1f.hostagent.v1.WriteFileResponse\x12I\n" +
-	"\bReadFile\x12\x1d.hostagent.v1.ReadFileRequest\x1a\x1e.hostagent.v1.ReadFileResponse\x12Q\n" +
+	"\bReadFile\x12\x1d.hostagent.v1.ReadFileRequest\x1a\x1e.hostagent.v1.ReadFileResponse\x12[\n" +
+	"\x0eCreateSnapshot\x12#.hostagent.v1.CreateSnapshotRequest\x1a$.hostagent.v1.CreateSnapshotResponse\x12[\n" +
+	"\x0eDeleteSnapshot\x12#.hostagent.v1.DeleteSnapshotRequest\x1a$.hostagent.v1.DeleteSnapshotResponse\x12Q\n" +
 	"\n" +
 	"ExecStream\x12\x1f.hostagent.v1.ExecStreamRequest\x1a .hostagent.v1.ExecStreamResponse0\x01\x12`\n" +
 	"\x0fWriteFileStream\x12$.hostagent.v1.WriteFileStreamRequest\x1a%.hostagent.v1.WriteFileStreamResponse(\x01\x12]\n" +
@@ -1653,7 +1878,7 @@ func file_hostagent_proto_rawDescGZIP() []byte {
 	return file_hostagent_proto_rawDescData
 }
 
-var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_hostagent_proto_goTypes = []any{
 	(*CreateSandboxRequest)(nil),    // 0: hostagent.v1.CreateSandboxRequest
 	(*CreateSandboxResponse)(nil),   // 1: hostagent.v1.CreateSandboxResponse
@@ -1663,56 +1888,64 @@ var file_hostagent_proto_goTypes = []any{
 	(*PauseSandboxResponse)(nil),    // 5: hostagent.v1.PauseSandboxResponse
 	(*ResumeSandboxRequest)(nil),    // 6: hostagent.v1.ResumeSandboxRequest
 	(*ResumeSandboxResponse)(nil),   // 7: hostagent.v1.ResumeSandboxResponse
-	(*ExecRequest)(nil),             // 8: hostagent.v1.ExecRequest
-	(*ExecResponse)(nil),            // 9: hostagent.v1.ExecResponse
-	(*ListSandboxesRequest)(nil),    // 10: hostagent.v1.ListSandboxesRequest
-	(*ListSandboxesResponse)(nil),   // 11: hostagent.v1.ListSandboxesResponse
-	(*SandboxInfo)(nil),             // 12: hostagent.v1.SandboxInfo
-	(*WriteFileRequest)(nil),        // 13: hostagent.v1.WriteFileRequest
-	(*WriteFileResponse)(nil),       // 14: hostagent.v1.WriteFileResponse
-	(*ReadFileRequest)(nil),         // 15: hostagent.v1.ReadFileRequest
-	(*ReadFileResponse)(nil),        // 16: hostagent.v1.ReadFileResponse
-	(*ExecStreamRequest)(nil),       // 17: hostagent.v1.ExecStreamRequest
-	(*ExecStreamResponse)(nil),      // 18: hostagent.v1.ExecStreamResponse
-	(*ExecStreamStart)(nil),         // 19: hostagent.v1.ExecStreamStart
-	(*ExecStreamData)(nil),          // 20: hostagent.v1.ExecStreamData
-	(*ExecStreamEnd)(nil),           // 21: hostagent.v1.ExecStreamEnd
-	(*WriteFileStreamRequest)(nil),  // 22: hostagent.v1.WriteFileStreamRequest
-	(*WriteFileStreamMeta)(nil),     // 23: hostagent.v1.WriteFileStreamMeta
-	(*WriteFileStreamResponse)(nil), // 24: hostagent.v1.WriteFileStreamResponse
-	(*ReadFileStreamRequest)(nil),   // 25: hostagent.v1.ReadFileStreamRequest
-	(*ReadFileStreamResponse)(nil),  // 26: hostagent.v1.ReadFileStreamResponse
+	(*CreateSnapshotRequest)(nil),   // 8: hostagent.v1.CreateSnapshotRequest
+	(*CreateSnapshotResponse)(nil),  // 9: hostagent.v1.CreateSnapshotResponse
+	(*DeleteSnapshotRequest)(nil),   // 10: hostagent.v1.DeleteSnapshotRequest
+	(*DeleteSnapshotResponse)(nil),  // 11: hostagent.v1.DeleteSnapshotResponse
+	(*ExecRequest)(nil),             // 12: hostagent.v1.ExecRequest
+	(*ExecResponse)(nil),            // 13: hostagent.v1.ExecResponse
+	(*ListSandboxesRequest)(nil),    // 14: hostagent.v1.ListSandboxesRequest
+	(*ListSandboxesResponse)(nil),   // 15: hostagent.v1.ListSandboxesResponse
+	(*SandboxInfo)(nil),             // 16: hostagent.v1.SandboxInfo
+	(*WriteFileRequest)(nil),        // 17: hostagent.v1.WriteFileRequest
+	(*WriteFileResponse)(nil),       // 18: hostagent.v1.WriteFileResponse
+	(*ReadFileRequest)(nil),         // 19: hostagent.v1.ReadFileRequest
+	(*ReadFileResponse)(nil),        // 20: hostagent.v1.ReadFileResponse
+	(*ExecStreamRequest)(nil),       // 21: hostagent.v1.ExecStreamRequest
+	(*ExecStreamResponse)(nil),      // 22: hostagent.v1.ExecStreamResponse
+	(*ExecStreamStart)(nil),         // 23: hostagent.v1.ExecStreamStart
+	(*ExecStreamData)(nil),          // 24: hostagent.v1.ExecStreamData
+	(*ExecStreamEnd)(nil),           // 25: hostagent.v1.ExecStreamEnd
+	(*WriteFileStreamRequest)(nil),  // 26: hostagent.v1.WriteFileStreamRequest
+	(*WriteFileStreamMeta)(nil),     // 27: hostagent.v1.WriteFileStreamMeta
+	(*WriteFileStreamResponse)(nil), // 28: hostagent.v1.WriteFileStreamResponse
+	(*ReadFileStreamRequest)(nil),   // 29: hostagent.v1.ReadFileStreamRequest
+	(*ReadFileStreamResponse)(nil),  // 30: hostagent.v1.ReadFileStreamResponse
 }
 var file_hostagent_proto_depIdxs = []int32{
-	12, // 0: hostagent.v1.ListSandboxesResponse.sandboxes:type_name -> hostagent.v1.SandboxInfo
-	19, // 1: hostagent.v1.ExecStreamResponse.start:type_name -> hostagent.v1.ExecStreamStart
-	20, // 2: hostagent.v1.ExecStreamResponse.data:type_name -> hostagent.v1.ExecStreamData
-	21, // 3: hostagent.v1.ExecStreamResponse.end:type_name -> hostagent.v1.ExecStreamEnd
-	23, // 4: hostagent.v1.WriteFileStreamRequest.meta:type_name -> hostagent.v1.WriteFileStreamMeta
+	16, // 0: hostagent.v1.ListSandboxesResponse.sandboxes:type_name -> hostagent.v1.SandboxInfo
+	23, // 1: hostagent.v1.ExecStreamResponse.start:type_name -> hostagent.v1.ExecStreamStart
+	24, // 2: hostagent.v1.ExecStreamResponse.data:type_name -> hostagent.v1.ExecStreamData
+	25, // 3: hostagent.v1.ExecStreamResponse.end:type_name -> hostagent.v1.ExecStreamEnd
+	27, // 4: hostagent.v1.WriteFileStreamRequest.meta:type_name -> hostagent.v1.WriteFileStreamMeta
 	0,  // 5: hostagent.v1.HostAgentService.CreateSandbox:input_type -> hostagent.v1.CreateSandboxRequest
 	2,  // 6: hostagent.v1.HostAgentService.DestroySandbox:input_type -> hostagent.v1.DestroySandboxRequest
 	4,  // 7: hostagent.v1.HostAgentService.PauseSandbox:input_type -> hostagent.v1.PauseSandboxRequest
 	6,  // 8: hostagent.v1.HostAgentService.ResumeSandbox:input_type -> hostagent.v1.ResumeSandboxRequest
-	8,  // 9: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
-	10, // 10: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
-	13, // 11: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
-	15, // 12: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
-	17, // 13: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
-	22, // 14: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
-	25, // 15: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
-	1,  // 16: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
-	3,  // 17: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
-	5,  // 18: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
-	7,  // 19: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
-	9,  // 20: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
-	11, // 21: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
-	14, // 22: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
-	16, // 23: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
-	18, // 24: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
-	24, // 25: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
-	26, // 26: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
-	16, // [16:27] is the sub-list for method output_type
-	5,  // [5:16] is the sub-list for method input_type
+	12, // 9: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
+	14, // 10: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
+	17, // 11: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
+	19, // 12: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
+	8,  // 13: hostagent.v1.HostAgentService.CreateSnapshot:input_type -> hostagent.v1.CreateSnapshotRequest
+	10, // 14: hostagent.v1.HostAgentService.DeleteSnapshot:input_type -> hostagent.v1.DeleteSnapshotRequest
+	21, // 15: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
+	26, // 16: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
+	29, // 17: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
+	1,  // 18: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
+	3,  // 19: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
+	5,  // 20: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
+	7,  // 21: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
+	13, // 22: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
+	15, // 23: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
+	18, // 24: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
+	20, // 25: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
+	9,  // 26: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
+	11, // 27: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
+	22, // 28: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
+	28, // 29: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
+	30, // 30: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
+	18, // [18:31] is the sub-list for method output_type
+	5,  // [5:18] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
 	5,  // [5:5] is the sub-list for extension extendee
 	0,  // [0:5] is the sub-list for field type_name
@@ -1723,16 +1956,16 @@ func file_hostagent_proto_init() {
 	if File_hostagent_proto != nil {
 		return
 	}
-	file_hostagent_proto_msgTypes[18].OneofWrappers = []any{
+	file_hostagent_proto_msgTypes[22].OneofWrappers = []any{
 		(*ExecStreamResponse_Start)(nil),
 		(*ExecStreamResponse_Data)(nil),
 		(*ExecStreamResponse_End)(nil),
 	}
-	file_hostagent_proto_msgTypes[20].OneofWrappers = []any{
+	file_hostagent_proto_msgTypes[24].OneofWrappers = []any{
 		(*ExecStreamData_Stdout)(nil),
 		(*ExecStreamData_Stderr)(nil),
 	}
-	file_hostagent_proto_msgTypes[22].OneofWrappers = []any{
+	file_hostagent_proto_msgTypes[26].OneofWrappers = []any{
 		(*WriteFileStreamRequest_Meta)(nil),
 		(*WriteFileStreamRequest_Chunk)(nil),
 	}
@@ -1742,7 +1975,7 @@ func file_hostagent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hostagent_proto_rawDesc), len(file_hostagent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   27,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -56,6 +56,12 @@ const (
 	// HostAgentServiceReadFileProcedure is the fully-qualified name of the HostAgentService's ReadFile
 	// RPC.
 	HostAgentServiceReadFileProcedure = "/hostagent.v1.HostAgentService/ReadFile"
+	// HostAgentServiceCreateSnapshotProcedure is the fully-qualified name of the HostAgentService's
+	// CreateSnapshot RPC.
+	HostAgentServiceCreateSnapshotProcedure = "/hostagent.v1.HostAgentService/CreateSnapshot"
+	// HostAgentServiceDeleteSnapshotProcedure is the fully-qualified name of the HostAgentService's
+	// DeleteSnapshot RPC.
+	HostAgentServiceDeleteSnapshotProcedure = "/hostagent.v1.HostAgentService/DeleteSnapshot"
 	// HostAgentServiceExecStreamProcedure is the fully-qualified name of the HostAgentService's
 	// ExecStream RPC.
 	HostAgentServiceExecStreamProcedure = "/hostagent.v1.HostAgentService/ExecStream"
@@ -85,6 +91,11 @@ type HostAgentServiceClient interface {
 	WriteFile(context.Context, *connect.Request[gen.WriteFileRequest]) (*connect.Response[gen.WriteFileResponse], error)
 	// ReadFile reads a file from inside a sandbox.
 	ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error)
+	// CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
+	// template, and destroys the sandbox.
+	CreateSnapshot(context.Context, *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error)
+	// DeleteSnapshot removes a snapshot template from disk.
+	DeleteSnapshot(context.Context, *connect.Request[gen.DeleteSnapshotRequest]) (*connect.Response[gen.DeleteSnapshotResponse], error)
 	// ExecStream runs a command inside a sandbox and streams output events as they arrive.
 	ExecStream(context.Context, *connect.Request[gen.ExecStreamRequest]) (*connect.ServerStreamForClient[gen.ExecStreamResponse], error)
 	// WriteFileStream writes a file to a sandbox using chunked streaming.
@@ -153,6 +164,18 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("ReadFile")),
 			connect.WithClientOptions(opts...),
 		),
+		createSnapshot: connect.NewClient[gen.CreateSnapshotRequest, gen.CreateSnapshotResponse](
+			httpClient,
+			baseURL+HostAgentServiceCreateSnapshotProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("CreateSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteSnapshot: connect.NewClient[gen.DeleteSnapshotRequest, gen.DeleteSnapshotResponse](
+			httpClient,
+			baseURL+HostAgentServiceDeleteSnapshotProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("DeleteSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
 		execStream: connect.NewClient[gen.ExecStreamRequest, gen.ExecStreamResponse](
 			httpClient,
 			baseURL+HostAgentServiceExecStreamProcedure,
@@ -184,6 +207,8 @@ type hostAgentServiceClient struct {
 	listSandboxes   *connect.Client[gen.ListSandboxesRequest, gen.ListSandboxesResponse]
 	writeFile       *connect.Client[gen.WriteFileRequest, gen.WriteFileResponse]
 	readFile        *connect.Client[gen.ReadFileRequest, gen.ReadFileResponse]
+	createSnapshot  *connect.Client[gen.CreateSnapshotRequest, gen.CreateSnapshotResponse]
+	deleteSnapshot  *connect.Client[gen.DeleteSnapshotRequest, gen.DeleteSnapshotResponse]
 	execStream      *connect.Client[gen.ExecStreamRequest, gen.ExecStreamResponse]
 	writeFileStream *connect.Client[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse]
 	readFileStream  *connect.Client[gen.ReadFileStreamRequest, gen.ReadFileStreamResponse]
@@ -229,6 +254,16 @@ func (c *hostAgentServiceClient) ReadFile(ctx context.Context, req *connect.Requ
 	return c.readFile.CallUnary(ctx, req)
 }
 
+// CreateSnapshot calls hostagent.v1.HostAgentService.CreateSnapshot.
+func (c *hostAgentServiceClient) CreateSnapshot(ctx context.Context, req *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error) {
+	return c.createSnapshot.CallUnary(ctx, req)
+}
+
+// DeleteSnapshot calls hostagent.v1.HostAgentService.DeleteSnapshot.
+func (c *hostAgentServiceClient) DeleteSnapshot(ctx context.Context, req *connect.Request[gen.DeleteSnapshotRequest]) (*connect.Response[gen.DeleteSnapshotResponse], error) {
+	return c.deleteSnapshot.CallUnary(ctx, req)
+}
+
 // ExecStream calls hostagent.v1.HostAgentService.ExecStream.
 func (c *hostAgentServiceClient) ExecStream(ctx context.Context, req *connect.Request[gen.ExecStreamRequest]) (*connect.ServerStreamForClient[gen.ExecStreamResponse], error) {
 	return c.execStream.CallServerStream(ctx, req)
@@ -262,6 +297,11 @@ type HostAgentServiceHandler interface {
 	WriteFile(context.Context, *connect.Request[gen.WriteFileRequest]) (*connect.Response[gen.WriteFileResponse], error)
 	// ReadFile reads a file from inside a sandbox.
 	ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error)
+	// CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
+	// template, and destroys the sandbox.
+	CreateSnapshot(context.Context, *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error)
+	// DeleteSnapshot removes a snapshot template from disk.
+	DeleteSnapshot(context.Context, *connect.Request[gen.DeleteSnapshotRequest]) (*connect.Response[gen.DeleteSnapshotResponse], error)
 	// ExecStream runs a command inside a sandbox and streams output events as they arrive.
 	ExecStream(context.Context, *connect.Request[gen.ExecStreamRequest], *connect.ServerStream[gen.ExecStreamResponse]) error
 	// WriteFileStream writes a file to a sandbox using chunked streaming.
@@ -326,6 +366,18 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("ReadFile")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServiceCreateSnapshotHandler := connect.NewUnaryHandler(
+		HostAgentServiceCreateSnapshotProcedure,
+		svc.CreateSnapshot,
+		connect.WithSchema(hostAgentServiceMethods.ByName("CreateSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceDeleteSnapshotHandler := connect.NewUnaryHandler(
+		HostAgentServiceDeleteSnapshotProcedure,
+		svc.DeleteSnapshot,
+		connect.WithSchema(hostAgentServiceMethods.ByName("DeleteSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
 	hostAgentServiceExecStreamHandler := connect.NewServerStreamHandler(
 		HostAgentServiceExecStreamProcedure,
 		svc.ExecStream,
@@ -362,6 +414,10 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceWriteFileHandler.ServeHTTP(w, r)
 		case HostAgentServiceReadFileProcedure:
 			hostAgentServiceReadFileHandler.ServeHTTP(w, r)
+		case HostAgentServiceCreateSnapshotProcedure:
+			hostAgentServiceCreateSnapshotHandler.ServeHTTP(w, r)
+		case HostAgentServiceDeleteSnapshotProcedure:
+			hostAgentServiceDeleteSnapshotHandler.ServeHTTP(w, r)
 		case HostAgentServiceExecStreamProcedure:
 			hostAgentServiceExecStreamHandler.ServeHTTP(w, r)
 		case HostAgentServiceWriteFileStreamProcedure:
@@ -407,6 +463,14 @@ func (UnimplementedHostAgentServiceHandler) WriteFile(context.Context, *connect.
 
 func (UnimplementedHostAgentServiceHandler) ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ReadFile is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) CreateSnapshot(context.Context, *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.CreateSnapshot is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) DeleteSnapshot(context.Context, *connect.Request[gen.DeleteSnapshotRequest]) (*connect.Response[gen.DeleteSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.DeleteSnapshot is not implemented"))
 }
 
 func (UnimplementedHostAgentServiceHandler) ExecStream(context.Context, *connect.Request[gen.ExecStreamRequest], *connect.ServerStream[gen.ExecStreamResponse]) error {
