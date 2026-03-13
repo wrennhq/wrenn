@@ -104,7 +104,7 @@ func CreateNetwork(slot *Slot) error {
 		return fmt.Errorf("get host namespace: %w", err)
 	}
 	defer hostNS.Close()
-	defer netns.Set(hostNS)
+	defer func() { _ = netns.Set(hostNS) }()
 
 	// Create named network namespace.
 	ns, err := netns.NewNamed(slot.NamespaceID)
@@ -304,17 +304,17 @@ func RemoveNetwork(slot *Slot) error {
 
 	// Remove host-side iptables rules (best effort).
 	if defaultIface != "" {
-		iptablesHost(
+		_ = iptablesHost(
 			"-D", "FORWARD",
 			"-i", slot.VethName, "-o", defaultIface,
 			"-j", "ACCEPT",
 		)
-		iptablesHost(
+		_ = iptablesHost(
 			"-D", "FORWARD",
 			"-i", defaultIface, "-o", slot.VethName,
 			"-j", "ACCEPT",
 		)
-		iptablesHost(
+		_ = iptablesHost(
 			"-t", "nat", "-D", "POSTROUTING",
 			"-s", fmt.Sprintf("%s/32", slot.VpeerIP.String()),
 			"-o", defaultIface,
@@ -324,18 +324,18 @@ func RemoveNetwork(slot *Slot) error {
 
 	// Remove host route.
 	_, hostNet, _ := net.ParseCIDR(fmt.Sprintf("%s/32", slot.HostIP.String()))
-	netlink.RouteDel(&netlink.Route{
+	_ = netlink.RouteDel(&netlink.Route{
 		Dst: hostNet,
 		Gw:  slot.VpeerIP,
 	})
 
 	// Delete veth (also destroys the peer in the namespace).
 	if veth, err := netlink.LinkByName(slot.VethName); err == nil {
-		netlink.LinkDel(veth)
+		_ = netlink.LinkDel(veth)
 	}
 
 	// Delete the named namespace.
-	netns.DeleteNamed(slot.NamespaceID)
+	_ = netns.DeleteNamed(slot.NamespaceID)
 
 	slog.Info("network removed", "ns", slot.NamespaceID)
 

@@ -115,7 +115,7 @@ func (s *Server) Ready() <-chan struct{} {
 // Stop signals the UFFD poll loop to exit and waits for it to finish.
 func (s *Server) Stop() error {
 	// Write a byte to the exit pipe to wake the poll loop.
-	s.exitW.Write([]byte{0})
+	_, _ = s.exitW.Write([]byte{0})
 	<-s.doneCh
 	return s.doneErr
 }

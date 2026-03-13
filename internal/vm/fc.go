@@ -131,15 +131,6 @@ func (c *fcClient) createSnapshot(ctx context.Context, snapPath, memPath string)
 	})
 }
 
-// loadSnapshot loads a VM snapshot from a file-backed memory image.
-func (c *fcClient) loadSnapshot(ctx context.Context, snapPath, memPath string) error {
-	return c.do(ctx, http.MethodPut, "/snapshot/load", map[string]any{
-		"snapshot_path": snapPath,
-		"mem_file_path": memPath,
-		"resume_vm":     false,
-	})
-}
-
 // loadSnapshotWithUffd loads a VM snapshot using a UFFD socket for
 // lazy memory loading. Firecracker will connect to the socket and
 // send the uffd fd + memory region mappings.

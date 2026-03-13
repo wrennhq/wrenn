@@ -128,5 +128,5 @@ func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Write(resp.Msg.Content)
+	_, _ = w.Write(resp.Msg.Content)
 }

@@ -111,7 +111,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	sandboxID := id.NewSandboxID()
 
 	// Insert pending record.
-	sb, err := h.db.InsertSandbox(ctx, db.InsertSandboxParams{
+	_, err := h.db.InsertSandbox(ctx, db.InsertSandboxParams{
 		ID:         sandboxID,
 		OwnerID:    "",
 		HostID:     "default",
@@ -136,9 +136,11 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TimeoutSec: req.TimeoutSec,
 	}))
 	if err != nil {
-		h.db.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
+		if _, dbErr := h.db.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
 			ID: sandboxID, Status: "error",
-		})
+		}); dbErr != nil {
+			slog.Warn("failed to update sandbox status to error", "id", sandboxID, "error", dbErr)
+		}
 		status, code, msg := agentErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
@@ -146,7 +148,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Update to running.
 	now := time.Now()
-	sb, err = h.db.UpdateSandboxRunning(ctx, db.UpdateSandboxRunningParams{
+	sb, err := h.db.UpdateSandboxRunning(ctx, db.UpdateSandboxRunningParams{
 		ID:      sandboxID,
 		HostIp:  resp.Msg.HostIp,
 		GuestIp: "",

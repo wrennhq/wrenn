@@ -84,7 +84,9 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Delete existing template record and files.
-		h.db.DeleteTemplate(ctx, req.Name)
+		if err := h.db.DeleteTemplate(ctx, req.Name); err != nil {
+			slog.Warn("failed to delete existing template", "name", req.Name, "error", err)
+		}
 	}
 
 	// Verify sandbox exists and is running or paused.

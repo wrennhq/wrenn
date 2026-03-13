@@ -74,15 +74,15 @@ Startup (`cmd/control-plane/main.go`) wires: config (env vars) → pgxpool → `
 
 ### Host Agent
 
-**Packages:** `internal/hostagent/`, `internal/sandbox/`, `internal/vm/`, `internal/network/`, `internal/filesystem/`, `internal/envdclient/`, `internal/snapshot/`
+**Packages:** `internal/hostagent/`, `internal/sandbox/`, `internal/vm/`, `internal/network/`, `internal/devicemapper/`, `internal/envdclient/`, `internal/snapshot/`
 
-Startup (`cmd/host-agent/main.go`) wires: root check → enable IP forwarding → `sandbox.Manager` (containing `vm.Manager` + `network.SlotAllocator`) → `hostagent.Server` (Connect RPC handler) → HTTP server.
+Startup (`cmd/host-agent/main.go`) wires: root check → enable IP forwarding → clean up stale dm devices → `sandbox.Manager` (containing `vm.Manager` + `network.SlotAllocator` + `devicemapper.LoopRegistry`) → `hostagent.Server` (Connect RPC handler) → HTTP server.
 
 - **RPC Server** (`internal/hostagent/server.go`): implements `hostagentv1connect.HostAgentServiceHandler`. Thin wrapper — every method delegates to `sandbox.Manager`. Maps Connect error codes on return.
 - **Sandbox Manager** (`internal/sandbox/manager.go`): the core orchestration layer. Maintains in-memory state in `boxes map[string]*sandboxState` (protected by `sync.RWMutex`). Each `sandboxState` holds a `models.Sandbox`, a `*network.Slot`, and an `*envdclient.Client`. Runs a TTL reaper (every 10s) that auto-destroys timed-out sandboxes.
 - **VM Manager** (`internal/vm/manager.go`, `fc.go`, `config.go`): manages Firecracker processes. Uses raw HTTP API over Unix socket (`/tmp/fc-{sandboxID}.sock`), not the firecracker-go-sdk Machine type. Launches Firecracker via `unshare -m` + `ip netns exec`. Configures VM via PUT to `/boot-source`, `/drives/rootfs`, `/network-interfaces/eth0`, `/machine-config`, then starts with PUT `/actions`.
 - **Network** (`internal/network/setup.go`, `allocator.go`): per-sandbox network namespace with veth pair + TAP device. See Networking section below.
-- **Filesystem** (`internal/filesystem/clone.go`): CoW rootfs clones via `cp --reflink=auto`.
+- **Device Mapper** (`internal/devicemapper/devicemapper.go`): CoW rootfs via device-mapper snapshots. Shared read-only loop devices per base template (refcounted `LoopRegistry`), per-sandbox sparse CoW files, dm-snapshot create/restore/remove/flatten operations.
 - **envd Client** (`internal/envdclient/client.go`, `health.go`): dual interface to the guest agent. Connect RPC for streaming process exec (`process.Start()` bidirectional stream). Plain HTTP for file operations (POST/GET `/files?path=...&username=root`). Health check polls `GET /health` every 100ms until ready (30s timeout).
 
 ### envd (Guest Agent)
@@ -132,7 +132,7 @@ HIBERNATED → RUNNING (cold snapshot resume, slower)
 **Sandbox creation** (`POST /v1/sandboxes`):
 1. API handler generates sandbox ID, inserts into DB as "pending"
 2. RPC `CreateSandbox` → host agent → `sandbox.Manager.Create()`
-3. Manager: resolve base rootfs → `cp --reflink` clone → allocate network slot → `CreateNetwork()` (netns + veth + tap + NAT) → `vm.Create()` (start Firecracker, configure via HTTP API, boot) → `envdclient.WaitUntilReady()` (poll /health) → store in-memory state
+3. Manager: resolve base rootfs → acquire shared loop device → create dm-snapshot (sparse CoW file) → allocate network slot → `CreateNetwork()` (netns + veth + tap + NAT) → `vm.Create()` (start Firecracker with `/dev/mapper/wrenn-{id}`, configure via HTTP API, boot) → `envdclient.WaitUntilReady()` (poll /health) → store in-memory state
 4. API handler updates DB to "running" with host_ip
 
 **Command execution** (`POST /v1/sandboxes/{id}/exec`):
@@ -181,6 +181,7 @@ To add a new query: add it to the appropriate `.sql` file in `db/queries/` → `
 - **Buf + protoc-gen-connect-go** for code generation (not protoc-gen-go-grpc)
 - **Raw Firecracker HTTP API** via Unix socket (not firecracker-go-sdk Machine type)
 - **TAP networking** (not vsock) for host-to-envd communication
+- **Device-mapper snapshots** for rootfs CoW — shared read-only loop device per base template, per-sandbox sparse CoW file, Firecracker gets `/dev/mapper/wrenn-{id}`
 - **PostgreSQL** via pgx/v5 + sqlc (type-safe query generation). Goose for migrations (plain SQL, up/down)
 - **Admin UI**: htmx + Go html/template + chi router. No SPA, no React, no build step
 - **Lago** for billing (external service, not in this codebase)

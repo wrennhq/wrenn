@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 	"unicode/utf8"
@@ -85,13 +86,15 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 
 	// Update last active.
-	h.db.UpdateLastActive(ctx, db.UpdateLastActiveParams{
+	if err := h.db.UpdateLastActive(ctx, db.UpdateLastActiveParams{
 		ID: sandboxID,
 		LastActiveAt: pgtype.Timestamptz{
 			Time:  time.Now(),
 			Valid: true,
 		},
-	})
+	}); err != nil {
+		slog.Warn("failed to update last_active_at", "id", sandboxID, "error", err)
+	}
 
 	// Use base64 encoding if output contains non-UTF-8 bytes.
 	stdout := resp.Msg.Stdout

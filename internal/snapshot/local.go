@@ -1,10 +1,12 @@
 package snapshot
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 const (
@@ -12,6 +14,8 @@ const (
 	MemDiffName    = "memfile"
 	MemHeaderName  = "memfile.header"
 	RootfsFileName = "rootfs.ext4"
+	RootfsCowName  = "rootfs.cow"
+	RootfsMetaName = "rootfs.meta"
 )
 
 // DirPath returns the snapshot directory for a given name.
@@ -39,15 +43,68 @@ func RootfsPath(baseDir, name string) string {
 	return filepath.Join(DirPath(baseDir, name), RootfsFileName)
 }
 
+// CowPath returns the path to the rootfs CoW diff file.
+func CowPath(baseDir, name string) string {
+	return filepath.Join(DirPath(baseDir, name), RootfsCowName)
+}
+
+// MetaPath returns the path to the rootfs metadata file.
+func MetaPath(baseDir, name string) string {
+	return filepath.Join(DirPath(baseDir, name), RootfsMetaName)
+}
+
+// RootfsMeta records which base template a CoW file was created against.
+type RootfsMeta struct {
+	BaseTemplate string `json:"base_template"`
+}
+
+// WriteMeta writes rootfs metadata to the snapshot directory.
+func WriteMeta(baseDir, name string, meta *RootfsMeta) error {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("marshal rootfs meta: %w", err)
+	}
+	if err := os.WriteFile(MetaPath(baseDir, name), data, 0644); err != nil {
+		return fmt.Errorf("write rootfs meta: %w", err)
+	}
+	return nil
+}
+
+// ReadMeta reads rootfs metadata from the snapshot directory.
+func ReadMeta(baseDir, name string) (*RootfsMeta, error) {
+	data, err := os.ReadFile(MetaPath(baseDir, name))
+	if err != nil {
+		return nil, fmt.Errorf("read rootfs meta: %w", err)
+	}
+	var meta RootfsMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, fmt.Errorf("unmarshal rootfs meta: %w", err)
+	}
+	return &meta, nil
+}
+
 // Exists reports whether a complete snapshot exists (all required files present).
+// Supports both legacy (rootfs.ext4) and CoW-based (rootfs.cow + rootfs.meta) snapshots.
 func Exists(baseDir, name string) bool {
 	dir := DirPath(baseDir, name)
-	for _, f := range []string{SnapFileName, MemDiffName, MemHeaderName, RootfsFileName} {
+
+	// Common files required by both formats.
+	for _, f := range []string{SnapFileName, MemDiffName, MemHeaderName} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			return false
 		}
 	}
-	return true
+
+	// Accept either rootfs.ext4 (legacy) or rootfs.cow + rootfs.meta (dm-snapshot).
+	if _, err := os.Stat(filepath.Join(dir, RootfsFileName)); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, RootfsCowName)); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, RootfsMetaName)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // IsTemplate reports whether a template image directory exists (has rootfs.ext4).
@@ -59,6 +116,15 @@ func IsTemplate(baseDir, name string) bool {
 // IsSnapshot reports whether a directory is a snapshot (has all snapshot files).
 func IsSnapshot(baseDir, name string) bool {
 	return Exists(baseDir, name)
+}
+
+// HasCow reports whether a snapshot uses CoW format (rootfs.cow + rootfs.meta)
+// as opposed to legacy full rootfs (rootfs.ext4).
+func HasCow(baseDir, name string) bool {
+	dir := DirPath(baseDir, name)
+	_, cowErr := os.Stat(filepath.Join(dir, RootfsCowName))
+	_, metaErr := os.Stat(filepath.Join(dir, RootfsMetaName))
+	return cowErr == nil && metaErr == nil
 }
 
 // EnsureDir creates the snapshot directory if it doesn't exist.
@@ -75,12 +141,14 @@ func Remove(baseDir, name string) error {
 	return os.RemoveAll(DirPath(baseDir, name))
 }
 
-// DirSize returns the total byte size of all files in the snapshot directory.
+// DirSize returns the actual disk usage of all files in the snapshot directory.
+// Uses block-based accounting (stat.Blocks * 512) so sparse files report only
+// the blocks that are actually allocated, not their apparent size.
 func DirSize(baseDir, name string) (int64, error) {
 	var total int64
 	dir := DirPath(baseDir, name)
 
-	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -91,7 +159,13 @@ func DirSize(baseDir, name string) (int64, error) {
 		if err != nil {
 			return err
 		}
-		total += info.Size()
+		if sys, ok := info.Sys().(*syscall.Stat_t); ok {
+			// Blocks is in 512-byte units regardless of filesystem block size.
+			total += sys.Blocks * 512
+		} else {
+			// Fallback to apparent size if syscall stat is unavailable.
+			total += info.Size()
+		}
 		return nil
 	})
 	if err != nil {

@@ -35,6 +35,9 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *
 	r.Get("/openapi.yaml", serveOpenAPI)
 	r.Get("/docs", serveDocs)
 
+	// Test UI for sandbox lifecycle management.
+	r.Get("/test", serveTestUI)
+
 	// Sandbox CRUD.
 	r.Route("/v1/sandboxes", func(r chi.Router) {
 		r.Post("/", sandbox.Create)
@@ -71,7 +74,7 @@ func (s *Server) Handler() http.Handler {
 
 func serveOpenAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/yaml")
-	w.Write(openapiYAML)
+	_, _ = w.Write(openapiYAML)
 }
 
 func serveDocs(w http.ResponseWriter, r *http.Request) {

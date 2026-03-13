@@ -2,6 +2,7 @@ package api
 
 import (
 	"io"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -189,6 +190,6 @@ func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Reque
 
 	if err := stream.Err(); err != nil {
 		// Headers already sent, nothing we can do but log.
-		// The client will see a truncated response.
+		slog.Warn("file stream error after headers sent", "error", err)
 	}
 }

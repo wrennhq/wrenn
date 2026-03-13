@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"git.omukk.dev/wrenn/sandbox/internal/devicemapper"
 	"git.omukk.dev/wrenn/sandbox/internal/hostagent"
 	"git.omukk.dev/wrenn/sandbox/internal/sandbox"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
@@ -28,6 +29,9 @@ func main() {
 	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
 		slog.Warn("failed to enable ip_forward", "error", err)
 	}
+
+	// Clean up any stale dm-snapshot devices from a previous crash.
+	devicemapper.CleanupStaleDevices()
 
 	listenAddr := envOrDefault("AGENT_LISTEN_ADDR", ":50051")
 	kernelPath := envOrDefault("AGENT_KERNEL_PATH", "/var/lib/wrenn/kernels/vmlinux")

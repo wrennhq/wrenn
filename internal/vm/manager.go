@@ -53,7 +53,7 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 
 	// Step 2: Wait for the API socket to appear.
 	if err := waitForSocket(ctx, cfg.SocketPath, proc); err != nil {
-		proc.stop()
+		_ = proc.stop()
 		return nil, fmt.Errorf("wait for socket: %w", err)
 	}
 
@@ -61,13 +61,13 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 	client := newFCClient(cfg.SocketPath)
 
 	if err := configureVM(ctx, client, &cfg); err != nil {
-		proc.stop()
+		_ = proc.stop()
 		return nil, fmt.Errorf("configure VM: %w", err)
 	}
 
 	// Step 4: Start the VM.
 	if err := client.startVM(ctx); err != nil {
-		proc.stop()
+		_ = proc.stop()
 		return nil, fmt.Errorf("start VM: %w", err)
 	}
 
@@ -218,7 +218,7 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapPath
 
 	// Step 2: Wait for the API socket.
 	if err := waitForSocket(ctx, cfg.SocketPath, proc); err != nil {
-		proc.stop()
+		_ = proc.stop()
 		return nil, fmt.Errorf("wait for socket: %w", err)
 	}
 
@@ -228,13 +228,13 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapPath
 	// No boot resources are configured — the snapshot carries kernel,
 	// drive, network, and machine config state.
 	if err := client.loadSnapshotWithUffd(ctx, snapPath, uffdSocketPath); err != nil {
-		proc.stop()
+		_ = proc.stop()
 		return nil, fmt.Errorf("load snapshot: %w", err)
 	}
 
 	// Step 4: Resume the VM.
 	if err := client.resumeVM(ctx); err != nil {
-		proc.stop()
+		_ = proc.stop()
 		return nil, fmt.Errorf("resume VM: %w", err)
 	}
 

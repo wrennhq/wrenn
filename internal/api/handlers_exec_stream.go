@@ -37,11 +37,6 @@ type wsStartMsg struct {
 	Args []string `json:"args"`
 }
 
-// wsStopMsg is sent by the client to stop the process.
-type wsStopMsg struct {
-	Type string `json:"type"` // "stop"
-}
-
 // wsOutMsg is sent by the server for process events.
 type wsOutMsg struct {
 	Type     string `json:"type"`                // "start", "stdout", "stderr", "exit", "error"

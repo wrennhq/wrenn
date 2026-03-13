@@ -10,8 +10,8 @@ type VMConfig struct {
 	// KernelPath is the path to the uncompressed Linux kernel (vmlinux).
 	KernelPath string
 
-	// RootfsPath is the path to the ext4 rootfs image for this sandbox.
-	// This should be a per-sandbox copy (reflink clone of the base image).
+	// RootfsPath is the path to the rootfs block device for this sandbox.
+	// Typically a dm-snapshot device (e.g., /dev/mapper/wrenn-sb-a1b2c3d4).
 	RootfsPath string
 
 	// VCPUs is the number of virtual CPUs to allocate (default: 1).
