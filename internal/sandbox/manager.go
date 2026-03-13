@@ -50,7 +50,23 @@ type sandboxState struct {
 	uffdSocketPath string // non-empty for sandboxes restored from snapshot
 	dmDevice       *devicemapper.SnapshotDevice
 	baseImagePath  string // path to the base template rootfs (for loop registry release)
+
+	// parent holds the snapshot header and diff file paths from which this
+	// sandbox was restored. Non-nil means re-pause should use "Diff" snapshot
+	// type instead of "Full", avoiding the UFFD fault-in storm.
+	parent *snapshotParent
 }
+
+// snapshotParent stores the previous generation's snapshot state so that
+// re-pause can produce an incremental diff instead of a full memory dump.
+type snapshotParent struct {
+	header    *snapshot.Header
+	diffPaths map[string]string // build ID → file path
+}
+
+// maxDiffGenerations caps how many incremental diff generations we chain
+// before falling back to a Full snapshot to collapse the chain.
+const maxDiffGenerations = 10
 
 // New creates a new sandbox manager.
 func New(cfg Config) *Manager {
@@ -281,7 +297,14 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	}
 	slog.Debug("pause: VM paused", "id", sandboxID, "elapsed", time.Since(pauseStart))
 
-	// Step 2: Take VM state snapshot (snapfile + memfile) — CoW file is saved separately.
+	// Determine snapshot type: Diff if resumed from snapshot (avoids UFFD
+	// fault-in storm), Full otherwise or if generation cap is reached.
+	snapshotType := "Full"
+	if sb.parent != nil && sb.parent.header.Metadata.Generation < maxDiffGenerations {
+		snapshotType = "Diff"
+	}
+
+	// Step 2: Take VM state snapshot (snapfile + memfile).
 	if err := snapshot.EnsureDir(m.cfg.SnapshotsDir, sandboxID); err != nil {
 		return fmt.Errorf("create snapshot dir: %w", err)
 	}
@@ -290,28 +313,47 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	rawMemPath := filepath.Join(snapDir, "memfile.raw")
 	snapPath := snapshot.SnapPath(m.cfg.SnapshotsDir, sandboxID)
 
-	// For UFFD-resumed sandboxes, FC must fault in ALL lazy-loaded pages to
-	// serialize memory — this is the main bottleneck on re-pause.
 	snapshotStart := time.Now()
-	if err := m.vm.Snapshot(ctx, sandboxID, snapPath, rawMemPath); err != nil {
+	if err := m.vm.Snapshot(ctx, sandboxID, snapPath, rawMemPath, snapshotType); err != nil {
 		warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
 		return fmt.Errorf("create VM snapshot: %w", err)
 	}
-	slog.Debug("pause: FC snapshot created", "id", sandboxID, "elapsed", time.Since(snapshotStart))
+	slog.Debug("pause: FC snapshot created", "id", sandboxID, "type", snapshotType, "elapsed", time.Since(snapshotStart))
 
 	// Step 3: Process the raw memfile into a compact diff + header.
 	buildID := uuid.New()
-	diffPath := snapshot.MemDiffPath(m.cfg.SnapshotsDir, sandboxID)
 	headerPath := snapshot.MemHeaderPath(m.cfg.SnapshotsDir, sandboxID)
 
 	processStart := time.Now()
-	if _, err := snapshot.ProcessMemfile(rawMemPath, diffPath, headerPath, buildID); err != nil {
-		warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
-		return fmt.Errorf("process memfile: %w", err)
-	}
-	slog.Debug("pause: memfile processed", "id", sandboxID, "elapsed", time.Since(processStart))
+	if sb.parent != nil && snapshotType == "Diff" {
+		// Diff: process against parent header, producing only changed blocks.
+		diffPath := snapshot.MemDiffPathForBuild(m.cfg.SnapshotsDir, sandboxID, buildID)
+		if _, err := snapshot.ProcessMemfileWithParent(rawMemPath, diffPath, headerPath, sb.parent.header, buildID); err != nil {
+			warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+			return fmt.Errorf("process memfile with parent: %w", err)
+		}
 
-	// Remove the raw memfile — we only keep the compact diff.
+		// Copy previous generation diff files into the snapshot directory.
+		for prevBuildID, prevPath := range sb.parent.diffPaths {
+			dstPath := snapshot.MemDiffPathForBuild(m.cfg.SnapshotsDir, sandboxID, uuid.MustParse(prevBuildID))
+			if prevPath != dstPath {
+				if err := copyFile(prevPath, dstPath); err != nil {
+					warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+					return fmt.Errorf("copy parent diff file: %w", err)
+				}
+			}
+		}
+	} else {
+		// Full: first generation or generation cap reached — single diff file.
+		diffPath := snapshot.MemDiffPath(m.cfg.SnapshotsDir, sandboxID)
+		if _, err := snapshot.ProcessMemfile(rawMemPath, diffPath, headerPath, buildID); err != nil {
+			warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+			return fmt.Errorf("process memfile: %w", err)
+		}
+	}
+	slog.Debug("pause: memfile processed", "id", sandboxID, "type", snapshotType, "elapsed", time.Since(processStart))
+
+	// Remove the raw memfile — we only keep the compact diff(s).
 	os.Remove(rawMemPath)
 
 	// Step 4: Destroy the VM first so Firecracker releases the dm device.
@@ -357,7 +399,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	delete(m.boxes, sandboxID)
 	m.mu.Unlock()
 
-	slog.Info("sandbox paused", "id", sandboxID, "total_elapsed", time.Since(pauseStart))
+	slog.Info("sandbox paused", "id", sandboxID, "snapshot_type", snapshotType, "total_elapsed", time.Since(pauseStart))
 	return nil
 }
 
@@ -380,9 +422,10 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 		return nil, fmt.Errorf("deserialize header: %w", err)
 	}
 
-	// Build diff file map (build ID → file path).
-	diffPaths := map[string]string{
-		header.Metadata.BuildID.String(): snapshot.MemDiffPath(snapDir, sandboxID),
+	// Build diff file map — supports both single-generation and multi-generation.
+	diffPaths, err := snapshot.ListDiffFiles(snapDir, sandboxID, header)
+	if err != nil {
+		return nil, fmt.Errorf("list diff files: %w", err)
 	}
 
 	source, err := uffd.NewDiffFileSource(header, diffPaths)
@@ -537,20 +580,26 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 		uffdSocketPath: uffdSocketPath,
 		dmDevice:       dmDev,
 		baseImagePath:  baseImagePath,
+		// Preserve parent snapshot info so re-pause can use Diff snapshots.
+		parent: &snapshotParent{
+			header:    header,
+			diffPaths: diffPaths,
+		},
 	}
 
 	m.mu.Lock()
 	m.boxes[sandboxID] = sb
 	m.mu.Unlock()
 
-	// Clean up remaining snapshot files (snapfile, memfile, header, meta).
-	// The CoW file was already moved out.
-	warnErr("snapshot cleanup error", sandboxID, snapshot.Remove(snapDir, sandboxID))
+	// Don't delete snapshot dir — diff files are needed for re-pause.
+	// The CoW file was already moved out. The dir will be cleaned up
+	// on destroy or overwritten on re-pause.
 
 	slog.Info("sandbox resumed from snapshot",
 		"id", sandboxID,
 		"host_ip", slot.HostIP.String(),
 		"dm_device", dmDev.DevicePath,
+		"generation", header.Metadata.Generation,
 	)
 
 	return &sb.Sandbox, nil
@@ -585,16 +634,40 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID, name string) (i
 		return 0, fmt.Errorf("create template dir: %w", err)
 	}
 
-	// Copy VM snapshot and memory files.
+	// Copy VM snapshot file and memory header.
 	srcDir := snapshot.DirPath(m.cfg.SnapshotsDir, sandboxID)
 	dstDir := snapshot.DirPath(m.cfg.ImagesDir, name)
 
-	for _, fname := range []string{snapshot.SnapFileName, snapshot.MemDiffName, snapshot.MemHeaderName} {
+	for _, fname := range []string{snapshot.SnapFileName, snapshot.MemHeaderName} {
 		src := filepath.Join(srcDir, fname)
 		dst := filepath.Join(dstDir, fname)
 		if err := copyFile(src, dst); err != nil {
 			warnErr("template dir cleanup error", name, snapshot.Remove(m.cfg.ImagesDir, name))
 			return 0, fmt.Errorf("copy %s: %w", fname, err)
+		}
+	}
+
+	// Copy all memory diff files referenced by the header (supports multi-generation).
+	headerData, err := os.ReadFile(filepath.Join(srcDir, snapshot.MemHeaderName))
+	if err != nil {
+		warnErr("template dir cleanup error", name, snapshot.Remove(m.cfg.ImagesDir, name))
+		return 0, fmt.Errorf("read header for template: %w", err)
+	}
+	srcHeader, err := snapshot.Deserialize(headerData)
+	if err != nil {
+		warnErr("template dir cleanup error", name, snapshot.Remove(m.cfg.ImagesDir, name))
+		return 0, fmt.Errorf("deserialize header for template: %w", err)
+	}
+	srcDiffPaths, err := snapshot.ListDiffFiles(m.cfg.SnapshotsDir, sandboxID, srcHeader)
+	if err != nil {
+		warnErr("template dir cleanup error", name, snapshot.Remove(m.cfg.ImagesDir, name))
+		return 0, fmt.Errorf("list diff files for template: %w", err)
+	}
+	for _, srcPath := range srcDiffPaths {
+		dstPath := filepath.Join(dstDir, filepath.Base(srcPath))
+		if err := copyFile(srcPath, dstPath); err != nil {
+			warnErr("template dir cleanup error", name, snapshot.Remove(m.cfg.ImagesDir, name))
+			return 0, fmt.Errorf("copy diff file %s: %w", filepath.Base(srcPath), err)
 		}
 	}
 
@@ -683,9 +756,10 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 	// Snapshot determines memory size.
 	memoryMB := int(header.Metadata.Size / (1024 * 1024))
 
-	// Build diff file map.
-	diffPaths := map[string]string{
-		header.Metadata.BuildID.String(): snapshot.MemDiffPath(imagesDir, snapshotName),
+	// Build diff file map — supports multi-generation templates.
+	diffPaths, err := snapshot.ListDiffFiles(imagesDir, snapshotName, header)
+	if err != nil {
+		return nil, fmt.Errorf("list diff files: %w", err)
 	}
 
 	source, err := uffd.NewDiffFileSource(header, diffPaths)
@@ -815,6 +889,11 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 		uffdSocketPath: uffdSocketPath,
 		dmDevice:       dmDev,
 		baseImagePath:  baseRootfs,
+		// Template-spawned sandboxes also get diff re-pause support.
+		parent: &snapshotParent{
+			header:    header,
+			diffPaths: diffPaths,
+		},
 	}
 
 	m.mu.Lock()

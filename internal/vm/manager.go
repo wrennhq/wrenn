@@ -164,19 +164,19 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 	return nil
 }
 
-// Snapshot creates a full VM snapshot. The VM must already be paused.
-// Produces a snapfile (VM state) and a memfile (full memory dump).
-func (m *Manager) Snapshot(ctx context.Context, sandboxID, snapPath, memPath string) error {
+// Snapshot creates a VM snapshot. The VM must already be paused.
+// snapshotType is "Full" (all memory) or "Diff" (only dirty pages since last resume).
+func (m *Manager) Snapshot(ctx context.Context, sandboxID, snapPath, memPath, snapshotType string) error {
 	vm, ok := m.vms[sandboxID]
 	if !ok {
 		return fmt.Errorf("VM not found: %s", sandboxID)
 	}
 
-	if err := vm.client.createSnapshot(ctx, snapPath, memPath); err != nil {
+	if err := vm.client.createSnapshot(ctx, snapPath, memPath, snapshotType); err != nil {
 		return fmt.Errorf("create snapshot: %w", err)
 	}
 
-	slog.Info("VM snapshot created", "sandbox", sandboxID, "snap_path", snapPath)
+	slog.Info("VM snapshot created", "sandbox", sandboxID, "snap_path", snapPath, "type", snapshotType)
 	return nil
 }
 

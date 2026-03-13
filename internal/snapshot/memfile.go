@@ -123,7 +123,6 @@ func ProcessMemfileWithParent(memfilePath, diffPath, headerPath string, parentHe
 
 	totalBlocks := TotalBlocks(memSize, DefaultBlockSize)
 	dirty := make([]bool, totalBlocks)
-	empty := make([]bool, totalBlocks)
 	buf := make([]byte, DefaultBlockSize)
 
 	for i := int64(0); i < totalBlocks; i++ {
@@ -139,7 +138,8 @@ func ProcessMemfileWithParent(memfilePath, diffPath, headerPath string, parentHe
 		}
 
 		if isZeroBlock(buf) {
-			empty[i] = true
+			// For a diff memfile, zero blocks mean "not dirtied since resume" —
+			// they should inherit the parent's mapping, not be zero-filled.
 			continue
 		}
 
@@ -149,11 +149,10 @@ func ProcessMemfileWithParent(memfilePath, diffPath, headerPath string, parentHe
 		}
 	}
 
-	// Build new generation header merged with parent.
+	// Only dirty blocks go into the diff overlay; MergeMappings preserves the
+	// parent's mapping for everything else.
 	dirtyMappings := CreateMapping(buildID, dirty, DefaultBlockSize)
-	emptyMappings := CreateMapping(uuid.Nil, empty, DefaultBlockSize)
-	diffMapping := MergeMappings(dirtyMappings, emptyMappings)
-	merged := MergeMappings(parentHeader.Mapping, diffMapping)
+	merged := MergeMappings(parentHeader.Mapping, dirtyMappings)
 	normalized := NormalizeMappings(merged)
 
 	metadata := parentHeader.Metadata.NextGeneration(buildID)

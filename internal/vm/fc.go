@@ -122,10 +122,11 @@ func (c *fcClient) resumeVM(ctx context.Context) error {
 	})
 }
 
-// createSnapshot creates a full VM snapshot.
-func (c *fcClient) createSnapshot(ctx context.Context, snapPath, memPath string) error {
+// createSnapshot creates a VM snapshot.
+// snapshotType is "Full" (all memory) or "Diff" (only dirty pages since last resume).
+func (c *fcClient) createSnapshot(ctx context.Context, snapPath, memPath, snapshotType string) error {
 	return c.do(ctx, http.MethodPut, "/snapshot/create", map[string]any{
-		"snapshot_type": "Full",
+		"snapshot_type": snapshotType,
 		"snapshot_path": snapPath,
 		"mem_file_path": memPath,
 	})
