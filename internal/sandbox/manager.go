@@ -18,6 +18,7 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/network"
 	"git.omukk.dev/wrenn/sandbox/internal/snapshot"
 	"git.omukk.dev/wrenn/sandbox/internal/uffd"
+	"git.omukk.dev/wrenn/sandbox/internal/validate"
 	"git.omukk.dev/wrenn/sandbox/internal/vm"
 )
 
@@ -82,6 +83,9 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 
 	if template == "" {
 		template = "minimal"
+	}
+	if err := validate.SafeName(template); err != nil {
+		return nil, fmt.Errorf("invalid template name: %w", err)
 	}
 
 	// Check if template refers to a snapshot (has snapfile + memfile + header + rootfs).
@@ -560,6 +564,10 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 // so the template has no dependency on the original base image. Memory state
 // and VM snapshot files are copied as-is.
 func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID, name string) (int64, error) {
+	if err := validate.SafeName(name); err != nil {
+		return 0, fmt.Errorf("invalid snapshot name: %w", err)
+	}
+
 	// If the sandbox is running, pause it first.
 	if _, err := m.get(sandboxID); err == nil {
 		if err := m.Pause(ctx, sandboxID); err != nil {
@@ -648,6 +656,9 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID, name string) (i
 
 // DeleteSnapshot removes a snapshot template from disk.
 func (m *Manager) DeleteSnapshot(name string) error {
+	if err := validate.SafeName(name); err != nil {
+		return fmt.Errorf("invalid snapshot name: %w", err)
+	}
 	return snapshot.Remove(m.cfg.ImagesDir, name)
 }
 

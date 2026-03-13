@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/validate"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
@@ -72,6 +74,10 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name == "" {
 		req.Name = id.NewSnapshotName()
+	}
+	if err := validate.SafeName(req.Name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid snapshot name: %s", err))
+		return
 	}
 
 	ctx := r.Context()
@@ -166,6 +172,10 @@ func (h *snapshotHandler) List(w http.ResponseWriter, r *http.Request) {
 // Delete handles DELETE /v1/snapshots/{name}.
 func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if err := validate.SafeName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid snapshot name: %s", err))
+		return
+	}
 	ctx := r.Context()
 
 	if _, err := h.db.GetTemplate(ctx, name); err != nil {

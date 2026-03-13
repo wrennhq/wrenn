@@ -1,6 +1,7 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -93,6 +94,8 @@ func NewSlot(index int) *Slot {
 //   - Veth pair bridging host and namespace
 //   - TAP device inside namespace for Firecracker
 //   - Routes and NAT rules for connectivity
+//
+// On error, all partially created resources are rolled back.
 func CreateNetwork(slot *Slot) error {
 	// Lock this goroutine to the OS thread — required for netns manipulation.
 	runtime.LockOSThread()
@@ -106,12 +109,25 @@ func CreateNetwork(slot *Slot) error {
 	defer hostNS.Close()
 	defer func() { _ = netns.Set(hostNS) }()
 
+	// rollbacks accumulates cleanup functions; on error they run in reverse.
+	var rollbacks []func()
+	rollback := func() {
+		for i := len(rollbacks) - 1; i >= 0; i-- {
+			rollbacks[i]()
+		}
+	}
+
 	// Create named network namespace.
 	ns, err := netns.NewNamed(slot.NamespaceID)
 	if err != nil {
 		return fmt.Errorf("create namespace %s: %w", slot.NamespaceID, err)
 	}
 	defer ns.Close()
+	// Deleting the namespace also cleans up TAP, loopback, namespace-internal
+	// routes, and namespace-internal iptables rules.
+	rollbacks = append(rollbacks, func() {
+		_ = netns.DeleteNamed(slot.NamespaceID)
+	})
 	// We are now inside the new namespace.
 
 	slog.Info("created network namespace", "ns", slot.NamespaceID)
@@ -124,12 +140,14 @@ func CreateNetwork(slot *Slot) error {
 		PeerName:  "eth0",
 	}
 	if err := netlink.LinkAdd(veth); err != nil {
+		rollback()
 		return fmt.Errorf("create veth pair: %w", err)
 	}
 
 	// Configure vpeer (eth0) inside namespace.
 	vpeer, err := netlink.LinkByName("eth0")
 	if err != nil {
+		rollback()
 		return fmt.Errorf("find eth0: %w", err)
 	}
 	vpeerAddr := &netlink.Addr{
@@ -139,20 +157,30 @@ func CreateNetwork(slot *Slot) error {
 		},
 	}
 	if err := netlink.AddrAdd(vpeer, vpeerAddr); err != nil {
+		rollback()
 		return fmt.Errorf("set vpeer addr: %w", err)
 	}
 	if err := netlink.LinkSetUp(vpeer); err != nil {
+		rollback()
 		return fmt.Errorf("bring up vpeer: %w", err)
 	}
 
 	// Move veth to host namespace.
 	vethLink, err := netlink.LinkByName(slot.VethName)
 	if err != nil {
+		rollback()
 		return fmt.Errorf("find veth: %w", err)
 	}
 	if err := netlink.LinkSetNsFd(vethLink, int(hostNS)); err != nil {
+		rollback()
 		return fmt.Errorf("move veth to host ns: %w", err)
 	}
+	// Once the veth is in the host namespace, we need to clean it up from there.
+	rollbacks = append(rollbacks, func() {
+		if l, err := netlink.LinkByName(slot.VethName); err == nil {
+			_ = netlink.LinkDel(l)
+		}
+	})
 
 	// Create TAP device inside namespace.
 	tapAttrs := netlink.NewLinkAttrs()
@@ -162,10 +190,12 @@ func CreateNetwork(slot *Slot) error {
 		Mode:      netlink.TUNTAP_MODE_TAP,
 	}
 	if err := netlink.LinkAdd(tap); err != nil {
+		rollback()
 		return fmt.Errorf("create tap device: %w", err)
 	}
 	tapLink, err := netlink.LinkByName(tapName)
 	if err != nil {
+		rollback()
 		return fmt.Errorf("find tap: %w", err)
 	}
 	tapAddr := &netlink.Addr{
@@ -175,18 +205,22 @@ func CreateNetwork(slot *Slot) error {
 		},
 	}
 	if err := netlink.AddrAdd(tapLink, tapAddr); err != nil {
+		rollback()
 		return fmt.Errorf("set tap addr: %w", err)
 	}
 	if err := netlink.LinkSetUp(tapLink); err != nil {
+		rollback()
 		return fmt.Errorf("bring up tap: %w", err)
 	}
 
 	// Bring up loopback.
 	lo, err := netlink.LinkByName("lo")
 	if err != nil {
+		rollback()
 		return fmt.Errorf("find loopback: %w", err)
 	}
 	if err := netlink.LinkSetUp(lo); err != nil {
+		rollback()
 		return fmt.Errorf("bring up loopback: %w", err)
 	}
 
@@ -195,6 +229,7 @@ func CreateNetwork(slot *Slot) error {
 		Scope: netlink.SCOPE_UNIVERSE,
 		Gw:    slot.VethIP,
 	}); err != nil {
+		rollback()
 		return fmt.Errorf("add default route in namespace: %w", err)
 	}
 
@@ -202,6 +237,7 @@ func CreateNetwork(slot *Slot) error {
 	if err := nsExec(slot.NamespaceID,
 		"sysctl", "-w", "net.ipv4.ip_forward=1",
 	); err != nil {
+		rollback()
 		return fmt.Errorf("enable ip_forward in namespace: %w", err)
 	}
 
@@ -212,6 +248,7 @@ func CreateNetwork(slot *Slot) error {
 		"-o", "eth0", "-s", guestIP,
 		"-j", "SNAT", "--to", slot.VpeerIP.String(),
 	); err != nil {
+		rollback()
 		return fmt.Errorf("add SNAT rule: %w", err)
 	}
 	// Inbound: host -> guest. Packets arrive with dst=hostIP, DNAT to guest IP.
@@ -220,17 +257,20 @@ func CreateNetwork(slot *Slot) error {
 		"-i", "eth0", "-d", slot.HostIP.String(),
 		"-j", "DNAT", "--to", guestIP,
 	); err != nil {
+		rollback()
 		return fmt.Errorf("add DNAT rule: %w", err)
 	}
 
 	// Switch back to host namespace for host-side config.
 	if err := netns.Set(hostNS); err != nil {
+		rollback()
 		return fmt.Errorf("switch to host ns: %w", err)
 	}
 
 	// Configure veth on host side.
 	hostVeth, err := netlink.LinkByName(slot.VethName)
 	if err != nil {
+		rollback()
 		return fmt.Errorf("find veth in host: %w", err)
 	}
 	vethAddr := &netlink.Addr{
@@ -240,9 +280,11 @@ func CreateNetwork(slot *Slot) error {
 		},
 	}
 	if err := netlink.AddrAdd(hostVeth, vethAddr); err != nil {
+		rollback()
 		return fmt.Errorf("set veth addr: %w", err)
 	}
 	if err := netlink.LinkSetUp(hostVeth); err != nil {
+		rollback()
 		return fmt.Errorf("bring up veth: %w", err)
 	}
 
@@ -252,12 +294,17 @@ func CreateNetwork(slot *Slot) error {
 		Dst: hostNet,
 		Gw:  slot.VpeerIP,
 	}); err != nil {
+		rollback()
 		return fmt.Errorf("add host route: %w", err)
 	}
+	rollbacks = append(rollbacks, func() {
+		_ = netlink.RouteDel(&netlink.Route{Dst: hostNet, Gw: slot.VpeerIP})
+	})
 
 	// Find default gateway interface for FORWARD rules.
 	defaultIface, err := getDefaultInterface()
 	if err != nil {
+		rollback()
 		return fmt.Errorf("get default interface: %w", err)
 	}
 
@@ -267,15 +314,24 @@ func CreateNetwork(slot *Slot) error {
 		"-i", slot.VethName, "-o", defaultIface,
 		"-j", "ACCEPT",
 	); err != nil {
+		rollback()
 		return fmt.Errorf("add forward rule (out): %w", err)
 	}
+	rollbacks = append(rollbacks, func() {
+		_ = iptablesHost("-D", "FORWARD", "-i", slot.VethName, "-o", defaultIface, "-j", "ACCEPT")
+	})
+
 	if err := iptablesHost(
 		"-A", "FORWARD",
 		"-i", defaultIface, "-o", slot.VethName,
 		"-j", "ACCEPT",
 	); err != nil {
+		rollback()
 		return fmt.Errorf("add forward rule (in): %w", err)
 	}
+	rollbacks = append(rollbacks, func() {
+		_ = iptablesHost("-D", "FORWARD", "-i", defaultIface, "-o", slot.VethName, "-j", "ACCEPT")
+	})
 
 	// MASQUERADE for outbound traffic from sandbox.
 	// After SNAT inside the namespace, outbound packets arrive on the host
@@ -286,6 +342,7 @@ func CreateNetwork(slot *Slot) error {
 		"-o", defaultIface,
 		"-j", "MASQUERADE",
 	); err != nil {
+		rollback()
 		return fmt.Errorf("add masquerade rule: %w", err)
 	}
 
@@ -299,47 +356,65 @@ func CreateNetwork(slot *Slot) error {
 }
 
 // RemoveNetwork tears down the network topology for a sandbox.
+// All steps are attempted even if earlier ones fail. Returns a combined
+// error describing which cleanup steps failed.
 func RemoveNetwork(slot *Slot) error {
+	var errs []error
+
 	defaultIface, _ := getDefaultInterface()
 
-	// Remove host-side iptables rules (best effort).
+	// Remove host-side iptables rules.
 	if defaultIface != "" {
-		_ = iptablesHost(
+		if err := iptablesHost(
 			"-D", "FORWARD",
 			"-i", slot.VethName, "-o", defaultIface,
 			"-j", "ACCEPT",
-		)
-		_ = iptablesHost(
+		); err != nil {
+			errs = append(errs, fmt.Errorf("remove forward rule (out): %w", err))
+		}
+		if err := iptablesHost(
 			"-D", "FORWARD",
 			"-i", defaultIface, "-o", slot.VethName,
 			"-j", "ACCEPT",
-		)
-		_ = iptablesHost(
+		); err != nil {
+			errs = append(errs, fmt.Errorf("remove forward rule (in): %w", err))
+		}
+		if err := iptablesHost(
 			"-t", "nat", "-D", "POSTROUTING",
 			"-s", fmt.Sprintf("%s/32", slot.VpeerIP.String()),
 			"-o", defaultIface,
 			"-j", "MASQUERADE",
-		)
+		); err != nil {
+			errs = append(errs, fmt.Errorf("remove masquerade rule: %w", err))
+		}
+	} else {
+		errs = append(errs, fmt.Errorf("could not determine default interface; host iptables rules not removed"))
 	}
 
 	// Remove host route.
 	_, hostNet, _ := net.ParseCIDR(fmt.Sprintf("%s/32", slot.HostIP.String()))
-	_ = netlink.RouteDel(&netlink.Route{
+	if err := netlink.RouteDel(&netlink.Route{
 		Dst: hostNet,
 		Gw:  slot.VpeerIP,
-	})
+	}); err != nil {
+		errs = append(errs, fmt.Errorf("remove host route: %w", err))
+	}
 
 	// Delete veth (also destroys the peer in the namespace).
 	if veth, err := netlink.LinkByName(slot.VethName); err == nil {
-		_ = netlink.LinkDel(veth)
+		if err := netlink.LinkDel(veth); err != nil {
+			errs = append(errs, fmt.Errorf("delete veth: %w", err))
+		}
 	}
 
 	// Delete the named namespace.
-	_ = netns.DeleteNamed(slot.NamespaceID)
+	if err := netns.DeleteNamed(slot.NamespaceID); err != nil {
+		errs = append(errs, fmt.Errorf("delete namespace: %w", err))
+	}
 
-	slog.Info("network removed", "ns", slot.NamespaceID)
+	slog.Info("network removed", "ns", slot.NamespaceID, "cleanup_errors", len(errs))
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // nsExec runs a command inside a network namespace.

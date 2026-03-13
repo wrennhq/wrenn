@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/validate"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
@@ -85,6 +87,10 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if req.Template == "" {
 		req.Template = "minimal"
+	}
+	if err := validate.SafeName(req.Template); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid template name: %s", err))
+		return
 	}
 	if req.VCPUs <= 0 {
 		req.VCPUs = 1
