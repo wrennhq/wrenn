@@ -156,6 +156,15 @@ func CreateSnapshot(name, originLoopDev, cowPath string, originSizeBytes int64) 
 // The CoW file must have been created with the persistent (P) flag and still
 // contain valid dm-snapshot metadata.
 func RestoreSnapshot(name, originLoopDev, cowPath string, originSizeBytes int64) (*SnapshotDevice, error) {
+	// Defensively remove a stale device with the same name. This can happen
+	// if a previous pause failed to clean up the dm device (e.g. "device busy").
+	if dmDeviceExists(name) {
+		slog.Warn("removing stale dm device before restore", "name", name)
+		if err := dmsetupRemove(name); err != nil {
+			return nil, fmt.Errorf("remove stale device %s: %w", name, err)
+		}
+	}
+
 	cowLoopDev, err := losetupCreateRW(cowPath)
 	if err != nil {
 		return nil, fmt.Errorf("losetup cow: %w", err)
@@ -291,6 +300,11 @@ func dmsetupCreate(name, originDev, cowDev string, sectors int64) error {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+// dmDeviceExists checks whether a device-mapper device with the given name exists.
+func dmDeviceExists(name string) bool {
+	return exec.Command("dmsetup", "info", name).Run() == nil
 }
 
 // dmsetupRemove removes a device-mapper device.

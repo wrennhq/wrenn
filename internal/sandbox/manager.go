@@ -364,7 +364,22 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	// Step 5: Now that FC is gone, safely remove the dm-snapshot and save the CoW.
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(sb.dmDevice); err != nil {
-			warnErr("dm-snapshot remove error during pause", sandboxID, err)
+			// Hard error: if the dm device isn't removed, the CoW file is still
+			// in use and we can't safely move it. The snapshot files from step 2-3
+			// are cleaned up, but the sandbox resources remain so the user can retry.
+			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
+			m.slots.Release(sb.SlotIndex)
+			if sb.baseImagePath != "" {
+				m.loops.Release(sb.baseImagePath)
+			}
+			if sb.uffdSocketPath != "" {
+				os.Remove(sb.uffdSocketPath)
+			}
+			warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+			m.mu.Lock()
+			delete(m.boxes, sandboxID)
+			m.mu.Unlock()
+			return fmt.Errorf("remove dm-snapshot: %w", err)
 		}
 
 		// Move (not copy) the CoW file into the snapshot directory.
