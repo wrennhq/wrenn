@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
@@ -47,8 +48,9 @@ type execResponse struct {
 func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "id")
 	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
 
-	sb, err := h.db.GetSandbox(ctx, sandboxID)
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
 		return

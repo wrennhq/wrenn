@@ -20,8 +20,22 @@ func (q *Queries) DeleteTemplate(ctx context.Context, name string) error {
 	return err
 }
 
+const deleteTemplateByTeam = `-- name: DeleteTemplateByTeam :exec
+DELETE FROM templates WHERE name = $1 AND team_id = $2
+`
+
+type DeleteTemplateByTeamParams struct {
+	Name   string `json:"name"`
+	TeamID string `json:"team_id"`
+}
+
+func (q *Queries) DeleteTemplateByTeam(ctx context.Context, arg DeleteTemplateByTeamParams) error {
+	_, err := q.db.Exec(ctx, deleteTemplateByTeam, arg.Name, arg.TeamID)
+	return err
+}
+
 const getTemplate = `-- name: GetTemplate :one
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at FROM templates WHERE name = $1
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE name = $1
 `
 
 func (q *Queries) GetTemplate(ctx context.Context, name string) (Template, error) {
@@ -34,14 +48,39 @@ func (q *Queries) GetTemplate(ctx context.Context, name string) (Template, error
 		&i.MemoryMb,
 		&i.SizeBytes,
 		&i.CreatedAt,
+		&i.TeamID,
+	)
+	return i, err
+}
+
+const getTemplateByTeam = `-- name: GetTemplateByTeam :one
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE name = $1 AND team_id = $2
+`
+
+type GetTemplateByTeamParams struct {
+	Name   string `json:"name"`
+	TeamID string `json:"team_id"`
+}
+
+func (q *Queries) GetTemplateByTeam(ctx context.Context, arg GetTemplateByTeamParams) (Template, error) {
+	row := q.db.QueryRow(ctx, getTemplateByTeam, arg.Name, arg.TeamID)
+	var i Template
+	err := row.Scan(
+		&i.Name,
+		&i.Type,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const insertTemplate = `-- name: InsertTemplate :one
-INSERT INTO templates (name, type, vcpus, memory_mb, size_bytes)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING name, type, vcpus, memory_mb, size_bytes, created_at
+INSERT INTO templates (name, type, vcpus, memory_mb, size_bytes, team_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING name, type, vcpus, memory_mb, size_bytes, created_at, team_id
 `
 
 type InsertTemplateParams struct {
@@ -50,6 +89,7 @@ type InsertTemplateParams struct {
 	Vcpus     pgtype.Int4 `json:"vcpus"`
 	MemoryMb  pgtype.Int4 `json:"memory_mb"`
 	SizeBytes int64       `json:"size_bytes"`
+	TeamID    string      `json:"team_id"`
 }
 
 func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) (Template, error) {
@@ -59,6 +99,7 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 		arg.Vcpus,
 		arg.MemoryMb,
 		arg.SizeBytes,
+		arg.TeamID,
 	)
 	var i Template
 	err := row.Scan(
@@ -68,12 +109,13 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 		&i.MemoryMb,
 		&i.SizeBytes,
 		&i.CreatedAt,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const listTemplates = `-- name: ListTemplates :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at FROM templates ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
@@ -92,6 +134,76 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
 			&i.MemoryMb,
 			&i.SizeBytes,
 			&i.CreatedAt,
+			&i.TeamID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTemplatesByTeam = `-- name: ListTemplatesByTeam :many
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE team_id = $1 ORDER BY created_at DESC
+`
+
+func (q *Queries) ListTemplatesByTeam(ctx context.Context, teamID string) ([]Template, error) {
+	rows, err := q.db.Query(ctx, listTemplatesByTeam, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Template
+	for rows.Next() {
+		var i Template
+		if err := rows.Scan(
+			&i.Name,
+			&i.Type,
+			&i.Vcpus,
+			&i.MemoryMb,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.TeamID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTemplatesByTeamAndType = `-- name: ListTemplatesByTeamAndType :many
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE team_id = $1 AND type = $2 ORDER BY created_at DESC
+`
+
+type ListTemplatesByTeamAndTypeParams struct {
+	TeamID string `json:"team_id"`
+	Type   string `json:"type"`
+}
+
+func (q *Queries) ListTemplatesByTeamAndType(ctx context.Context, arg ListTemplatesByTeamAndTypeParams) ([]Template, error) {
+	rows, err := q.db.Query(ctx, listTemplatesByTeamAndType, arg.TeamID, arg.Type)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Template
+	for rows.Next() {
+		var i Template
+		if err := rows.Scan(
+			&i.Name,
+			&i.Type,
+			&i.Vcpus,
+			&i.MemoryMb,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -104,7 +216,7 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
 }
 
 const listTemplatesByType = `-- name: ListTemplatesByType :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at FROM templates WHERE type = $1 ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE type = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTemplatesByType(ctx context.Context, type_ string) ([]Template, error) {
@@ -123,6 +235,7 @@ func (q *Queries) ListTemplatesByType(ctx context.Context, type_ string) ([]Temp
 			&i.MemoryMb,
 			&i.SizeBytes,
 			&i.CreatedAt,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}

@@ -8,11 +8,133 @@ servers:
   - url: http://localhost:8080
     description: Local development
 
+security: []
+
 paths:
+  /v1/auth/signup:
+    post:
+      summary: Create a new account
+      operationId: signup
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupRequest"
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Invalid request (bad email, short password)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/auth/login:
+    post:
+      summary: Log in with email and password
+      operationId: login
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/api-keys:
+    post:
+      summary: Create an API key
+      operationId: createAPIKey
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPIKeyRequest"
+      responses:
+        "201":
+          description: API key created (plaintext key only shown once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKeyResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      summary: List API keys for your team
+      operationId: listAPIKeys
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of API keys (plaintext keys are never returned)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIKeyResponse"
+
+  /v1/api-keys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    delete:
+      summary: Delete an API key
+      operationId: deleteAPIKey
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: API key deleted
+
   /v1/sandboxes:
     post:
       summary: Create a sandbox
       operationId: createSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -34,8 +156,11 @@ paths:
                 $ref: "#/components/schemas/Error"
 
     get:
-      summary: List all sandboxes
+      summary: List sandboxes for your team
       operationId: listSandboxes
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       responses:
         "200":
           description: List of sandboxes
@@ -57,6 +182,9 @@ paths:
     get:
       summary: Get sandbox details
       operationId: getSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       responses:
         "200":
           description: Sandbox details
@@ -74,6 +202,9 @@ paths:
     delete:
       summary: Destroy a sandbox
       operationId: destroySandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       responses:
         "204":
           description: Sandbox destroyed
@@ -89,6 +220,9 @@ paths:
     post:
       summary: Execute a command
       operationId: execCommand
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -126,6 +260,9 @@ paths:
     post:
       summary: Pause a running sandbox
       operationId: pauseSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       description: |
         Takes a snapshot of the sandbox (VM state + memory + rootfs), then
         destroys all running resources. The sandbox exists only as files on
@@ -155,6 +292,9 @@ paths:
     post:
       summary: Resume a paused sandbox
       operationId: resumeSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       description: |
         Restores a paused sandbox from its snapshot using UFFD for lazy
         memory loading. Boots a fresh Firecracker process, sets up a new
@@ -177,6 +317,9 @@ paths:
     post:
       summary: Create a snapshot template
       operationId: createSnapshot
+      tags: [snapshots]
+      security:
+        - apiKeyAuth: []
       description: |
         Pauses a running sandbox, takes a full snapshot, copies the snapshot
         files to the images directory as a reusable template, then destroys
@@ -210,8 +353,11 @@ paths:
                 $ref: "#/components/schemas/Error"
 
     get:
-      summary: List templates
+      summary: List templates for your team
       operationId: listSnapshots
+      tags: [snapshots]
+      security:
+        - apiKeyAuth: []
       parameters:
         - name: type
           in: query
@@ -241,6 +387,9 @@ paths:
     delete:
       summary: Delete a snapshot template
       operationId: deleteSnapshot
+      tags: [snapshots]
+      security:
+        - apiKeyAuth: []
       description: Removes the snapshot files from disk and deletes the database record.
       responses:
         "204":
@@ -263,6 +412,9 @@ paths:
     post:
       summary: Upload a file
       operationId: uploadFile
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -305,6 +457,9 @@ paths:
     post:
       summary: Download a file
       operationId: downloadFile
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -337,6 +492,9 @@ paths:
     get:
       summary: Stream command execution via WebSocket
       operationId: execStream
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       description: |
         Opens a WebSocket connection for streaming command execution.
 
@@ -387,6 +545,9 @@ paths:
     post:
       summary: Upload a file (streaming)
       operationId: streamUploadFile
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       description: |
         Streams file content to the sandbox without buffering in memory.
         Suitable for large files. Uses the same multipart/form-data format
@@ -433,6 +594,9 @@ paths:
     post:
       summary: Download a file (streaming)
       operationId: streamDownloadFile
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
       description: |
         Streams file content from the sandbox without buffering in memory.
         Suitable for large files. Returns raw bytes with chunked transfer encoding.
@@ -464,7 +628,85 @@ paths:
                 $ref: "#/components/schemas/Error"
 
 components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for sandbox lifecycle operations. Create via POST /v1/api-keys.
+
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from /v1/auth/login or /v1/auth/signup. Valid for 6 hours.
+
   schemas:
+    SignupRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT token (valid for 6 hours)
+        user_id:
+          type: string
+        team_id:
+          type: string
+        email:
+          type: string
+
+    CreateAPIKeyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          default: Unnamed API Key
+
+    APIKeyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        name:
+          type: string
+        key_prefix:
+          type: string
+          description: Display prefix (e.g. "wrn_ab12cd34...")
+        created_at:
+          type: string
+          format: date-time
+        last_used:
+          type: string
+          format: date-time
+          nullable: true
+        key:
+          type: string
+          description: Full plaintext key. Only returned on creation, never again.
+          nullable: true
+
     CreateSandboxRequest:
       type: object
       properties:

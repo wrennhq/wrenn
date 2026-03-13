@@ -1,13 +1,19 @@
 -- name: InsertSandbox :one
-INSERT INTO sandboxes (id, owner_id, host_id, template, status, vcpus, memory_mb, timeout_sec)
+INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: GetSandbox :one
 SELECT * FROM sandboxes WHERE id = $1;
 
+-- name: GetSandboxByTeam :one
+SELECT * FROM sandboxes WHERE id = $1 AND team_id = $2;
+
 -- name: ListSandboxes :many
 SELECT * FROM sandboxes ORDER BY created_at DESC;
+
+-- name: ListSandboxesByTeam :many
+SELECT * FROM sandboxes WHERE team_id = $1 ORDER BY created_at DESC;
 
 -- name: ListSandboxesByHostAndStatus :many
 SELECT * FROM sandboxes

@@ -10,7 +10,6 @@ import (
 
 type Sandbox struct {
 	ID           string             `json:"id"`
-	OwnerID      string             `json:"owner_id"`
 	HostID       string             `json:"host_id"`
 	Template     string             `json:"template"`
 	Status       string             `json:"status"`
@@ -23,6 +22,24 @@ type Sandbox struct {
 	StartedAt    pgtype.Timestamptz `json:"started_at"`
 	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
 	LastUpdated  pgtype.Timestamptz `json:"last_updated"`
+	TeamID       string             `json:"team_id"`
+}
+
+type Team struct {
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type TeamApiKey struct {
+	ID        string             `json:"id"`
+	TeamID    string             `json:"team_id"`
+	Name      string             `json:"name"`
+	KeyHash   string             `json:"key_hash"`
+	KeyPrefix string             `json:"key_prefix"`
+	CreatedBy string             `json:"created_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	LastUsed  pgtype.Timestamptz `json:"last_used"`
 }
 
 type Template struct {
@@ -31,5 +48,22 @@ type Template struct {
 	Vcpus     pgtype.Int4        `json:"vcpus"`
 	MemoryMb  pgtype.Int4        `json:"memory_mb"`
 	SizeBytes int64              `json:"size_bytes"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	TeamID    string             `json:"team_id"`
+}
+
+type User struct {
+	ID           string             `json:"id"`
+	Email        string             `json:"email"`
+	PasswordHash string             `json:"password_hash"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UsersTeam struct {
+	UserID    string             `json:"user_id"`
+	TeamID    string             `json:"team_id"`
+	IsDefault bool               `json:"is_default"`
+	Role      string             `json:"role"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }

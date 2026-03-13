@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
@@ -20,7 +21,7 @@ type Server struct {
 }
 
 // New constructs the chi router and registers all routes.
-func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *Server {
+func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, pool *pgxpool.Pool, jwtSecret []byte) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
 
@@ -30,6 +31,8 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *
 	files := newFilesHandler(queries, agent)
 	filesStream := newFilesStreamHandler(queries, agent)
 	snapshots := newSnapshotHandler(queries, agent)
+	authH := newAuthHandler(queries, pool, jwtSecret)
+	apiKeys := newAPIKeyHandler(queries)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -38,8 +41,21 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *
 	// Test UI for sandbox lifecycle management.
 	r.Get("/test", serveTestUI)
 
-	// Sandbox CRUD.
+	// Unauthenticated auth endpoints.
+	r.Post("/v1/auth/signup", authH.Signup)
+	r.Post("/v1/auth/login", authH.Login)
+
+	// JWT-authenticated: API key management.
+	r.Route("/v1/api-keys", func(r chi.Router) {
+		r.Use(requireJWT(jwtSecret))
+		r.Post("/", apiKeys.Create)
+		r.Get("/", apiKeys.List)
+		r.Delete("/{id}", apiKeys.Delete)
+	})
+
+	// API-key-authenticated: sandbox lifecycle.
 	r.Route("/v1/sandboxes", func(r chi.Router) {
+		r.Use(requireAPIKey(queries))
 		r.Post("/", sandbox.Create)
 		r.Get("/", sandbox.List)
 
@@ -57,8 +73,9 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *
 		})
 	})
 
-	// Snapshot / template management.
+	// API-key-authenticated: snapshot / template management.
 	r.Route("/v1/snapshots", func(r chi.Router) {
+		r.Use(requireAPIKey(queries))
 		r.Post("/", snapshots.Create)
 		r.Get("/", snapshots.List)
 		r.Delete("/{name}", snapshots.Delete)

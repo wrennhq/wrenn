@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/validate"
@@ -81,22 +82,23 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
 	overwrite := r.URL.Query().Get("overwrite") == "true"
 
-	// Check if name already exists.
-	if _, err := h.db.GetTemplate(ctx, req.Name); err == nil {
+	// Check if name already exists for this team.
+	if _, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err == nil {
 		if !overwrite {
 			writeError(w, http.StatusConflict, "already_exists", "snapshot name already exists; use ?overwrite=true to replace")
 			return
 		}
 		// Delete existing template record and files.
-		if err := h.db.DeleteTemplate(ctx, req.Name); err != nil {
+		if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err != nil {
 			slog.Warn("failed to delete existing template", "name", req.Name, "error", err)
 		}
 	}
 
-	// Verify sandbox exists and is running or paused.
-	sb, err := h.db.GetSandbox(ctx, req.SandboxID)
+	// Verify sandbox exists, belongs to team, and is running or paused.
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: req.SandboxID, TeamID: ac.TeamID})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
 		return
@@ -134,6 +136,7 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Vcpus:     pgtype.Int4{Int32: sb.Vcpus, Valid: true},
 		MemoryMb:  pgtype.Int4{Int32: sb.MemoryMb, Valid: true},
 		SizeBytes: resp.Msg.SizeBytes,
+		TeamID:    ac.TeamID,
 	})
 	if err != nil {
 		slog.Error("failed to insert template record", "name", req.Name, "error", err)
@@ -147,14 +150,15 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 // List handles GET /v1/snapshots.
 func (h *snapshotHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
 	typeFilter := r.URL.Query().Get("type")
 
 	var templates []db.Template
 	var err error
 	if typeFilter != "" {
-		templates, err = h.db.ListTemplatesByType(ctx, typeFilter)
+		templates, err = h.db.ListTemplatesByTeamAndType(ctx, db.ListTemplatesByTeamAndTypeParams{TeamID: ac.TeamID, Type: typeFilter})
 	} else {
-		templates, err = h.db.ListTemplates(ctx)
+		templates, err = h.db.ListTemplatesByTeam(ctx, ac.TeamID)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list templates")
@@ -177,8 +181,9 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
 
-	if _, err := h.db.GetTemplate(ctx, name); err != nil {
+	if _, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: name, TeamID: ac.TeamID}); err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "template not found")
 		return
 	}
@@ -190,7 +195,7 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("delete snapshot: agent RPC failed", "name", name, "error", err)
 	}
 
-	if err := h.db.DeleteTemplate(ctx, name); err != nil {
+	if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: name, TeamID: ac.TeamID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete template record")
 		return
 	}

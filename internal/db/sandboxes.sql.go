@@ -29,7 +29,7 @@ func (q *Queries) BulkUpdateStatusByIDs(ctx context.Context, arg BulkUpdateStatu
 }
 
 const getSandbox = `-- name: GetSandbox :one
-SELECT id, owner_id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated FROM sandboxes WHERE id = $1
+SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes WHERE id = $1
 `
 
 func (q *Queries) GetSandbox(ctx context.Context, id string) (Sandbox, error) {
@@ -37,7 +37,6 @@ func (q *Queries) GetSandbox(ctx context.Context, id string) (Sandbox, error) {
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerID,
 		&i.HostID,
 		&i.Template,
 		&i.Status,
@@ -50,19 +49,51 @@ func (q *Queries) GetSandbox(ctx context.Context, id string) (Sandbox, error) {
 		&i.StartedAt,
 		&i.LastActiveAt,
 		&i.LastUpdated,
+		&i.TeamID,
+	)
+	return i, err
+}
+
+const getSandboxByTeam = `-- name: GetSandboxByTeam :one
+SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes WHERE id = $1 AND team_id = $2
+`
+
+type GetSandboxByTeamParams struct {
+	ID     string `json:"id"`
+	TeamID string `json:"team_id"`
+}
+
+func (q *Queries) GetSandboxByTeam(ctx context.Context, arg GetSandboxByTeamParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, getSandboxByTeam, arg.ID, arg.TeamID)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.HostID,
+		&i.Template,
+		&i.Status,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.TimeoutSec,
+		&i.GuestIp,
+		&i.HostIp,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.LastActiveAt,
+		&i.LastUpdated,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const insertSandbox = `-- name: InsertSandbox :one
-INSERT INTO sandboxes (id, owner_id, host_id, template, status, vcpus, memory_mb, timeout_sec)
+INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, owner_id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated
+RETURNING id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id
 `
 
 type InsertSandboxParams struct {
 	ID         string `json:"id"`
-	OwnerID    string `json:"owner_id"`
+	TeamID     string `json:"team_id"`
 	HostID     string `json:"host_id"`
 	Template   string `json:"template"`
 	Status     string `json:"status"`
@@ -74,7 +105,7 @@ type InsertSandboxParams struct {
 func (q *Queries) InsertSandbox(ctx context.Context, arg InsertSandboxParams) (Sandbox, error) {
 	row := q.db.QueryRow(ctx, insertSandbox,
 		arg.ID,
-		arg.OwnerID,
+		arg.TeamID,
 		arg.HostID,
 		arg.Template,
 		arg.Status,
@@ -85,7 +116,6 @@ func (q *Queries) InsertSandbox(ctx context.Context, arg InsertSandboxParams) (S
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerID,
 		&i.HostID,
 		&i.Template,
 		&i.Status,
@@ -98,12 +128,13 @@ func (q *Queries) InsertSandbox(ctx context.Context, arg InsertSandboxParams) (S
 		&i.StartedAt,
 		&i.LastActiveAt,
 		&i.LastUpdated,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const listSandboxes = `-- name: ListSandboxes :many
-SELECT id, owner_id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated FROM sandboxes ORDER BY created_at DESC
+SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes ORDER BY created_at DESC
 `
 
 func (q *Queries) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
@@ -117,7 +148,6 @@ func (q *Queries) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 		var i Sandbox
 		if err := rows.Scan(
 			&i.ID,
-			&i.OwnerID,
 			&i.HostID,
 			&i.Template,
 			&i.Status,
@@ -130,6 +160,7 @@ func (q *Queries) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 			&i.StartedAt,
 			&i.LastActiveAt,
 			&i.LastUpdated,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -142,7 +173,7 @@ func (q *Queries) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 }
 
 const listSandboxesByHostAndStatus = `-- name: ListSandboxesByHostAndStatus :many
-SELECT id, owner_id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated FROM sandboxes
+SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes
 WHERE host_id = $1 AND status = ANY($2::text[])
 ORDER BY created_at DESC
 `
@@ -163,7 +194,6 @@ func (q *Queries) ListSandboxesByHostAndStatus(ctx context.Context, arg ListSand
 		var i Sandbox
 		if err := rows.Scan(
 			&i.ID,
-			&i.OwnerID,
 			&i.HostID,
 			&i.Template,
 			&i.Status,
@@ -176,6 +206,46 @@ func (q *Queries) ListSandboxesByHostAndStatus(ctx context.Context, arg ListSand
 			&i.StartedAt,
 			&i.LastActiveAt,
 			&i.LastUpdated,
+			&i.TeamID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSandboxesByTeam = `-- name: ListSandboxesByTeam :many
+SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes WHERE team_id = $1 ORDER BY created_at DESC
+`
+
+func (q *Queries) ListSandboxesByTeam(ctx context.Context, teamID string) ([]Sandbox, error) {
+	rows, err := q.db.Query(ctx, listSandboxesByTeam, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Sandbox
+	for rows.Next() {
+		var i Sandbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.HostID,
+			&i.Template,
+			&i.Status,
+			&i.Vcpus,
+			&i.MemoryMb,
+			&i.TimeoutSec,
+			&i.GuestIp,
+			&i.HostIp,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.LastActiveAt,
+			&i.LastUpdated,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -213,7 +283,7 @@ SET status = 'running',
     last_active_at = $4,
     last_updated = NOW()
 WHERE id = $1
-RETURNING id, owner_id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated
+RETURNING id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id
 `
 
 type UpdateSandboxRunningParams struct {
@@ -233,7 +303,6 @@ func (q *Queries) UpdateSandboxRunning(ctx context.Context, arg UpdateSandboxRun
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerID,
 		&i.HostID,
 		&i.Template,
 		&i.Status,
@@ -246,6 +315,7 @@ func (q *Queries) UpdateSandboxRunning(ctx context.Context, arg UpdateSandboxRun
 		&i.StartedAt,
 		&i.LastActiveAt,
 		&i.LastUpdated,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -255,7 +325,7 @@ UPDATE sandboxes
 SET status = $2,
     last_updated = NOW()
 WHERE id = $1
-RETURNING id, owner_id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated
+RETURNING id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id
 `
 
 type UpdateSandboxStatusParams struct {
@@ -268,7 +338,6 @@ func (q *Queries) UpdateSandboxStatus(ctx context.Context, arg UpdateSandboxStat
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerID,
 		&i.HostID,
 		&i.Template,
 		&i.Status,
@@ -281,6 +350,7 @@ func (q *Queries) UpdateSandboxStatus(ctx context.Context, arg UpdateSandboxStat
 		&i.StartedAt,
 		&i.LastActiveAt,
 		&i.LastUpdated,
+		&i.TeamID,
 	)
 	return i, err
 }

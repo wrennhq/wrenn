@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/validate"
@@ -103,10 +104,11 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
 
 	// If the template is a snapshot, use its baked-in vcpus/memory
 	// (they cannot be changed since the VM state is frozen).
-	if tmpl, err := h.db.GetTemplate(ctx, req.Template); err == nil && tmpl.Type == "snapshot" {
+	if tmpl, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: req.Template, TeamID: ac.TeamID}); err == nil && tmpl.Type == "snapshot" {
 		if tmpl.Vcpus.Valid {
 			req.VCPUs = tmpl.Vcpus.Int32
 		}
@@ -119,7 +121,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Insert pending record.
 	_, err := h.db.InsertSandbox(ctx, db.InsertSandboxParams{
 		ID:         sandboxID,
-		OwnerID:    "",
+		TeamID:     ac.TeamID,
 		HostID:     "default",
 		Template:   req.Template,
 		Status:     "pending",
@@ -173,7 +175,8 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List handles GET /v1/sandboxes.
 func (h *sandboxHandler) List(w http.ResponseWriter, r *http.Request) {
-	sandboxes, err := h.db.ListSandboxes(r.Context())
+	ac := auth.MustFromContext(r.Context())
+	sandboxes, err := h.db.ListSandboxesByTeam(r.Context(), ac.TeamID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list sandboxes")
 		return
@@ -190,8 +193,9 @@ func (h *sandboxHandler) List(w http.ResponseWriter, r *http.Request) {
 // Get handles GET /v1/sandboxes/{id}.
 func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "id")
+	ac := auth.MustFromContext(r.Context())
 
-	sb, err := h.db.GetSandbox(r.Context(), sandboxID)
+	sb, err := h.db.GetSandboxByTeam(r.Context(), db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
 		return
@@ -206,8 +210,9 @@ func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "id")
 	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
 
-	sb, err := h.db.GetSandbox(ctx, sandboxID)
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
 		return
@@ -241,8 +246,9 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "id")
 	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
 
-	sb, err := h.db.GetSandbox(ctx, sandboxID)
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
 		return
@@ -283,8 +289,9 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 func (h *sandboxHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "id")
 	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
 
-	_, err := h.db.GetSandbox(ctx, sandboxID)
+	_, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
 		return

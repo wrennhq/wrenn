@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds the control plane configuration.
@@ -10,14 +12,20 @@ type Config struct {
 	DatabaseURL   string
 	ListenAddr    string
 	HostAgentAddr string
+	JWTSecret     string
 }
 
-// Load reads configuration from environment variables.
+// Load reads configuration from a .env file (if present) and environment variables.
+// Real environment variables take precedence over .env values.
 func Load() Config {
+	// Best-effort load — missing .env file is fine.
+	_ = godotenv.Load()
+
 	cfg := Config{
 		DatabaseURL:   envOrDefault("DATABASE_URL", "postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable"),
 		ListenAddr:    envOrDefault("CP_LISTEN_ADDR", ":8080"),
 		HostAgentAddr: envOrDefault("CP_HOST_AGENT_ADDR", "http://localhost:50051"),
+		JWTSecret:     os.Getenv("JWT_SECRET"),
 	}
 
 	// Ensure the host agent address has a scheme.

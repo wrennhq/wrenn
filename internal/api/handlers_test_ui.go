@@ -109,13 +109,63 @@ const testUIHTML = `<!DOCTYPE html>
   }
   .clickable { cursor: pointer; color: #89a785; text-decoration: underline; }
   .clickable:hover { color: #aacdaa; }
+  .auth-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 8px;
+  }
+  .auth-badge.authed { background: rgba(94,140,88,0.15); color: #89a785; }
+  .auth-badge.unauthed { background: rgba(179,85,68,0.15); color: #c27b6d; }
+  .key-display {
+    background: #1b201e;
+    border: 1px solid #5e8c58;
+    border-radius: 4px;
+    padding: 8px;
+    margin-top: 8px;
+    font-size: 12px;
+    word-break: break-all;
+    color: #89a785;
+  }
 </style>
 </head>
 <body>
 
-<h1>Wrenn Sandbox Test Console</h1>
+<h1>Wrenn Sandbox Test Console <span id="auth-status" class="auth-badge unauthed">not authenticated</span></h1>
 
 <div class="grid">
+  <!-- Auth Panel -->
+  <div class="panel">
+    <h2>Authentication</h2>
+    <label>Email</label>
+    <input type="email" id="auth-email" value="" placeholder="user@example.com">
+    <label>Password</label>
+    <input type="password" id="auth-password" value="" placeholder="min 8 characters">
+    <div class="btn-row">
+      <button class="btn-green" onclick="signup()">Sign Up</button>
+      <button class="btn-blue" onclick="login()">Log In</button>
+      <button class="btn-red" onclick="logout()">Log Out</button>
+    </div>
+    <div id="auth-info" style="margin-top:8px;font-size:12px;color:#5f5c57"></div>
+  </div>
+
+  <!-- API Keys Panel -->
+  <div class="panel">
+    <h2>API Keys</h2>
+    <label>Key Name</label>
+    <input type="text" id="key-name" value="" placeholder="my-api-key">
+    <div class="btn-row">
+      <button class="btn-green" onclick="createAPIKey()">Create Key</button>
+      <button onclick="listAPIKeys()">Refresh</button>
+    </div>
+    <div id="new-key-display" style="display:none" class="key-display"></div>
+    <div id="api-keys-table"></div>
+    <label style="margin-top:12px">Active API Key</label>
+    <input type="text" id="active-api-key" value="" placeholder="wrn_...">
+  </div>
+
   <!-- Create Sandbox -->
   <div class="panel">
     <h2>Create Sandbox</h2>
@@ -189,6 +239,8 @@ const testUIHTML = `<!DOCTYPE html>
 
 <script>
 const API = '';
+let jwtToken = '';
+let activeAPIKey = '';
 
 function log(msg, level) {
   const el = document.getElementById('log');
@@ -203,8 +255,37 @@ function esc(s) {
   return d.innerHTML;
 }
 
-async function api(method, path, body) {
+function updateAuthStatus() {
+  const badge = document.getElementById('auth-status');
+  const info = document.getElementById('auth-info');
+  if (jwtToken) {
+    badge.textContent = 'authenticated';
+    badge.className = 'auth-badge authed';
+    try {
+      const payload = JSON.parse(atob(jwtToken.split('.')[1]));
+      info.textContent = 'User: ' + payload.email + ' | Team: ' + payload.team_id;
+    } catch(e) {
+      info.textContent = 'Token set';
+    }
+  } else {
+    badge.textContent = 'not authenticated';
+    badge.className = 'auth-badge unauthed';
+    info.textContent = '';
+  }
+}
+
+// API call with appropriate auth headers.
+async function api(method, path, body, authType) {
   const opts = { method, headers: {} };
+  if (authType === 'jwt' && jwtToken) {
+    opts.headers['Authorization'] = 'Bearer ' + jwtToken;
+  } else if (authType === 'apikey') {
+    const key = document.getElementById('active-api-key').value;
+    if (!key) {
+      throw new Error('No API key set. Create one first and paste it in the Active API Key field.');
+    }
+    opts.headers['X-API-Key'] = key;
+  }
   if (body) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -222,11 +303,109 @@ function statusBadge(s) {
   return '<span class="status status-' + s + '">' + s + '</span>';
 }
 
+// --- Auth ---
+
+async function signup() {
+  const email = document.getElementById('auth-email').value;
+  const password = document.getElementById('auth-password').value;
+  if (!email || !password) { log('Email and password required', 'err'); return; }
+  log('Signing up as ' + email + '...', 'info');
+  try {
+    const data = await api('POST', '/v1/auth/signup', { email, password });
+    jwtToken = data.token;
+    updateAuthStatus();
+    log('Signed up! User: ' + data.user_id + ', Team: ' + data.team_id, 'ok');
+  } catch (e) {
+    log('Signup failed: ' + e.message, 'err');
+  }
+}
+
+async function login() {
+  const email = document.getElementById('auth-email').value;
+  const password = document.getElementById('auth-password').value;
+  if (!email || !password) { log('Email and password required', 'err'); return; }
+  log('Logging in as ' + email + '...', 'info');
+  try {
+    const data = await api('POST', '/v1/auth/login', { email, password });
+    jwtToken = data.token;
+    updateAuthStatus();
+    log('Logged in! User: ' + data.user_id + ', Team: ' + data.team_id, 'ok');
+    listAPIKeys();
+  } catch (e) {
+    log('Login failed: ' + e.message, 'err');
+  }
+}
+
+function logout() {
+  jwtToken = '';
+  updateAuthStatus();
+  log('Logged out', 'info');
+}
+
+// --- API Keys ---
+
+async function createAPIKey() {
+  if (!jwtToken) { log('Log in first to create API keys', 'err'); return; }
+  const name = document.getElementById('key-name').value || 'Unnamed API Key';
+  log('Creating API key "' + name + '"...', 'info');
+  try {
+    const data = await api('POST', '/v1/api-keys', { name }, 'jwt');
+    const display = document.getElementById('new-key-display');
+    display.style.display = 'block';
+    display.textContent = 'New key (copy now — shown only once): ' + data.key;
+    document.getElementById('active-api-key').value = data.key;
+    log('API key created: ' + data.key_prefix, 'ok');
+    listAPIKeys();
+  } catch (e) {
+    log('Create API key failed: ' + e.message, 'err');
+  }
+}
+
+async function listAPIKeys() {
+  if (!jwtToken) return;
+  try {
+    const data = await api('GET', '/v1/api-keys', null, 'jwt');
+    renderAPIKeys(data);
+  } catch (e) {
+    log('List API keys failed: ' + e.message, 'err');
+  }
+}
+
+function renderAPIKeys(keys) {
+  if (!keys || keys.length === 0) {
+    document.getElementById('api-keys-table').innerHTML = '<p style="color:#5f5c57;margin-top:8px">No API keys</p>';
+    return;
+  }
+  let html = '<table><thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Last Used</th><th>Actions</th></tr></thead><tbody>';
+  for (const k of keys) {
+    html += '<tr>';
+    html += '<td>' + esc(k.name) + '</td>';
+    html += '<td style="font-size:11px">' + esc(k.key_prefix) + '</td>';
+    html += '<td>' + new Date(k.created_at).toLocaleString() + '</td>';
+    html += '<td>' + (k.last_used ? new Date(k.last_used).toLocaleString() : '-') + '</td>';
+    html += '<td><button class="btn-red" onclick="deleteAPIKey(\'' + k.id + '\')">Delete</button></td>';
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('api-keys-table').innerHTML = html;
+}
+
+async function deleteAPIKey(id) {
+  log('Deleting API key ' + id + '...', 'info');
+  try {
+    await api('DELETE', '/v1/api-keys/' + id, null, 'jwt');
+    log('Deleted API key ' + id, 'ok');
+    listAPIKeys();
+  } catch (e) {
+    log('Delete API key failed: ' + e.message, 'err');
+  }
+}
+
 // --- Sandboxes ---
 
 async function listSandboxes() {
   try {
-    const data = await api('GET', '/v1/sandboxes');
+    const data = await api('GET', '/v1/sandboxes', null, 'apikey');
     renderSandboxes(data);
   } catch (e) {
     log('List sandboxes failed: ' + e.message, 'err');
@@ -277,7 +456,7 @@ async function createSandbox() {
   const timeout_sec = parseInt(document.getElementById('create-timeout').value);
   log('Creating sandbox (template=' + template + ', vcpus=' + vcpus + ', mem=' + memory_mb + 'MB)...', 'info');
   try {
-    const data = await api('POST', '/v1/sandboxes', { template, vcpus, memory_mb, timeout_sec });
+    const data = await api('POST', '/v1/sandboxes', { template, vcpus, memory_mb, timeout_sec }, 'apikey');
     log('Created sandbox ' + data.id + ' [' + data.status + ']', 'ok');
     listSandboxes();
   } catch (e) {
@@ -288,7 +467,7 @@ async function createSandbox() {
 async function pauseSandbox(id) {
   log('Pausing ' + id + '...', 'info');
   try {
-    await api('POST', '/v1/sandboxes/' + id + '/pause');
+    await api('POST', '/v1/sandboxes/' + id + '/pause', null, 'apikey');
     log('Paused ' + id, 'ok');
     listSandboxes();
   } catch (e) {
@@ -299,7 +478,7 @@ async function pauseSandbox(id) {
 async function resumeSandbox(id) {
   log('Resuming ' + id + '...', 'info');
   try {
-    await api('POST', '/v1/sandboxes/' + id + '/resume');
+    await api('POST', '/v1/sandboxes/' + id + '/resume', null, 'apikey');
     log('Resumed ' + id, 'ok');
     listSandboxes();
   } catch (e) {
@@ -310,7 +489,7 @@ async function resumeSandbox(id) {
 async function destroySandbox(id) {
   log('Destroying ' + id + '...', 'info');
   try {
-    await api('DELETE', '/v1/sandboxes/' + id);
+    await api('DELETE', '/v1/sandboxes/' + id, null, 'apikey');
     log('Destroyed ' + id, 'ok');
     listSandboxes();
   } catch (e) {
@@ -334,7 +513,7 @@ async function execCmd() {
 
   log('Exec on ' + sandboxId + ': ' + cmd + ' ' + args.join(' '), 'info');
   try {
-    const data = await api('POST', '/v1/sandboxes/' + sandboxId + '/exec', { cmd, args });
+    const data = await api('POST', '/v1/sandboxes/' + sandboxId + '/exec', { cmd, args }, 'apikey');
     let text = '';
     if (data.stdout) text += data.stdout;
     if (data.stderr) text += '\n[stderr]\n' + data.stderr;
@@ -362,7 +541,7 @@ async function createSnapshot() {
   const qs = overwrite ? '?overwrite=true' : '';
   log('Creating snapshot from ' + sandbox_id + (name ? ' as "' + name + '"' : '') + '...', 'info');
   try {
-    const data = await api('POST', '/v1/snapshots' + qs, body);
+    const data = await api('POST', '/v1/snapshots' + qs, body, 'apikey');
     log('Snapshot created: ' + data.name + ' (' + (data.size_bytes / 1024 / 1024).toFixed(1) + 'MB)', 'ok');
     listSnapshots();
     listSandboxes();
@@ -373,7 +552,7 @@ async function createSnapshot() {
 
 async function listSnapshots() {
   try {
-    const data = await api('GET', '/v1/snapshots');
+    const data = await api('GET', '/v1/snapshots', null, 'apikey');
     renderSnapshots(data);
   } catch (e) {
     log('List snapshots failed: ' + e.message, 'err');
@@ -408,7 +587,7 @@ function useTemplate(name) {
 async function deleteSnapshot(name) {
   log('Deleting snapshot "' + name + '"...', 'info');
   try {
-    await api('DELETE', '/v1/snapshots/' + encodeURIComponent(name));
+    await api('DELETE', '/v1/snapshots/' + encodeURIComponent(name), null, 'apikey');
     log('Deleted snapshot "' + name + '"', 'ok');
     listSnapshots();
   } catch (e) {
@@ -428,8 +607,7 @@ document.getElementById('auto-refresh').addEventListener('change', function() {
 });
 
 // --- Init ---
-listSandboxes();
-listSnapshots();
+updateAuthStatus();
 </script>
 </body>
 </html>`

@@ -24,6 +24,11 @@ func main() {
 
 	cfg := config.Load()
 
+	if len(cfg.JWTSecret) < 32 {
+		slog.Error("JWT_SECRET must be at least 32 characters")
+		os.Exit(1)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -51,7 +56,7 @@ func main() {
 	)
 
 	// API server.
-	srv := api.New(queries, agentClient)
+	srv := api.New(queries, agentClient, pool, []byte(cfg.JWTSecret))
 
 	// Start reconciler.
 	reconciler := api.NewReconciler(queries, agentClient, "default", 30*time.Second)
