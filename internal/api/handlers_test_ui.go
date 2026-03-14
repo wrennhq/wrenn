@@ -175,8 +175,8 @@ const testUIHTML = `<!DOCTYPE html>
     <input type="number" id="create-vcpus" value="1" min="1" max="8">
     <label>Memory (MB)</label>
     <input type="number" id="create-memory" value="512" min="128" max="8192">
-    <label>Timeout (sec)</label>
-    <input type="number" id="create-timeout" value="300" min="30">
+    <label>Timeout (sec, 0 = no auto-pause)</label>
+    <input type="number" id="create-timeout" value="0" min="0">
     <div class="btn-row">
       <button class="btn-green" onclick="createSandbox()">Create</button>
     </div>
@@ -417,7 +417,7 @@ function renderSandboxes(sandboxes) {
     document.getElementById('sandboxes-table').innerHTML = '<p style="color:#5f5c57;margin-top:8px">No sandboxes</p>';
     return;
   }
-  let html = '<table><thead><tr><th>ID</th><th>Status</th><th>Template</th><th>vCPUs</th><th>Mem</th><th>Host IP</th><th>Created</th><th>Actions</th></tr></thead><tbody>';
+  let html = '<table><thead><tr><th>ID</th><th>Status</th><th>Template</th><th>vCPUs</th><th>Mem</th><th>TTL</th><th>Host IP</th><th>Created</th><th>Actions</th></tr></thead><tbody>';
   for (const sb of sandboxes) {
     html += '<tr>';
     html += '<td class="clickable" onclick="useSandbox(\'' + sb.id + '\')">' + sb.id + '</td>';
@@ -425,10 +425,12 @@ function renderSandboxes(sandboxes) {
     html += '<td>' + esc(sb.template) + '</td>';
     html += '<td>' + sb.vcpus + '</td>';
     html += '<td>' + sb.memory_mb + 'MB</td>';
+    html += '<td>' + (sb.timeout_sec ? sb.timeout_sec + 's' : '-') + '</td>';
     html += '<td>' + (sb.host_ip || '-') + '</td>';
     html += '<td>' + new Date(sb.created_at).toLocaleTimeString() + '</td>';
     html += '<td><div class="btn-row">';
     if (sb.status === 'running') {
+      html += '<button class="btn-blue" onclick="pingSandbox(\'' + sb.id + '\')">Ping</button>';
       html += '<button class="btn-amber" onclick="pauseSandbox(\'' + sb.id + '\')">Pause</button>';
       html += '<button class="btn-red" onclick="destroySandbox(\'' + sb.id + '\')">Destroy</button>';
     } else if (sb.status === 'paused') {
@@ -494,6 +496,16 @@ async function destroySandbox(id) {
     listSandboxes();
   } catch (e) {
     log('Destroy failed: ' + e.message, 'err');
+  }
+}
+
+async function pingSandbox(id) {
+  log('Pinging ' + id + '...', 'info');
+  try {
+    await api('POST', '/v1/sandboxes/' + id + '/ping', null, 'apikey');
+    log('Pinged ' + id + ' — inactivity timer reset', 'ok');
+  } catch (e) {
+    log('Ping failed: ' + e.message, 'err');
   }
 }
 

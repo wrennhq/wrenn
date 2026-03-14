@@ -249,6 +249,40 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/sandboxes/{id}/ping:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Reset sandbox inactivity timer
+      operationId: pingSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Resets the last_active_at timestamp for a running sandbox, preventing
+        the auto-pause TTL from expiring. Use this as a keepalive for sandboxes
+        that are idle but should remain running.
+      responses:
+        "204":
+          description: Ping acknowledged, inactivity timer reset
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/sandboxes/{id}/pause:
     parameters:
       - name: id
@@ -721,7 +755,11 @@ components:
           default: 512
         timeout_sec:
           type: integer
-          default: 300
+          default: 0
+          description: >
+            Auto-pause TTL in seconds. The sandbox is automatically paused
+            after this duration of inactivity (no exec or ping). 0 means
+            no auto-pause.
 
     Sandbox:
       type: object

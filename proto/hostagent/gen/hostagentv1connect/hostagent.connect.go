@@ -71,6 +71,9 @@ const (
 	// HostAgentServiceReadFileStreamProcedure is the fully-qualified name of the HostAgentService's
 	// ReadFileStream RPC.
 	HostAgentServiceReadFileStreamProcedure = "/hostagent.v1.HostAgentService/ReadFileStream"
+	// HostAgentServicePingSandboxProcedure is the fully-qualified name of the HostAgentService's
+	// PingSandbox RPC.
+	HostAgentServicePingSandboxProcedure = "/hostagent.v1.HostAgentService/PingSandbox"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -103,6 +106,8 @@ type HostAgentServiceClient interface {
 	WriteFileStream(context.Context) *connect.ClientStreamForClient[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse]
 	// ReadFileStream reads a file from a sandbox and streams it back in chunks.
 	ReadFileStream(context.Context, *connect.Request[gen.ReadFileStreamRequest]) (*connect.ServerStreamForClient[gen.ReadFileStreamResponse], error)
+	// PingSandbox resets the inactivity timer for a running sandbox.
+	PingSandbox(context.Context, *connect.Request[gen.PingSandboxRequest]) (*connect.Response[gen.PingSandboxResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -194,6 +199,12 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("ReadFileStream")),
 			connect.WithClientOptions(opts...),
 		),
+		pingSandbox: connect.NewClient[gen.PingSandboxRequest, gen.PingSandboxResponse](
+			httpClient,
+			baseURL+HostAgentServicePingSandboxProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("PingSandbox")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -212,6 +223,7 @@ type hostAgentServiceClient struct {
 	execStream      *connect.Client[gen.ExecStreamRequest, gen.ExecStreamResponse]
 	writeFileStream *connect.Client[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse]
 	readFileStream  *connect.Client[gen.ReadFileStreamRequest, gen.ReadFileStreamResponse]
+	pingSandbox     *connect.Client[gen.PingSandboxRequest, gen.PingSandboxResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -279,6 +291,11 @@ func (c *hostAgentServiceClient) ReadFileStream(ctx context.Context, req *connec
 	return c.readFileStream.CallServerStream(ctx, req)
 }
 
+// PingSandbox calls hostagent.v1.HostAgentService.PingSandbox.
+func (c *hostAgentServiceClient) PingSandbox(ctx context.Context, req *connect.Request[gen.PingSandboxRequest]) (*connect.Response[gen.PingSandboxResponse], error) {
+	return c.pingSandbox.CallUnary(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -309,6 +326,8 @@ type HostAgentServiceHandler interface {
 	WriteFileStream(context.Context, *connect.ClientStream[gen.WriteFileStreamRequest]) (*connect.Response[gen.WriteFileStreamResponse], error)
 	// ReadFileStream reads a file from a sandbox and streams it back in chunks.
 	ReadFileStream(context.Context, *connect.Request[gen.ReadFileStreamRequest], *connect.ServerStream[gen.ReadFileStreamResponse]) error
+	// PingSandbox resets the inactivity timer for a running sandbox.
+	PingSandbox(context.Context, *connect.Request[gen.PingSandboxRequest]) (*connect.Response[gen.PingSandboxResponse], error)
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -396,6 +415,12 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("ReadFileStream")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServicePingSandboxHandler := connect.NewUnaryHandler(
+		HostAgentServicePingSandboxProcedure,
+		svc.PingSandbox,
+		connect.WithSchema(hostAgentServiceMethods.ByName("PingSandbox")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -424,6 +449,8 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceWriteFileStreamHandler.ServeHTTP(w, r)
 		case HostAgentServiceReadFileStreamProcedure:
 			hostAgentServiceReadFileStreamHandler.ServeHTTP(w, r)
+		case HostAgentServicePingSandboxProcedure:
+			hostAgentServicePingSandboxHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -483,4 +510,8 @@ func (UnimplementedHostAgentServiceHandler) WriteFileStream(context.Context, *co
 
 func (UnimplementedHostAgentServiceHandler) ReadFileStream(context.Context, *connect.Request[gen.ReadFileStreamRequest], *connect.ServerStream[gen.ReadFileStreamResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ReadFileStream is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) PingSandbox(context.Context, *connect.Request[gen.PingSandboxRequest]) (*connect.Response[gen.PingSandboxResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PingSandbox is not implemented"))
 }

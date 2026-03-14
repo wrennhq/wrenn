@@ -99,9 +99,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.MemoryMB <= 0 {
 		req.MemoryMB = 512
 	}
-	if req.TimeoutSec <= 0 {
-		req.TimeoutSec = 300
-	}
+	// timeout_sec = 0 means no auto-pause; only set if explicitly requested.
 
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
@@ -259,7 +257,8 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.agent.ResumeSandbox(ctx, connect.NewRequest(&pb.ResumeSandboxRequest{
-		SandboxId: sandboxID,
+		SandboxId:  sandboxID,
+		TimeoutSec: sb.TimeoutSec,
 	}))
 	if err != nil {
 		status, code, msg := agentErrToHTTP(err)
@@ -283,6 +282,44 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
+}
+
+// Ping handles POST /v1/sandboxes/{id}/ping.
+// Resets the inactivity timer for a running sandbox.
+func (h *sandboxHandler) Ping(w http.ResponseWriter, r *http.Request) {
+	sandboxID := chi.URLParam(r, "id")
+	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
+
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		return
+	}
+	if sb.Status != "running" {
+		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+		return
+	}
+
+	if _, err := h.agent.PingSandbox(ctx, connect.NewRequest(&pb.PingSandboxRequest{
+		SandboxId: sandboxID,
+	})); err != nil {
+		status, code, msg := agentErrToHTTP(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	if err := h.db.UpdateLastActive(ctx, db.UpdateLastActiveParams{
+		ID: sandboxID,
+		LastActiveAt: pgtype.Timestamptz{
+			Time:  time.Now(),
+			Valid: true,
+		},
+	}); err != nil {
+		slog.Warn("ping: failed to update last_active_at in DB", "sandbox_id", sandboxID, "error", err)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Destroy handles DELETE /v1/sandboxes/{id}.

@@ -59,7 +59,7 @@ func main() {
 	srv := api.New(queries, agentClient, pool, []byte(cfg.JWTSecret))
 
 	// Start reconciler.
-	reconciler := api.NewReconciler(queries, agentClient, "default", 30*time.Second)
+	reconciler := api.NewReconciler(queries, agentClient, "default", 5*time.Second)
 	reconciler.Start(ctx)
 
 	httpServer := &http.Server{

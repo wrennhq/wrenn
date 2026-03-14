@@ -40,6 +40,9 @@ type Manager struct {
 	mu     sync.RWMutex
 	boxes  map[string]*sandboxState
 	stopCh chan struct{}
+
+	autoPausedMu  sync.Mutex
+	autoPausedIDs []string
 }
 
 // sandboxState holds the runtime state for a single sandbox.
@@ -459,7 +462,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 // Resume restores a paused sandbox from its snapshot using UFFD for
 // lazy memory loading. The sandbox gets a new network slot.
-func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox, error) {
+func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) (*models.Sandbox, error) {
 	snapDir := m.cfg.SnapshotsDir
 	if !snapshot.Exists(snapDir, sandboxID) {
 		return nil, fmt.Errorf("no snapshot found for sandbox %s", sandboxID)
@@ -575,7 +578,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 		SandboxID:        sandboxID,
 		KernelPath:       m.cfg.KernelPath,
 		RootfsPath:       dmDev.DevicePath,
-		VCPUs:            1,                                          // Placeholder; overridden by snapshot.
+		VCPUs:            1,                                         // Placeholder; overridden by snapshot.
 		MemoryMB:         int(header.Metadata.Size / (1024 * 1024)), // Placeholder; overridden by snapshot.
 		NetworkNamespace: slot.NamespaceID,
 		TapDevice:        slot.TapName,
@@ -622,7 +625,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 			Template:     "",
 			VCPUs:        vmCfg.VCPUs,
 			MemoryMB:     vmCfg.MemoryMB,
-			TimeoutSec:   0,
+			TimeoutSec:   timeoutSec,
 			SlotIndex:    slotIdx,
 			HostIP:       slot.HostIP,
 			RootfsPath:   dmDev.DevicePath,
@@ -1033,6 +1036,33 @@ func (m *Manager) GetClient(sandboxID string) (*envdclient.Client, error) {
 	return sb.client, nil
 }
 
+// Ping resets the inactivity timer for a running sandbox.
+func (m *Manager) Ping(sandboxID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sb, ok := m.boxes[sandboxID]
+	if !ok {
+		return fmt.Errorf("sandbox not found: %s", sandboxID)
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+	sb.LastActiveAt = time.Now()
+	return nil
+}
+
+// DrainAutoPausedIDs returns and clears the list of sandbox IDs that were
+// automatically paused by the TTL reaper since the last call.
+func (m *Manager) DrainAutoPausedIDs() []string {
+	m.autoPausedMu.Lock()
+	defer m.autoPausedMu.Unlock()
+
+	ids := m.autoPausedIDs
+	m.autoPausedIDs = nil
+	return ids
+}
+
 func (m *Manager) get(sandboxID string) (*sandboxState, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1048,7 +1078,7 @@ func (m *Manager) get(sandboxID string) (*sandboxState, error) {
 // that have exceeded their TTL (timeout_sec of inactivity).
 func (m *Manager) StartTTLReaper(ctx context.Context) {
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -1064,7 +1094,7 @@ func (m *Manager) StartTTLReaper(ctx context.Context) {
 	}()
 }
 
-func (m *Manager) reapExpired(ctx context.Context) {
+func (m *Manager) reapExpired(_ context.Context) {
 	m.mu.RLock()
 	var expired []string
 	now := time.Now()
@@ -1072,7 +1102,7 @@ func (m *Manager) reapExpired(ctx context.Context) {
 		if sb.TimeoutSec <= 0 {
 			continue
 		}
-		if sb.Status != models.StatusRunning && sb.Status != models.StatusPaused {
+		if sb.Status != models.StatusRunning {
 			continue
 		}
 		if now.Sub(sb.LastActiveAt) > time.Duration(sb.TimeoutSec)*time.Second {
@@ -1082,10 +1112,23 @@ func (m *Manager) reapExpired(ctx context.Context) {
 	m.mu.RUnlock()
 
 	for _, id := range expired {
-		slog.Info("TTL expired, destroying sandbox", "id", id)
-		if err := m.Destroy(ctx, id); err != nil {
-			slog.Warn("TTL reap failed", "id", id, "error", err)
+		slog.Info("TTL expired, auto-pausing sandbox", "id", id)
+		// Use a detached context so that an app shutdown does not cancel
+		// a pause mid-flight, which would leave the VM frozen without a
+		// valid snapshot.
+		pauseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		err := m.Pause(pauseCtx, id)
+		cancel()
+		if err != nil {
+			slog.Warn("TTL auto-pause failed, destroying sandbox", "id", id, "error", err)
+			if destroyErr := m.Destroy(context.Background(), id); destroyErr != nil {
+				slog.Warn("TTL destroy after failed pause also failed", "id", id, "error", destroyErr)
+			}
+			continue
 		}
+		m.autoPausedMu.Lock()
+		m.autoPausedIDs = append(m.autoPausedIDs, id)
+		m.autoPausedMu.Unlock()
 	}
 }
 

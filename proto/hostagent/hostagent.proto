@@ -45,6 +45,10 @@ service HostAgentService {
 
   // ReadFileStream reads a file from a sandbox and streams it back in chunks.
   rpc ReadFileStream(ReadFileStreamRequest) returns (stream ReadFileStreamResponse);
+
+  // PingSandbox resets the inactivity timer for a running sandbox.
+  rpc PingSandbox(PingSandboxRequest) returns (PingSandboxResponse);
+
 }
 
 message CreateSandboxRequest {
@@ -60,8 +64,8 @@ message CreateSandboxRequest {
   // Memory in MB (default: 512).
   int32 memory_mb = 3;
 
-  // TTL in seconds. Sandbox is auto-destroyed after this duration of
-  // inactivity. 0 means no auto-destroy.
+  // TTL in seconds. Sandbox is auto-paused after this duration of
+  // inactivity. 0 means no auto-pause.
   int32 timeout_sec = 4;
 }
 
@@ -85,6 +89,10 @@ message PauseSandboxResponse {}
 
 message ResumeSandboxRequest {
   string sandbox_id = 1;
+
+  // TTL in seconds restored from the DB so the reaper can auto-pause
+  // the sandbox again after inactivity. 0 means no auto-pause.
+  int32 timeout_sec = 2;
 }
 
 message ResumeSandboxResponse {
@@ -127,6 +135,10 @@ message ListSandboxesRequest {}
 
 message ListSandboxesResponse {
   repeated SandboxInfo sandboxes = 1;
+
+  // IDs of sandboxes that were automatically paused by the TTL reaper
+  // since the last call. Drained on read.
+  repeated string auto_paused_sandbox_ids = 2;
 }
 
 message SandboxInfo {
@@ -215,3 +227,12 @@ message ReadFileStreamRequest {
 message ReadFileStreamResponse {
   bytes chunk = 1;
 }
+
+// ── Ping ────────────────────────────────────────────────────────────
+
+message PingSandboxRequest {
+  string sandbox_id = 1;
+}
+
+message PingSandboxResponse {}
+

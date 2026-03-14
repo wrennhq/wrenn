@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -71,7 +72,7 @@ func (s *Server) ResumeSandbox(
 	ctx context.Context,
 	req *connect.Request[pb.ResumeSandboxRequest],
 ) (*connect.Response[pb.ResumeSandboxResponse], error) {
-	sb, err := s.mgr.Resume(ctx, req.Msg.SandboxId)
+	sb, err := s.mgr.Resume(ctx, req.Msg.SandboxId, int(req.Msg.TimeoutSec))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -104,6 +105,19 @@ func (s *Server) DeleteSnapshot(
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("delete snapshot: %w", err))
 	}
 	return connect.NewResponse(&pb.DeleteSnapshotResponse{}), nil
+}
+
+func (s *Server) PingSandbox(
+	ctx context.Context,
+	req *connect.Request[pb.PingSandboxRequest],
+) (*connect.Response[pb.PingSandboxResponse], error) {
+	if err := s.mgr.Ping(req.Msg.SandboxId); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewResponse(&pb.PingSandboxResponse{}), nil
 }
 
 func (s *Server) Exec(
@@ -394,6 +408,7 @@ func (s *Server) ListSandboxes(
 	}
 
 	return connect.NewResponse(&pb.ListSandboxesResponse{
-		Sandboxes: infos,
+		Sandboxes:            infos,
+		AutoPausedSandboxIds: s.mgr.DrainAutoPausedIDs(),
 	}), nil
 }

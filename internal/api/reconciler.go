@@ -49,7 +49,8 @@ func (rc *Reconciler) Start(ctx context.Context) {
 }
 
 func (rc *Reconciler) reconcile(ctx context.Context) {
-	// Get all sandboxes the host agent knows about.
+	// Single RPC returns both the running sandbox list and any IDs that
+	// were auto-paused by the TTL reaper since the last call.
 	resp, err := rc.agent.ListSandboxes(ctx, connect.NewRequest(&pb.ListSandboxesRequest{}))
 	if err != nil {
 		slog.Warn("reconciler: failed to list sandboxes from host agent", "error", err)
@@ -60,6 +61,12 @@ func (rc *Reconciler) reconcile(ctx context.Context) {
 	alive := make(map[string]struct{}, len(resp.Msg.Sandboxes))
 	for _, sb := range resp.Msg.Sandboxes {
 		alive[sb.SandboxId] = struct{}{}
+	}
+
+	// Build auto-paused set from the same response.
+	autoPausedSet := make(map[string]struct{}, len(resp.Msg.AutoPausedSandboxIds))
+	for _, id := range resp.Msg.AutoPausedSandboxIds {
+		autoPausedSet[id] = struct{}{}
 	}
 
 	// Get all DB sandboxes for this host that are running.
@@ -86,12 +93,34 @@ func (rc *Reconciler) reconcile(ctx context.Context) {
 		return
 	}
 
-	slog.Info("reconciler: marking stale sandboxes as stopped", "count", len(stale), "ids", stale)
+	// Split stale sandboxes into those auto-paused by the TTL reaper vs
+	// those that crashed/were orphaned.
+	var toPause, toStop []string
+	for _, id := range stale {
+		if _, ok := autoPausedSet[id]; ok {
+			toPause = append(toPause, id)
+		} else {
+			toStop = append(toStop, id)
+		}
+	}
 
-	if err := rc.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
-		Column1: stale,
-		Status:  "stopped",
-	}); err != nil {
-		slog.Warn("reconciler: failed to update stale sandboxes", "error", err)
+	if len(toPause) > 0 {
+		slog.Info("reconciler: marking auto-paused sandboxes", "count", len(toPause), "ids", toPause)
+		if err := rc.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
+			Column1: toPause,
+			Status:  "paused",
+		}); err != nil {
+			slog.Warn("reconciler: failed to mark auto-paused sandboxes", "error", err)
+		}
+	}
+
+	if len(toStop) > 0 {
+		slog.Info("reconciler: marking stale sandboxes as stopped", "count", len(toStop), "ids", toStop)
+		if err := rc.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
+			Column1: toStop,
+			Status:  "stopped",
+		}); err != nil {
+			slog.Warn("reconciler: failed to update stale sandboxes", "error", err)
+		}
 	}
 }

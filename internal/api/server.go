@@ -64,6 +64,7 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 			r.Delete("/", sandbox.Destroy)
 			r.Post("/exec", exec.Exec)
 			r.Get("/exec/stream", execStream.ExecStream)
+			r.Post("/ping", sandbox.Ping)
 			r.Post("/pause", sandbox.Pause)
 			r.Post("/resume", sandbox.Resume)
 			r.Post("/files/write", files.Upload)
