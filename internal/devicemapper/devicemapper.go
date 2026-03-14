@@ -5,6 +5,7 @@
 package devicemapper
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -155,12 +157,12 @@ func CreateSnapshot(name, originLoopDev, cowPath string, originSizeBytes int64) 
 // RestoreSnapshot re-attaches a dm-snapshot from an existing persistent CoW file.
 // The CoW file must have been created with the persistent (P) flag and still
 // contain valid dm-snapshot metadata.
-func RestoreSnapshot(name, originLoopDev, cowPath string, originSizeBytes int64) (*SnapshotDevice, error) {
+func RestoreSnapshot(ctx context.Context, name, originLoopDev, cowPath string, originSizeBytes int64) (*SnapshotDevice, error) {
 	// Defensively remove a stale device with the same name. This can happen
 	// if a previous pause failed to clean up the dm device (e.g. "device busy").
 	if dmDeviceExists(name) {
 		slog.Warn("removing stale dm device before restore", "name", name)
-		if err := dmsetupRemove(name); err != nil {
+		if err := dmsetupRemove(ctx, name); err != nil {
 			return nil, fmt.Errorf("remove stale device %s: %w", name, err)
 		}
 	}
@@ -197,8 +199,8 @@ func RestoreSnapshot(name, originLoopDev, cowPath string, originSizeBytes int64)
 
 // RemoveSnapshot tears down a dm-snapshot device and its CoW loop device.
 // The CoW file is NOT deleted — the caller decides whether to keep or remove it.
-func RemoveSnapshot(dev *SnapshotDevice) error {
-	if err := dmsetupRemove(dev.Name); err != nil {
+func RemoveSnapshot(ctx context.Context, dev *SnapshotDevice) error {
+	if err := dmsetupRemove(ctx, dev.Name); err != nil {
 		return fmt.Errorf("dmsetup remove %s: %w", dev.Name, err)
 	}
 
@@ -259,7 +261,7 @@ func CleanupStaleDevices() {
 		}
 
 		slog.Warn("removing stale dm-snapshot device", "name", name)
-		if err := dmsetupRemove(name); err != nil {
+		if err := dmsetupRemove(context.Background(), name); err != nil {
 			slog.Warn("failed to remove stale device", "name", name, "error", err)
 		}
 	}
@@ -307,13 +309,40 @@ func dmDeviceExists(name string) bool {
 	return exec.Command("dmsetup", "info", name).Run() == nil
 }
 
-// dmsetupRemove removes a device-mapper device.
-func dmsetupRemove(name string) error {
-	cmd := exec.Command("dmsetup", "remove", name)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+// dmsetupRemove removes a device-mapper device, retrying on transient
+// "device busy" errors that occur when the kernel hasn't fully released
+// the device after a Firecracker process exits.
+func dmsetupRemove(ctx context.Context, name string) error {
+	var lastErr error
+	for attempt := range 5 {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("context cancelled while retrying dmsetup remove %s: %w", name, lastErr)
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		cmd := exec.CommandContext(ctx, "dmsetup", "remove", name)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		// If the context was cancelled, the process was killed and its
+		// output is unreliable. Return the context error directly so
+		// callers can distinguish cancellation from a real dm failure.
+		if ctx.Err() != nil {
+			return fmt.Errorf("dmsetup remove %s: %w", name, ctx.Err())
+		}
+		outStr := strings.TrimSpace(string(out))
+		lastErr = fmt.Errorf("%s: %w", outStr, err)
+		// Only retry on transient "busy" errors. Other failures
+		// (device not found, permission denied) are permanent.
+		if !strings.Contains(outStr, "Device or resource busy") {
+			return lastErr
+		}
+		slog.Debug("dmsetup remove retry", "name", name, "attempt", attempt+1, "error", lastErr)
 	}
-	return nil
+	return lastErr
 }
 
 // createSparseFile creates a sparse file of the given size.

@@ -139,7 +139,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 	// Allocate network slot.
 	slotIdx, err := m.slots.Allocate()
 	if err != nil {
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("allocate network slot: %w", err)
@@ -149,7 +149,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 	// Set up network.
 	if err := network.CreateNetwork(slot); err != nil {
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("create network: %w", err)
@@ -173,7 +173,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 	if _, err := m.vm.Create(ctx, vmCfg); err != nil {
 		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("create VM: %w", err)
@@ -188,7 +188,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
 		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("wait for envd: %w", err)
@@ -262,7 +262,7 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 
 	// Tear down dm-snapshot and release the base image loop device.
 	if sb.dmDevice != nil {
-		if err := devicemapper.RemoveSnapshot(sb.dmDevice); err != nil {
+		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("dm-snapshot remove error", "id", sb.ID, "error", err)
 		}
 		os.Remove(sb.dmDevice.CowPath)
@@ -304,8 +304,18 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		snapshotType = "Diff"
 	}
 
+	// resumeOnError unpauses the VM so the sandbox stays usable when a
+	// post-freeze step fails. If the resume itself fails, the sandbox is
+	// left frozen — the caller should destroy it.
+	resumeOnError := func() {
+		if err := m.vm.Resume(ctx, sandboxID); err != nil {
+			slog.Error("failed to resume VM after pause error — sandbox is frozen", "id", sandboxID, "error", err)
+		}
+	}
+
 	// Step 2: Take VM state snapshot (snapfile + memfile).
 	if err := snapshot.EnsureDir(m.cfg.SnapshotsDir, sandboxID); err != nil {
+		resumeOnError()
 		return fmt.Errorf("create snapshot dir: %w", err)
 	}
 
@@ -316,6 +326,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	snapshotStart := time.Now()
 	if err := m.vm.Snapshot(ctx, sandboxID, snapPath, rawMemPath, snapshotType); err != nil {
 		warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+		resumeOnError()
 		return fmt.Errorf("create VM snapshot: %w", err)
 	}
 	slog.Debug("pause: FC snapshot created", "id", sandboxID, "type", snapshotType, "elapsed", time.Since(snapshotStart))
@@ -330,6 +341,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		diffPath := snapshot.MemDiffPathForBuild(m.cfg.SnapshotsDir, sandboxID, buildID)
 		if _, err := snapshot.ProcessMemfileWithParent(rawMemPath, diffPath, headerPath, sb.parent.header, buildID); err != nil {
 			warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+			resumeOnError()
 			return fmt.Errorf("process memfile with parent: %w", err)
 		}
 
@@ -339,6 +351,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 			if prevPath != dstPath {
 				if err := copyFile(prevPath, dstPath); err != nil {
 					warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+					resumeOnError()
 					return fmt.Errorf("copy parent diff file: %w", err)
 				}
 			}
@@ -348,6 +361,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		diffPath := snapshot.MemDiffPath(m.cfg.SnapshotsDir, sandboxID)
 		if _, err := snapshot.ProcessMemfile(rawMemPath, diffPath, headerPath, buildID); err != nil {
 			warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+			resumeOnError()
 			return fmt.Errorf("process memfile: %w", err)
 		}
 	}
@@ -363,15 +377,16 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 	// Step 5: Now that FC is gone, safely remove the dm-snapshot and save the CoW.
 	if sb.dmDevice != nil {
-		if err := devicemapper.RemoveSnapshot(sb.dmDevice); err != nil {
+		if err := devicemapper.RemoveSnapshot(ctx, sb.dmDevice); err != nil {
 			// Hard error: if the dm device isn't removed, the CoW file is still
-			// in use and we can't safely move it. The snapshot files from step 2-3
-			// are cleaned up, but the sandbox resources remain so the user can retry.
+			// in use and we can't safely move it. The VM is already destroyed so
+			// the sandbox is unrecoverable — clean up remaining resources.
+			// Note: we intentionally skip m.loops.Release here because the stale
+			// dm device still references the origin loop device. Detaching it now
+			// would corrupt the dm device. CleanupStaleDevices handles this on
+			// next agent startup.
 			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
 			m.slots.Release(sb.SlotIndex)
-			if sb.baseImagePath != "" {
-				m.loops.Release(sb.baseImagePath)
-			}
 			if sb.uffdSocketPath != "" {
 				os.Remove(sb.uffdSocketPath)
 			}
@@ -386,6 +401,18 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		snapshotCow := snapshot.CowPath(m.cfg.SnapshotsDir, sandboxID)
 		if err := os.Rename(sb.dmDevice.CowPath, snapshotCow); err != nil {
 			warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+			// VM and dm-snapshot are already gone — clean up remaining resources.
+			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
+			m.slots.Release(sb.SlotIndex)
+			if sb.baseImagePath != "" {
+				m.loops.Release(sb.baseImagePath)
+			}
+			if sb.uffdSocketPath != "" {
+				os.Remove(sb.uffdSocketPath)
+			}
+			m.mu.Lock()
+			delete(m.boxes, sandboxID)
+			m.mu.Unlock()
 			return fmt.Errorf("move cow file: %w", err)
 		}
 
@@ -394,6 +421,18 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 			BaseTemplate: sb.baseImagePath,
 		}); err != nil {
 			warnErr("snapshot dir cleanup error", sandboxID, snapshot.Remove(m.cfg.SnapshotsDir, sandboxID))
+			// VM and dm-snapshot are already gone — clean up remaining resources.
+			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
+			m.slots.Release(sb.SlotIndex)
+			if sb.baseImagePath != "" {
+				m.loops.Release(sb.baseImagePath)
+			}
+			if sb.uffdSocketPath != "" {
+				os.Remove(sb.uffdSocketPath)
+			}
+			m.mu.Lock()
+			delete(m.boxes, sandboxID)
+			m.mu.Unlock()
 			return fmt.Errorf("write rootfs meta: %w", err)
 		}
 	}
@@ -489,7 +528,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 
 	// Restore dm-snapshot from existing persistent CoW file.
 	dmName := "wrenn-" + sandboxID
-	dmDev, err := devicemapper.RestoreSnapshot(dmName, originLoop, cowPath, originSize)
+	dmDev, err := devicemapper.RestoreSnapshot(ctx, dmName, originLoop, cowPath, originSize)
 	if err != nil {
 		source.Close()
 		m.loops.Release(baseImagePath)
@@ -501,7 +540,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 	slotIdx, err := m.slots.Allocate()
 	if err != nil {
 		source.Close()
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		rollbackCow()
 		m.loops.Release(baseImagePath)
 		return nil, fmt.Errorf("allocate network slot: %w", err)
@@ -511,7 +550,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 	if err := network.CreateNetwork(slot); err != nil {
 		source.Close()
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		rollbackCow()
 		m.loops.Release(baseImagePath)
 		return nil, fmt.Errorf("create network: %w", err)
@@ -525,7 +564,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 		source.Close()
 		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		rollbackCow()
 		m.loops.Release(baseImagePath)
 		return nil, fmt.Errorf("start uffd server: %w", err)
@@ -536,8 +575,8 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 		SandboxID:        sandboxID,
 		KernelPath:       m.cfg.KernelPath,
 		RootfsPath:       dmDev.DevicePath,
-		VCPUs:            int(header.Metadata.Size / (1024 * 1024)), // Will be overridden by snapshot.
-		MemoryMB:         int(header.Metadata.Size / (1024 * 1024)),
+		VCPUs:            1,                                          // Placeholder; overridden by snapshot.
+		MemoryMB:         int(header.Metadata.Size / (1024 * 1024)), // Placeholder; overridden by snapshot.
 		NetworkNamespace: slot.NamespaceID,
 		TapDevice:        slot.TapName,
 		TapMAC:           slot.TapMAC,
@@ -552,7 +591,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 		source.Close()
 		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		rollbackCow()
 		m.loops.Release(baseImagePath)
 		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
@@ -569,8 +608,8 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) (*models.Sandbox
 		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
 		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
-		os.Remove(cowPath)
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
+		rollbackCow()
 		m.loops.Release(baseImagePath)
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
@@ -709,7 +748,7 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID, name string) (i
 	// Temporarily restore the dm-snapshot to read the merged view.
 	cowPath := snapshot.CowPath(m.cfg.SnapshotsDir, sandboxID)
 	tmpDmName := "wrenn-flatten-" + sandboxID
-	tmpDev, err := devicemapper.RestoreSnapshot(tmpDmName, originLoop, cowPath, originSize)
+	tmpDev, err := devicemapper.RestoreSnapshot(ctx, tmpDmName, originLoop, cowPath, originSize)
 	if err != nil {
 		m.loops.Release(meta.BaseTemplate)
 		warnErr("template dir cleanup error", name, snapshot.Remove(m.cfg.ImagesDir, name))
@@ -721,7 +760,7 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID, name string) (i
 	flattenErr := devicemapper.FlattenSnapshot(tmpDev.DevicePath, flattenedPath)
 
 	// Always clean up the temporary dm device.
-	warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(tmpDev))
+	warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), tmpDev))
 	m.loops.Release(meta.BaseTemplate)
 
 	if flattenErr != nil {
@@ -810,7 +849,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 	slotIdx, err := m.slots.Allocate()
 	if err != nil {
 		source.Close()
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("allocate network slot: %w", err)
@@ -820,7 +859,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 	if err := network.CreateNetwork(slot); err != nil {
 		source.Close()
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("create network: %w", err)
@@ -834,7 +873,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 		source.Close()
 		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("start uffd server: %w", err)
@@ -861,7 +900,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 		source.Close()
 		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
@@ -878,7 +917,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
 		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
 		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(dmDev))
+		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("wait for envd: %w", err)
