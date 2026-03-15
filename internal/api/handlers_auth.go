@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
@@ -81,7 +82,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	_, err = qtx.InsertUser(ctx, db.InsertUserParams{
 		ID:           userID,
 		Email:        req.Email,
-		PasswordHash: passwordHash,
+		PasswordHash: pgtype.Text{String: passwordHash, Valid: true},
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -158,7 +159,11 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := auth.CheckPassword(user.PasswordHash, req.Password); err != nil {
+	if !user.PasswordHash.Valid {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
+		return
+	}
+	if err := auth.CheckPassword(user.PasswordHash.String, req.Password); err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
 		return
 	}

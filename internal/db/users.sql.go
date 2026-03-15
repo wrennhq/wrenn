@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getUserByEmail = `-- name: GetUserByEmail :one
@@ -50,13 +52,37 @@ RETURNING id, email, password_hash, created_at, updated_at
 `
 
 type InsertUserParams struct {
-	ID           string `json:"id"`
-	Email        string `json:"email"`
-	PasswordHash string `json:"password_hash"`
+	ID           string      `json:"id"`
+	Email        string      `json:"email"`
+	PasswordHash pgtype.Text `json:"password_hash"`
 }
 
 func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, insertUser, arg.ID, arg.Email, arg.PasswordHash)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertUserOAuth = `-- name: InsertUserOAuth :one
+INSERT INTO users (id, email)
+VALUES ($1, $2)
+RETURNING id, email, password_hash, created_at, updated_at
+`
+
+type InsertUserOAuthParams struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+func (q *Queries) InsertUserOAuth(ctx context.Context, arg InsertUserOAuthParams) (User, error) {
+	row := q.db.QueryRow(ctx, insertUserOAuth, arg.ID, arg.Email)
 	var i User
 	err := row.Scan(
 		&i.ID,

@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
@@ -21,7 +22,7 @@ type Server struct {
 }
 
 // New constructs the chi router and registers all routes.
-func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, pool *pgxpool.Pool, jwtSecret []byte) *Server {
+func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, pool *pgxpool.Pool, jwtSecret []byte, oauthRegistry *oauth.Registry, oauthRedirectURL string) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
 
@@ -32,6 +33,7 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	filesStream := newFilesStreamHandler(queries, agent)
 	snapshots := newSnapshotHandler(queries, agent)
 	authH := newAuthHandler(queries, pool, jwtSecret)
+	oauthH := newOAuthHandler(queries, pool, jwtSecret, oauthRegistry, oauthRedirectURL)
 	apiKeys := newAPIKeyHandler(queries)
 
 	// OpenAPI spec and docs.
@@ -44,6 +46,8 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	// Unauthenticated auth endpoints.
 	r.Post("/v1/auth/signup", authH.Signup)
 	r.Post("/v1/auth/login", authH.Login)
+	r.Get("/v1/auth/oauth/{provider}", oauthH.Redirect)
+	r.Get("/v1/auth/oauth/{provider}/callback", oauthH.Callback)
 
 	// JWT-authenticated: API key management.
 	r.Route("/v1/api-keys", func(r chi.Router) {

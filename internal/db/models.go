@@ -8,6 +8,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type OauthProvider struct {
+	Provider   string             `json:"provider"`
+	ProviderID string             `json:"provider_id"`
+	UserID     string             `json:"user_id"`
+	Email      string             `json:"email"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type Sandbox struct {
 	ID           string             `json:"id"`
 	HostID       string             `json:"host_id"`
@@ -55,7 +63,7 @@ type Template struct {
 type User struct {
 	ID           string             `json:"id"`
 	Email        string             `json:"email"`
-	PasswordHash string             `json:"password_hash"`
+	PasswordHash pgtype.Text        `json:"password_hash"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }

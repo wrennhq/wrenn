@@ -67,6 +67,73 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/auth/oauth/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [github]
+        description: OAuth provider name
+
+    get:
+      summary: Start OAuth login flow
+      operationId: oauthRedirect
+      tags: [auth]
+      description: |
+        Redirects the user to the OAuth provider's authorization page.
+        Sets a short-lived CSRF state cookie for validation on callback.
+      responses:
+        "302":
+          description: Redirect to provider authorization URL
+        "404":
+          description: Provider not found or not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/auth/oauth/{provider}/callback:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [github]
+        description: OAuth provider name
+
+    get:
+      summary: OAuth callback
+      operationId: oauthCallback
+      tags: [auth]
+      description: |
+        Handles the OAuth provider's callback after user authorization.
+        Exchanges the authorization code for a user profile, creates or
+        logs in the user, and redirects to the frontend with a JWT token.
+
+        **On success:** redirects to `{OAUTH_REDIRECT_URL}/auth/{provider}/callback?token=...&user_id=...&team_id=...&email=...`
+
+        **On error:** redirects to `{OAUTH_REDIRECT_URL}/auth/{provider}/callback?error=...`
+
+        Possible error codes: `access_denied`, `invalid_state`, `missing_code`,
+        `exchange_failed`, `email_taken`, `internal_error`.
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+          description: Authorization code from the OAuth provider
+        - name: state
+          in: query
+          schema:
+            type: string
+          description: CSRF state parameter (must match the cookie)
+      responses:
+        "302":
+          description: Redirect to frontend with token or error
+
   /v1/api-keys:
     post:
       summary: Create an API key
