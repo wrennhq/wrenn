@@ -8,15 +8,15 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/service"
 )
 
 type apiKeyHandler struct {
-	db *db.Queries
+	svc *service.APIKeyService
 }
 
-func newAPIKeyHandler(db *db.Queries) *apiKeyHandler {
-	return &apiKeyHandler{db: db}
+func newAPIKeyHandler(svc *service.APIKeyService) *apiKeyHandler {
+	return &apiKeyHandler{svc: svc}
 }
 
 type createAPIKeyRequest struct {
@@ -60,32 +60,14 @@ func (h *apiKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		req.Name = "Unnamed API Key"
-	}
-
-	plaintext, hash, err := auth.GenerateAPIKey()
+	result, err := h.svc.Create(r.Context(), ac.TeamID, ac.UserID, req.Name)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate API key")
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create API key")
 		return
 	}
 
-	keyID := id.NewAPIKeyID()
-	row, err := h.db.InsertAPIKey(r.Context(), db.InsertAPIKeyParams{
-		ID:        keyID,
-		TeamID:    ac.TeamID,
-		Name:      req.Name,
-		KeyHash:   hash,
-		KeyPrefix: auth.APIKeyPrefix(plaintext),
-		CreatedBy: ac.UserID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to create API key")
-		return
-	}
-
-	resp := apiKeyToResponse(row)
-	resp.Key = &plaintext
+	resp := apiKeyToResponse(result.Row)
+	resp.Key = &result.Plaintext
 
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -94,7 +76,7 @@ func (h *apiKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *apiKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 
-	keys, err := h.db.ListAPIKeysByTeam(r.Context(), ac.TeamID)
+	keys, err := h.svc.List(r.Context(), ac.TeamID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list API keys")
 		return
@@ -113,10 +95,7 @@ func (h *apiKeyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 	keyID := chi.URLParam(r, "id")
 
-	if err := h.db.DeleteAPIKey(r.Context(), db.DeleteAPIKeyParams{
-		ID:     keyID,
-		TeamID: ac.TeamID,
-	}); err != nil {
+	if err := h.svc.Delete(r.Context(), keyID, ac.TeamID); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete API key")
 		return
 	}

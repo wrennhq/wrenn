@@ -10,6 +10,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/service"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
@@ -26,15 +27,20 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	r := chi.NewRouter()
 	r.Use(requestLogger())
 
-	sandbox := newSandboxHandler(queries, agent)
+	// Shared service layer.
+	sandboxSvc := &service.SandboxService{DB: queries, Agent: agent}
+	apiKeySvc := &service.APIKeyService{DB: queries}
+	templateSvc := &service.TemplateService{DB: queries}
+
+	sandbox := newSandboxHandler(sandboxSvc)
 	exec := newExecHandler(queries, agent)
 	execStream := newExecStreamHandler(queries, agent)
 	files := newFilesHandler(queries, agent)
 	filesStream := newFilesStreamHandler(queries, agent)
-	snapshots := newSnapshotHandler(queries, agent)
+	snapshots := newSnapshotHandler(templateSvc, queries, agent)
 	authH := newAuthHandler(queries, pool, jwtSecret)
 	oauthH := newOAuthHandler(queries, pool, jwtSecret, oauthRegistry, oauthRedirectURL)
-	apiKeys := newAPIKeyHandler(queries)
+	apiKeys := newAPIKeyHandler(apiKeySvc)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -91,6 +97,12 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 
 // Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
+	return s.router
+}
+
+// Router returns the underlying chi router so additional routes (e.g. dashboard)
+// can be mounted on it.
+func (s *Server) Router() chi.Router {
 	return s.router
 }
 

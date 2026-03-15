@@ -3,10 +3,12 @@ package api
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -66,6 +68,30 @@ func requestLogger() func(http.Handler) http.Handler {
 
 func decodeJSON(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// serviceErrToHTTP maps a service-layer error to an HTTP status, code, and message.
+// It inspects the underlying Connect RPC error if present, otherwise returns 500.
+func serviceErrToHTTP(err error) (int, string, string) {
+	msg := err.Error()
+
+	// Check for Connect RPC errors wrapped by the service layer.
+	var connectErr *connect.Error
+	if errors.As(err, &connectErr) {
+		return agentErrToHTTP(connectErr)
+	}
+
+	// Map well-known service error patterns.
+	switch {
+	case strings.Contains(msg, "not found"):
+		return http.StatusNotFound, "not_found", msg
+	case strings.Contains(msg, "not running"), strings.Contains(msg, "not paused"):
+		return http.StatusConflict, "invalid_state", msg
+	case strings.Contains(msg, "invalid"):
+		return http.StatusBadRequest, "invalid_request", msg
+	default:
+		return http.StatusInternalServerError, "internal_error", msg
+	}
 }
 
 type statusWriter struct {

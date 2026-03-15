@@ -14,18 +14,20 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/service"
 	"git.omukk.dev/wrenn/sandbox/internal/validate"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type snapshotHandler struct {
+	svc   *service.TemplateService
 	db    *db.Queries
 	agent hostagentv1connect.HostAgentServiceClient
 }
 
-func newSnapshotHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *snapshotHandler {
-	return &snapshotHandler{db: db, agent: agent}
+func newSnapshotHandler(svc *service.TemplateService, db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *snapshotHandler {
+	return &snapshotHandler{svc: svc, db: db, agent: agent}
 }
 
 type createSnapshotRequest struct {
@@ -91,7 +93,6 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "already_exists", "snapshot name already exists; use ?overwrite=true to replace")
 			return
 		}
-		// Delete existing template record and files.
 		if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err != nil {
 			slog.Warn("failed to delete existing template", "name", req.Name, "error", err)
 		}
@@ -108,8 +109,6 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Call host agent to create snapshot. If running, the agent pauses it first.
-	// The sandbox remains paused after this call.
 	resp, err := h.agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
 		SandboxId: req.SandboxID,
 		Name:      req.Name,
@@ -129,7 +128,6 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Insert template record.
 	tmpl, err := h.db.InsertTemplate(ctx, db.InsertTemplateParams{
 		Name:      req.Name,
 		Type:      "snapshot",
@@ -149,17 +147,10 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List handles GET /v1/snapshots.
 func (h *snapshotHandler) List(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	ac := auth.MustFromContext(ctx)
+	ac := auth.MustFromContext(r.Context())
 	typeFilter := r.URL.Query().Get("type")
 
-	var templates []db.Template
-	var err error
-	if typeFilter != "" {
-		templates, err = h.db.ListTemplatesByTeamAndType(ctx, db.ListTemplatesByTeamAndTypeParams{TeamID: ac.TeamID, Type: typeFilter})
-	} else {
-		templates, err = h.db.ListTemplatesByTeam(ctx, ac.TeamID)
-	}
+	templates, err := h.svc.List(r.Context(), ac.TeamID, typeFilter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list templates")
 		return
@@ -188,7 +179,6 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete files on host agent.
 	if _, err := h.agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{
 		Name: name,
 	})); err != nil {
