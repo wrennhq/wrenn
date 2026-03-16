@@ -35,6 +35,9 @@ mkdir -p /var/lib/wrenn/images
 # Sandbox working directory
 mkdir -p /var/lib/wrenn/sandboxes
 
+# Snapshots directory
+mkdir -p /var/lib/wrenn/snapshots
+
 # Enable IP forwarding
 sysctl -w net.ipv4.ip_forward=1
 ```
@@ -53,9 +56,7 @@ CP_HOST_AGENT_ADDR=http://localhost:50051
 
 # Host agent
 AGENT_LISTEN_ADDR=:50051
-AGENT_KERNEL_PATH=/var/lib/wrenn/kernels/vmlinux
-AGENT_IMAGES_PATH=/var/lib/wrenn/images
-AGENT_SANDBOXES_PATH=/var/lib/wrenn/sandboxes
+AGENT_FILES_ROOTDIR=/var/lib/wrenn
 ```
 
 ### Run
@@ -91,7 +92,7 @@ Hosts must be registered with the control plane before they can serve sandboxes.
         --register <token-from-step-1> \
         --address 10.0.1.5:50051
    ```
-   On first startup the agent sends its specs (arch, CPU, memory, disk) to the control plane, receives a long-lived host JWT, and saves it to `AGENT_TOKEN_FILE` (default `/var/lib/wrenn/host-token`).
+   On first startup the agent sends its specs (arch, CPU, memory, disk) to the control plane, receives a long-lived host JWT, and saves it to `$AGENT_FILES_ROOTDIR/host-token`.
 
 3. **Subsequent startups** don't need `--register` — the agent loads the saved JWT automatically:
    ```bash

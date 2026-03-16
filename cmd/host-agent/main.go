@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -39,18 +40,15 @@ func main() {
 	devicemapper.CleanupStaleDevices()
 
 	listenAddr := envOrDefault("AGENT_LISTEN_ADDR", ":50051")
-	kernelPath := envOrDefault("AGENT_KERNEL_PATH", "/var/lib/wrenn/kernels/vmlinux")
-	imagesPath := envOrDefault("AGENT_IMAGES_PATH", "/var/lib/wrenn/images")
-	sandboxesPath := envOrDefault("AGENT_SANDBOXES_PATH", "/var/lib/wrenn/sandboxes")
-	snapshotsPath := envOrDefault("AGENT_SNAPSHOTS_PATH", "/var/lib/wrenn/snapshots")
+	rootDir := envOrDefault("AGENT_FILES_ROOTDIR", "/var/lib/wrenn")
 	cpURL := os.Getenv("AGENT_CP_URL")
-	tokenFile := envOrDefault("AGENT_TOKEN_FILE", "/var/lib/wrenn/host-token")
+	tokenFile := filepath.Join(rootDir, "host-token")
 
 	cfg := sandbox.Config{
-		KernelPath:   kernelPath,
-		ImagesDir:    imagesPath,
-		SandboxesDir: sandboxesPath,
-		SnapshotsDir: snapshotsPath,
+		KernelPath:   filepath.Join(rootDir, "kernels", "vmlinux"),
+		ImagesDir:    filepath.Join(rootDir, "images"),
+		SandboxesDir: filepath.Join(rootDir, "sandboxes"),
+		SnapshotsDir: filepath.Join(rootDir, "snapshots"),
 	}
 
 	mgr := sandbox.New(cfg)

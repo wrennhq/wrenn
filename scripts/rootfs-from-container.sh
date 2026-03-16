@@ -10,10 +10,10 @@
 #
 # Arguments:
 #   container   — Docker container name or ID to export
-#   image_name  — Directory name under AGENT_IMAGES_PATH (e.g. "waitlist")
+#   image_name  — Directory name under images dir (e.g. "waitlist")
 #
 # Output:
-#   ${AGENT_IMAGES_PATH}/<image_name>/rootfs.ext4
+#   ${AGENT_FILES_ROOTDIR}/images/<image_name>/rootfs.ext4
 #
 # Requires: docker, mkfs.ext4, resize2fs, e2fsck, make (for building envd)
 # Sudo is used only for mount/umount/copy-into-image operations.
@@ -22,7 +22,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-AGENT_IMAGES_PATH="${AGENT_IMAGES_PATH:-/var/lib/wrenn/images}"
+AGENT_FILES_ROOTDIR="${AGENT_FILES_ROOTDIR:-/var/lib/wrenn}"
+AGENT_IMAGES_PATH="${AGENT_FILES_ROOTDIR}/images"
 
 if [ $# -lt 2 ]; then
     echo "Usage: $0 <container> <image_name>"
