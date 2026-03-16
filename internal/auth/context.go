@@ -33,3 +33,31 @@ func MustFromContext(ctx context.Context) AuthContext {
 	}
 	return a
 }
+
+const hostCtxKey contextKey = 1
+
+// HostContext is stamped into request context by host token middleware.
+type HostContext struct {
+	HostID string
+}
+
+// WithHostContext returns a new context with the given HostContext.
+func WithHostContext(ctx context.Context, h HostContext) context.Context {
+	return context.WithValue(ctx, hostCtxKey, h)
+}
+
+// HostFromContext retrieves the HostContext. Returns zero value and false if absent.
+func HostFromContext(ctx context.Context) (HostContext, bool) {
+	h, ok := ctx.Value(hostCtxKey).(HostContext)
+	return h, ok
+}
+
+// MustHostFromContext retrieves the HostContext. Panics if absent — only call
+// inside handlers behind host token middleware.
+func MustHostFromContext(ctx context.Context) HostContext {
+	h, ok := HostFromContext(ctx)
+	if !ok {
+		panic("auth: MustHostFromContext called on unauthenticated request")
+	}
+	return h
+}

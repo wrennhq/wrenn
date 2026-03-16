@@ -64,14 +64,49 @@ AGENT_SANDBOXES_PATH=/var/lib/wrenn/sandboxes
 # Apply database migrations
 make migrate-up
 
-# Start host agent (requires root)
-sudo ./builds/wrenn-agent
-
 # Start control plane
 ./builds/wrenn-cp
 ```
 
-Control plane listens on `CP_LISTEN_ADDR` (default `:8000`). Host agent listens on `AGENT_LISTEN_ADDR` (default `:50051`).
+Control plane listens on `CP_LISTEN_ADDR` (default `:8000`).
+
+### Host registration
+
+Hosts must be registered with the control plane before they can serve sandboxes.
+
+1. **Create a host record** (via API or admin UI):
+   ```bash
+   # As an admin (JWT auth)
+   curl -X POST http://localhost:8000/v1/hosts \
+     -H "Authorization: Bearer $JWT_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"type": "regular"}'
+   ```
+   This returns a `registration_token` (valid for 1 hour).
+
+2. **Start the host agent** with the registration token and its externally-reachable address:
+   ```bash
+   sudo AGENT_CP_URL=http://cp-host:8000 \
+        ./builds/wrenn-agent \
+        --register <token-from-step-1> \
+        --address 10.0.1.5:50051
+   ```
+   On first startup the agent sends its specs (arch, CPU, memory, disk) to the control plane, receives a long-lived host JWT, and saves it to `AGENT_TOKEN_FILE` (default `/var/lib/wrenn/host-token`).
+
+3. **Subsequent startups** don't need `--register` — the agent loads the saved JWT automatically:
+   ```bash
+   sudo AGENT_CP_URL=http://cp-host:8000 \
+        ./builds/wrenn-agent --address 10.0.1.5:50051
+   ```
+
+4. **If registration fails** (e.g., network error after token was consumed), regenerate a token:
+   ```bash
+   curl -X POST http://localhost:8000/v1/hosts/$HOST_ID/token \
+     -H "Authorization: Bearer $JWT_TOKEN"
+   ```
+   Then restart the agent with the new token.
+
+The agent sends heartbeats to the control plane every 30 seconds. Host agent listens on `AGENT_LISTEN_ADDR` (default `:50051`).
 
 ### Rootfs images
 

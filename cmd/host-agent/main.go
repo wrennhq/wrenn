@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +17,10 @@ import (
 )
 
 func main() {
+	registrationToken := flag.String("register", "", "One-time registration token from the control plane")
+	advertiseAddr := flag.String("address", "", "Externally-reachable address (ip:port) for this host agent")
+	flag.Parse()
+
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	})))
@@ -38,6 +43,8 @@ func main() {
 	imagesPath := envOrDefault("AGENT_IMAGES_PATH", "/var/lib/wrenn/images")
 	sandboxesPath := envOrDefault("AGENT_SANDBOXES_PATH", "/var/lib/wrenn/sandboxes")
 	snapshotsPath := envOrDefault("AGENT_SNAPSHOTS_PATH", "/var/lib/wrenn/snapshots")
+	cpURL := os.Getenv("AGENT_CP_URL")
+	tokenFile := envOrDefault("AGENT_TOKEN_FILE", "/var/lib/wrenn/host-token")
 
 	cfg := sandbox.Config{
 		KernelPath:   kernelPath,
@@ -52,6 +59,34 @@ func main() {
 	defer cancel()
 
 	mgr.StartTTLReaper(ctx)
+
+	if *advertiseAddr == "" {
+		slog.Error("--address flag is required (externally-reachable ip:port)")
+		os.Exit(1)
+	}
+
+	// Register with the control plane (if configured).
+	if cpURL != "" {
+		hostToken, err := hostagent.Register(ctx, hostagent.RegistrationConfig{
+			CPURL:             cpURL,
+			RegistrationToken: *registrationToken,
+			TokenFile:         tokenFile,
+			Address:           *advertiseAddr,
+		})
+		if err != nil {
+			slog.Error("host registration failed", "error", err)
+			os.Exit(1)
+		}
+
+		hostID, err := hostagent.HostIDFromToken(hostToken)
+		if err != nil {
+			slog.Error("failed to extract host ID from token", "error", err)
+			os.Exit(1)
+		}
+
+		slog.Info("host registered", "host_id", hostID)
+		hostagent.StartHeartbeat(ctx, cpURL, hostID, hostToken, 30*time.Second)
+	}
 
 	srv := hostagent.NewServer(mgr)
 	path, handler := hostagentv1connect.NewHostAgentServiceHandler(srv)

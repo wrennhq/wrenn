@@ -73,6 +73,28 @@ func (q *Queries) GetTeam(ctx context.Context, id string) (Team, error) {
 	return i, err
 }
 
+const getTeamMembership = `-- name: GetTeamMembership :one
+SELECT user_id, team_id, is_default, role, created_at FROM users_teams WHERE user_id = $1 AND team_id = $2
+`
+
+type GetTeamMembershipParams struct {
+	UserID string `json:"user_id"`
+	TeamID string `json:"team_id"`
+}
+
+func (q *Queries) GetTeamMembership(ctx context.Context, arg GetTeamMembershipParams) (UsersTeam, error) {
+	row := q.db.QueryRow(ctx, getTeamMembership, arg.UserID, arg.TeamID)
+	var i UsersTeam
+	err := row.Scan(
+		&i.UserID,
+		&i.TeamID,
+		&i.IsDefault,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertTeam = `-- name: InsertTeam :one
 INSERT INTO teams (id, name)
 VALUES ($1, $2)

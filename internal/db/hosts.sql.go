@@ -35,7 +35,7 @@ func (q *Queries) DeleteHost(ctx context.Context, id string) error {
 }
 
 const getHost = `-- name: GetHost :one
-SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at FROM hosts WHERE id = $1
+SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts WHERE id = $1
 `
 
 func (q *Queries) GetHost(ctx context.Context, id string) (Host, error) {
@@ -58,6 +58,43 @@ func (q *Queries) GetHost(ctx context.Context, id string) (Host, error) {
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CertFingerprint,
+		&i.MtlsEnabled,
+	)
+	return i, err
+}
+
+const getHostByTeam = `-- name: GetHostByTeam :one
+SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts WHERE id = $1 AND team_id = $2
+`
+
+type GetHostByTeamParams struct {
+	ID     string      `json:"id"`
+	TeamID pgtype.Text `json:"team_id"`
+}
+
+func (q *Queries) GetHostByTeam(ctx context.Context, arg GetHostByTeamParams) (Host, error) {
+	row := q.db.QueryRow(ctx, getHostByTeam, arg.ID, arg.TeamID)
+	var i Host
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.TeamID,
+		&i.Provider,
+		&i.AvailabilityZone,
+		&i.Arch,
+		&i.CpuCores,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.Address,
+		&i.Status,
+		&i.LastHeartbeatAt,
+		&i.Metadata,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CertFingerprint,
+		&i.MtlsEnabled,
 	)
 	return i, err
 }
@@ -120,7 +157,7 @@ func (q *Queries) GetHostTokensByHost(ctx context.Context, hostID string) ([]Hos
 const insertHost = `-- name: InsertHost :one
 INSERT INTO hosts (id, type, team_id, provider, availability_zone, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at
+RETURNING id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled
 `
 
 type InsertHostParams struct {
@@ -159,6 +196,8 @@ func (q *Queries) InsertHost(ctx context.Context, arg InsertHostParams) (Host, e
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CertFingerprint,
+		&i.MtlsEnabled,
 	)
 	return i, err
 }
@@ -196,7 +235,7 @@ func (q *Queries) InsertHostToken(ctx context.Context, arg InsertHostTokenParams
 }
 
 const listHosts = `-- name: ListHosts :many
-SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at FROM hosts ORDER BY created_at DESC
+SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts ORDER BY created_at DESC
 `
 
 func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
@@ -225,6 +264,8 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CertFingerprint,
+			&i.MtlsEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -237,7 +278,7 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 }
 
 const listHostsByStatus = `-- name: ListHostsByStatus :many
-SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at FROM hosts WHERE status = $1 ORDER BY created_at DESC
+SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts WHERE status = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListHostsByStatus(ctx context.Context, status string) ([]Host, error) {
@@ -266,6 +307,8 @@ func (q *Queries) ListHostsByStatus(ctx context.Context, status string) ([]Host,
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CertFingerprint,
+			&i.MtlsEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -278,7 +321,7 @@ func (q *Queries) ListHostsByStatus(ctx context.Context, status string) ([]Host,
 }
 
 const listHostsByTag = `-- name: ListHostsByTag :many
-SELECT h.id, h.type, h.team_id, h.provider, h.availability_zone, h.arch, h.cpu_cores, h.memory_mb, h.disk_gb, h.address, h.status, h.last_heartbeat_at, h.metadata, h.created_by, h.created_at, h.updated_at FROM hosts h
+SELECT h.id, h.type, h.team_id, h.provider, h.availability_zone, h.arch, h.cpu_cores, h.memory_mb, h.disk_gb, h.address, h.status, h.last_heartbeat_at, h.metadata, h.created_by, h.created_at, h.updated_at, h.cert_fingerprint, h.mtls_enabled FROM hosts h
 JOIN host_tags ht ON ht.host_id = h.id
 WHERE ht.tag = $1
 ORDER BY h.created_at DESC
@@ -310,6 +353,8 @@ func (q *Queries) ListHostsByTag(ctx context.Context, tag string) ([]Host, error
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CertFingerprint,
+			&i.MtlsEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -322,7 +367,7 @@ func (q *Queries) ListHostsByTag(ctx context.Context, tag string) ([]Host, error
 }
 
 const listHostsByTeam = `-- name: ListHostsByTeam :many
-SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at FROM hosts WHERE team_id = $1 ORDER BY created_at DESC
+SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts WHERE team_id = $1 AND type = 'byoc' ORDER BY created_at DESC
 `
 
 func (q *Queries) ListHostsByTeam(ctx context.Context, teamID pgtype.Text) ([]Host, error) {
@@ -351,6 +396,8 @@ func (q *Queries) ListHostsByTeam(ctx context.Context, teamID pgtype.Text) ([]Ho
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CertFingerprint,
+			&i.MtlsEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -363,7 +410,7 @@ func (q *Queries) ListHostsByTeam(ctx context.Context, teamID pgtype.Text) ([]Ho
 }
 
 const listHostsByType = `-- name: ListHostsByType :many
-SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at FROM hosts WHERE type = $1 ORDER BY created_at DESC
+SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts WHERE type = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListHostsByType(ctx context.Context, type_ string) ([]Host, error) {
@@ -392,6 +439,8 @@ func (q *Queries) ListHostsByType(ctx context.Context, type_ string) ([]Host, er
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CertFingerprint,
+			&i.MtlsEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -412,7 +461,7 @@ func (q *Queries) MarkHostTokenUsed(ctx context.Context, id string) error {
 	return err
 }
 
-const registerHost = `-- name: RegisterHost :exec
+const registerHost = `-- name: RegisterHost :execrows
 UPDATE hosts
 SET arch = $2,
     cpu_cores = $3,
@@ -422,7 +471,7 @@ SET arch = $2,
     status = 'online',
     last_heartbeat_at = NOW(),
     updated_at = NOW()
-WHERE id = $1
+WHERE id = $1 AND status = 'pending'
 `
 
 type RegisterHostParams struct {
@@ -434,8 +483,8 @@ type RegisterHostParams struct {
 	Address  pgtype.Text `json:"address"`
 }
 
-func (q *Queries) RegisterHost(ctx context.Context, arg RegisterHostParams) error {
-	_, err := q.db.Exec(ctx, registerHost,
+func (q *Queries) RegisterHost(ctx context.Context, arg RegisterHostParams) (int64, error) {
+	result, err := q.db.Exec(ctx, registerHost,
 		arg.ID,
 		arg.Arch,
 		arg.CpuCores,
@@ -443,7 +492,10 @@ func (q *Queries) RegisterHost(ctx context.Context, arg RegisterHostParams) erro
 		arg.DiskGb,
 		arg.Address,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const removeHostTag = `-- name: RemoveHostTag :exec

@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
@@ -23,7 +24,7 @@ type Server struct {
 }
 
 // New constructs the chi router and registers all routes.
-func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, pool *pgxpool.Pool, jwtSecret []byte, oauthRegistry *oauth.Registry, oauthRedirectURL string) *Server {
+func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, pool *pgxpool.Pool, rdb *redis.Client, jwtSecret []byte, oauthRegistry *oauth.Registry, oauthRedirectURL string) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
 
@@ -31,6 +32,7 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	sandboxSvc := &service.SandboxService{DB: queries, Agent: agent}
 	apiKeySvc := &service.APIKeyService{DB: queries}
 	templateSvc := &service.TemplateService{DB: queries}
+	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret}
 
 	sandbox := newSandboxHandler(sandboxSvc)
 	exec := newExecHandler(queries, agent)
@@ -41,6 +43,7 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	authH := newAuthHandler(queries, pool, jwtSecret)
 	oauthH := newOAuthHandler(queries, pool, jwtSecret, oauthRegistry, oauthRedirectURL)
 	apiKeys := newAPIKeyHandler(apiKeySvc)
+	hostH := newHostHandler(hostSvc, queries)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -90,6 +93,30 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 		r.Post("/", snapshots.Create)
 		r.Get("/", snapshots.List)
 		r.Delete("/{name}", snapshots.Delete)
+	})
+
+	// Host management.
+	r.Route("/v1/hosts", func(r chi.Router) {
+		// Unauthenticated: one-time registration token.
+		r.Post("/register", hostH.Register)
+
+		// Host-token-authenticated: heartbeat.
+		r.With(requireHostToken(jwtSecret)).Post("/{id}/heartbeat", hostH.Heartbeat)
+
+		// JWT-authenticated: host CRUD and tags.
+		r.Group(func(r chi.Router) {
+			r.Use(requireJWT(jwtSecret))
+			r.Post("/", hostH.Create)
+			r.Get("/", hostH.List)
+			r.Route("/{id}", func(r chi.Router) {
+				r.Get("/", hostH.Get)
+				r.Delete("/", hostH.Delete)
+				r.Post("/token", hostH.RegenerateToken)
+				r.Get("/tags", hostH.ListTags)
+				r.Post("/tags", hostH.AddTag)
+				r.Delete("/tags/{tag}", hostH.RemoveTag)
+			})
+		})
 	})
 
 	return &Server{router: r}

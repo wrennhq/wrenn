@@ -87,6 +87,8 @@ func serviceErrToHTTP(err error) (int, string, string) {
 		return http.StatusNotFound, "not_found", msg
 	case strings.Contains(msg, "not running"), strings.Contains(msg, "not paused"):
 		return http.StatusConflict, "invalid_state", msg
+	case strings.Contains(msg, "forbidden"):
+		return http.StatusForbidden, "forbidden", msg
 	case strings.Contains(msg, "invalid"):
 		return http.StatusBadRequest, "invalid_request", msg
 	default:

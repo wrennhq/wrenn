@@ -32,6 +32,8 @@ type Host struct {
 	CreatedBy        string             `json:"created_by"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	CertFingerprint  pgtype.Text        `json:"cert_fingerprint"`
+	MtlsEnabled      bool               `json:"mtls_enabled"`
 }
 
 type HostTag struct {

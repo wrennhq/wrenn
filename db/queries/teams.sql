@@ -21,3 +21,6 @@ UPDATE teams SET is_byoc = $2 WHERE id = $1;
 
 -- name: GetBYOCTeams :many
 SELECT * FROM teams WHERE is_byoc = TRUE ORDER BY created_at;
+
+-- name: GetTeamMembership :one
+SELECT * FROM users_teams WHERE user_id = $1 AND team_id = $2;

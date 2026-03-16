@@ -66,8 +66,6 @@ func main() {
 	}
 	slog.Info("connected to redis")
 
-	_ = rdb // TODO: pass to services that need it (host registration)
-
 	// Connect RPC client for the host agent.
 	agentHTTP := &http.Client{Timeout: 10 * time.Minute}
 	agentClient := hostagentv1connect.NewHostAgentServiceClient(
@@ -89,7 +87,7 @@ func main() {
 	}
 
 	// API server.
-	srv := api.New(queries, agentClient, pool, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL)
+	srv := api.New(queries, agentClient, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL)
 
 	// Start reconciler.
 	reconciler := api.NewReconciler(queries, agentClient, "default", 5*time.Second)

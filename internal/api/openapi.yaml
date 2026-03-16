@@ -728,6 +728,290 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/hosts:
+    post:
+      summary: Create a host
+      operationId: createHost
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Creates a new host record and returns a one-time registration token.
+        Regular hosts can only be created by admins. BYOC hosts can be created
+        by admins or team owners.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateHostRequest"
+      responses:
+        "201":
+          description: Host created with registration token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateHostResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      summary: List hosts
+      operationId: listHosts
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Admins see all hosts. Non-admins see only BYOC hosts belonging to their team.
+      responses:
+        "200":
+          description: List of hosts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Host"
+
+  /v1/hosts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get host details
+      operationId: getHost
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Host details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Host"
+        "404":
+          description: Host not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Delete a host
+      operationId: deleteHost
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Admins can delete any host. Team owners can delete BYOC hosts
+        belonging to their team.
+      responses:
+        "204":
+          description: Host deleted
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/token:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Regenerate registration token
+      operationId: regenerateHostToken
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Issues a new registration token for a host still in "pending" status.
+        Use this when a previous registration attempt failed after consuming
+        the original token. Same permission model as host creation.
+      responses:
+        "201":
+          description: New registration token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateHostResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Host is not in pending status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/register:
+    post:
+      summary: Register a host agent
+      operationId: registerHost
+      tags: [hosts]
+      description: |
+        Called by the host agent on first startup. Validates the one-time
+        registration token, records machine specs, sets the host status to
+        "online", and returns a long-lived JWT for subsequent API calls
+        (heartbeats).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterHostRequest"
+      responses:
+        "201":
+          description: Host registered, JWT returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterHostResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Invalid or expired registration token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/heartbeat:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Host agent heartbeat
+      operationId: hostHeartbeat
+      tags: [hosts]
+      security:
+        - hostTokenAuth: []
+      description: |
+        Updates the host's last_heartbeat_at timestamp. The host ID in the URL
+        must match the host ID in the JWT.
+      responses:
+        "204":
+          description: Heartbeat recorded
+        "401":
+          description: Invalid or missing host token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Host ID mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/tags:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: List host tags
+      operationId: listHostTags
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+    post:
+      summary: Add a tag to a host
+      operationId: addHostTag
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTagRequest"
+      responses:
+        "204":
+          description: Tag added
+        "404":
+          description: Host not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/tags/{tag}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: tag
+        in: path
+        required: true
+        schema:
+          type: string
+
+    delete:
+      summary: Remove a tag from a host
+      operationId: removeHostTag
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Tag removed
+        "404":
+          description: Host not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     apiKeyAuth:
@@ -741,6 +1025,12 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: JWT token from /v1/auth/login or /v1/auth/signup. Valid for 6 hours.
+
+    hostTokenAuth:
+      type: apiKey
+      in: header
+      name: X-Host-Token
+      description: Long-lived host JWT returned from POST /v1/hosts/register. Valid for 1 year.
 
   schemas:
     SignupRequest:
@@ -936,6 +1226,117 @@ components:
         path:
           type: string
           description: Absolute file path inside the sandbox
+
+    CreateHostRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [regular, byoc]
+          description: Host type. Regular hosts are shared; BYOC hosts belong to a team.
+        team_id:
+          type: string
+          description: Required for BYOC hosts.
+        provider:
+          type: string
+          description: Cloud provider (e.g. aws, gcp, hetzner, bare-metal).
+        availability_zone:
+          type: string
+          description: Availability zone (e.g. us-east, eu-west).
+
+    CreateHostResponse:
+      type: object
+      properties:
+        host:
+          $ref: "#/components/schemas/Host"
+        registration_token:
+          type: string
+          description: One-time registration token for the host agent. Expires in 1 hour.
+
+    RegisterHostRequest:
+      type: object
+      required: [token, address]
+      properties:
+        token:
+          type: string
+          description: One-time registration token from POST /v1/hosts.
+        arch:
+          type: string
+          description: CPU architecture (e.g. x86_64, aarch64).
+        cpu_cores:
+          type: integer
+        memory_mb:
+          type: integer
+        disk_gb:
+          type: integer
+        address:
+          type: string
+          description: Host agent address (ip:port).
+
+    RegisterHostResponse:
+      type: object
+      properties:
+        host:
+          $ref: "#/components/schemas/Host"
+        token:
+          type: string
+          description: Long-lived host JWT for X-Host-Token header. Valid for 1 year.
+
+    Host:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [regular, byoc]
+        team_id:
+          type: string
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+        availability_zone:
+          type: string
+          nullable: true
+        arch:
+          type: string
+          nullable: true
+        cpu_cores:
+          type: integer
+          nullable: true
+        memory_mb:
+          type: integer
+          nullable: true
+        disk_gb:
+          type: integer
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, online, offline, draining]
+        last_heartbeat_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AddTagRequest:
+      type: object
+      required: [tag]
+      properties:
+        tag:
+          type: string
 
     Error:
       type: object

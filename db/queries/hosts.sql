@@ -13,12 +13,12 @@ SELECT * FROM hosts ORDER BY created_at DESC;
 SELECT * FROM hosts WHERE type = $1 ORDER BY created_at DESC;
 
 -- name: ListHostsByTeam :many
-SELECT * FROM hosts WHERE team_id = $1 ORDER BY created_at DESC;
+SELECT * FROM hosts WHERE team_id = $1 AND type = 'byoc' ORDER BY created_at DESC;
 
 -- name: ListHostsByStatus :many
 SELECT * FROM hosts WHERE status = $1 ORDER BY created_at DESC;
 
--- name: RegisterHost :exec
+-- name: RegisterHost :execrows
 UPDATE hosts
 SET arch = $2,
     cpu_cores = $3,
@@ -28,7 +28,7 @@ SET arch = $2,
     status = 'online',
     last_heartbeat_at = NOW(),
     updated_at = NOW()
-WHERE id = $1;
+WHERE id = $1 AND status = 'pending';
 
 -- name: UpdateHostStatus :exec
 UPDATE hosts SET status = $2, updated_at = NOW() WHERE id = $1;
@@ -64,3 +64,6 @@ UPDATE host_tokens SET used_at = NOW() WHERE id = $1;
 
 -- name: GetHostTokensByHost :many
 SELECT * FROM host_tokens WHERE host_id = $1 ORDER BY created_at DESC;
+
+-- name: GetHostByTeam :one
+SELECT * FROM hosts WHERE id = $1 AND team_id = $2;

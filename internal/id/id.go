@@ -38,3 +38,22 @@ func NewTeamID() string {
 func NewAPIKeyID() string {
 	return "key-" + hex8()
 }
+
+// NewHostID generates a new host ID in the format "host-" + 8 hex chars.
+func NewHostID() string {
+	return "host-" + hex8()
+}
+
+// NewHostTokenID generates a new host token audit ID in the format "htok-" + 8 hex chars.
+func NewHostTokenID() string {
+	return "htok-" + hex8()
+}
+
+// NewRegistrationToken generates a 64-char hex token (32 bytes of entropy).
+func NewRegistrationToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+	return hex.EncodeToString(b)
+}
