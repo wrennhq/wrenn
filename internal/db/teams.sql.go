@@ -9,8 +9,37 @@ import (
 	"context"
 )
 
+const getBYOCTeams = `-- name: GetBYOCTeams :many
+SELECT id, name, created_at, is_byoc FROM teams WHERE is_byoc = TRUE ORDER BY created_at
+`
+
+func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
+	rows, err := q.db.Query(ctx, getBYOCTeams)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Team
+	for rows.Next() {
+		var i Team
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.IsByoc,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDefaultTeamForUser = `-- name: GetDefaultTeamForUser :one
-SELECT t.id, t.name, t.created_at FROM teams t
+SELECT t.id, t.name, t.created_at, t.is_byoc FROM teams t
 JOIN users_teams ut ON ut.team_id = t.id
 WHERE ut.user_id = $1 AND ut.is_default = TRUE
 LIMIT 1
@@ -19,25 +48,35 @@ LIMIT 1
 func (q *Queries) GetDefaultTeamForUser(ctx context.Context, userID string) (Team, error) {
 	row := q.db.QueryRow(ctx, getDefaultTeamForUser, userID)
 	var i Team
-	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.IsByoc,
+	)
 	return i, err
 }
 
 const getTeam = `-- name: GetTeam :one
-SELECT id, name, created_at FROM teams WHERE id = $1
+SELECT id, name, created_at, is_byoc FROM teams WHERE id = $1
 `
 
 func (q *Queries) GetTeam(ctx context.Context, id string) (Team, error) {
 	row := q.db.QueryRow(ctx, getTeam, id)
 	var i Team
-	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.IsByoc,
+	)
 	return i, err
 }
 
 const insertTeam = `-- name: InsertTeam :one
 INSERT INTO teams (id, name)
 VALUES ($1, $2)
-RETURNING id, name, created_at
+RETURNING id, name, created_at, is_byoc
 `
 
 type InsertTeamParams struct {
@@ -48,7 +87,12 @@ type InsertTeamParams struct {
 func (q *Queries) InsertTeam(ctx context.Context, arg InsertTeamParams) (Team, error) {
 	row := q.db.QueryRow(ctx, insertTeam, arg.ID, arg.Name)
 	var i Team
-	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.IsByoc,
+	)
 	return i, err
 }
 
@@ -71,5 +115,19 @@ func (q *Queries) InsertTeamMember(ctx context.Context, arg InsertTeamMemberPara
 		arg.IsDefault,
 		arg.Role,
 	)
+	return err
+}
+
+const setTeamBYOC = `-- name: SetTeamBYOC :exec
+UPDATE teams SET is_byoc = $2 WHERE id = $1
+`
+
+type SetTeamBYOCParams struct {
+	ID     string `json:"id"`
+	IsByoc bool   `json:"is_byoc"`
+}
+
+func (q *Queries) SetTeamBYOC(ctx context.Context, arg SetTeamBYOCParams) error {
+	_, err := q.db.Exec(ctx, setTeamBYOC, arg.ID, arg.IsByoc)
 	return err
 }

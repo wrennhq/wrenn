@@ -15,3 +15,9 @@ SELECT t.* FROM teams t
 JOIN users_teams ut ON ut.team_id = t.id
 WHERE ut.user_id = $1 AND ut.is_default = TRUE
 LIMIT 1;
+
+-- name: SetTeamBYOC :exec
+UPDATE teams SET is_byoc = $2 WHERE id = $1;
+
+-- name: GetBYOCTeams :many
+SELECT * FROM teams WHERE is_byoc = TRUE ORDER BY created_at;

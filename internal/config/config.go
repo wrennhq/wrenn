@@ -10,6 +10,7 @@ import (
 // Config holds the control plane configuration.
 type Config struct {
 	DatabaseURL   string
+	RedisURL      string
 	ListenAddr    string
 	HostAgentAddr string
 	JWTSecret     string
@@ -28,6 +29,7 @@ func Load() Config {
 
 	cfg := Config{
 		DatabaseURL:   envOrDefault("DATABASE_URL", "postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable"),
+		RedisURL:      envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
 		ListenAddr:    envOrDefault("CP_LISTEN_ADDR", ":8080"),
 		HostAgentAddr: envOrDefault("CP_HOST_AGENT_ADDR", "http://localhost:50051"),
 		JWTSecret:     os.Getenv("JWT_SECRET"),

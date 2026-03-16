@@ -11,8 +11,82 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteAdminPermission = `-- name: DeleteAdminPermission :exec
+DELETE FROM admin_permissions WHERE user_id = $1 AND permission = $2
+`
+
+type DeleteAdminPermissionParams struct {
+	UserID     string `json:"user_id"`
+	Permission string `json:"permission"`
+}
+
+func (q *Queries) DeleteAdminPermission(ctx context.Context, arg DeleteAdminPermissionParams) error {
+	_, err := q.db.Exec(ctx, deleteAdminPermission, arg.UserID, arg.Permission)
+	return err
+}
+
+const getAdminPermissions = `-- name: GetAdminPermissions :many
+SELECT id, user_id, permission, created_at FROM admin_permissions WHERE user_id = $1 ORDER BY permission
+`
+
+func (q *Queries) GetAdminPermissions(ctx context.Context, userID string) ([]AdminPermission, error) {
+	rows, err := q.db.Query(ctx, getAdminPermissions, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminPermission
+	for rows.Next() {
+		var i AdminPermission
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Permission,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAdminUsers = `-- name: GetAdminUsers :many
+SELECT id, email, password_hash, created_at, updated_at, is_admin FROM users WHERE is_admin = TRUE ORDER BY created_at
+`
+
+func (q *Queries) GetAdminUsers(ctx context.Context) ([]User, error) {
+	rows, err := q.db.Query(ctx, getAdminUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.PasswordHash,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IsAdmin,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, created_at, updated_at FROM users WHERE email = $1
+SELECT id, email, password_hash, created_at, updated_at, is_admin FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -24,12 +98,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.PasswordHash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsAdmin,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, created_at, updated_at FROM users WHERE id = $1
+SELECT id, email, password_hash, created_at, updated_at, is_admin FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -41,14 +116,49 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.PasswordHash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsAdmin,
 	)
 	return i, err
+}
+
+const hasAdminPermission = `-- name: HasAdminPermission :one
+SELECT EXISTS(
+    SELECT 1 FROM admin_permissions WHERE user_id = $1 AND permission = $2
+) AS has_permission
+`
+
+type HasAdminPermissionParams struct {
+	UserID     string `json:"user_id"`
+	Permission string `json:"permission"`
+}
+
+func (q *Queries) HasAdminPermission(ctx context.Context, arg HasAdminPermissionParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasAdminPermission, arg.UserID, arg.Permission)
+	var has_permission bool
+	err := row.Scan(&has_permission)
+	return has_permission, err
+}
+
+const insertAdminPermission = `-- name: InsertAdminPermission :exec
+INSERT INTO admin_permissions (id, user_id, permission)
+VALUES ($1, $2, $3)
+`
+
+type InsertAdminPermissionParams struct {
+	ID         string `json:"id"`
+	UserID     string `json:"user_id"`
+	Permission string `json:"permission"`
+}
+
+func (q *Queries) InsertAdminPermission(ctx context.Context, arg InsertAdminPermissionParams) error {
+	_, err := q.db.Exec(ctx, insertAdminPermission, arg.ID, arg.UserID, arg.Permission)
+	return err
 }
 
 const insertUser = `-- name: InsertUser :one
 INSERT INTO users (id, email, password_hash)
 VALUES ($1, $2, $3)
-RETURNING id, email, password_hash, created_at, updated_at
+RETURNING id, email, password_hash, created_at, updated_at, is_admin
 `
 
 type InsertUserParams struct {
@@ -66,6 +176,7 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, e
 		&i.PasswordHash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsAdmin,
 	)
 	return i, err
 }
@@ -73,7 +184,7 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, e
 const insertUserOAuth = `-- name: InsertUserOAuth :one
 INSERT INTO users (id, email)
 VALUES ($1, $2)
-RETURNING id, email, password_hash, created_at, updated_at
+RETURNING id, email, password_hash, created_at, updated_at, is_admin
 `
 
 type InsertUserOAuthParams struct {
@@ -90,6 +201,21 @@ func (q *Queries) InsertUserOAuth(ctx context.Context, arg InsertUserOAuthParams
 		&i.PasswordHash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsAdmin,
 	)
 	return i, err
+}
+
+const setUserAdmin = `-- name: SetUserAdmin :exec
+UPDATE users SET is_admin = $2, updated_at = NOW() WHERE id = $1
+`
+
+type SetUserAdminParams struct {
+	ID      string `json:"id"`
+	IsAdmin bool   `json:"is_admin"`
+}
+
+func (q *Queries) SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error {
+	_, err := q.db.Exec(ctx, setUserAdmin, arg.ID, arg.IsAdmin)
+	return err
 }

@@ -8,6 +8,46 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AdminPermission struct {
+	ID         string             `json:"id"`
+	UserID     string             `json:"user_id"`
+	Permission string             `json:"permission"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type Host struct {
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	TeamID           pgtype.Text        `json:"team_id"`
+	Provider         pgtype.Text        `json:"provider"`
+	AvailabilityZone pgtype.Text        `json:"availability_zone"`
+	Arch             pgtype.Text        `json:"arch"`
+	CpuCores         pgtype.Int4        `json:"cpu_cores"`
+	MemoryMb         pgtype.Int4        `json:"memory_mb"`
+	DiskGb           pgtype.Int4        `json:"disk_gb"`
+	Address          pgtype.Text        `json:"address"`
+	Status           string             `json:"status"`
+	LastHeartbeatAt  pgtype.Timestamptz `json:"last_heartbeat_at"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedBy        string             `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type HostTag struct {
+	HostID string `json:"host_id"`
+	Tag    string `json:"tag"`
+}
+
+type HostToken struct {
+	ID        string             `json:"id"`
+	HostID    string             `json:"host_id"`
+	CreatedBy string             `json:"created_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+}
+
 type OauthProvider struct {
 	Provider   string             `json:"provider"`
 	ProviderID string             `json:"provider_id"`
@@ -37,6 +77,7 @@ type Team struct {
 	ID        string             `json:"id"`
 	Name      string             `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	IsByoc    bool               `json:"is_byoc"`
 }
 
 type TeamApiKey struct {
@@ -66,6 +107,7 @@ type User struct {
 	PasswordHash pgtype.Text        `json:"password_hash"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	IsAdmin      bool               `json:"is_admin"`
 }
 
 type UsersTeam struct {

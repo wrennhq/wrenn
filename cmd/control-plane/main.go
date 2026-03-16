@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/sandbox/internal/api"
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
@@ -49,6 +50,23 @@ func main() {
 	slog.Info("connected to database")
 
 	queries := db.New(pool)
+
+	// Redis client.
+	redisOpts, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		slog.Error("failed to parse REDIS_URL", "error", err)
+		os.Exit(1)
+	}
+	rdb := redis.NewClient(redisOpts)
+	defer rdb.Close()
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		slog.Error("failed to ping redis", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("connected to redis")
+
+	_ = rdb // TODO: pass to services that need it (host registration)
 
 	// Connect RPC client for the host agent.
 	agentHTTP := &http.Client{Timeout: 10 * time.Minute}
