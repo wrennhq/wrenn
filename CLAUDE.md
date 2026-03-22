@@ -1,848 +1,415 @@
-# CLAUDE.md — Wrenn Sandbox
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-Wrenn Sandbox is a microVM-based code execution platform. Users create isolated sandboxes (Firecracker microVMs), run code inside them, and get output back via SDKs (Python, TypeScript, Go). Think E2B but with persistent sandboxes, pool-based pricing, and a single-binary deployment story.
+Wrenn Sandbox is a microVM-based code execution platform. Users create isolated sandboxes (Firecracker microVMs), run code inside them, and get output back via SDKs. Think E2B but with persistent sandboxes, pool-based pricing, and a single-binary deployment story.
+
+## Build & Development Commands
+
+All commands go through the Makefile. Never use raw `go build` or `go run`.
+
+```bash
+make build              # Build all binaries → builds/
+make build-cp           # Control plane only (builds frontend first)
+make build-agent        # Host agent only
+make build-envd         # envd static binary (verified statically linked)
+make build-frontend     # SvelteKit dashboard → internal/dashboard/static/
+
+make dev                # Full local dev: infra + migrate + control plane
+make dev-infra          # Start PostgreSQL + Prometheus + Grafana (Docker)
+make dev-down           # Stop dev infra
+make dev-cp             # Control plane with hot reload (if air installed)
+make dev-frontend       # Vite dev server with HMR (port 5173)
+make dev-agent          # Host agent (sudo required)
+make dev-envd           # envd in TCP debug mode
+
+make check              # fmt + vet + lint + test (CI order)
+make test               # Unit tests: go test -race -v ./internal/...
+make test-integration   # Integration tests (require host agent + Firecracker)
+make fmt                # gofmt both modules
+make vet                # go vet both modules
+make lint               # golangci-lint
+
+make migrate-up         # Apply pending migrations
+make migrate-down       # Rollback last migration
+make migrate-create name=xxx  # Scaffold new goose migration (never create manually)
+make migrate-reset      # Drop + re-apply all
+
+make generate           # Proto (buf) + sqlc codegen
+make proto              # buf generate for all proto dirs
+make tidy               # go mod tidy both modules
+```
+
+Run a single test: `go test -race -v -run TestName ./internal/path/...`
 
 ## Architecture
 
 ```
-User SDK (Python/TS/Go)
-    │
-    │ HTTPS / WebSocket
-    ▼
-Control Plane (Go binary, single process)
-    ├── REST API (chi router)
-    ├── Admin UI (htmx + Go templates)
-    ├── Scheduler (picks host for new sandboxes)
-    ├── State DB (PostgreSQL via pgx + goose migrations)
-    ├── Lifecycle Manager (background goroutine)
-    └── gRPC client → Host Agent
-    │
-    │ gRPC (mTLS)
-    ▼
-Host Agent (Go binary, one per physical machine)
-    ├── VM Manager (Firecracker Go SDK + jailer)
-    ├── Network Manager (TAP devices, NAT, IP allocator)
-    ├── Filesystem Manager (CoW rootfs clones)
-    ├── Envd Client (vsock gRPC to guest agent)
-    ├── Snapshot Manager (pause/hibernate/resume)
-    ├── Metrics Exporter (Prometheus)
-    └── gRPC server (listens for control plane)
-    │
-    │ vsock (AF_VSOCK, through Firecracker)
-    ▼
-envd (Go binary, runs inside each microVM as PID 1)
-    ├── ProcessService (exec commands, stream stdout/stderr)
-    ├── FilesystemService (read/write/list files)
-    └── Terminal (PTY handling for interactive sessions)
+User SDK → HTTPS/WS → Control Plane → Connect RPC → Host Agent → HTTP/Connect RPC over TAP → envd (inside VM)
 ```
 
-## Key Decisions
+**Three binaries, two Go modules:**
 
-- **Language**: Everything is Go. No Python, no Node.js, no separate frontend.
-- **Guest agent**: envd is extracted from E2B's open-source repo (e2b-dev/infra, Apache 2.0). The orchestrator VM management code is also adapted from E2B.
-- **Database**: PostgreSQL. Migrations via goose (plain SQL files).
-- **Admin UI**: htmx + Go html/template + chi router, served from the control plane binary. No SPA, no React, no build step.
-- **API framework**: chi router for HTTP. Standard grpc-go for gRPC.
-- **Billing**: Lago (external service, integrated via API). Not part of this codebase — we send usage events to Lago.
-- **No separate reverse proxy binary**. Port forwarding is handled within the control plane or host agent directly if needed later.
+| Binary | Module | Entry point | Runs as |
+|--------|--------|-------------|---------|
+| wrenn-cp | `git.omukk.dev/wrenn/sandbox` | `cmd/control-plane/main.go` | Unprivileged |
+| wrenn-agent | `git.omukk.dev/wrenn/sandbox` | `cmd/host-agent/main.go` | Root (NET_ADMIN + /dev/kvm) |
+| envd | `git.omukk.dev/wrenn/sandbox/envd` (standalone `envd/go.mod`) | `envd/main.go` | PID 1 inside guest VM |
 
-## Directory Structure
+envd is a **completely independent Go module**. It is never imported by the main module. The only connection is the protobuf contract. It compiles to a static binary baked into rootfs images.
+
+**Key architectural invariant:** The host agent is **stateful** (in-memory `boxes` map is the source of truth for running VMs). The control plane is **stateless** (all persistent state in PostgreSQL). The reconciler (`internal/api/reconciler.go`) bridges the gap — it periodically compares DB records against the host agent's live state and marks orphaned sandboxes as "stopped".
+
+### Control Plane
+
+**Packages:** `internal/api/`, `internal/dashboard/`, `internal/auth/`, `internal/scheduler/`, `internal/lifecycle/`, `internal/config/`, `internal/db/`
+
+Startup (`cmd/control-plane/main.go`) wires: config (env vars) → pgxpool → `db.Queries` (sqlc-generated) → Connect RPC client to host agent → `api.Server`. Everything flows through constructor injection.
+
+- **API Server** (`internal/api/server.go`): chi router with middleware. Creates handler structs (`sandboxHandler`, `execHandler`, `filesHandler`, etc.) injected with `db.Queries` and the host agent Connect RPC client. Routes under `/v1/sandboxes/*`.
+- **Reconciler** (`internal/api/reconciler.go`): background goroutine (every 30s) that compares DB records against `agent.ListSandboxes()` RPC. Marks orphaned DB entries as "stopped".
+- **Dashboard** (SvelteKit + Tailwind + Bits UI, statically built and embedded via `go:embed`, served as catch-all at root)
+- **Database**: PostgreSQL via pgx/v5. Queries generated by sqlc from `db/queries/sandboxes.sql`. Migrations in `db/migrations/` (goose, plain SQL).
+- **Config** (`internal/config/config.go`): purely environment variables (`DATABASE_URL`, `CP_LISTEN_ADDR`, `CP_HOST_AGENT_ADDR`), no YAML/file config.
+
+### Host Agent
+
+**Packages:** `internal/hostagent/`, `internal/sandbox/`, `internal/vm/`, `internal/network/`, `internal/devicemapper/`, `internal/envdclient/`, `internal/snapshot/`
+
+Startup (`cmd/host-agent/main.go`) wires: root check → enable IP forwarding → clean up stale dm devices → `sandbox.Manager` (containing `vm.Manager` + `network.SlotAllocator` + `devicemapper.LoopRegistry`) → `hostagent.Server` (Connect RPC handler) → HTTP server.
+
+- **RPC Server** (`internal/hostagent/server.go`): implements `hostagentv1connect.HostAgentServiceHandler`. Thin wrapper — every method delegates to `sandbox.Manager`. Maps Connect error codes on return.
+- **Sandbox Manager** (`internal/sandbox/manager.go`): the core orchestration layer. Maintains in-memory state in `boxes map[string]*sandboxState` (protected by `sync.RWMutex`). Each `sandboxState` holds a `models.Sandbox`, a `*network.Slot`, and an `*envdclient.Client`. Runs a TTL reaper (every 10s) that auto-destroys timed-out sandboxes.
+- **VM Manager** (`internal/vm/manager.go`, `fc.go`, `config.go`): manages Firecracker processes. Uses raw HTTP API over Unix socket (`/tmp/fc-{sandboxID}.sock`), not the firecracker-go-sdk Machine type. Launches Firecracker via `unshare -m` + `ip netns exec`. Configures VM via PUT to `/boot-source`, `/drives/rootfs`, `/network-interfaces/eth0`, `/machine-config`, then starts with PUT `/actions`.
+- **Network** (`internal/network/setup.go`, `allocator.go`): per-sandbox network namespace with veth pair + TAP device. See Networking section below.
+- **Device Mapper** (`internal/devicemapper/devicemapper.go`): CoW rootfs via device-mapper snapshots. Shared read-only loop devices per base template (refcounted `LoopRegistry`), per-sandbox sparse CoW files, dm-snapshot create/restore/remove/flatten operations.
+- **envd Client** (`internal/envdclient/client.go`, `health.go`): dual interface to the guest agent. Connect RPC for streaming process exec (`process.Start()` bidirectional stream). Plain HTTP for file operations (POST/GET `/files?path=...&username=root`). Health check polls `GET /health` every 100ms until ready (30s timeout).
+
+### envd (Guest Agent)
+
+**Module:** `envd/` with its own `go.mod` (`git.omukk.dev/wrenn/sandbox/envd`)
+
+Runs as PID 1 inside the microVM via `wrenn-init.sh` (mounts procfs/sysfs/dev, sets hostname, writes resolv.conf, then execs envd). Extracted from E2B (Apache 2.0), with shared packages internalized into `envd/internal/shared/`. Listens on TCP `0.0.0.0:49983`.
+
+- **ProcessService**: start processes, stream stdout/stderr, signal handling, PTY support
+- **FilesystemService**: stat/list/mkdir/move/remove/watch files
+- **Health**: GET `/health`
+
+### Dashboard (Frontend)
+
+**Directory:** `frontend/` — standalone SvelteKit app (Svelte 5, runes mode)
+
+- **Stack**: SvelteKit + `adapter-static` + Tailwind CSS v4 + Bits UI (headless accessible components)
+- **Package manager**: pnpm
+- **Routing**: SvelteKit file-based routing under `frontend/src/routes/`
+- **Routing layout**: `/login` and `/signup` at root, authenticated pages under `/dashboard/*` (e.g. `/dashboard/capsules`, `/dashboard/keys`)
+- **Build output**: `frontend/build/` → copied to `internal/dashboard/static/` → embedded via `go:embed` into the control plane binary
+- **Serving**: `internal/dashboard/dashboard.go` registers a `NotFound` catch-all SPA handler with fallback to `index.html`. API routes (`/v1/*`, `/openapi.yaml`, `/docs`) are registered first and take priority
+- **Dev workflow**: `make dev-frontend` runs Vite dev server on port 5173 with HMR. API calls proxy to `http://localhost:8000`
+- **Fonts**: Manrope (UI), Instrument Serif (headings), JetBrains Mono (code), Alice (brand wordmark) — all self-hosted via `@fontsource`
+- **Dark mode**: class-based (`.dark` on `<html>`) with system preference detection + localStorage persistence
+
+To add a new page: create `frontend/src/routes/your-page/+page.svelte`.
+
+### Networking (per sandbox)
+
+Each sandbox gets its own Linux network namespace (`ns-{idx}`). Slot index (1-based, up to 65534) determines all addressing:
 
 ```
-wrenn-sandbox/
-├── CLAUDE.md                          # This file
-├── Makefile                           # Build all binaries, run migrations, generate proto
-├── go.mod                             # github.com/wrenn-dev/wrenn-sandbox
-├── go.sum
-├── .env.example
-│
-├── cmd/
-│   ├── control-plane/
-│   │   └── main.go                    # Entry: HTTP server + gRPC client + lifecycle manager
-│   └── host-agent/
-│       └── main.go                    # Entry: gRPC server + VM management
-│
-├── envd/                              # Guest agent (extracted from E2B, separate go.mod)
-│   ├── go.mod
-│   ├── main.go
-│   ├── Makefile
-│   └── internal/                      # Process exec, filesystem, PTY, PID 1 handling
-│
-├── proto/
-│   ├── envd/                          # From E2B: ProcessService, FilesystemService
-│   │   ├── process.proto
-│   │   ├── filesystem.proto
-│   │   └── gen/                       # Generated Go stubs
-│   └── hostagent/                     # Our definition: control plane ↔ host agent
-│       ├── hostagent.proto
-│       └── gen/
-│
-├── internal/
-│   │
-│   │ ── CONTROL PLANE ──
-│   ├── api/
-│   │   ├── server.go                  # chi router setup, middleware
-│   │   ├── middleware.go              # Auth, rate limiting, request logging
-│   │   ├── handlers_sandbox.go        # CRUD for sandboxes
-│   │   ├── handlers_exec.go           # Execute commands in sandboxes
-│   │   ├── handlers_files.go          # Upload/download files
-│   │   └── handlers_terminal.go       # WebSocket terminal sessions
-│   │
-│   ├── admin/                         # Admin UI (htmx + Go templates)
-│   │   ├── handlers.go                # Page handlers (dashboard, sandbox detail, etc.)
-│   │   ├── templates/
-│   │   │   ├── layout.html            # Base layout with htmx, navigation
-│   │   │   ├── dashboard.html         # Overview: active sandboxes, resource usage
-│   │   │   ├── sandboxes.html         # List all sandboxes with status
-│   │   │   ├── sandbox_detail.html    # Single sandbox: logs, metrics, audit trail
-│   │   │   └── partials/              # htmx partial templates for dynamic updates
-│   │   │       ├── sandbox_row.html
-│   │   │       ├── metrics_card.html
-│   │   │       └── audit_log.html
-│   │   └── static/                    # Minimal CSS (no build step)
-│   │       └── style.css
-│   │
-│   ├── auth/
-│   │   ├── apikey.go                  # API key validation
-│   │   └── ratelimit.go
-│   │
-│   ├── scheduler/
-│   │   ├── scheduler.go               # Interface definition
-│   │   ├── single_host.go             # Default: always picks the one registered host
-│   │   └── least_loaded.go            # Multi-host: picks host with most available capacity
-│   │
-│   ├── lifecycle/
-│   │   └── manager.go                 # Background goroutine: auto-pause, auto-hibernate, auto-destroy
-│   │
-│   │ ── HOST AGENT ──
-│   ├── vm/
-│   │   ├── manager.go                 # CreateVM, DestroyVM (wraps Firecracker Go SDK)
-│   │   ├── config.go                  # Build Firecracker config from sandbox request
-│   │   └── jailer.go                  # Jailer configuration for production
-│   │
-│   ├── network/
-│   │   ├── manager.go                 # SetupNetwork, TeardownNetwork (TAP + NAT)
-│   │   ├── allocator.go               # IP pool allocator (/30 subnets from 10.0.0.0/16)
-│   │   └── nat.go                     # iptables/nftables rule management
-│   │
-│   ├── filesystem/
-│   │   ├── images.go                  # Base image registry
-│   │   └── clone.go                   # CoW rootfs clones (cp --reflink)
-│   │
-│   ├── envdclient/
-│   │   ├── client.go                  # gRPC client wrapper for envd
-│   │   ├── dialer.go                  # vsock CONNECT handshake dialer
-│   │   └── health.go                  # Health check with retry
-│   │
-│   ├── snapshot/
-│   │   ├── manager.go                 # Pause/resume coordination
-│   │   ├── local.go                   # Local disk snapshot storage
-│   │   └── remote.go                  # S3/GCS upload/download for hibernate
-│   │
-│   ├── metrics/
-│   │   ├── collector.go               # Read cgroup stats per sandbox
-│   │   └── exporter.go                # Prometheus /metrics endpoint
-│   │
-│   │ ── SHARED ──
-│   ├── models/
-│   │   ├── sandbox.go                 # Sandbox struct, status enum, state machine
-│   │   └── host.go                    # Host struct, capacity tracking
-│   │
-│   ├── id/
-│   │   └── id.go                      # Generate sandbox IDs: "sb-" + 8 hex chars
-│   │
-│   └── config/
-│       └── config.go                  # Configuration loading (env vars + YAML)
-│
-├── db/
-│   ├── migrations/                    # goose SQL migrations
-│   │   ├── 00001_initial.sql
-│   │   ├── 00002_add_persistence.sql
-│   │   └── 00003_add_audit_events.sql
-│   └── queries/                       # SQL queries (used with sqlc or raw pgx)
-│       ├── sandboxes.sql
-│       ├── hosts.sql
-│       └── audit.sql
-│
-├── images/                            # Rootfs build scripts
-│   ├── build-rootfs.sh
-│   ├── docker-to-rootfs.sh
-│   └── templates/
-│       ├── minimal/build.sh
-│       ├── python311/build.sh
-│       └── node20/build.sh
-|
-├── deploy/
-│   ├── systemd/
-│   │   ├── wrenn-control-plane.service
-│   │   └── wrenn-host-agent.service
-│   └── ansible/
-│       └── playbook.yml
-│
-├── scripts/
-│   ├── setup-host.sh
-│   ├── generate-proto.sh
-│   └── dev.sh
-│
-└── tests/
-    ├── integration/
-    │   ├── sandbox_lifecycle_test.go
-    │   ├── networking_test.go
-    │   └── snapshot_test.go
-    └── load/
-        └── concurrent_test.go
+Host Namespace                      Namespace "ns-{idx}"                   Guest VM
+──────────────────────────────────────────────────────────────────────────────────────
+veth-{idx}  ←──── veth pair ────→  eth0
+10.12.0.{idx*2}/31                 10.12.0.{idx*2+1}/31
+                                     │
+                                   tap0 (169.254.0.22/30) ←── TAP ──→ eth0 (169.254.0.21)
+                                                                          ↑ kernel ip= boot arg
 ```
 
-## Database
-
-### Tech Stack
-- PostgreSQL (via pgx/v5 driver, no ORM)
-- goose for migrations (plain SQL, up/down)
-- sqlc for type-safe query generation (optional, can use raw pgx)
-
-### Migration Convention
-```
-db/migrations/
-├── 00001_initial.sql
-├── 00002_add_persistence.sql
-└── ...
-```
-
-Each migration file uses goose format:
-```sql
--- +goose Up
-CREATE TABLE sandboxes (...);
-
--- +goose Down
-DROP TABLE sandboxes;
-```
-
-Run migrations:
-```bash
-# Apply all pending migrations
-goose -dir db/migrations postgres "$DATABASE_URL" up
-
-# Rollback last migration
-goose -dir db/migrations postgres "$DATABASE_URL" down
-
-# Check current status
-goose -dir db/migrations postgres "$DATABASE_URL" status
-
-# Create a new migration
-goose -dir db/migrations create add_new_table sql
-```
-
-### Core Tables
-
-**sandboxes** — Every sandbox created on the platform
-```sql
-CREATE TABLE sandboxes (
-    id               TEXT PRIMARY KEY,
-    owner_id         TEXT NOT NULL,
-    host_id          TEXT NOT NULL,
-    template         TEXT NOT NULL,
-    status           TEXT NOT NULL DEFAULT 'pending',
-    vcpus            INTEGER DEFAULT 1,
-    memory_mb        INTEGER DEFAULT 512,
-    timeout_sec      INTEGER DEFAULT 300,
-    guest_ip         TEXT,
-    vsock_cid        INTEGER,
-    snapshot_path    TEXT,
-    created_at       TIMESTAMPTZ DEFAULT NOW(),
-    started_at       TIMESTAMPTZ,
-    paused_at        TIMESTAMPTZ,
-    last_active_at   TIMESTAMPTZ,
-    metadata         JSONB DEFAULT '{}'
-);
-
-CREATE INDEX idx_sandboxes_owner ON sandboxes(owner_id);
-CREATE INDEX idx_sandboxes_status ON sandboxes(status);
-CREATE INDEX idx_sandboxes_host ON sandboxes(host_id);
-```
-
-**hosts** — Registered host agents
-```sql
-CREATE TABLE hosts (
-    id               TEXT PRIMARY KEY,
-    grpc_endpoint    TEXT NOT NULL,
-    total_vcpus      INTEGER,
-    total_memory_mb  INTEGER,
-    used_vcpus       INTEGER DEFAULT 0,
-    used_memory_mb   INTEGER DEFAULT 0,
-    sandbox_count    INTEGER DEFAULT 0,
-    status           TEXT DEFAULT 'healthy',
-    last_heartbeat   TIMESTAMPTZ
-);
-```
-
-**audit_events** — Every exec/file operation
-```sql
-CREATE TABLE audit_events (
-    id               BIGSERIAL PRIMARY KEY,
-    sandbox_id       TEXT NOT NULL REFERENCES sandboxes(id),
-    owner_id         TEXT NOT NULL,
-    event_type       TEXT NOT NULL,
-    command          TEXT,
-    exit_code        INTEGER,
-    duration_ms      INTEGER,
-    stdout_bytes     INTEGER,
-    stderr_bytes     INTEGER,
-    created_at       TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX idx_audit_sandbox ON audit_events(sandbox_id);
-CREATE INDEX idx_audit_owner ON audit_events(owner_id);
-CREATE INDEX idx_audit_created ON audit_events(created_at);
-```
-
-**api_keys** — Authentication
-```sql
-CREATE TABLE api_keys (
-    id               TEXT PRIMARY KEY,
-    key_hash         TEXT NOT NULL UNIQUE,
-    owner_id         TEXT NOT NULL,
-    plan             TEXT DEFAULT 'hobby',
-    pool_vcpus       INTEGER DEFAULT 2,
-    pool_memory_mb   INTEGER DEFAULT 8192,
-    pool_storage_mb  INTEGER DEFAULT 20480,
-    is_active        BOOLEAN DEFAULT true,
-    created_at       TIMESTAMPTZ DEFAULT NOW()
-);
-```
+- **Host-reachable IP**: `10.11.0.{idx}/32` — routed through veth to namespace, DNAT'd to guest
+- **Outbound NAT**: guest (169.254.0.21) → SNAT to vpeerIP inside namespace → MASQUERADE on host to default interface
+- **Inbound NAT**: host traffic to 10.11.0.{idx} → DNAT to 169.254.0.21 inside namespace
+- IP forwarding enabled inside each namespace
+- All details in `internal/network/setup.go`
 
 ### Sandbox State Machine
 ```
 PENDING → STARTING → RUNNING → PAUSED → HIBERNATED
                        │          │
                        ↓          ↓
-                    STOPPED    STOPPED
-                       │
-                       ↓
-                    (destroyed/cleaned up)
+                    STOPPED    STOPPED → (destroyed)
 
-Also: any state → ERROR (on crash/failure)
-PAUSED → RUNNING (resume from warm snapshot)
-HIBERNATED → RUNNING (resume from cold snapshot, slower)
+Any state → ERROR (on crash/failure)
+PAUSED → RUNNING (warm snapshot resume)
+HIBERNATED → RUNNING (cold snapshot resume, slower)
 ```
 
-## Admin UI (htmx)
+### Key Request Flows
 
-The control plane serves an admin dashboard at `/admin/`. It uses:
-- Go `html/template` for server-side rendering
-- htmx for dynamic updates (no JavaScript framework)
-- Minimal custom CSS — no Tailwind, no build step
+**Sandbox creation** (`POST /v1/sandboxes`):
+1. API handler generates sandbox ID, inserts into DB as "pending"
+2. RPC `CreateSandbox` → host agent → `sandbox.Manager.Create()`
+3. Manager: resolve base rootfs → acquire shared loop device → create dm-snapshot (sparse CoW file) → allocate network slot → `CreateNetwork()` (netns + veth + tap + NAT) → `vm.Create()` (start Firecracker with `/dev/mapper/wrenn-{id}`, configure via HTTP API, boot) → `envdclient.WaitUntilReady()` (poll /health) → store in-memory state
+4. API handler updates DB to "running" with host_ip
 
-### Pages
-- `/admin/` — Dashboard: active sandbox count, resource pool usage, recent activity
-- `/admin/sandboxes` — List all sandboxes (filterable by status, owner, template)
-- `/admin/sandboxes/{id}` — Sandbox detail: status, metrics, audit log, actions (pause/resume/destroy)
-- `/admin/hosts` — Host agent list with capacity and health
-- `/admin/keys` — API key management
+**Command execution** (`POST /v1/sandboxes/{id}/exec`):
+1. API handler verifies sandbox is "running" in DB
+2. RPC `Exec` → host agent → `sandbox.Manager.Exec()` → `envdclient.Exec()`
+3. envd client opens bidirectional Connect RPC stream (`process.Start`), collects stdout/stderr/exit_code
+4. API handler checks UTF-8 validity (base64-encodes if binary), updates last_active_at, returns result
 
-### htmx Patterns
-- Sandbox list auto-refreshes via `hx-trigger="every 5s"`
-- Actions (pause, resume, destroy) use `hx-post` with `hx-swap="outerHTML"` to update the row
-- Audit log on sandbox detail uses `hx-get` with infinite scroll
-- Metrics cards use `hx-trigger="every 10s"` for live updates
+**Streaming exec** (`WS /v1/sandboxes/{id}/exec/stream`):
+1. WebSocket upgrade, read first message for cmd/args
+2. RPC `ExecStream` → host agent → `sandbox.Manager.ExecStream()` → `envdclient.ExecStream()`
+3. envd client returns a channel of events; host agent forwards events through the RPC stream
+4. API handler forwards stream events to WebSocket as JSON messages (`{type: "stdout"|"stderr"|"exit", ...}`)
 
-### Styling
-Wrenn brand colors:
-- Background: obsidian (#0c0c0c, #131313, #1a1a1a for raised surfaces)
-- Text: warm off-white (#e8e6e3), dim (#9a9890)
-- Accent: sage green (#8fbc8f)
-- Borders: #2a2a2a
-- Font: system monospace for data, system sans-serif for prose
-- Minimal, developer-tool aesthetic. Dense, functional, sharp edges.
-
-## Proto Definitions
-
-### hostagent.proto (control plane ↔ host agent)
-```protobuf
-syntax = "proto3";
-package hostagent;
-option go_package = "github.com/wrenn-dev/wrenn-sandbox/proto/hostagent/gen";
-
-service HostAgentService {
-  rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
-  rpc DestroySandbox(DestroySandboxRequest) returns (DestroySandboxResponse);
-  rpc PauseSandbox(PauseSandboxRequest) returns (PauseSandboxResponse);
-  rpc ResumeSandbox(ResumeSandboxRequest) returns (ResumeSandboxResponse);
-  rpc Exec(ExecRequest) returns (stream ExecOutput);
-  rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
-  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
-  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-}
-```
-
-### envd protos (host agent ↔ guest agent)
-Extracted from E2B's spec/ directory. ProcessService and FilesystemService. Do not modify these unless you also modify envd.
+**File transfer**: Write uses multipart POST to envd `/files`; read uses GET. Streaming variants chunk in 64KB pieces through the RPC stream.
 
 ## REST API
 
-All endpoints under `/v1/`. JSON request/response. API key auth via `X-API-Key` header.
+Routes defined in `internal/api/server.go`, handlers in `internal/api/handlers_*.go`. OpenAPI spec embedded via `//go:embed` and served at `/openapi.yaml` (Swagger UI at `/docs`). JSON request/response. API key auth via `X-API-Key` header. Error responses: `{"error": {"code": "...", "message": "..."}}`.
 
-```
-POST   /v1/sandboxes                    Create sandbox
-GET    /v1/sandboxes                    List sandboxes
-GET    /v1/sandboxes/{id}               Get sandbox status
-POST   /v1/sandboxes/{id}/exec          Execute command
-PUT    /v1/sandboxes/{id}/files         Upload file
-GET    /v1/sandboxes/{id}/files/{path}  Download file
-POST   /v1/sandboxes/{id}/pause         Pause sandbox
-POST   /v1/sandboxes/{id}/resume        Resume sandbox
-DELETE /v1/sandboxes/{id}               Destroy sandbox
-WS     /v1/sandboxes/{id}/terminal      Interactive terminal
+## Code Generation
 
-GET    /v1/hosts                        List hosts (admin)
-GET    /v1/keys                         List API keys (admin)
-POST   /v1/keys                         Create API key (admin)
-```
+### Proto (Connect RPC)
+
+Proto source of truth is `proto/envd/*.proto` and `proto/hostagent/*.proto`. Run `make proto` to regenerate. Three `buf.gen.yaml` files control output:
+
+| buf.gen.yaml location | Generates to | Used by |
+|---|---|---|
+| `proto/envd/buf.gen.yaml` | `proto/envd/gen/` | Main module (host agent's envd client) |
+| `proto/hostagent/buf.gen.yaml` | `proto/hostagent/gen/` | Main module (control plane ↔ host agent) |
+| `envd/spec/buf.gen.yaml` | `envd/internal/services/spec/` | envd module (guest agent server) |
+
+The envd `buf.gen.yaml` reads from `../../proto/envd/` (same source protos) but generates into envd's own module. This means the same `.proto` files produce two independent sets of Go stubs — one for each Go module.
+
+To add a new RPC method: edit the `.proto` file → `make proto` → implement the handler on both sides.
+
+### sqlc
+
+Config: `sqlc.yaml` (project root). Reads queries from `db/queries/*.sql`, reads schema from `db/migrations/`, outputs to `internal/db/`.
+
+To add a new query: add it to the appropriate `.sql` file in `db/queries/` → `make generate` → use the new method on `*db.Queries`.
+
+## Key Technical Decisions
+
+- **Connect RPC** (not gRPC) for all RPC communication between components
+- **Buf + protoc-gen-connect-go** for code generation (not protoc-gen-go-grpc)
+- **Raw Firecracker HTTP API** via Unix socket (not firecracker-go-sdk Machine type)
+- **TAP networking** (not vsock) for host-to-envd communication
+- **Device-mapper snapshots** for rootfs CoW — shared read-only loop device per base template, per-sandbox sparse CoW file, Firecracker gets `/dev/mapper/wrenn-{id}`
+- **PostgreSQL** via pgx/v5 + sqlc (type-safe query generation). Goose for migrations (plain SQL, up/down)
+- **Dashboard**: SvelteKit (Svelte 5, adapter-static) + Tailwind CSS v4 + Bits UI. Built to static files, embedded into the Go binary via `go:embed`, served as catch-all at root
+- **Lago** for billing (external service, not in this codebase)
 
 ## Coding Conventions
 
-### Go Style
-- Follow standard Go conventions. Run `gofmt` and `go vet`.
-- Use `context.Context` everywhere. Pass it through the full call chain.
-- Error handling: wrap errors with `fmt.Errorf("create sandbox: %w", err)`. No bare returns.
-- Logging: use `slog` (Go 1.21+ structured logging). No third-party loggers.
-- No global state. Everything injected via constructors.
-
-### Naming
-- Sandbox IDs: `sb-` prefix + 8 hex chars (e.g., `sb-a1b2c3d4`)
-- API keys: `wrn_` prefix + 32 random chars
-- Host IDs: hostname or `host-` prefix + 8 hex chars
-- TAP devices: `tap-` + first 8 chars of sandbox ID
-- vsock CIDs: allocated from pool starting at 3
-
-### Error Responses
-```json
-{
-  "error": {
-    "code": "pool_exhausted",
-    "message": "Your vCPU pool is fully allocated. Upgrade your plan or destroy idle sandboxes."
-  }
-}
-```
-
-### Testing
-- Unit tests: `go test ./internal/...`
-- Integration tests: `go test ./tests/integration/...` (require running host agent + Firecracker)
-- Table-driven tests for handlers and state machine transitions
-
-
-## envd — Standalone Binary
-
-envd is a **completely independent Go project**. It has its own `go.mod`, its own dependencies, and its own build. It is never imported by the control plane or host agent as a Go package. The only connection is the protobuf contract — both envd and the host agent generate code from the same `.proto` files.
-
-**Why standalone:** envd runs inside microVMs. It gets compiled once as a static binary, baked into rootfs images, and then used across thousands of sandboxes. It has zero runtime dependency on the rest of the Wrenn codebase. The host agent talks to it over vsock gRPC — same as talking to any remote service.
-
-**envd's own structure:**
-```
-envd/
-├── go.mod                    # module github.com/wrenn-dev/envd (NOT the parent module)
-├── go.sum
-├── Makefile                  # self-contained build
-├── main.go                   # Entry point, boots as PID 1
-└── internal/
-    ├── server/               # gRPC service implementations
-    ├── process/              # Process exec, PTY, signal handling
-    ├── filesystem/           # File read/write/list/watch
-    └── network/              # Guest-side network config on boot/resume
-```
-
-**Building envd:**
-```bash
-cd envd
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-s -w' -o envd .
-file envd  # MUST say "statically linked"
-# Binary goes into rootfs images at /usr/local/bin/envd
-```
-
-**Versioning:** envd has its own version, independent of the control plane or host agent. When you update envd, you rebuild rootfs images. Existing sandboxes keep the old envd.
-
-## Build Commands (Makefile)
-
-```makefile
-# ═══════════════════════════════════════════════════
-#  Variables
-# ═══════════════════════════════════════════════════
-DATABASE_URL   ?= postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable
-GOBIN          := $(shell pwd)/bin
-ENVD_DIR       := envd
-LDFLAGS        := -s -w
-
-# ═══════════════════════════════════════════════════
-#  Build
-# ═══════════════════════════════════════════════════
-.PHONY: build build-cp build-agent build-envd
-
-build: build-cp build-agent build-envd
-
-build-cp:
-	go build -v -ldflags="$(LDFLAGS)" -o $(GOBIN)/wrenn-cp ./cmd/control-plane
-
-build-agent:
-	go build -v -ldflags="$(LDFLAGS)" -o $(GOBIN)/wrenn-agent ./cmd/host-agent
-
-build-envd:
-	cd $(ENVD_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS)" -o ../$(GOBIN)/envd .
-	@file $(GOBIN)/envd | grep -q "statically linked" || \
-		(echo "ERROR: envd is not statically linked!" && exit 1)
-
-# ═══════════════════════════════════════════════════
-#  Development
-# ═══════════════════════════════════════════════════
-.PHONY: dev dev-cp dev-agent dev-envd dev-infra dev-down dev-seed
-
-## One command to start everything for local dev
-dev: dev-infra migrate-up dev-seed dev-cp
-
-dev-infra:
-	docker compose -f deploy/docker-compose.dev.yml up -d
-	@echo "Waiting for PostgreSQL..."
-	@until pg_isready -h localhost -p 5432 -q; do sleep 0.5; done
-	@echo "Dev infrastructure ready."
-
-dev-down:
-	docker compose -f deploy/docker-compose.dev.yml down -v
-
-dev-cp:
-	@if command -v air > /dev/null; then air -c .air.cp.toml; \
-	else go run ./cmd/control-plane; fi
-
-dev-agent:
-	sudo go run ./cmd/host-agent
-
-dev-envd:
-	cd $(ENVD_DIR) && go run . --debug --listen-tcp :3002
-
-dev-seed:
-	go run ./scripts/seed.go
-
-# ═══════════════════════════════════════════════════
-#  Database (goose)
-# ═══════════════════════════════════════════════════
-.PHONY: migrate-up migrate-down migrate-status migrate-create migrate-reset
-
-migrate-up:
-	goose -dir db/migrations postgres "$(DATABASE_URL)" up
-
-migrate-down:
-	goose -dir db/migrations postgres "$(DATABASE_URL)" down
-
-migrate-status:
-	goose -dir db/migrations postgres "$(DATABASE_URL)" status
-
-migrate-create:
-	goose -dir db/migrations create $(name) sql
-
-migrate-reset:
-	goose -dir db/migrations postgres "$(DATABASE_URL)" reset
-	goose -dir db/migrations postgres "$(DATABASE_URL)" up
-
-# ═══════════════════════════════════════════════════
-#  Code Generation
-# ═══════════════════════════════════════════════════
-.PHONY: generate proto sqlc
-
-generate: proto sqlc
-
-proto:
-	protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		proto/hostagent/hostagent.proto
-	protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		proto/envd/process.proto proto/envd/filesystem.proto
-
-sqlc:
-	@if command -v sqlc > /dev/null; then sqlc generate; \
-	else echo "sqlc not installed, skipping"; fi
-
-# ═══════════════════════════════════════════════════
-#  Quality & Testing
-# ═══════════════════════════════════════════════════
-.PHONY: fmt lint vet test test-integration test-all tidy check
-
-fmt:
-	gofmt -w .
-	cd $(ENVD_DIR) && gofmt -w .
-
-lint:
-	golangci-lint run ./...
-
-vet:
-	go vet ./...
-	cd $(ENVD_DIR) && go vet ./...
-
-test:
-	go test -race -v ./internal/...
-
-test-integration:
-	go test -race -v -tags=integration ./tests/integration/...
-
-test-all: test test-integration
-
-tidy:
-	go mod tidy
-	cd $(ENVD_DIR) && go mod tidy
-
-## Run all quality checks in CI order
-check: fmt vet lint test
-
-# ═══════════════════════════════════════════════════
-#  Rootfs Images
-# ═══════════════════════════════════════════════════
-.PHONY: images image-minimal image-python image-node
-
-images: build-envd image-minimal image-python image-node
-
-image-minimal:
-	sudo bash images/templates/minimal/build.sh
-
-image-python:
-	sudo bash images/templates/python311/build.sh
-
-image-node:
-	sudo bash images/templates/node20/build.sh
-
-# ═══════════════════════════════════════════════════
-#  Deployment
-# ═══════════════════════════════════════════════════
-.PHONY: setup-host install
-
-setup-host:
-	sudo bash scripts/setup-host.sh
-
-install: build
-	sudo cp $(GOBIN)/wrenn-cp /usr/local/bin/
-	sudo cp $(GOBIN)/wrenn-agent /usr/local/bin/
-	sudo cp deploy/systemd/*.service /etc/systemd/system/
-	sudo systemctl daemon-reload
-
-# ═══════════════════════════════════════════════════
-#  Clean
-# ═══════════════════════════════════════════════════
-.PHONY: clean
-
-clean:
-	rm -rf bin/
-	cd $(ENVD_DIR) && rm -f envd
-
-# ═══════════════════════════════════════════════════
-#  Help
-# ═══════════════════════════════════════════════════
-.DEFAULT_GOAL := help
-.PHONY: help
-help:
-	@echo "Wrenn Sandbox"
-	@echo ""
-	@echo "  make dev            Full local dev (infra + migrate + seed + control plane)"
-	@echo "  make dev-infra      Start PostgreSQL + Prometheus + Grafana"
-	@echo "  make dev-down       Stop dev infra"
-	@echo "  make dev-cp         Control plane (hot reload if air installed)"
-	@echo "  make dev-agent      Host agent (sudo required)"
-	@echo "  make dev-envd       envd in TCP debug mode"
-	@echo ""
-	@echo "  make build          Build all binaries → bin/"
-	@echo "  make build-envd     Build envd static binary"
-	@echo ""
-	@echo "  make migrate-up     Apply migrations"
-	@echo "  make migrate-create name=xxx  New migration"
-	@echo "  make migrate-reset  Drop + re-apply all"
-	@echo ""
-	@echo "  make generate       Proto + sqlc codegen"
-	@echo "  make check          fmt + vet + lint + test"
-	@echo "  make test-all       Unit + integration tests"
-	@echo ""
-	@echo "  make images         Build all rootfs images"
-	@echo "  make setup-host     One-time host setup"
-	@echo "  make install        Install binaries + systemd units"
-```
-
-### docker-compose.dev.yml
-
-```yaml
-# deploy/docker-compose.dev.yml
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: wrenn
-      POSTGRES_PASSWORD: wrenn
-      POSTGRES_DB: wrenn
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3001:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
-
-volumes:
-  pgdata:
-```
-
-### .env.example
-
-```bash
-# Database
-DATABASE_URL=postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable
-
-# Control Plane
-CP_LISTEN_ADDR=:8000
-CP_HOST_AGENT_ADDR=localhost:50051
-
-# Host Agent
-AGENT_LISTEN_ADDR=:50051
-AGENT_KERNEL_PATH=/var/lib/wrenn/kernels/vmlinux
-AGENT_IMAGES_PATH=/var/lib/wrenn/images
-AGENT_SANDBOXES_PATH=/var/lib/wrenn/sandboxes
-AGENT_HOST_INTERFACE=eth0
-
-# Lago (billing — external service)
-LAGO_API_URL=http://localhost:3000
-LAGO_API_KEY=
-
-# Object Storage (hibernate snapshots — Hetzner Object Storage, S3-compatible)
-# Hetzner Object Storage uses the S3-compatible API, so we use standard AWS SDK environment variables
-S3_BUCKET=wrenn-snapshots
-S3_REGION=fsn1
-S3_ENDPOINT=https://fsn1.your-objectstorage.com
-AWS_ACCESS_KEY_ID=       # Hetzner Object Storage access key (S3-compatible)
-AWS_SECRET_ACCESS_KEY=   # Hetzner Object Storage secret key (S3-compatible)
-```
-
-### Development Workflow
-
-```bash
-# First time
-git clone https://github.com/wrenn-dev/wrenn-sandbox && cd wrenn-sandbox
-make tidy
-
-# Install tools
-go install github.com/pressly/goose/v3/cmd/goose@latest
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-go install github.com/air-verse/air@latest
-go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
-
-# Start everything
-make dev-infra          # PostgreSQL + monitoring
-make migrate-up         # Create tables
-make dev-seed           # Test API key
-
-# Terminal 1
-make dev-cp             # → http://localhost:8000 (API + admin UI)
-
-# Terminal 2
-make dev-agent          # → gRPC on :50051
-
-# Terminal 3
-curl http://localhost:8000/v1/sandboxes
-open http://localhost:8000/admin/
-```
-
-## Implementation Priority
-
-### Phase 1: Boot a VM
-1. Build envd static binary
-2. Create minimal rootfs with envd baked in
-3. Write `internal/vm/` — boot Firecracker
-4. Write `internal/envdclient/` — connect to envd over vsock
-5. Test: boot VM, run "echo hello", get output back
-
-### Phase 2: Host Agent
-1. Write `internal/network/` — TAP + NAT per sandbox
-2. Write `internal/filesystem/` — CoW rootfs clones
-3. Define hostagent.proto, generate stubs
-4. Write host agent gRPC server
-5. Test: grpcurl to create/exec/destroy
-
-### Phase 3: Control Plane
-1. Set up PostgreSQL, write goose migrations
-2. Write `internal/api/` — REST handlers
-3. Write `internal/auth/` — API key validation
-4. Write `internal/scheduler/` — SingleHostScheduler
-5. Test: curl to create/exec/destroy via REST
-
-### Phase 4: Admin UI
-1. Write `internal/admin/` — htmx templates
-2. Dashboard, sandbox list, sandbox detail
-3. Host status, API key management
-4. Test: browser, see sandboxes, perform actions
-
-### Phase 5: Persistence
-1. Write `internal/snapshot/` — Firecracker snapshots
-2. Add pause/hibernate/resume states
-3. Write `internal/lifecycle/` — auto-pause idle sandboxes
-4. Test: pause, resume, verify state intact
-
-### Phase 6: SDKs
-1. Python SDK
-2. TypeScript SDK
-3. Go SDK
-4. Test: end-to-end from SDK
-
-### Phase 7: Hardening
-1. Jailer integration
-2. cgroup resource limits
-3. Egress filtering
-4. Prometheus metrics
-5. Stress testing
-
-## Dependencies
-
-### Go modules (main project)
-```
-github.com/go-chi/chi/v5
-github.com/jackc/pgx/v5
-github.com/pressly/goose/v3
-github.com/firecracker-microvm/firecracker-go-sdk
-github.com/mdlayher/vsock
-google.golang.org/grpc
-google.golang.org/protobuf
-github.com/prometheus/client_golang
-github.com/gorilla/websocket
-github.com/rs/cors
-golang.org/x/crypto
-```
-
-### envd Go modules (separate go.mod — minimal deps only)
-```
-google.golang.org/grpc
-google.golang.org/protobuf
-github.com/mdlayher/vsock
-```
-
-### External services
-- PostgreSQL (local Docker or managed)
-- Lago (billing, HTTP API only)
-- S3/GCS (hibernate snapshot storage)
-
-### Dev tools
-```
-goose, protoc, protoc-gen-go, protoc-gen-go-grpc, air, golangci-lint, grpcurl, sqlc
-```
-
-## Important Notes
-
-- Host agent MUST run as root (NET_ADMIN + /dev/kvm).
-- Control plane does NOT need root.
-- envd is a **standalone Go module** (`envd/go.mod`). Never imported by other Go code. Static binary. Baked into rootfs images.
-- `make dev` is the one command for local development.
-- For dev without Firecracker, `make dev-envd` runs envd in TCP mode.
+- **Go style**: `gofmt`, `go vet`, `context.Context` everywhere, errors wrapped with `fmt.Errorf("action: %w", err)`, `slog` for logging, no global state
+- **Naming**: Sandbox IDs `sb-` + 8 hex, API keys `wrn_` + 32 chars, Host IDs `host-` + 8 hex
+- **Dependencies**: Use `go get` to add deps, never hand-edit go.mod. For envd deps: `cd envd && go get ...` (separate module)
+- **Generated code**: Always commit generated code (proto stubs, sqlc). Never add generated code to .gitignore
+- **Migrations**: Always use `make migrate-create name=xxx`, never create migration files manually
+- **Testing**: Table-driven tests for handlers and state machine transitions
+
+### Two-module gotcha
+
+The main module (`go.mod`) and envd (`envd/go.mod`) are fully independent. `make tidy`, `make fmt`, `make vet` already operate on both. But when adding dependencies manually, remember to target the correct module (`cd envd && go get ...` for envd deps). `make proto` also generates stubs for both modules from the same proto sources.
+
+## Rootfs & Guest Init
+
+- **wrenn-init** (`images/wrenn-init.sh`): the PID 1 init script baked into every rootfs. Mounts virtual filesystems, sets hostname, writes `/etc/resolv.conf`, then execs envd.
+- **Updating the rootfs** after changing envd or wrenn-init: `bash scripts/update-debug-rootfs.sh [rootfs_path]`. This builds envd via `make build-envd`, mounts the rootfs image, copies in the new binaries, and unmounts. Defaults to `/var/lib/wrenn/images/minimal.ext4`.
+- Rootfs images are minimal debootstrap — no systemd, no coreutils beyond busybox. Use `/bin/sh -c` for shell builtins inside the guest.
+
+## Fixed Paths (on host machine)
+
+- Kernel: `/var/lib/wrenn/kernels/vmlinux`
+- Base rootfs images: `/var/lib/wrenn/images/{template}.ext4`
+- Sandbox clones: `/var/lib/wrenn/sandboxes/`
+- Firecracker: `/usr/local/bin/firecracker` (e2b's fork of firecracker)
+
+## Web UI Styling
+
+### Identity
+ 
+Warm, confident developer tool with industrial precision and crafted organic character. The feel is sharp and data-forward — not cold or sterile, but not soft either. Think: an engineer's favorite tool, built with care.
+ 
+---
+ 
+### Color Palette (Dark Mode)
+ 
+**Background scale (6 steps, near-black-green):**
+`#0a0c0b` (bg-0, page base) → `#0f1211` (bg-1, sidebar/topbar) → `#141817` (bg-2, cards/surfaces) → `#1a1e1c` (bg-3, hover states/elevated) → `#212624` (bg-4, inputs/avatars) → `#2a302d` (bg-5, active controls)
+ 
+**Text hierarchy (5 levels):**
+- Bright `#eae7e2` — page titles, metric values, active states
+- Primary `#d0cdc6` — body text, nav labels, readable content
+- Secondary `#9b9790` — supporting text, inactive nav, descriptions
+- Tertiary `#6b6862` — labels, section headers, timestamps
+- Muted `#454340` — ghost text, disabled states, grid labels
+ 
+**Sage green brand accent (3 tiers + 2 glows):**
+- Solid `#5e8c58` — primary accent, buttons, borders, active indicators
+- Mid `#89a785` — badges, chart lines, secondary accent
+- Bright `#a4c89f` — active nav text, live counts, chart dots
+- Glow `rgba(94,140,88,0.07)` — active nav backgrounds, subtle highlights
+- Glow Mid `rgba(94,140,88,0.14)` — live badges, status badge backgrounds
+ 
+**Borders (2 levels):**
+- Default `#1f2321` — card edges, dividers, sidebar borders
+- Mid `#2a2f2c` — hover states, interactive borders, stronger separation
+ 
+**Semantic status colors:**
+- Amber `#d4a73c` — warning, building, countdown timers
+- Red `#cf8172` — error, failed, destructive actions
+- Blue `#5a9fd4` — info, stopped (use sparingly)
+ 
+**Light mode:** (TBD — follow same warm-tinted approach. Background scale from `#f8f6f1` → `#dedbd5`. Text hierarchy inverts. Accent stays `#5e8c58` for solid.)
+ 
+---
+ 
+### Typography
+ 
+Four fonts, each with a clear role:
+ 
+| Font | Role | Weights | Where |
+|------|------|---------|-------|
+| **Manrope** (variable) | Body, UI | 400–700 | All body text, nav labels, buttons, descriptions, section headers |
+| **Instrument Serif** | Display, metrics | 400 | Page titles (h1), large metric values, empty-state headings only |
+| **JetBrains Mono** | Code, data | 400–600 | Status bar, time range buttons, search inputs, IDs, commit SHAs, countdown timers, log viewer, URL paths, code blocks |
+| **Alice** | Brand wordmark | 400 | Sidebar wordmark only — never used elsewhere |
+ 
+**Sizing:**
+- Base body: `14px`
+- Page title (h1): `24px` serif, `letter-spacing: -0.02em`
+- Card metric values: `36px` serif, `letter-spacing: -0.04em`
+- Chart inline metric: `30px` serif, `letter-spacing: -0.04em`
+- Nav items: `13px` body, weight 500
+- Section/group labels: `11px` body, uppercase, `letter-spacing: 0.06em`, weight 600
+- Chart section labels: `12px` body, uppercase, `letter-spacing: 0.05em`, weight 600
+- Stat cell labels: `11px` body, uppercase, `letter-spacing: 0.05em`, weight 600
+- Badge text: `10px`, uppercase, `letter-spacing: 0.04em`, weight 600
+- Status bar / footer links: `11–12px` mono
+- Table headers: `11px` body, uppercase, `letter-spacing: 0.05em`, weight 600, color muted
+- Table body cells: `13px`
+ 
+**Key rule:** Instrument Serif is reserved exclusively for page-level titles and large numeric values. It provides warmth and character without softness. Everything else uses Manrope (UI) or JetBrains Mono (data/code).
+ 
+---
+ 
+### Spacing
+ 
+4px base unit (Tailwind scale). Moderate density — functional and confident, never cramped.
+ 
+- Page content padding: `24–28px`
+- Card/surface internal padding: `18–20px`
+- Sidebar width: `230px`
+- Sidebar nav item padding: `8px 10px`
+- Sidebar brand area: `18px 16px 16px`
+- Tab bar items: `10px 16px`
+- Topbar: `16px 28px`
+- Metric strip cell: `18px 20px`
+- Chart header: `18px 20px`
+- Chart canvas: `14px 20px 12px`
+- Table header cells: `11px 16px`
+- Table body cells: `12px 16px`
+- Status bar: `6px 28px`
+- Between sections (cards): `20–24px` margin-bottom
+ 
+---
+ 
+### Borders & Depth
+ 
+**Flat aesthetic — no drop shadows.** Depth comes from background color stepping (bg-0 → bg-1 → bg-2 → bg-3), not shadows. `--shadow-sm: 0 0 #0000`.
+ 
+- All borders: `1px solid` in warm muted tones
+- Corner radii: cards/surfaces `8px`, inputs/buttons `5px`, logo mark `6px`, avatars `5px`, dots `50%`
+- Connected metric cells use shared border container with `border-left: 1px solid` between cells (no gap/grid trick) — creates the industrial panel look
+- Tables wrapped in `border-radius: 8px` container with overflow hidden
+ 
+---
+ 
+### Components
+ 
+**Sidebar navigation:**
+- Active items use `3px left-border` in sage solid (`#5e8c58`) with accent glow background (`rgba(94,140,88,0.07)`)
+- Active text color: accent-bright (`#a4c89f`)
+- Icons at `16px`, opacity 0.5 default, 1.0 on active
+- Group labels: `11px` uppercase with `0.06em` tracking, muted color
+ 
+**Status chip (live indicator):**
+- Rounded `8px` border, `bg-2` background, `border-mid` border
+- Pulsing dot: `7px`, accent-solid fill, `box-shadow: 0 0 8px rgba(94,140,88,0.5)` with glow animation
+- Count in mono at `14px` accent-bright, label in secondary text
+ 
+**Live badges (inline):**
+- `10px` text, uppercase, `3px` border-radius
+- Background: accent-glow-mid (`rgba(94,140,88,0.14)`), text: accent mid
+- Includes `5px` pulsing dot with box-shadow
+ 
+**Metric strip:**
+- 3-column grid, connected cells (single outer border, inner dividers)
+- Hover: background steps from bg-2 to bg-3
+- Value: `36px` serif, bright text
+- Label: `11px` uppercase, tertiary
+- Sub-metadata row with `1px` divider between items
+ 
+**Chart cards:**
+- `8px` border-radius, bg-2 background, default border
+- Header: section label (12px uppercase) + large serif metric + live badge
+- Range group: segmented buttons with `1px` borders, mono text, active state uses bg-5
+- Chart area: SVG with `0.5px` grid lines in border color, `10px` mono axis labels in muted
+- Data line: `1.5px` accent-solid stroke, `stroke-linejoin: round`
+- Area fill: gradient from `rgba(94,140,88,0.28)` → transparent
+- Data dot: accent-bright fill, `2.5px` bg-2 stroke, `4px` radius
+ 
+**Buttons hierarchy:**
+1. Ghost (icon-btn): transparent bg, default border, tertiary color → border-mid + secondary on hover
+2. Outline: no bg, border-mid border → accent-solid border + primary text on hover
+3. Tool: bg-2 background, default border → border-mid + primary on hover
+4. Filled/CTA: accent-solid background, white text → lighter green on hover, subtle `translateY(-1px)` lift
+ 
+**Tables:**
+- Container: `8px` border-radius, border, overflow hidden
+- Header: bg-3 background, `11px` uppercase muted text
+- Body: default bg, `1px` border-bottom between rows
+- Row hover: bg-3
+ 
+**Empty states:**
+- Centered, `72px` vertical padding
+- Icon container: `56px` square, bg-3, border-mid border, `8px` radius
+- Heading: `20px` serif, bright text
+- Description: `13px` body, tertiary text
+- CTA button below
+ 
+**Inputs:**
+- bg-2 background, default border, `5px` radius
+- Mono font for search/filter inputs
+- Focus: `border-color: accent-solid` (clean single ring, no double-ring)
+- Placeholder: muted color
+ 
+**Focus rings:** Single accent-solid border-color change on focus. Clean and minimal — no double-ring outlines.
+ 
+---
+ 
+### Animation
+ 
+- **All interactive transitions:** `150ms ease`
+- **Page load / section entrance:** `fadeUp` — `opacity: 0, translateY(6px)` → visible, `0.35s ease`, staggered with `60–80ms` delays between elements
+- **Chart data animation:** SVG `<animate>` on path `d`, polyline `points`, and circle `cy` — `0.5–0.6s` duration, `0.2–0.35s` begin delay, `fill: freeze`
+- **Live status dot:** `glow` keyframe — `2.5s ease infinite` box-shadow bloom from `0 0 6px rgba(94,140,88,0.5)` → `0 0 14px rgba(94,140,88,0.2)`
+- **CTA buttons:** subtle `translateY(-1px)` on hover for lift feel
+ 
+---
+ 
+### Dark Mode
+ 
+Primary and default mode. Very dark near-black-green backgrounds (`#0a0c0b` base) with warm off-white text and desaturated sage accent. Completely flat — no card shadows anywhere. System preference detection + localStorage persistence.
+ 
+---
+ 
+### Overall Feel
+ 
+Sharp, warm, industrial-confident. Avoids cold grays entirely — palette leans slightly warm/brown-tinted throughout. The serif display type provides organic character and warmth on titles and metrics, while Manrope handles readable UI text and JetBrains Mono anchors the data-forward, developer-tool identity. Connected metric panels, tight chart cards, and uppercase section labels create engineering density without sacrificing readability. The result is a tool that feels crafted and precise — designed by someone who uses developer tools daily.

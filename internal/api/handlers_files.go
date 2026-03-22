@@ -1,0 +1,135 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+
+	"connectrpc.com/connect"
+	"github.com/go-chi/chi/v5"
+
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
+	"git.omukk.dev/wrenn/sandbox/internal/db"
+	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
+	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
+)
+
+type filesHandler struct {
+	db    *db.Queries
+	agent hostagentv1connect.HostAgentServiceClient
+}
+
+func newFilesHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *filesHandler {
+	return &filesHandler{db: db, agent: agent}
+}
+
+// Upload handles POST /v1/sandboxes/{id}/files/write.
+// Expects multipart/form-data with:
+//   - "path" text field: absolute destination path inside the sandbox
+//   - "file" file field: binary content to write
+func (h *filesHandler) Upload(w http.ResponseWriter, r *http.Request) {
+	sandboxID := chi.URLParam(r, "id")
+	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
+
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		return
+	}
+	if sb.Status != "running" {
+		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+		return
+	}
+
+	// Limit to 100 MB.
+	r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
+
+	if err := r.ParseMultipartForm(100 << 20); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "file exceeds 100 MB limit")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid_request", "expected multipart/form-data")
+		return
+	}
+
+	filePath := r.FormValue("path")
+	if filePath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "path field is required")
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "file field is required")
+		return
+	}
+	defer file.Close()
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_error", "failed to read uploaded file")
+		return
+	}
+
+	if _, err := h.agent.WriteFile(ctx, connect.NewRequest(&pb.WriteFileRequest{
+		SandboxId: sandboxID,
+		Path:      filePath,
+		Content:   content,
+	})); err != nil {
+		status, code, msg := agentErrToHTTP(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type readFileRequest struct {
+	Path string `json:"path"`
+}
+
+// Download handles POST /v1/sandboxes/{id}/files/read.
+// Accepts JSON body with path, returns raw file content with Content-Disposition.
+func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
+	sandboxID := chi.URLParam(r, "id")
+	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
+
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		return
+	}
+	if sb.Status != "running" {
+		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+		return
+	}
+
+	var req readFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+
+	if req.Path == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "path is required")
+		return
+	}
+
+	resp, err := h.agent.ReadFile(ctx, connect.NewRequest(&pb.ReadFileRequest{
+		SandboxId: sandboxID,
+		Path:      req.Path,
+	}))
+	if err != nil {
+		status, code, msg := agentErrToHTTP(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	_, _ = w.Write(resp.Msg.Content)
+}

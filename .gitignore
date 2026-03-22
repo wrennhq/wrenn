@@ -37,3 +37,12 @@ e2b/
 
 ## Builds
 builds/
+
+## Frontend
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+
+## Dashboard embedded static (built from frontend, not committed)
+internal/dashboard/static/*
+!internal/dashboard/static/.gitkeep

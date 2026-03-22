@@ -1,0 +1,238 @@
+syntax = "proto3";
+
+package hostagent.v1;
+
+// HostAgentService manages sandbox VMs on a single physical host.
+// The control plane calls these RPCs to orchestrate sandbox lifecycle.
+service HostAgentService {
+  // CreateSandbox boots a new microVM with the given configuration.
+  rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
+
+  // DestroySandbox stops and cleans up a sandbox (VM, network, rootfs).
+  rpc DestroySandbox(DestroySandboxRequest) returns (DestroySandboxResponse);
+
+  // PauseSandbox pauses a running sandbox's VM.
+  rpc PauseSandbox(PauseSandboxRequest) returns (PauseSandboxResponse);
+
+  // ResumeSandbox resumes a paused sandbox's VM.
+  rpc ResumeSandbox(ResumeSandboxRequest) returns (ResumeSandboxResponse);
+
+  // Exec runs a command inside a sandbox and returns the collected output.
+  rpc Exec(ExecRequest) returns (ExecResponse);
+
+  // ListSandboxes returns all sandboxes managed by this host agent.
+  rpc ListSandboxes(ListSandboxesRequest) returns (ListSandboxesResponse);
+
+  // WriteFile writes content to a file inside a sandbox.
+  rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
+
+  // ReadFile reads a file from inside a sandbox.
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+
+  // CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
+  // template, and destroys the sandbox.
+  rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
+
+  // DeleteSnapshot removes a snapshot template from disk.
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+
+  // ExecStream runs a command inside a sandbox and streams output events as they arrive.
+  rpc ExecStream(ExecStreamRequest) returns (stream ExecStreamResponse);
+
+  // WriteFileStream writes a file to a sandbox using chunked streaming.
+  // First message must contain metadata (sandbox_id, path). Subsequent messages contain data chunks.
+  rpc WriteFileStream(stream WriteFileStreamRequest) returns (WriteFileStreamResponse);
+
+  // ReadFileStream reads a file from a sandbox and streams it back in chunks.
+  rpc ReadFileStream(ReadFileStreamRequest) returns (stream ReadFileStreamResponse);
+
+  // PingSandbox resets the inactivity timer for a running sandbox.
+  rpc PingSandbox(PingSandboxRequest) returns (PingSandboxResponse);
+
+}
+
+message CreateSandboxRequest {
+  // Sandbox ID assigned by the control plane. If empty, the host agent generates one.
+  string sandbox_id = 5;
+
+  // Template name (e.g., "minimal", "python311"). Determines base rootfs.
+  string template = 1;
+
+  // Number of virtual CPUs (default: 1).
+  int32 vcpus = 2;
+
+  // Memory in MB (default: 512).
+  int32 memory_mb = 3;
+
+  // TTL in seconds. Sandbox is auto-paused after this duration of
+  // inactivity. 0 means no auto-pause.
+  int32 timeout_sec = 4;
+}
+
+message CreateSandboxResponse {
+  string sandbox_id = 1;
+  string status = 2;
+  string host_ip = 3;
+}
+
+message DestroySandboxRequest {
+  string sandbox_id = 1;
+}
+
+message DestroySandboxResponse {}
+
+message PauseSandboxRequest {
+  string sandbox_id = 1;
+}
+
+message PauseSandboxResponse {}
+
+message ResumeSandboxRequest {
+  string sandbox_id = 1;
+
+  // TTL in seconds restored from the DB so the reaper can auto-pause
+  // the sandbox again after inactivity. 0 means no auto-pause.
+  int32 timeout_sec = 2;
+}
+
+message ResumeSandboxResponse {
+  string sandbox_id = 1;
+  string status = 2;
+  string host_ip = 3;
+}
+
+message CreateSnapshotRequest {
+  string sandbox_id = 1;
+  string name = 2;
+}
+
+message CreateSnapshotResponse {
+  string name = 1;
+  int64 size_bytes = 2;
+}
+
+message DeleteSnapshotRequest {
+  string name = 1;
+}
+
+message DeleteSnapshotResponse {}
+
+message ExecRequest {
+  string sandbox_id = 1;
+  string cmd = 2;
+  repeated string args = 3;
+  // Timeout for the command in seconds (default: 30).
+  int32 timeout_sec = 4;
+}
+
+message ExecResponse {
+  bytes stdout = 1;
+  bytes stderr = 2;
+  int32 exit_code = 3;
+}
+
+message ListSandboxesRequest {}
+
+message ListSandboxesResponse {
+  repeated SandboxInfo sandboxes = 1;
+
+  // IDs of sandboxes that were automatically paused by the TTL reaper
+  // since the last call. Drained on read.
+  repeated string auto_paused_sandbox_ids = 2;
+}
+
+message SandboxInfo {
+  string sandbox_id = 1;
+  string status = 2;
+  string template = 3;
+  int32 vcpus = 4;
+  int32 memory_mb = 5;
+  string host_ip = 6;
+  int64 created_at_unix = 7;
+  int64 last_active_at_unix = 8;
+  int32 timeout_sec = 9;
+}
+
+message WriteFileRequest {
+  string sandbox_id = 1;
+  string path = 2;
+  bytes content = 3;
+}
+
+message WriteFileResponse {}
+
+message ReadFileRequest {
+  string sandbox_id = 1;
+  string path = 2;
+}
+
+message ReadFileResponse {
+  bytes content = 1;
+}
+
+// ── Streaming Exec ──────────────────────────────────────────────────
+
+message ExecStreamRequest {
+  string sandbox_id = 1;
+  string cmd = 2;
+  repeated string args = 3;
+  int32 timeout_sec = 4;
+}
+
+message ExecStreamResponse {
+  oneof event {
+    ExecStreamStart start = 1;
+    ExecStreamData data = 2;
+    ExecStreamEnd end = 3;
+  }
+}
+
+message ExecStreamStart {
+  uint32 pid = 1;
+}
+
+message ExecStreamData {
+  oneof output {
+    bytes stdout = 1;
+    bytes stderr = 2;
+  }
+}
+
+message ExecStreamEnd {
+  int32 exit_code = 1;
+  string error = 2;
+}
+
+// ── Streaming File Transfer ─────────────────────────────────────────
+
+message WriteFileStreamRequest {
+  oneof content {
+    WriteFileStreamMeta meta = 1;
+    bytes chunk = 2;
+  }
+}
+
+message WriteFileStreamMeta {
+  string sandbox_id = 1;
+  string path = 2;
+}
+
+message WriteFileStreamResponse {}
+
+message ReadFileStreamRequest {
+  string sandbox_id = 1;
+  string path = 2;
+}
+
+message ReadFileStreamResponse {
+  bytes chunk = 1;
+}
+
+// ── Ping ────────────────────────────────────────────────────────────
+
+message PingSandboxRequest {
+  string sandbox_id = 1;
+}
+
+message PingSandboxResponse {}
+

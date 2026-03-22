@@ -9,9 +9,12 @@ LDFLAGS        := -s -w
 # ═══════════════════════════════════════════════════
 #  Build
 # ═══════════════════════════════════════════════════
-.PHONY: build build-cp build-agent build-envd
+.PHONY: build build-cp build-agent build-envd build-frontend
 
 build: build-cp build-agent build-envd
+
+build-frontend:
+	cd frontend && pnpm install --frozen-lockfile && pnpm build
 
 build-cp:
 	go build -v -ldflags="$(LDFLAGS)" -o $(GOBIN)/wrenn-cp ./cmd/control-plane
@@ -21,17 +24,17 @@ build-agent:
 
 build-envd:
 	cd $(ENVD_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS)" -o ../$(GOBIN)/envd .
+		go build -ldflags="$(LDFLAGS)" -o $(GOBIN)/envd .
 	@file $(GOBIN)/envd | grep -q "statically linked" || \
 		(echo "ERROR: envd is not statically linked!" && exit 1)
 
 # ═══════════════════════════════════════════════════
 #  Development
 # ═══════════════════════════════════════════════════
-.PHONY: dev dev-cp dev-agent dev-envd dev-infra dev-down dev-seed
+.PHONY: dev dev-cp dev-agent dev-envd dev-frontend dev-infra dev-down
 
 ## One command to start everything for local dev
-dev: dev-infra migrate-up dev-seed dev-cp
+dev: dev-infra migrate-up dev-cp
 
 dev-infra:
 	docker compose -f deploy/docker-compose.dev.yml up -d
@@ -49,11 +52,12 @@ dev-cp:
 dev-agent:
 	sudo go run ./cmd/host-agent
 
+dev-frontend:
+	cd frontend && pnpm dev --port 5173
+
 dev-envd:
 	cd $(ENVD_DIR) && go run . --debug --listen-tcp :3002
 
-dev-seed:
-	go run ./scripts/seed.go
 
 # ═══════════════════════════════════════════════════
 #  Database (goose)
@@ -84,16 +88,12 @@ migrate-reset:
 generate: proto sqlc
 
 proto:
-	protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		proto/hostagent/hostagent.proto
-	protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		proto/envd/process.proto proto/envd/filesystem.proto
+	cd proto/envd && buf generate
+	cd proto/hostagent && buf generate
+	cd $(ENVD_DIR)/spec && buf generate
 
 sqlc:
-	@if command -v sqlc > /dev/null; then sqlc generate; \
-	else echo "sqlc not installed, skipping"; fi
+	sqlc generate
 
 # ═══════════════════════════════════════════════════
 #  Quality & Testing
@@ -177,10 +177,12 @@ help:
 	@echo "  make dev-infra      Start PostgreSQL + Prometheus + Grafana"
 	@echo "  make dev-down       Stop dev infra"
 	@echo "  make dev-cp         Control plane (hot reload if air installed)"
+	@echo "  make dev-frontend   Vite dev server with HMR (port 5173)"
 	@echo "  make dev-agent      Host agent (sudo required)"
 	@echo "  make dev-envd       envd in TCP debug mode"
 	@echo ""
 	@echo "  make build          Build all binaries → builds/"
+	@echo "  make build-frontend Build SvelteKit dashboard → frontend/build/"
 	@echo "  make build-envd     Build envd static binary"
 	@echo ""
 	@echo "  make migrate-up     Apply migrations"

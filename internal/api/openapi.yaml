@@ -1,0 +1,1350 @@
+openapi: "3.1.0"
+info:
+  title: Wrenn Sandbox API
+  description: MicroVM-based code execution platform API.
+  version: "0.1.0"
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+security: []
+
+paths:
+  /v1/auth/signup:
+    post:
+      summary: Create a new account
+      operationId: signup
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupRequest"
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Invalid request (bad email, short password)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/auth/login:
+    post:
+      summary: Log in with email and password
+      operationId: login
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/auth/oauth/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [github]
+        description: OAuth provider name
+
+    get:
+      summary: Start OAuth login flow
+      operationId: oauthRedirect
+      tags: [auth]
+      description: |
+        Redirects the user to the OAuth provider's authorization page.
+        Sets a short-lived CSRF state cookie for validation on callback.
+      responses:
+        "302":
+          description: Redirect to provider authorization URL
+        "404":
+          description: Provider not found or not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/auth/oauth/{provider}/callback:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [github]
+        description: OAuth provider name
+
+    get:
+      summary: OAuth callback
+      operationId: oauthCallback
+      tags: [auth]
+      description: |
+        Handles the OAuth provider's callback after user authorization.
+        Exchanges the authorization code for a user profile, creates or
+        logs in the user, and redirects to the frontend with a JWT token.
+
+        **On success:** redirects to `{OAUTH_REDIRECT_URL}/auth/{provider}/callback?token=...&user_id=...&team_id=...&email=...`
+
+        **On error:** redirects to `{OAUTH_REDIRECT_URL}/auth/{provider}/callback?error=...`
+
+        Possible error codes: `access_denied`, `invalid_state`, `missing_code`,
+        `exchange_failed`, `email_taken`, `internal_error`.
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+          description: Authorization code from the OAuth provider
+        - name: state
+          in: query
+          schema:
+            type: string
+          description: CSRF state parameter (must match the cookie)
+      responses:
+        "302":
+          description: Redirect to frontend with token or error
+
+  /v1/api-keys:
+    post:
+      summary: Create an API key
+      operationId: createAPIKey
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPIKeyRequest"
+      responses:
+        "201":
+          description: API key created (plaintext key only shown once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKeyResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      summary: List API keys for your team
+      operationId: listAPIKeys
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of API keys (plaintext keys are never returned)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIKeyResponse"
+
+  /v1/api-keys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    delete:
+      summary: Delete an API key
+      operationId: deleteAPIKey
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: API key deleted
+
+  /v1/sandboxes:
+    post:
+      summary: Create a sandbox
+      operationId: createSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSandboxRequest"
+      responses:
+        "201":
+          description: Sandbox created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "502":
+          description: Host agent error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      summary: List sandboxes for your team
+      operationId: listSandboxes
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      responses:
+        "200":
+          description: List of sandboxes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Sandbox"
+
+  /v1/sandboxes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get sandbox details
+      operationId: getSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      responses:
+        "200":
+          description: Sandbox details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Destroy a sandbox
+      operationId: destroySandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      responses:
+        "204":
+          description: Sandbox destroyed
+
+  /v1/sandboxes/{id}/exec:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Execute a command
+      operationId: execCommand
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecRequest"
+      responses:
+        "200":
+          description: Command output
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecResponse"
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/ping:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Reset sandbox inactivity timer
+      operationId: pingSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Resets the last_active_at timestamp for a running sandbox, preventing
+        the auto-pause TTL from expiring. Use this as a keepalive for sandboxes
+        that are idle but should remain running.
+      responses:
+        "204":
+          description: Ping acknowledged, inactivity timer reset
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/pause:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Pause a running sandbox
+      operationId: pauseSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Takes a snapshot of the sandbox (VM state + memory + rootfs), then
+        destroys all running resources. The sandbox exists only as files on
+        disk and can be resumed later.
+      responses:
+        "200":
+          description: Sandbox paused (snapshot taken, resources released)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/resume:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Resume a paused sandbox
+      operationId: resumeSandbox
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Restores a paused sandbox from its snapshot using UFFD for lazy
+        memory loading. Boots a fresh Firecracker process, sets up a new
+        network slot, and waits for envd to become ready.
+      responses:
+        "200":
+          description: Sandbox resumed (new VM booted from snapshot)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sandbox"
+        "409":
+          description: Sandbox not paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/snapshots:
+    post:
+      summary: Create a snapshot template
+      operationId: createSnapshot
+      tags: [snapshots]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Pauses a running sandbox, takes a full snapshot, copies the snapshot
+        files to the images directory as a reusable template, then destroys
+        the sandbox. The template can be used to create new sandboxes.
+      parameters:
+        - name: overwrite
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["true"]
+          description: Set to "true" to overwrite an existing snapshot with the same name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSnapshotRequest"
+      responses:
+        "201":
+          description: Snapshot created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "409":
+          description: Name already exists or sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      summary: List templates for your team
+      operationId: listSnapshots
+      tags: [snapshots]
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [base, snapshot]
+          description: Filter by template type.
+      responses:
+        "200":
+          description: List of templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Template"
+
+  /v1/snapshots/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+
+    delete:
+      summary: Delete a snapshot template
+      operationId: deleteSnapshot
+      tags: [snapshots]
+      security:
+        - apiKeyAuth: []
+      description: Removes the snapshot files from disk and deletes the database record.
+      responses:
+        "204":
+          description: Snapshot deleted
+        "404":
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/write:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Upload a file
+      operationId: uploadFile
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [path, file]
+              properties:
+                path:
+                  type: string
+                  description: Absolute destination path inside the sandbox
+                file:
+                  type: string
+                  format: binary
+                  description: File content
+      responses:
+        "204":
+          description: File uploaded
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: File too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Download a file
+      operationId: downloadFile
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReadFileRequest"
+      responses:
+        "200":
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Sandbox or file not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/exec/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Stream command execution via WebSocket
+      operationId: execStream
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Opens a WebSocket connection for streaming command execution.
+
+        **Client sends** (first message to start the process):
+        ```json
+        {"type": "start", "cmd": "tail", "args": ["-f", "/var/log/syslog"]}
+        ```
+
+        **Client sends** (to stop the process):
+        ```json
+        {"type": "stop"}
+        ```
+
+        **Server sends** (process events as they arrive):
+        ```json
+        {"type": "start", "pid": 1234}
+        {"type": "stdout", "data": "line of output\n"}
+        {"type": "stderr", "data": "warning message\n"}
+        {"type": "exit", "exit_code": 0}
+        {"type": "error", "data": "description of error"}
+        ```
+
+        The connection closes automatically after the process exits.
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/stream/write:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Upload a file (streaming)
+      operationId: streamUploadFile
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Streams file content to the sandbox without buffering in memory.
+        Suitable for large files. Uses the same multipart/form-data format
+        as the non-streaming upload endpoint.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [path, file]
+              properties:
+                path:
+                  type: string
+                  description: Absolute destination path inside the sandbox
+                file:
+                  type: string
+                  format: binary
+                  description: File content
+      responses:
+        "204":
+          description: File uploaded
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/stream/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Download a file (streaming)
+      operationId: streamDownloadFile
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Streams file content from the sandbox without buffering in memory.
+        Suitable for large files. Returns raw bytes with chunked transfer encoding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReadFileRequest"
+      responses:
+        "200":
+          description: File content streamed in chunks
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Sandbox or file not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts:
+    post:
+      summary: Create a host
+      operationId: createHost
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Creates a new host record and returns a one-time registration token.
+        Regular hosts can only be created by admins. BYOC hosts can be created
+        by admins or team owners.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateHostRequest"
+      responses:
+        "201":
+          description: Host created with registration token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateHostResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      summary: List hosts
+      operationId: listHosts
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Admins see all hosts. Non-admins see only BYOC hosts belonging to their team.
+      responses:
+        "200":
+          description: List of hosts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Host"
+
+  /v1/hosts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get host details
+      operationId: getHost
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Host details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Host"
+        "404":
+          description: Host not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Delete a host
+      operationId: deleteHost
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Admins can delete any host. Team owners can delete BYOC hosts
+        belonging to their team.
+      responses:
+        "204":
+          description: Host deleted
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/token:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Regenerate registration token
+      operationId: regenerateHostToken
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Issues a new registration token for a host still in "pending" status.
+        Use this when a previous registration attempt failed after consuming
+        the original token. Same permission model as host creation.
+      responses:
+        "201":
+          description: New registration token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateHostResponse"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Host is not in pending status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/register:
+    post:
+      summary: Register a host agent
+      operationId: registerHost
+      tags: [hosts]
+      description: |
+        Called by the host agent on first startup. Validates the one-time
+        registration token, records machine specs, sets the host status to
+        "online", and returns a long-lived JWT for subsequent API calls
+        (heartbeats).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterHostRequest"
+      responses:
+        "201":
+          description: Host registered, JWT returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterHostResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Invalid or expired registration token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/heartbeat:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Host agent heartbeat
+      operationId: hostHeartbeat
+      tags: [hosts]
+      security:
+        - hostTokenAuth: []
+      description: |
+        Updates the host's last_heartbeat_at timestamp. The host ID in the URL
+        must match the host ID in the JWT.
+      responses:
+        "204":
+          description: Heartbeat recorded
+        "401":
+          description: Invalid or missing host token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Host ID mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/tags:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: List host tags
+      operationId: listHostTags
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+    post:
+      summary: Add a tag to a host
+      operationId: addHostTag
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTagRequest"
+      responses:
+        "204":
+          description: Tag added
+        "404":
+          description: Host not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/tags/{tag}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: tag
+        in: path
+        required: true
+        schema:
+          type: string
+
+    delete:
+      summary: Remove a tag from a host
+      operationId: removeHostTag
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Tag removed
+        "404":
+          description: Host not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for sandbox lifecycle operations. Create via POST /v1/api-keys.
+
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from /v1/auth/login or /v1/auth/signup. Valid for 6 hours.
+
+    hostTokenAuth:
+      type: apiKey
+      in: header
+      name: X-Host-Token
+      description: Long-lived host JWT returned from POST /v1/hosts/register. Valid for 1 year.
+
+  schemas:
+    SignupRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT token (valid for 6 hours)
+        user_id:
+          type: string
+        team_id:
+          type: string
+        email:
+          type: string
+
+    CreateAPIKeyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          default: Unnamed API Key
+
+    APIKeyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        name:
+          type: string
+        key_prefix:
+          type: string
+          description: Display prefix (e.g. "wrn_ab12cd34...")
+        created_at:
+          type: string
+          format: date-time
+        last_used:
+          type: string
+          format: date-time
+          nullable: true
+        key:
+          type: string
+          description: Full plaintext key. Only returned on creation, never again.
+          nullable: true
+
+    CreateSandboxRequest:
+      type: object
+      properties:
+        template:
+          type: string
+          default: minimal
+        vcpus:
+          type: integer
+          default: 1
+        memory_mb:
+          type: integer
+          default: 512
+        timeout_sec:
+          type: integer
+          default: 0
+          description: >
+            Auto-pause TTL in seconds. The sandbox is automatically paused
+            after this duration of inactivity (no exec or ping). 0 means
+            no auto-pause.
+
+    Sandbox:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, paused, stopped, error]
+        template:
+          type: string
+        vcpus:
+          type: integer
+        memory_mb:
+          type: integer
+        timeout_sec:
+          type: integer
+        guest_ip:
+          type: string
+        host_ip:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_active_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_updated:
+          type: string
+          format: date-time
+
+    CreateSnapshotRequest:
+      type: object
+      required: [sandbox_id]
+      properties:
+        sandbox_id:
+          type: string
+          description: ID of the running sandbox to snapshot.
+        name:
+          type: string
+          description: Name for the snapshot template. Auto-generated if omitted.
+
+    Template:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [base, snapshot]
+        vcpus:
+          type: integer
+          nullable: true
+        memory_mb:
+          type: integer
+          nullable: true
+        size_bytes:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+
+    ExecRequest:
+      type: object
+      required: [cmd]
+      properties:
+        cmd:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        timeout_sec:
+          type: integer
+          default: 30
+
+    ExecResponse:
+      type: object
+      properties:
+        sandbox_id:
+          type: string
+        cmd:
+          type: string
+        stdout:
+          type: string
+        stderr:
+          type: string
+        exit_code:
+          type: integer
+        duration_ms:
+          type: integer
+        encoding:
+          type: string
+          enum: [utf-8, base64]
+          description: Output encoding. "base64" when stdout/stderr contain binary data.
+
+    ReadFileRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Absolute file path inside the sandbox
+
+    CreateHostRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [regular, byoc]
+          description: Host type. Regular hosts are shared; BYOC hosts belong to a team.
+        team_id:
+          type: string
+          description: Required for BYOC hosts.
+        provider:
+          type: string
+          description: Cloud provider (e.g. aws, gcp, hetzner, bare-metal).
+        availability_zone:
+          type: string
+          description: Availability zone (e.g. us-east, eu-west).
+
+    CreateHostResponse:
+      type: object
+      properties:
+        host:
+          $ref: "#/components/schemas/Host"
+        registration_token:
+          type: string
+          description: One-time registration token for the host agent. Expires in 1 hour.
+
+    RegisterHostRequest:
+      type: object
+      required: [token, address]
+      properties:
+        token:
+          type: string
+          description: One-time registration token from POST /v1/hosts.
+        arch:
+          type: string
+          description: CPU architecture (e.g. x86_64, aarch64).
+        cpu_cores:
+          type: integer
+        memory_mb:
+          type: integer
+        disk_gb:
+          type: integer
+        address:
+          type: string
+          description: Host agent address (ip:port).
+
+    RegisterHostResponse:
+      type: object
+      properties:
+        host:
+          $ref: "#/components/schemas/Host"
+        token:
+          type: string
+          description: Long-lived host JWT for X-Host-Token header. Valid for 1 year.
+
+    Host:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [regular, byoc]
+        team_id:
+          type: string
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+        availability_zone:
+          type: string
+          nullable: true
+        arch:
+          type: string
+          nullable: true
+        cpu_cores:
+          type: integer
+          nullable: true
+        memory_mb:
+          type: integer
+          nullable: true
+        disk_gb:
+          type: integer
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, online, offline, draining]
+        last_heartbeat_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AddTagRequest:
+      type: object
+      required: [tag]
+      properties:
+        tag:
+          type: string
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string

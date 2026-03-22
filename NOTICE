@@ -1,0 +1,19 @@
+Wrenn Sandbox
+Copyright (c) 2026 M/S Omukk, Bangladesh
+
+This project includes software derived from the following project:
+
+Project: e2b infra
+Repository: https://github.com/e2b-dev/infra
+
+The following files and directories in this repository contain code derived from the above project and are licensed under the Apache License Version 2.0:
+
+- envd/
+- proto/envd/*.proto
+- internal/snapshot/
+- internal/uffd/
+
+Modifications to this code were made by M/S Omukk.
+
+Copyright (c) 2023 FoundryLabs, Inc.
+Modifications Copyright (c) 2026 M/S Omukk, Bangladesh

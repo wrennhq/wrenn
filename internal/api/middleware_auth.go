@@ -1,0 +1,56 @@
+package api
+
+import (
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
+	"git.omukk.dev/wrenn/sandbox/internal/db"
+)
+
+// requireAPIKeyOrJWT accepts either X-API-Key header or Authorization: Bearer JWT.
+// Both stamp TeamID into the request context via auth.AuthContext.
+func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Try API key first.
+			if key := r.Header.Get("X-API-Key"); key != "" {
+				hash := auth.HashAPIKey(key)
+				row, err := queries.GetAPIKeyByHash(r.Context(), hash)
+				if err != nil {
+					writeError(w, http.StatusUnauthorized, "unauthorized", "invalid API key")
+					return
+				}
+
+				if err := queries.UpdateAPIKeyLastUsed(r.Context(), row.ID); err != nil {
+					slog.Warn("failed to update api key last_used", "key_id", row.ID, "error", err)
+				}
+
+				ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{TeamID: row.TeamID})
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// Try JWT bearer token.
+			if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
+				tokenStr := strings.TrimPrefix(header, "Bearer ")
+				claims, err := auth.VerifyJWT(jwtSecret, tokenStr)
+				if err != nil {
+					writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
+					return
+				}
+
+				ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{
+					TeamID: claims.TeamID,
+					UserID: claims.Subject,
+					Email:  claims.Email,
+				})
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			writeError(w, http.StatusUnauthorized, "unauthorized", "X-API-Key or Authorization: Bearer <token> required")
+		})
+	}
+}

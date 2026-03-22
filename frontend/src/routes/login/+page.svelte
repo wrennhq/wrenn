@@ -1,0 +1,287 @@
+<script lang="ts">
+	import { goto } from '$app/navigation';
+	import { auth } from '$lib/auth.svelte';
+	import { apiLogin, apiSignup } from '$lib/api/auth';
+	import {
+		IconGithub,
+		IconMail,
+		IconLock,
+		IconEye,
+		IconEyeOff
+	} from '$lib/components/icons';
+
+	let mode: 'signin' | 'signup' = $state('signin');
+	let email = $state('');
+	let password = $state('');
+	let showPassword = $state(false);
+	let error = $state('');
+	let loading = $state(false);
+
+	// Mouse-reactive glow — moves opposite to cursor with viscous drag
+	let glowX = $state(50);
+	let glowY = $state(50);
+	let targetX = 50;
+	let targetY = 50;
+	let rafId: number | null = null;
+
+	const LERP_FACTOR = 0.04; // lower = more drag
+
+	function lerpLoop() {
+		const dx = targetX - glowX;
+		const dy = targetY - glowY;
+
+		if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+			glowX += dx * LERP_FACTOR;
+			glowY += dy * LERP_FACTOR;
+			rafId = requestAnimationFrame(lerpLoop);
+		} else {
+			glowX = targetX;
+			glowY = targetY;
+			rafId = null;
+		}
+	}
+
+	function handleMouseMove(e: MouseEvent) {
+		const target = e.currentTarget as HTMLElement;
+		const rect = target.getBoundingClientRect();
+		const normX = (e.clientX - rect.left) / rect.width;
+		const normY = (e.clientY - rect.top) / rect.height;
+
+		// Invert: mouse goes right → glow goes left
+		targetX = 55 - normX * 10;
+		targetY = 55 - normY * 10;
+
+		if (rafId === null) {
+			rafId = requestAnimationFrame(lerpLoop);
+		}
+	}
+
+	const title = $derived(mode === 'signin' ? 'Welcome back' : 'Create account');
+	const subtitle = $derived(
+		mode === 'signin' ? 'Sign in to your Wrenn account' : 'Get started with Wrenn'
+	);
+	const submitLabel = $derived(mode === 'signin' ? 'Sign in' : 'Create account');
+	const switchText = $derived(
+		mode === 'signin' ? "Don't have an account?" : 'Already have an account?'
+	);
+	const switchAction = $derived(mode === 'signin' ? 'Sign up' : 'Sign in');
+
+	function switchMode() {
+		mode = mode === 'signin' ? 'signup' : 'signin';
+		error = '';
+	}
+
+	async function handleSubmit(e: Event) {
+		e.preventDefault();
+		error = '';
+		loading = true;
+
+		const result =
+			mode === 'signin'
+				? await apiLogin(email, password)
+				: await apiSignup(email, password);
+
+		loading = false;
+
+		if (!result.ok) {
+			error = result.error;
+			return;
+		}
+
+		auth.login(result.data);
+		goto('/dashboard');
+	}
+</script>
+
+<svelte:head>
+	<title>Wrenn — {mode === 'signin' ? 'Sign in' : 'Sign up'}</title>
+</svelte:head>
+
+<div class="flex min-h-screen">
+	<!-- Left panel — branding -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="relative hidden w-1/2 flex-col items-center justify-center overflow-hidden bg-[var(--color-bg-1)] lg:flex"
+		onmousemove={handleMouseMove}
+	>
+		<!-- Mouse-reactive radial glow -->
+		<div
+			class="pointer-events-none absolute inset-0"
+			style="background: radial-gradient(ellipse 55% 45% at {glowX}% {glowY}%, rgba(94, 140, 88, 0.09) 0%, transparent 70%)"
+			aria-hidden="true"
+		></div>
+
+		<!-- Centered logo + wordmark -->
+		<div
+			class="relative z-10 flex flex-col items-center"
+			style="animation: fadeUp 0.35s ease both"
+		>
+			<img src="/logo.svg" alt="Wrenn" class="h-20 w-20 rounded-[var(--radius-card)]" />
+			<span
+				class="mt-5 font-brand text-[44px] tracking-[-0.01em] text-[var(--color-text-bright)]"
+			>
+				Wrenn
+			</span>
+		</div>
+
+		<!-- Tagline below logo -->
+		<div
+			class="relative z-10 mt-10 text-center"
+			style="animation: fadeUp 0.35s ease 0.1s both"
+		>
+			<h1
+				class="font-serif text-[42px] leading-[1.15] tracking-[-0.03em] text-[var(--color-text-bright)]"
+			>
+				Scale Up. Spin Out.
+			</h1>
+		</div>
+
+		<!-- Sub-tagline -->
+		<p
+			class="relative z-10 mt-6 font-mono text-[13px] uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]"
+			style="animation: fadeUp 0.35s ease 0.2s both"
+		>
+			Run Anything. Worry about Nothing.
+		</p>
+	</div>
+
+	<!-- Right panel — auth form -->
+	<div
+		class="flex w-full flex-col items-center justify-center bg-[var(--color-bg-0)] px-6 lg:w-1/2"
+	>
+		<!-- Mobile logo (shown only on small screens) -->
+		<div
+			class="mb-10 flex flex-col items-center lg:hidden"
+			style="animation: fadeUp 0.35s ease both"
+		>
+			<img src="/logo.svg" alt="Wrenn" class="h-12 w-12 rounded-[var(--radius-card)]" />
+			<span
+				class="mt-2 font-brand text-[24px] tracking-[-0.01em] text-[var(--color-text-bright)]"
+			>
+				Wrenn
+			</span>
+		</div>
+
+		<div class="w-full max-w-[400px]" style="animation: fadeUp 0.35s ease 0.1s both">
+			<!-- Header -->
+			<div class="mb-8">
+				<h2
+					class="font-serif text-[34px] tracking-[-0.02em] text-[var(--color-text-bright)]"
+				>
+					{title}
+				</h2>
+				<p class="mt-2 text-[14px] text-[var(--color-text-secondary)]">
+					{subtitle}
+				</p>
+			</div>
+
+			<!-- GitHub OAuth -->
+			<a
+				href="/api/auth/oauth/github"
+				class="flex w-full items-center justify-center gap-2.5 rounded-[var(--radius-button)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] px-4 py-3 text-[14px] font-medium text-[var(--color-text-bright)] no-underline transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-text-bright)]"
+			>
+				<IconGithub size={16} />
+				Continue with GitHub
+			</a>
+
+			<!-- Divider -->
+			<div class="my-6 flex items-center gap-3">
+				<div class="h-px flex-1 bg-[var(--color-border)]"></div>
+				<span
+					class="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]"
+					>or</span
+				>
+				<div class="h-px flex-1 bg-[var(--color-border)]"></div>
+			</div>
+
+			<!-- Form -->
+			<form onsubmit={handleSubmit} class="space-y-3">
+				<div class="group relative">
+					<div
+						class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] transition-colors duration-150 group-focus-within:text-[var(--color-accent)]"
+					>
+						<IconMail size={14} />
+					</div>
+					<input
+						type="email"
+						bind:value={email}
+						placeholder="Email address"
+						autocomplete="email"
+						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-3 pl-9 pr-3 text-[14px] text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
+					/>
+				</div>
+
+				<div class="group relative">
+					<div
+						class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] transition-colors duration-150 group-focus-within:text-[var(--color-accent)]"
+					>
+						<IconLock size={14} />
+					</div>
+					<input
+						type={showPassword ? 'text' : 'password'}
+						bind:value={password}
+						placeholder="Password"
+						autocomplete={mode === 'signin' ? 'current-password' : 'new-password'}
+						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-3 pl-9 pr-10 text-[14px] text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
+					/>
+					<button
+						type="button"
+						onclick={() => (showPassword = !showPassword)}
+						class="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] transition-colors duration-150 hover:text-[var(--color-text-secondary)]"
+						tabindex={-1}
+					>
+						{#if showPassword}
+							<IconEyeOff size={14} />
+						{:else}
+							<IconEye size={14} />
+						{/if}
+					</button>
+				</div>
+
+				{#if mode === 'signin'}
+					<div class="flex justify-end">
+						<button
+							type="button"
+							class="text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-accent-mid)]"
+						>
+							Forgot password?
+						</button>
+					</div>
+				{/if}
+
+				{#if error}
+					<p class="text-[13px] text-[var(--color-red)]">{error}</p>
+				{/if}
+
+				<button
+					type="submit"
+					disabled={loading}
+					class="!mt-5 w-full rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-3 text-[14px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:pointer-events-none disabled:opacity-50"
+				>
+					{#if loading}
+						<span class="inline-flex items-center gap-2">
+							<span
+								class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
+							></span>
+							{submitLabel}
+						</span>
+					{:else}
+						{submitLabel}
+					{/if}
+				</button>
+			</form>
+
+			<!-- Switch mode -->
+			<p class="mt-6 text-center text-[13px] text-[var(--color-text-secondary)]">
+				{switchText}
+				<button
+					type="button"
+					onclick={switchMode}
+					class="font-medium text-[var(--color-text-primary)] transition-colors duration-150 hover:text-[var(--color-text-bright)]"
+				>
+					{switchAction}
+				</button>
+			</p>
+		</div>
+	</div>
+</div>
