@@ -93,8 +93,15 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "already_exists", "snapshot name already exists; use ?overwrite=true to replace")
 			return
 		}
+		// Delete old files from the agent before removing the DB record.
+		if _, err := h.agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{Name: req.Name})); err != nil {
+			status, code, msg := agentErrToHTTP(err)
+			writeError(w, status, code, "failed to delete existing snapshot files: "+msg)
+			return
+		}
 		if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err != nil {
-			slog.Warn("failed to delete existing template", "name", req.Name, "error", err)
+			writeError(w, http.StatusInternalServerError, "db_error", "failed to remove existing template record")
+			return
 		}
 	}
 
@@ -182,7 +189,9 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{
 		Name: name,
 	})); err != nil {
-		slog.Warn("delete snapshot: agent RPC failed", "name", name, "error", err)
+		status, code, msg := agentErrToHTTP(err)
+		writeError(w, status, code, "failed to delete snapshot files: "+msg)
+		return
 	}
 
 	if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: name, TeamID: ac.TeamID}); err != nil {

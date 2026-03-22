@@ -181,11 +181,11 @@ func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID string) 
 		return fmt.Errorf("sandbox not found: %w", err)
 	}
 
-	// Best-effort destroy on host agent — sandbox may already be gone.
+	// Destroy on host agent. A not-found response is fine — sandbox is already gone.
 	if _, err := s.Agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
 		SandboxId: sandboxID,
-	})); err != nil {
-		slog.Warn("destroy: agent RPC failed (sandbox may already be gone)", "sandbox_id", sandboxID, "error", err)
+	})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
+		return fmt.Errorf("agent destroy: %w", err)
 	}
 
 	if _, err := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
