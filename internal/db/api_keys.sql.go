@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteAPIKey = `-- name: DeleteAPIKey :exec
@@ -103,6 +105,57 @@ func (q *Queries) ListAPIKeysByTeam(ctx context.Context, teamID string) ([]TeamA
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.LastUsed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAPIKeysByTeamWithCreator = `-- name: ListAPIKeysByTeamWithCreator :many
+SELECT k.id, k.team_id, k.name, k.key_hash, k.key_prefix, k.created_by, k.created_at, k.last_used,
+       u.email AS creator_email
+FROM team_api_keys k
+JOIN users u ON u.id = k.created_by
+WHERE k.team_id = $1
+ORDER BY k.created_at DESC
+`
+
+type ListAPIKeysByTeamWithCreatorRow struct {
+	ID           string             `json:"id"`
+	TeamID       string             `json:"team_id"`
+	Name         string             `json:"name"`
+	KeyHash      string             `json:"key_hash"`
+	KeyPrefix    string             `json:"key_prefix"`
+	CreatedBy    string             `json:"created_by"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	LastUsed     pgtype.Timestamptz `json:"last_used"`
+	CreatorEmail string             `json:"creator_email"`
+}
+
+func (q *Queries) ListAPIKeysByTeamWithCreator(ctx context.Context, teamID string) ([]ListAPIKeysByTeamWithCreatorRow, error) {
+	rows, err := q.db.Query(ctx, listAPIKeysByTeamWithCreator, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAPIKeysByTeamWithCreatorRow
+	for rows.Next() {
+		var i ListAPIKeysByTeamWithCreatorRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.Name,
+			&i.KeyHash,
+			&i.KeyPrefix,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.LastUsed,
+			&i.CreatorEmail,
 		); err != nil {
 			return nil, err
 		}

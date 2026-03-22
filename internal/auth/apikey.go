@@ -26,10 +26,10 @@ func HashAPIKey(plaintext string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// APIKeyPrefix returns the displayable prefix of an API key (e.g. "wrn_ab12...").
+// APIKeyPrefix returns the first 8 characters of a plaintext API key (e.g. "wrn_ab12").
 func APIKeyPrefix(plaintext string) string {
-	if len(plaintext) > 12 {
-		return plaintext[:12] + "..."
+	if len(plaintext) > 10 {
+		return plaintext[:10]
 	}
 	return plaintext
 }

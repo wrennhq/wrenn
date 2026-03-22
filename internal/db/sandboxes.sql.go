@@ -219,7 +219,9 @@ func (q *Queries) ListSandboxesByHostAndStatus(ctx context.Context, arg ListSand
 }
 
 const listSandboxesByTeam = `-- name: ListSandboxesByTeam :many
-SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes WHERE team_id = $1 ORDER BY created_at DESC
+SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes
+WHERE team_id = $1 AND status NOT IN ('stopped', 'error')
+ORDER BY created_at DESC
 `
 
 func (q *Queries) ListSandboxesByTeam(ctx context.Context, teamID string) ([]Sandbox, error) {

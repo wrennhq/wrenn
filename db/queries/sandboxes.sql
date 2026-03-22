@@ -13,7 +13,9 @@ SELECT * FROM sandboxes WHERE id = $1 AND team_id = $2;
 SELECT * FROM sandboxes ORDER BY created_at DESC;
 
 -- name: ListSandboxesByTeam :many
-SELECT * FROM sandboxes WHERE team_id = $1 ORDER BY created_at DESC;
+SELECT * FROM sandboxes
+WHERE team_id = $1 AND status NOT IN ('stopped', 'error')
+ORDER BY created_at DESC;
 
 -- name: ListSandboxesByHostAndStatus :many
 SELECT * FROM sandboxes

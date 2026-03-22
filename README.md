@@ -75,7 +75,7 @@ Control plane listens on `CP_LISTEN_ADDR` (default `:8000`).
 
 Hosts must be registered with the control plane before they can serve sandboxes.
 
-1. **Create a host record** (via API or admin UI):
+1. **Create a host record** (via API or dashboard):
    ```bash
    # As an admin (JWT auth)
    curl -X POST http://localhost:8000/v1/hosts \

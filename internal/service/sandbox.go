@@ -106,7 +106,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	return sb, nil
 }
 
-// List returns all sandboxes belonging to the given team.
+// List returns active sandboxes (excludes stopped/error) belonging to the given team.
 func (s *SandboxService) List(ctx context.Context, teamID string) ([]db.Sandbox, error) {
 	return s.DB.ListSandboxesByTeam(ctx, teamID)
 }

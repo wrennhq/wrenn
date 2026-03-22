@@ -52,6 +52,11 @@ func (s *APIKeyService) List(ctx context.Context, teamID string) ([]db.TeamApiKe
 	return s.DB.ListAPIKeysByTeam(ctx, teamID)
 }
 
+// ListWithCreator returns all API keys for the team, joined with the creator's email.
+func (s *APIKeyService) ListWithCreator(ctx context.Context, teamID string) ([]db.ListAPIKeysByTeamWithCreatorRow, error) {
+	return s.DB.ListAPIKeysByTeamWithCreator(ctx, teamID)
+}
+
 // Delete removes an API key by ID, scoped to the given team.
 func (s *APIKeyService) Delete(ctx context.Context, keyID, teamID string) error {
 	return s.DB.DeleteAPIKey(ctx, db.DeleteAPIKeyParams{ID: keyID, TeamID: teamID})

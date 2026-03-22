@@ -9,9 +9,12 @@ LDFLAGS        := -s -w
 # ═══════════════════════════════════════════════════
 #  Build
 # ═══════════════════════════════════════════════════
-.PHONY: build build-cp build-agent build-envd
+.PHONY: build build-cp build-agent build-envd build-frontend
 
 build: build-cp build-agent build-envd
+
+build-frontend:
+	cd frontend && pnpm install --frozen-lockfile && pnpm build
 
 build-cp:
 	go build -v -ldflags="$(LDFLAGS)" -o $(GOBIN)/wrenn-cp ./cmd/control-plane
@@ -28,7 +31,7 @@ build-envd:
 # ═══════════════════════════════════════════════════
 #  Development
 # ═══════════════════════════════════════════════════
-.PHONY: dev dev-cp dev-agent dev-envd dev-infra dev-down
+.PHONY: dev dev-cp dev-agent dev-envd dev-frontend dev-infra dev-down
 
 ## One command to start everything for local dev
 dev: dev-infra migrate-up dev-cp
@@ -48,6 +51,9 @@ dev-cp:
 
 dev-agent:
 	sudo go run ./cmd/host-agent
+
+dev-frontend:
+	cd frontend && pnpm dev --port 5173
 
 dev-envd:
 	cd $(ENVD_DIR) && go run . --debug --listen-tcp :3002
@@ -171,10 +177,12 @@ help:
 	@echo "  make dev-infra      Start PostgreSQL + Prometheus + Grafana"
 	@echo "  make dev-down       Stop dev infra"
 	@echo "  make dev-cp         Control plane (hot reload if air installed)"
+	@echo "  make dev-frontend   Vite dev server with HMR (port 5173)"
 	@echo "  make dev-agent      Host agent (sudo required)"
 	@echo "  make dev-envd       envd in TCP debug mode"
 	@echo ""
 	@echo "  make build          Build all binaries → builds/"
+	@echo "  make build-frontend Build SvelteKit dashboard → frontend/build/"
 	@echo "  make build-envd     Build envd static binary"
 	@echo ""
 	@echo "  make migrate-up     Apply migrations"

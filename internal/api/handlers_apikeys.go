@@ -24,13 +24,15 @@ type createAPIKeyRequest struct {
 }
 
 type apiKeyResponse struct {
-	ID        string  `json:"id"`
-	TeamID    string  `json:"team_id"`
-	Name      string  `json:"name"`
-	KeyPrefix string  `json:"key_prefix"`
-	CreatedAt string  `json:"created_at"`
-	LastUsed  *string `json:"last_used,omitempty"`
-	Key       *string `json:"key,omitempty"` // only populated on Create
+	ID           string  `json:"id"`
+	TeamID       string  `json:"team_id"`
+	Name         string  `json:"name"`
+	KeyPrefix    string  `json:"key_prefix"`
+	CreatedBy    string  `json:"created_by"`
+	CreatorEmail string  `json:"creator_email,omitempty"`
+	CreatedAt    string  `json:"created_at"`
+	LastUsed     *string `json:"last_used,omitempty"`
+	Key          *string `json:"key,omitempty"` // only populated on Create
 }
 
 func apiKeyToResponse(k db.TeamApiKey) apiKeyResponse {
@@ -39,6 +41,26 @@ func apiKeyToResponse(k db.TeamApiKey) apiKeyResponse {
 		TeamID:    k.TeamID,
 		Name:      k.Name,
 		KeyPrefix: k.KeyPrefix,
+		CreatedBy: k.CreatedBy,
+	}
+	if k.CreatedAt.Valid {
+		resp.CreatedAt = k.CreatedAt.Time.Format(time.RFC3339)
+	}
+	if k.LastUsed.Valid {
+		s := k.LastUsed.Time.Format(time.RFC3339)
+		resp.LastUsed = &s
+	}
+	return resp
+}
+
+func apiKeyWithCreatorToResponse(k db.ListAPIKeysByTeamWithCreatorRow) apiKeyResponse {
+	resp := apiKeyResponse{
+		ID:           k.ID,
+		TeamID:       k.TeamID,
+		Name:         k.Name,
+		KeyPrefix:    k.KeyPrefix,
+		CreatedBy:    k.CreatedBy,
+		CreatorEmail: k.CreatorEmail,
 	}
 	if k.CreatedAt.Valid {
 		resp.CreatedAt = k.CreatedAt.Time.Format(time.RFC3339)
@@ -76,7 +98,7 @@ func (h *apiKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *apiKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 
-	keys, err := h.svc.List(r.Context(), ac.TeamID)
+	keys, err := h.svc.ListWithCreator(r.Context(), ac.TeamID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list API keys")
 		return
@@ -84,7 +106,7 @@ func (h *apiKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]apiKeyResponse, len(keys))
 	for i, k := range keys {
-		resp[i] = apiKeyToResponse(k)
+		resp[i] = apiKeyWithCreatorToResponse(k)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

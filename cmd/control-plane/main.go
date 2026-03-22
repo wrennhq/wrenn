@@ -80,7 +80,7 @@ func main() {
 			slog.Error("CP_PUBLIC_URL must be set when OAuth providers are configured")
 			os.Exit(1)
 		}
-		callbackURL := strings.TrimRight(cfg.CPPublicURL, "/") + "/v1/auth/oauth/github/callback"
+		callbackURL := strings.TrimRight(cfg.CPPublicURL, "/") + "/auth/oauth/github/callback"
 		ghProvider := oauth.NewGitHubProvider(cfg.OAuthGitHubClientID, cfg.OAuthGitHubClientSecret, callbackURL)
 		oauthRegistry.Register(ghProvider)
 		slog.Info("registered OAuth provider", "provider", "github")

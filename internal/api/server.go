@@ -49,14 +49,11 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	r.Get("/openapi.yaml", serveOpenAPI)
 	r.Get("/docs", serveDocs)
 
-	// Test UI for sandbox lifecycle management.
-	r.Get("/test", serveTestUI)
-
 	// Unauthenticated auth endpoints.
 	r.Post("/v1/auth/signup", authH.Signup)
 	r.Post("/v1/auth/login", authH.Login)
-	r.Get("/v1/auth/oauth/{provider}", oauthH.Redirect)
-	r.Get("/v1/auth/oauth/{provider}/callback", oauthH.Callback)
+	r.Get("/auth/oauth/{provider}", oauthH.Redirect)
+	r.Get("/auth/oauth/{provider}/callback", oauthH.Callback)
 
 	// JWT-authenticated: API key management.
 	r.Route("/v1/api-keys", func(r chi.Router) {
@@ -66,9 +63,9 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 		r.Delete("/{id}", apiKeys.Delete)
 	})
 
-	// API-key-authenticated: sandbox lifecycle.
+	// Sandbox lifecycle: accepts API key or JWT bearer token.
 	r.Route("/v1/sandboxes", func(r chi.Router) {
-		r.Use(requireAPIKey(queries))
+		r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
 		r.Post("/", sandbox.Create)
 		r.Get("/", sandbox.List)
 
@@ -87,9 +84,9 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 		})
 	})
 
-	// API-key-authenticated: snapshot / template management.
+	// Snapshot / template management: accepts API key or JWT bearer token.
 	r.Route("/v1/snapshots", func(r chi.Router) {
-		r.Use(requireAPIKey(queries))
+		r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
 		r.Post("/", snapshots.Create)
 		r.Get("/", snapshots.List)
 		r.Delete("/{name}", snapshots.Delete)
@@ -124,12 +121,6 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 
 // Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
-	return s.router
-}
-
-// Router returns the underlying chi router so additional routes (e.g. dashboard)
-// can be mounted on it.
-func (s *Server) Router() chi.Router {
 	return s.router
 }
 

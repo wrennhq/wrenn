@@ -1,0 +1,121 @@
+@import 'tailwindcss';
+
+@import '@fontsource-variable/manrope';
+@import '@fontsource/instrument-serif/400.css';
+@import '@fontsource-variable/jetbrains-mono';
+@import '@fontsource/alice/400.css';
+
+/*
+ * Wrenn Design Tokens
+ * Sharp, warm, industrial-confident. Dark-first.
+ */
+
+@theme {
+	/* Background scale (6 steps, near-black-green) */
+	--color-bg-0: #0a0c0b;
+	--color-bg-1: #0f1211;
+	--color-bg-2: #141817;
+	--color-bg-3: #1a1e1c;
+	--color-bg-4: #212624;
+	--color-bg-5: #2a302d;
+
+	/* Text hierarchy (5 levels) */
+	--color-text-bright: #eae7e2;
+	--color-text-primary: #d0cdc6;
+	--color-text-secondary: #9b9790;
+	--color-text-tertiary: #6b6862;
+	--color-text-muted: #454340;
+
+	/* Sage green brand accent (3 tiers + 2 glows) */
+	--color-accent: #5e8c58;
+	--color-accent-mid: #89a785;
+	--color-accent-bright: #a4c89f;
+	--color-accent-glow: rgba(94, 140, 88, 0.07);
+	--color-accent-glow-mid: rgba(94, 140, 88, 0.14);
+
+	/* Borders (2 levels) */
+	--color-border: #1f2321;
+	--color-border-mid: #2a2f2c;
+
+	/* Semantic status */
+	--color-amber: #d4a73c;
+	--color-red: #cf8172;
+	--color-blue: #5a9fd4;
+
+	/* Fonts */
+	--font-sans: 'Manrope Variable', system-ui, sans-serif;
+	--font-serif: 'Instrument Serif', serif;
+	--font-mono: 'JetBrains Mono Variable', monospace;
+	--font-brand: 'Alice', serif;
+
+	/* Radii */
+	--radius-card: 8px;
+	--radius-input: 5px;
+	--radius-button: 5px;
+	--radius-avatar: 5px;
+	--radius-logo: 6px;
+
+	/* Shadows — flat aesthetic */
+	--shadow-sm: 0 0 #0000;
+}
+
+/* Base styles */
+html {
+	font-family: var(--font-sans);
+	font-size: 14px;
+	color: var(--color-text-primary);
+	background-color: var(--color-bg-0);
+}
+
+body {
+	margin: 0;
+	min-height: 100vh;
+}
+
+/* Selection */
+::selection {
+	background: rgba(94, 140, 88, 0.25);
+	color: var(--color-text-bright);
+}
+
+/* Scrollbar — thin, matches dark theme */
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--color-bg-4);
+	border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--color-bg-5);
+}
+
+/* Live status dot glow animation */
+@keyframes wrenn-glow {
+	0%,
+	100% {
+		box-shadow: 0 0 6px rgba(94, 140, 88, 0.5);
+	}
+	50% {
+		box-shadow: 0 0 14px rgba(94, 140, 88, 0.2);
+	}
+}
+
+/* Fade-up entrance animation */
+@keyframes fadeUp {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
