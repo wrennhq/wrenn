@@ -48,6 +48,20 @@
 	--font-mono: 'JetBrains Mono Variable', monospace;
 	--font-brand: 'Alice', serif;
 
+	/* Type scale — rem-based (root = 87.5%, giving 14px at browser default)
+	   Heading tokens carry a default line-height; body/UI tokens inherit the global 1.6. */
+	--text-display: 2.571rem;              /* ~36px — auth/login section headings */
+	--text-display--line-height: 1.1;
+	--text-page: 2rem;                     /* ~28px — page h1 titles */
+	--text-page--line-height: 1.15;
+	--text-heading: 1.429rem;              /* ~20px — dialog headings, empty-state */
+	--text-heading--line-height: 1.25;
+	--text-body: 1rem;                     /* 14px — primary body, buttons, inputs */
+	--text-ui: 0.929rem;                   /* ~13px — nav labels, table cells, secondary */
+	--text-meta: 0.857rem;                 /* ~12px — key prefixes, minor info */
+	--text-label: 0.786rem;               /* ~11px — uppercase section labels */
+	--text-badge: 0.714rem;               /* ~10px — live badges, tiny indicators */
+
 	/* Radii */
 	--radius-card: 8px;
 	--radius-input: 5px;
@@ -62,14 +76,23 @@
 /* Base styles */
 html {
 	font-family: var(--font-sans);
-	font-size: 14px;
+	font-size: 87.5%; /* 14px at browser default; scales with user text-size preferences */
+	line-height: 1.6;
 	color: var(--color-text-primary);
 	background-color: var(--color-bg-0);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
 }
 
 body {
 	margin: 0;
 	min-height: 100vh;
+}
+
+/* Tabular figures on all mono text — numbers align in tables and metric displays */
+.font-mono {
+	font-variant-numeric: tabular-nums;
 }
 
 /* Selection */
@@ -97,14 +120,14 @@ body {
 	background: var(--color-bg-5);
 }
 
-/* Live status dot glow animation */
+/* Live status dot pulse animation — opacity-only for GPU compositor, zero paint cost */
 @keyframes wrenn-glow {
 	0%,
 	100% {
-		box-shadow: 0 0 6px rgba(94, 140, 88, 0.5);
+		opacity: 1;
 	}
 	50% {
-		box-shadow: 0 0 14px rgba(94, 140, 88, 0.2);
+		opacity: 0.3;
 	}
 }
 
@@ -117,5 +140,17 @@ body {
 	to {
 		opacity: 1;
 		transform: translateY(0);
+	}
+}
+
+/* Respect user motion preferences — covers both CSS class animations and inline style animations */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
 	}
 }

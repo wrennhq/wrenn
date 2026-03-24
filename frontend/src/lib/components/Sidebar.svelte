@@ -74,7 +74,7 @@
 					alt="Wrenn"
 					class="h-7 w-7 shrink-0 rounded-[var(--radius-logo)]"
 				/>
-				<span class="font-brand text-[15px] text-[var(--color-text-bright)]">Wrenn</span>
+				<span class="font-brand text-[1.286rem] text-[var(--color-text-bright)]">Wrenn</span>
 			</div>
 		{/if}
 		<button
@@ -95,18 +95,18 @@
 					: 'gap-2 px-2.5'}"
 			>
 				<div
-					class="flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-avatar)] bg-[var(--color-bg-4)] text-[10px] font-bold uppercase text-[var(--color-text-secondary)]"
+					class="flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-avatar)] bg-[var(--color-bg-4)] text-badge font-bold uppercase text-[var(--color-text-secondary)]"
 				>
 					{currentTeam[0]}
 				</div>
 				{#if !collapsed}
 					<div class="min-w-0 flex-1 overflow-hidden whitespace-nowrap">
 						<div
-							class="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]"
+							class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]"
 						>
 							Team
 						</div>
-						<div class="truncate text-[13px] text-[var(--color-text-primary)]">
+						<div class="truncate text-ui text-[var(--color-text-primary)]">
 							{currentTeam}
 						</div>
 					</div>
@@ -126,20 +126,20 @@
 					style="animation: popoverSlideIn 150ms ease"
 				>
 					<div
-						class="mb-1 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]"
+						class="mb-1 px-2.5 py-1 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]"
 					>
 						Teams
 					</div>
 					{#each teams as team}
 						<button
-							class="flex w-full items-center gap-2.5 rounded-[var(--radius-input)] px-2.5 py-2 text-[13px] transition-colors duration-150 hover:bg-[var(--color-bg-3)] {team ===
+							class="flex w-full items-center gap-2.5 rounded-[var(--radius-input)] px-2.5 py-2 text-ui transition-colors duration-150 hover:bg-[var(--color-bg-3)] {team ===
 							currentTeam
 								? 'bg-[var(--color-accent-glow)]'
 								: ''}"
 							onclick={() => (teamPopoverOpen = false)}
 						>
 							<div
-								class="flex h-5 w-5 items-center justify-center rounded-[var(--radius-avatar)] text-[9px] font-bold uppercase text-white {team ===
+								class="flex h-5 w-5 items-center justify-center rounded-[var(--radius-avatar)] text-badge font-bold uppercase text-white {team ===
 								currentTeam
 									? 'bg-[var(--color-accent)]'
 									: 'bg-[var(--color-bg-5)]'}"
@@ -157,7 +157,7 @@
 					{/each}
 					<div class="mt-0.5 border-t border-[var(--color-border)] pt-0.5">
 						<button
-							class="flex w-full items-center gap-2.5 rounded-[var(--radius-input)] px-2.5 py-2 text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
+							class="flex w-full items-center gap-2.5 rounded-[var(--radius-input)] px-2.5 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
 						>
 							<IconPlus size={14} />
 							Create team
@@ -186,7 +186,7 @@
 			title={collapsed ? 'Docs' : undefined}
 		>
 			<IconDocs size={16} class="shrink-0 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
-			{#if !collapsed}<span class="text-[13px]">Docs</span>{/if}
+			{#if !collapsed}<span class="text-ui">Docs</span>{/if}
 		</a>
 		<a
 			href="/dashboard/notifications"
@@ -194,7 +194,7 @@
 			title={collapsed ? 'Notifications' : undefined}
 		>
 			<IconBell size={16} class="shrink-0 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
-			{#if !collapsed}<span class="text-[13px]">Notifications</span>{/if}
+			{#if !collapsed}<span class="text-ui">Notifications</span>{/if}
 		</a>
 		<a
 			href="/dashboard/settings"
@@ -202,7 +202,7 @@
 			title={collapsed ? 'Settings' : undefined}
 		>
 			<IconSettings size={16} class="shrink-0 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
-			{#if !collapsed}<span class="text-[13px]">Settings</span>{/if}
+			{#if !collapsed}<span class="text-ui">Settings</span>{/if}
 		</a>
 	</div>
 
@@ -214,11 +214,11 @@
 	>
 		{#if !collapsed}
 			<div
-				class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-4)] text-[10px] font-bold uppercase text-[var(--color-text-secondary)]"
+				class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-4)] text-badge font-bold uppercase text-[var(--color-text-secondary)]"
 			>
 				{userName[0] ?? ''}
 			</div>
-			<span class="flex-1 truncate text-[13px] text-[var(--color-text-secondary)]">
+			<span class="flex-1 truncate text-ui text-[var(--color-text-secondary)]">
 				{userName}
 			</span>
 		{/if}
@@ -242,7 +242,7 @@
 			{/if}
 		{:else}
 			<div
-				class="mb-1 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]"
+				class="mb-1 px-2.5 py-1.5 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]"
 			>
 				{label}
 			</div>
@@ -263,7 +263,7 @@
 					{/if}
 					<item.icon size={16} class="shrink-0 text-[var(--color-accent-bright)]" />
 					{#if !collapsed}
-						<span class="text-[13px] font-medium text-[var(--color-accent-bright)]">
+						<span class="text-ui font-medium text-[var(--color-accent-bright)]">
 							{item.label}
 						</span>
 					{/if}
@@ -282,7 +282,7 @@
 					/>
 					{#if !collapsed}
 						<span
-							class="text-[13px] text-[var(--color-text-primary)] transition-colors duration-150 group-hover:text-[var(--color-text-bright)]"
+							class="text-ui text-[var(--color-text-primary)] transition-colors duration-150 group-hover:text-[var(--color-text-bright)]"
 						>
 							{item.label}
 						</span>

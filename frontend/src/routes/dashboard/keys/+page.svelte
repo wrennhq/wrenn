@@ -2,6 +2,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount } from 'svelte';
 	import { listKeys, createKey, revokeKey, type APIKey } from '$lib/api/keys';
+	import { toast } from '$lib/toast.svelte';
 
 	let collapsed = $state(
 		typeof window !== 'undefined'
@@ -75,9 +76,13 @@
 
 	async function copyKey() {
 		if (!newKey?.key) return;
-		await navigator.clipboard.writeText(newKey.key);
-		copied = true;
-		setTimeout(() => (copied = false), 2000);
+		try {
+			await navigator.clipboard.writeText(newKey.key);
+			copied = true;
+			setTimeout(() => (copied = false), 2000);
+		} catch {
+			toast.error('Copy failed — select the key text and copy it manually.');
+		}
 	}
 
 	function formatDate(iso: string | undefined): string {
@@ -115,20 +120,20 @@
 	<div class="flex flex-1 flex-col overflow-hidden">
 		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
-			<div class="px-7 pt-6">
+			<div class="px-7 pt-8">
 				<div class="flex items-center justify-between">
 					<div>
-						<h1 class="font-serif text-[24px] tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
 							API Keys
 						</h1>
-						<p class="mt-1 text-[13px] text-[var(--color-text-tertiary)]">
+						<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 							Keys authenticate SDK and direct API requests. Treat them like passwords.
 						</p>
 					</div>
 
 					<button
 						onclick={() => { showCreate = true; createError = null; createName = ''; }}
-						class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-2 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
+						class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 					>
 						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 							<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
@@ -137,20 +142,26 @@
 					</button>
 				</div>
 
-				<div class="mt-5 border-b border-[var(--color-border)]"></div>
+				<div class="mt-6 border-b border-[var(--color-border)]"></div>
 			</div>
 
 			<!-- Content -->
-			<div class="p-7" style="animation: fadeUp 0.35s ease both">
+			<div class="p-8" style="animation: fadeUp 0.35s ease both">
 				{#if error}
-					<div class="mb-4 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-[13px] text-[var(--color-red)]">
-						{error}
+					<div class="mb-4 flex items-center justify-between gap-4 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-ui text-[var(--color-red)]">
+					<span>{error}</span>
+					<button
+						onclick={fetchKeys}
+						class="shrink-0 font-semibold underline-offset-2 hover:underline"
+					>
+						Try again
+					</button>
 					</div>
 				{/if}
 
 				{#if loading}
 					<div class="flex items-center justify-center py-24">
-						<div class="flex items-center gap-3 text-[13px] text-[var(--color-text-secondary)]">
+						<div class="flex items-center gap-3 text-ui text-[var(--color-text-secondary)]">
 							<svg class="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<path d="M21 12a9 9 0 1 1-6.219-8.56" />
 							</svg>
@@ -164,13 +175,13 @@
 								<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
 							</svg>
 						</div>
-						<p class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">No API keys yet</p>
-						<p class="mt-1.5 text-[13px] text-[var(--color-text-tertiary)]">Create a key to authenticate SDK and API requests.</p>
+						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No API keys yet</p>
+						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">Create your first key to start making API requests.</p>
 						<button
 							onclick={() => { showCreate = true; createError = null; createName = ''; }}
-							class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
+							class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 						>
-							Create a Key
+							New Key
 							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 								<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 							</svg>
@@ -180,11 +191,11 @@
 					<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] overflow-hidden">
 						<!-- Table header -->
 						<div class="grid grid-cols-[2fr_1.2fr_1.4fr_1.4fr_80px] border-b border-[var(--color-border)] bg-[var(--color-bg-3)]">
-							<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Name / Key</div>
-							<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created By</div>
-							<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created</div>
-							<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Last Used</div>
-							<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"></div>
+							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Name / Key</div>
+							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created By</div>
+							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created</div>
+							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Last Used</div>
+							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"></div>
 						</div>
 
 						{#each keys as key, i (key.id)}
@@ -193,37 +204,37 @@
 								style="animation: fadeUp 0.35s ease both; animation-delay: {i * 40}ms"
 							>
 								<!-- Name + prefix -->
-								<div class="flex flex-col gap-0.5 px-4 py-3">
-									<span class="text-[13px] font-medium text-[var(--color-text-bright)]">{key.name || '—'}</span>
-									<span class="font-mono text-[12px] text-[var(--color-text-muted)]">{key.key_prefix}...</span>
+								<div class="min-w-0 flex flex-col gap-0.5 px-5 py-4">
+									<span class="truncate text-ui font-medium text-[var(--color-text-bright)]">{key.name || '—'}</span>
+									<span class="font-mono text-meta text-[var(--color-text-muted)]">{key.key_prefix}…</span>
 								</div>
 
 								<!-- Created by -->
-								<div class="px-4 py-3">
-									<span class="text-[13px] text-[var(--color-text-secondary)]">{key.creator_email ?? key.created_by}</span>
+								<div class="min-w-0 px-5 py-4">
+									<span class="block truncate text-ui text-[var(--color-text-secondary)]">{key.creator_email ?? key.created_by}</span>
 								</div>
 
 								<!-- Created at -->
-								<div class="px-4 py-3">
-									<span class="text-[13px] text-[var(--color-text-secondary)]">{formatDate(key.created_at)}</span>
+								<div class="px-5 py-4">
+									<span class="text-ui text-[var(--color-text-secondary)]">{formatDate(key.created_at)}</span>
 								</div>
 
 								<!-- Last used -->
-								<div class="px-4 py-3">
+								<div class="px-5 py-4">
 									{#if key.last_used}
-										<span class="text-[13px] text-[var(--color-text-secondary)]" title={formatDate(key.last_used)}>
+										<span class="text-ui text-[var(--color-text-secondary)]" title={formatDate(key.last_used)}>
 											{timeAgo(key.last_used)}
 										</span>
 									{:else}
-										<span class="text-[13px] text-[var(--color-text-muted)]">Never</span>
+										<span class="text-ui text-[var(--color-text-muted)]">Never</span>
 									{/if}
 								</div>
 
 								<!-- Revoke -->
-								<div class="flex justify-end px-4 py-3">
+								<div class="flex justify-end px-5 py-4">
 									<button
 										onclick={() => { revokeTarget = key; revokeError = null; }}
-										class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--color-text-tertiary)] transition-colors duration-150 hover:border-[var(--color-red)]/40 hover:text-[var(--color-red)]"
+										class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-2.5 py-1 text-label font-semibold uppercase tracking-[0.04em] text-[var(--color-text-tertiary)] transition-colors duration-150 hover:border-[var(--color-red)]/40 hover:text-[var(--color-red)]"
 									>
 										Revoke
 									</button>
@@ -232,20 +243,14 @@
 						{/each}
 					</div>
 
-					<p class="mt-3 text-[12px] text-[var(--color-text-muted)]">
+					<p class="mt-3 text-meta text-[var(--color-text-muted)]">
 						{keys.length} {keys.length === 1 ? 'key' : 'keys'} total
 					</p>
 				{/if}
 			</div>
 		</main>
 
-		<!-- Status bar -->
-		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
-			<div class="flex items-center gap-1.5">
-				<span class="inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
-				<span class="font-mono text-[11px] uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
-			</div>
-		</footer>
+		<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
 	</div>
 </div>
 
@@ -260,17 +265,17 @@
 		></div>
 
 		<div class="relative w-full max-w-[400px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
-			<h2 class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">New API Key</h2>
-			<p class="mt-1 text-[13px] text-[var(--color-text-tertiary)]">Give your key a name to identify it later.</p>
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">New API Key</h2>
+			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Give your key a name to identify it later.</p>
 
 			{#if createError}
-				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-[12px] text-[var(--color-red)]">
+				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
 					{createError}
 				</div>
 			{/if}
 
 			<div class="mt-5">
-				<label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="key-name">
+				<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="key-name">
 					Key name
 				</label>
 				<input
@@ -279,7 +284,7 @@
 					placeholder="e.g. Production SDK"
 					bind:value={createName}
 					onkeydown={(e) => { if (e.key === 'Enter' && !creating) handleCreate(); }}
-					class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 text-[13px] text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)]"
+					class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)]"
 				/>
 			</div>
 
@@ -287,14 +292,14 @@
 				<button
 					onclick={() => { showCreate = false; }}
 					disabled={creating}
-					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
 				>
 					Cancel
 				</button>
 				<button
 					onclick={handleCreate}
 					disabled={creating || !createName.trim()}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
 				>
 					{#if creating}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -328,23 +333,23 @@
 						<polyline points="20 6 9 17 4 12" />
 					</svg>
 				</span>
-				<span class="text-[12px] font-semibold text-[var(--color-accent-mid)]">Key created successfully</span>
+				<span class="text-meta font-semibold text-[var(--color-accent-mid)]">Key created successfully</span>
 			</div>
 
-			<h2 class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">{newKey.name || 'API Key'}</h2>
-			<p class="mt-1 text-[13px] text-[var(--color-text-tertiary)]">
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">{newKey.name || 'API Key'}</h2>
+			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Copy this key now — it won't be shown again.
 			</p>
 
 			<!-- Key display -->
 			<div class="mt-5 rounded-[var(--radius-input)] border border-[var(--color-border-mid)] bg-[var(--color-bg-0)] p-4">
 				<div class="flex items-center gap-3">
-					<span class="min-w-0 flex-1 break-all font-mono text-[13px] leading-relaxed text-[var(--color-text-bright)]">
+					<span class="min-w-0 flex-1 break-all font-mono text-ui leading-relaxed text-[var(--color-text-bright)]">
 						{newKey.key ?? ''}
 					</span>
 					<button
 						onclick={copyKey}
-						class="shrink-0 flex items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-[12px] font-semibold transition-all duration-150
+						class="shrink-0 flex items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
 							{copied
 								? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
 								: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
@@ -371,15 +376,15 @@
 					<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
 					<line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
 				</svg>
-				<p class="text-[12px] leading-relaxed text-[var(--color-amber)]">
-					Store this key securely. For security reasons, we only show it once and cannot retrieve it later.
+				<p class="text-meta leading-relaxed text-[var(--color-amber)]">
+					Treat this like a password — store it in a secrets manager, not a document or chat message.
 				</p>
 			</div>
 
 			<div class="mt-6 flex justify-end">
 				<button
 					onclick={() => { newKey = null; }}
-					class="rounded-[var(--radius-button)] bg-[var(--color-bg-4)] border border-[var(--color-border-mid)] px-5 py-2 text-[13px] font-semibold text-[var(--color-text-primary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:bg-[var(--color-bg-5)]"
+					class="rounded-[var(--radius-button)] bg-[var(--color-bg-4)] border border-[var(--color-border-mid)] px-5 py-2 text-ui font-semibold text-[var(--color-text-primary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:bg-[var(--color-bg-5)]"
 				>
 					Done
 				</button>
@@ -399,15 +404,15 @@
 		></div>
 
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
-			<h2 class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">Revoke Key</h2>
-			<p class="mt-2 text-[13px] text-[var(--color-text-tertiary)]">
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Revoke Key</h2>
+			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Revoke <span class="font-medium text-[var(--color-text-secondary)]">{revokeTarget.name || revokeTarget.id}</span>?
 				Any request using it will stop working immediately.
 			</p>
-			<p class="mt-1.5 font-mono text-[12px] text-[var(--color-text-muted)]">{revokeTarget.key_prefix}...</p>
+			<p class="mt-1.5 font-mono text-meta text-[var(--color-text-muted)]">{revokeTarget.key_prefix}…</p>
 
 			{#if revokeError}
-				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-[12px] text-[var(--color-red)]">
+				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
 					{revokeError}
 				</div>
 			{/if}
@@ -416,14 +421,14 @@
 				<button
 					onclick={() => { revokeTarget = null; }}
 					disabled={revoking}
-					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
 				>
 					Cancel
 				</button>
 				<button
 					onclick={handleRevoke}
 					disabled={revoking}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
 				>
 					{#if revoking}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
