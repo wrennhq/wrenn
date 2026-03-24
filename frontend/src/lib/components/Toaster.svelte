@@ -5,7 +5,7 @@
 <div class="pointer-events-none fixed bottom-6 right-6 z-[100] flex flex-col-reverse gap-2">
 	{#each toast.list as t (t.id)}
 		<div
-			class="pointer-events-auto flex min-w-[280px] max-w-[400px] items-start gap-3 rounded-[var(--radius-card)] border bg-[var(--color-bg-2)] px-4 py-3 text-[13px] {t.type === 'error'
+			class="pointer-events-auto flex min-w-[280px] max-w-[400px] items-start gap-3 rounded-[var(--radius-card)] border bg-[var(--color-bg-2)] px-4 py-3 text-ui {t.type === 'error'
 				? 'border-[var(--color-red)]/30 text-[var(--color-red)]'
 				: 'border-[var(--color-accent)]/30 text-[var(--color-accent-bright)]'}"
 			style="animation: fadeUp 0.2s ease both"

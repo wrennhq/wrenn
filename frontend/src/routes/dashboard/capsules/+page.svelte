@@ -282,14 +282,14 @@
 	<div class="flex flex-1 flex-col overflow-hidden">
 		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header area -->
-			<div class="px-7 pt-6">
+			<div class="px-7 pt-8">
 				<!-- Top row: title + status chip -->
 				<div class="flex items-center justify-between">
 					<div>
-						<h1 class="font-serif text-[24px] tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
 							Capsules
 						</h1>
-						<p class="mt-1 text-[13px] text-[var(--color-text-tertiary)]">
+						<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 							Isolated VMs you can start, pause, and snapshot on demand.
 						</p>
 					</div>
@@ -306,17 +306,17 @@
 								></span>
 								<span class="relative inline-flex h-[7px] w-[7px] rounded-full bg-[var(--color-accent)]"></span>
 							</span>
-							<span class="font-mono text-[14px] font-semibold text-[var(--color-accent-bright)]">{runningCount}</span>
-							<span class="text-[13px] text-[var(--color-text-secondary)]">concurrent capsules</span>
+							<span class="font-mono text-body font-semibold text-[var(--color-accent-bright)]">{runningCount}</span>
+							<span class="text-ui text-[var(--color-text-secondary)]">concurrent capsules</span>
 						</div>
 					</div>
 				</div>
 
 				<!-- Tab bar -->
-				<div class="mt-4 flex gap-1 border-b border-[var(--color-border)]">
+				<div class="mt-5 flex gap-1 border-b border-[var(--color-border)]">
 					<button
 						onclick={() => (activeTab = 'list')}
-						class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors duration-150 {activeTab === 'list'
+						class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150 {activeTab === 'list'
 							? 'border-[var(--color-accent)] text-[var(--color-accent-bright)]'
 							: 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
 					>
@@ -328,7 +328,7 @@
 					</button>
 					<button
 						onclick={() => (activeTab = 'stats')}
-						class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors duration-150 {activeTab === 'stats'
+						class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150 {activeTab === 'stats'
 							? 'border-[var(--color-accent)] text-[var(--color-accent-bright)]'
 							: 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
 					>
@@ -342,7 +342,7 @@
 
 			<!-- Tab content -->
 			{#if activeTab === 'stats'}
-				<div class="p-7 space-y-5" style="animation: fadeUp 0.35s ease both">
+				<div class="p-8 space-y-5" style="animation: fadeUp 0.35s ease both">
 					<div class="flex overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]">
 						{@render metricCell('Concurrent Capsules', String(runningCount), '5-sec avg', 'limit: 20', true)}
 						{@render metricCell('Start Rate / Second', '0.000', '5-sec avg', null, true)}
@@ -353,7 +353,7 @@
 					{@render chartCard('Start Rate Per Second', '0.000', 'average')}
 				</div>
 			{:else}
-				<div class="p-7" style="animation: fadeUp 0.35s ease both">
+				<div class="p-8" style="animation: fadeUp 0.35s ease both">
 					<!-- Search bar + controls -->
 					<div class="mb-4 flex items-center gap-3">
 						<div class="relative flex-1 max-w-[300px]">
@@ -364,10 +364,10 @@
 								type="text"
 								placeholder="Search by ID..."
 								bind:value={searchQuery}
-								class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-2 pl-9 pr-3 font-mono text-[13px] text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)]"
+								class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-2 pl-9 pr-3 font-mono text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)]"
 							/>
 						</div>
-						<span class="text-[13px] text-[var(--color-text-secondary)]">{filteredCapsules.length} total</span>
+						<span class="text-ui text-[var(--color-text-secondary)]">{filteredCapsules.length} total</span>
 
 						<div class="flex-1"></div>
 
@@ -390,7 +390,7 @@
 						<!-- Auto-refresh countdown toggle -->
 						<button
 							onclick={toggleAutoRefresh}
-							class="flex items-center gap-1.5 rounded-[var(--radius-button)] border px-2.5 py-1.5 font-mono text-[11px] transition-colors duration-150
+							class="flex items-center gap-1.5 rounded-[var(--radius-button)] border px-2.5 py-1.5 font-mono text-label transition-colors duration-150
 								{autoRefresh
 									? 'border-[var(--color-accent)]/30 text-[var(--color-accent-mid)] hover:border-[var(--color-accent)]/50'
 									: 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-secondary)]'}"
@@ -405,7 +405,7 @@
 
 						<button
 							onclick={() => { showCreateDialog = true; createError = null; }}
-							class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-2 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
+							class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 						>
 							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 								<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
@@ -415,7 +415,7 @@
 					</div>
 
 					{#if error}
-						<div class="mb-4 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-[13px] text-[var(--color-red)]">
+						<div class="mb-4 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-ui text-[var(--color-red)]">
 							{error}
 						</div>
 					{/if}
@@ -424,8 +424,8 @@
 					<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] overflow-hidden">
 						<!-- Table header -->
 						<div class="grid grid-cols-[1.6fr_0.8fr_0.5fr_0.5fr_0.6fr_1fr_0.9fr] rounded-t-[var(--radius-card)] border-b border-[var(--color-border)] bg-[var(--color-bg-3)]">
-							<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">ID</div>
-							<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Template</div>
+							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">ID</div>
+							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Template</div>
 							{@render sortableHeader('CPU', 'vcpus')}
 							{@render sortableHeader('Memory', 'memory_mb')}
 							{@render sortableHeader('Idle Timeout', 'timeout_sec')}
@@ -435,7 +435,7 @@
 
 						{#if loading && capsules.length === 0}
 							<div class="flex items-center justify-center py-16">
-								<div class="flex items-center gap-3 text-[13px] text-[var(--color-text-secondary)]">
+								<div class="flex items-center gap-3 text-ui text-[var(--color-text-secondary)]">
 									<svg class="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<path d="M21 12a9 9 0 1 1-6.219-8.56" />
 									</svg>
@@ -451,17 +451,17 @@
 										<line x1="12" y1="17" x2="12" y2="21" />
 									</svg>
 								</div>
-								<p class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">
+								<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
 									No capsules yet
 								</p>
-								<p class="mt-1.5 text-[13px] text-[var(--color-text-tertiary)]">
-									Active capsules will appear here.
+								<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
+									Launch a capsule to start running isolated code.
 								</p>
 								<button
 									onclick={() => { showCreateDialog = true; createError = null; }}
-									class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
+									class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 								>
-									Create a Capsule
+									Launch a Capsule
 									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 										<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 									</svg>
@@ -474,7 +474,7 @@
 									style="animation: fadeUp 0.35s ease both; animation-delay: {i * 40}ms"
 								>
 									<!-- ID with status dot -->
-									<div class="flex items-center gap-2.5 px-4 py-3">
+									<div class="flex items-center gap-2.5 px-5 py-4">
 										{#if capsule.status === 'running'}
 											<span class="relative flex h-[6px] w-[6px] shrink-0">
 												<span class="absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]" style="animation: wrenn-glow 2.5s ease-in-out infinite"></span>
@@ -485,41 +485,41 @@
 										{:else}
 											<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-text-muted)]"></span>
 										{/if}
-										<span class="font-mono text-[13px] text-[var(--color-text-bright)]">{capsule.id}</span>
+										<span class="font-mono text-ui text-[var(--color-text-bright)]">{capsule.id}</span>
 									</div>
 
 									<!-- Template -->
-									<div class="px-4 py-3">
-										<span class="text-[13px] text-[var(--color-text-secondary)]">{capsule.template}</span>
+									<div class="min-w-0 px-5 py-4">
+										<span class="block truncate text-ui text-[var(--color-text-secondary)]">{capsule.template}</span>
 									</div>
 
 									<!-- CPU -->
-									<div class="px-4 py-3">
-										<span class="font-mono text-[13px] text-[var(--color-text-secondary)]">{capsule.vcpus}</span>
+									<div class="px-5 py-4">
+										<span class="font-mono text-ui text-[var(--color-text-secondary)]">{capsule.vcpus}</span>
 									</div>
 
 									<!-- Memory -->
-									<div class="px-4 py-3">
-										<span class="font-mono text-[13px] text-[var(--color-text-secondary)]">{capsule.memory_mb}MB</span>
+									<div class="px-5 py-4">
+										<span class="font-mono text-ui text-[var(--color-text-secondary)]">{capsule.memory_mb}MB</span>
 									</div>
 
 									<!-- Idle Timeout -->
-									<div class="px-4 py-3">
-										<span class="font-mono text-[13px] text-[var(--color-text-secondary)]">{capsule.timeout_sec ? `${capsule.timeout_sec}s` : '—'}</span>
+									<div class="px-5 py-4">
+										<span class="font-mono text-ui text-[var(--color-text-secondary)]">{capsule.timeout_sec ? `${capsule.timeout_sec}s` : '—'}</span>
 									</div>
 
 									<!-- Started -->
-									<div class="px-4 py-3">
-										<span class="text-[13px] text-[var(--color-text-secondary)]" title={capsule.started_at ?? ''}>{formatTime(capsule.started_at)}</span>
+									<div class="px-5 py-4">
+										<span class="text-ui text-[var(--color-text-secondary)]" title={capsule.started_at ?? ''}>{formatTime(capsule.started_at)}</span>
 										{#if capsule.last_active_at}
-											<span class="ml-1.5 text-[11px] text-[var(--color-text-muted)]">{timeAgo(capsule.last_active_at)}</span>
+											<span class="ml-1.5 text-label text-[var(--color-text-muted)]">{timeAgo(capsule.last_active_at)}</span>
 										{/if}
 									</div>
 
 									<!-- Status button with popover -->
-									<div class="relative px-4 py-3 status-menu-container">
+									<div class="relative px-5 py-4 status-menu-container">
 										{#if actionLoading === capsule.id}
-											<span class="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-secondary)]">
+											<span class="inline-flex items-center gap-1.5 text-ui text-[var(--color-text-secondary)]">
 												<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 													<path d="M21 12a9 9 0 1 1-6.219-8.56" />
 												</svg>
@@ -536,7 +536,7 @@
 														openMenuId = capsule.id;
 													}
 												}}
-												class="inline-flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-2)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]"
+												class="inline-flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-2)] px-2.5 py-1 text-label font-semibold uppercase tracking-[0.04em] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]"
 											>
 												{capsule.status}
 												<svg
@@ -563,7 +563,7 @@
 		>
 			<div class="flex items-center gap-1.5">
 				<span class="inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
-				<span class="font-mono text-[11px] uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
+				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
 	</div>
@@ -580,7 +580,7 @@
 			{#if openCapsule.status === 'running'}
 				<button
 					onclick={() => handlePause(openCapsule.id)}
-					class="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
+					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
 				>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" class="shrink-0">
 						<rect x="6" y="4" width="4" height="16" rx="1" />
@@ -590,7 +590,7 @@
 				</button>
 				<button
 					onclick={() => handlePauseAndSnapshot(openCapsule.id)}
-					class="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
+					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
 				>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
 						<path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" />
@@ -601,7 +601,7 @@
 			{:else if openCapsule.status === 'paused'}
 				<button
 					onclick={() => handleResume(openCapsule.id)}
-					class="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
+					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
 				>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" class="shrink-0">
 						<polygon points="5 3 19 12 5 21 5 3" />
@@ -610,7 +610,7 @@
 				</button>
 				<button
 					onclick={() => handleSnapshot(openCapsule.id)}
-					class="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
+					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
 				>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
 						<path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" />
@@ -622,7 +622,7 @@
 			<div class="my-1 border-t border-[var(--color-border)]"></div>
 			<button
 				onclick={() => { const target = openCapsule; openMenuId = null; destroyError = null; destroyTarget = target; }}
-				class="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
+				class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
 			>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
 					<polyline points="3 6 5 6 21 6" />
@@ -645,41 +645,41 @@
 		></div>
 
 		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
-			<h2 class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
-			<p class="mt-1 text-[13px] text-[var(--color-text-tertiary)]">Launch a new isolated VM.</p>
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
+			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Configure and launch a new isolated capsule.</p>
 
 			{#if createError}
-				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-[12px] text-[var(--color-red)]">
+				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
 					{createError}
 				</div>
 			{/if}
 
 			<div class="mt-5 space-y-4">
 				<div>
-					<label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-template">Template</label>
+					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-template">Template</label>
 					<input
 						id="create-template"
 						type="text"
 						bind:value={createForm.template}
-						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-[13px] text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)]"
+						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)]"
 						placeholder="minimal"
 					/>
 				</div>
 
 				<div class="grid grid-cols-2 gap-3">
 					<div>
-						<label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-vcpus">vCPUs</label>
+						<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-vcpus">vCPUs</label>
 						<input
 							id="create-vcpus"
 							type="number"
 							min="1"
 							max="8"
 							bind:value={createForm.vcpus}
-							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-[13px] text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
+							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
 						/>
 					</div>
 					<div>
-						<label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-memory">Memory (MB)</label>
+						<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-memory">Memory (MB)</label>
 						<input
 							id="create-memory"
 							type="number"
@@ -687,19 +687,19 @@
 							max="8192"
 							step="128"
 							bind:value={createForm.memory_mb}
-							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-[13px] text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
+							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
 						/>
 					</div>
 				</div>
 
 				<div>
-					<label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-timeout">Auto-pause timeout (seconds, 0 = never)</label>
+					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-timeout">Auto-pause timeout (seconds, 0 = never)</label>
 					<input
 						id="create-timeout"
 						type="number"
 						min="0"
 						bind:value={createForm.timeout_sec}
-						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-[13px] text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
+						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
 					/>
 				</div>
 			</div>
@@ -708,14 +708,14 @@
 				<button
 					onclick={() => { showCreateDialog = false; }}
 					disabled={creating}
-					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
 				>
 					Cancel
 				</button>
 				<button
 					onclick={handleCreate}
 					disabled={creating}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
 				>
 					{#if creating}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -742,13 +742,13 @@
 		></div>
 
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
-			<h2 class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">Destroy Capsule</h2>
-			<p class="mt-2 text-[13px] text-[var(--color-text-tertiary)]">
-				This will permanently destroy <span class="font-mono text-[var(--color-text-secondary)]">{destroyTarget.id}</span>. This action cannot be undone.
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Destroy Capsule</h2>
+			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
+				Destroy <span class="font-mono text-[var(--color-text-secondary)]">{destroyTarget.id}</span>? The capsule will be terminated and all data inside it lost.
 			</p>
 
 			{#if destroyError}
-				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-[12px] text-[var(--color-red)]">
+				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
 					{destroyError}
 				</div>
 			{/if}
@@ -757,14 +757,14 @@
 				<button
 					onclick={() => { destroyTarget = null; }}
 					disabled={destroying}
-					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
 				>
 					Cancel
 				</button>
 				<button
 					onclick={handleDestroy}
 					disabled={destroying}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
 				>
 					{#if destroying}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -784,7 +784,7 @@
 {#snippet sortableHeader(label: string, key: SortKey)}
 	<button
 		onclick={() => toggleSort(key)}
-		class="flex items-center gap-1 px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] transition-colors duration-150 hover:text-[var(--color-text-secondary)]"
+		class="flex items-center gap-1 px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] transition-colors duration-150 hover:text-[var(--color-text-secondary)]"
 	>
 		{label}
 		{#if sortKey === key}
@@ -799,16 +799,16 @@
 {/snippet}
 
 {#snippet metricCell(label: string, value: string, sublabel: string, extra: string | null, hasBorderRight: boolean)}
-	<div class="flex-1 bg-[var(--color-bg-2)] px-5 py-[18px] transition-colors duration-150 hover:bg-[var(--color-bg-3)] {hasBorderRight ? 'border-r border-[var(--color-border)]' : ''}">
+	<div class="flex-1 bg-[var(--color-bg-2)] px-5 py-5 transition-colors duration-150 hover:bg-[var(--color-bg-3)] {hasBorderRight ? 'border-r border-[var(--color-border)]' : ''}">
 		<div class="flex items-center gap-2">
-			<span class="text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">{label}</span>
-			<span class="rounded-[3px] bg-[var(--color-accent-glow-mid)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
+			<span class="text-meta font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">{label}</span>
+			<span class="rounded-[3px] bg-[var(--color-accent-glow-mid)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
 				<span class="mr-0.5 inline-block h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]" style="animation: wrenn-glow 2.5s ease-in-out infinite"></span>
 				Live
 			</span>
 		</div>
-		<div class="mt-1 font-serif text-[36px] tracking-[-0.04em] text-[var(--color-text-bright)]">{value}</div>
-		<div class="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+		<div class="mt-1 font-serif text-[2.571rem] tracking-[-0.04em] text-[var(--color-text-bright)]">{value}</div>
+		<div class="mt-1 flex items-center gap-1.5 text-label text-[var(--color-text-tertiary)]">
 			<span>{sublabel}</span>
 			{#if extra}
 				<span class="text-[var(--color-text-muted)]">|</span>
@@ -820,13 +820,13 @@
 
 {#snippet chartCard(label: string, value: string, sublabel: string)}
 	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
-		<div class="flex items-center justify-between px-5 pt-[18px] pb-3">
+		<div class="flex items-center justify-between px-5 pt-5 pb-3">
 			<div>
-				<div class="text-[12px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">{label}</div>
+				<div class="text-meta font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">{label}</div>
 				<div class="mt-0.5 flex items-baseline gap-2">
-					<span class="font-serif text-[30px] tracking-[-0.04em] text-[var(--color-text-bright)]">{value}</span>
-					<span class="text-[13px] text-[var(--color-text-secondary)]">{sublabel}</span>
-					<span class="rounded-[3px] bg-[var(--color-accent-glow-mid)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
+					<span class="font-serif text-[2.143rem] tracking-[-0.04em] text-[var(--color-text-bright)]">{value}</span>
+					<span class="text-ui text-[var(--color-text-secondary)]">{sublabel}</span>
+					<span class="rounded-[3px] bg-[var(--color-accent-glow-mid)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
 						<span class="mr-0.5 inline-block h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]" style="animation: wrenn-glow 2.5s ease-in-out infinite"></span>
 						Live
 					</span>
@@ -836,7 +836,7 @@
 			<div class="flex overflow-hidden rounded-[var(--radius-button)] border border-[var(--color-border)]">
 				{#each ['5m', '1H', '6H', '24H', '30D'] as range, i}
 					<button
-						class="px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 {range === '1H'
+						class="px-2.5 py-1 font-mono text-label transition-colors duration-150 {range === '1H'
 							? 'bg-[var(--color-bg-5)] text-[var(--color-text-bright)]'
 							: 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'} {i > 0
 							? 'border-l border-[var(--color-border)]'
@@ -850,11 +850,11 @@
 
 		<div class="relative h-[200px] px-5 pb-3">
 			<div class="absolute left-0 top-0 flex h-full w-12 flex-col justify-between py-1 text-right">
-				<span class="font-mono text-[10px] text-[var(--color-text-muted)]">4</span>
-				<span class="font-mono text-[10px] text-[var(--color-text-muted)]">3</span>
-				<span class="font-mono text-[10px] text-[var(--color-text-muted)]">2</span>
-				<span class="font-mono text-[10px] text-[var(--color-text-muted)]">1</span>
-				<span class="font-mono text-[10px] text-[var(--color-text-muted)]">0</span>
+				<span class="font-mono text-badge text-[var(--color-text-muted)]">4</span>
+				<span class="font-mono text-badge text-[var(--color-text-muted)]">3</span>
+				<span class="font-mono text-badge text-[var(--color-text-muted)]">2</span>
+				<span class="font-mono text-badge text-[var(--color-text-muted)]">1</span>
+				<span class="font-mono text-badge text-[var(--color-text-muted)]">0</span>
 			</div>
 
 			<svg class="ml-8 h-full w-[calc(100%-2rem)]" viewBox="0 0 400 180" preserveAspectRatio="none">
@@ -866,7 +866,7 @@
 
 			<div class="ml-8 flex justify-between pt-2">
 				{#each ['03:01', '03:02', '03:03', '03:04', '03:05'] as t}
-					<span class="font-mono text-[10px] text-[var(--color-text-muted)]">{t}</span>
+					<span class="font-mono text-badge text-[var(--color-text-muted)]">{t}</span>
 				{/each}
 			</div>
 		</div>

@@ -24,5 +24,5 @@
 </script>
 
 <div class="flex min-h-screen items-center justify-center">
-	<p class="text-[13px] text-[var(--color-text-secondary)]">Signing you in...</p>
+	<p class="text-ui text-[var(--color-text-secondary)]">Signing you in...</p>
 </div>

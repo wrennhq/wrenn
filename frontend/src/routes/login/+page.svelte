@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import { auth } from '$lib/auth.svelte';
 	import { apiLogin, apiSignup } from '$lib/api/auth';
 	import {
@@ -16,6 +18,12 @@
 	let showPassword = $state(false);
 	let error = $state('');
 	let loading = $state(false);
+
+	// Read OAuth error forwarded from /auth/github/callback
+	onMount(() => {
+		const urlErr = $page.url.searchParams.get('error');
+		if (urlErr) error = decodeURIComponent(urlErr);
+	});
 
 	// Mouse-reactive glow — moves opposite to cursor with viscous drag
 	let glowX = $state(50);
@@ -107,7 +115,7 @@
 		<!-- Mouse-reactive radial glow -->
 		<div
 			class="pointer-events-none absolute inset-0"
-			style="background: radial-gradient(ellipse 55% 45% at {glowX}% {glowY}%, rgba(94, 140, 88, 0.09) 0%, transparent 70%)"
+			style="background: radial-gradient(ellipse 55% 45% at {glowX}% {glowY}%, rgba(94, 140, 88, 0.14) 0%, transparent 70%)"
 			aria-hidden="true"
 		></div>
 
@@ -118,7 +126,7 @@
 		>
 			<img src="/logo.svg" alt="Wrenn" class="h-20 w-20 rounded-[var(--radius-card)]" />
 			<span
-				class="mt-5 font-brand text-[44px] tracking-[-0.01em] text-[var(--color-text-bright)]"
+				class="mt-5 font-brand text-[3.143rem] tracking-[-0.01em] text-[var(--color-text-bright)]"
 			>
 				Wrenn
 			</span>
@@ -126,19 +134,19 @@
 
 		<!-- Tagline below logo -->
 		<div
-			class="relative z-10 mt-10 text-center"
+			class="relative z-10 mt-16 max-w-[360px] text-center"
 			style="animation: fadeUp 0.35s ease 0.1s both"
 		>
 			<h1
-				class="font-serif text-[42px] leading-[1.15] tracking-[-0.03em] text-[var(--color-text-bright)]"
+				class="font-serif text-[5rem] leading-[1.1] tracking-[-0.04em] text-[var(--color-text-bright)]"
 			>
-				Scale Up. Spin Out.
+				Scale Up.<br />Spin Out.
 			</h1>
 		</div>
 
 		<!-- Sub-tagline -->
 		<p
-			class="relative z-10 mt-6 font-mono text-[13px] uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]"
+			class="relative z-10 mt-12 font-mono text-ui uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]"
 			style="animation: fadeUp 0.35s ease 0.2s both"
 		>
 			Run Anything. Worry about Nothing.
@@ -156,7 +164,7 @@
 		>
 			<img src="/logo.svg" alt="Wrenn" class="h-12 w-12 rounded-[var(--radius-card)]" />
 			<span
-				class="mt-2 font-brand text-[24px] tracking-[-0.01em] text-[var(--color-text-bright)]"
+				class="mt-2 font-brand text-page tracking-[-0.01em] text-[var(--color-text-bright)]"
 			>
 				Wrenn
 			</span>
@@ -166,11 +174,11 @@
 			<!-- Header -->
 			<div class="mb-8">
 				<h2
-					class="font-serif text-[34px] tracking-[-0.02em] text-[var(--color-text-bright)]"
+					class="font-serif text-display tracking-[-0.02em] text-[var(--color-text-bright)]"
 				>
 					{title}
 				</h2>
-				<p class="mt-2 text-[14px] text-[var(--color-text-secondary)]">
+				<p class="mt-2 text-body text-[var(--color-text-secondary)]">
 					{subtitle}
 				</p>
 			</div>
@@ -178,7 +186,7 @@
 			<!-- GitHub OAuth -->
 			<a
 				href="/api/auth/oauth/github"
-				class="flex w-full items-center justify-center gap-2.5 rounded-[var(--radius-button)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] px-4 py-3 text-[14px] font-medium text-[var(--color-text-bright)] no-underline transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-text-bright)]"
+				class="flex w-full items-center justify-center gap-2.5 rounded-[var(--radius-button)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] px-4 py-3 text-body font-medium text-[var(--color-text-bright)] no-underline transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-text-bright)]"
 			>
 				<IconGithub size={16} />
 				Continue with GitHub
@@ -188,7 +196,7 @@
 			<div class="my-6 flex items-center gap-3">
 				<div class="h-px flex-1 bg-[var(--color-border)]"></div>
 				<span
-					class="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]"
+					class="font-mono text-badge uppercase tracking-[0.1em] text-[var(--color-text-muted)]"
 					>or</span
 				>
 				<div class="h-px flex-1 bg-[var(--color-border)]"></div>
@@ -207,7 +215,7 @@
 						bind:value={email}
 						placeholder="Email address"
 						autocomplete="email"
-						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-3 pl-9 pr-3 text-[14px] text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
+						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-3 pl-9 pr-3 text-body text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
 					/>
 				</div>
 
@@ -222,7 +230,7 @@
 						bind:value={password}
 						placeholder="Password"
 						autocomplete={mode === 'signin' ? 'current-password' : 'new-password'}
-						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-3 pl-9 pr-10 text-[14px] text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
+						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-3 pl-9 pr-10 text-body text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
 					/>
 					<button
 						type="button"
@@ -242,7 +250,7 @@
 					<div class="flex justify-end">
 						<button
 							type="button"
-							class="text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-accent-mid)]"
+							class="text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-accent-mid)]"
 						>
 							Forgot password?
 						</button>
@@ -250,13 +258,13 @@
 				{/if}
 
 				{#if error}
-					<p class="text-[13px] text-[var(--color-red)]">{error}</p>
+					<p class="text-ui text-[var(--color-red)]">{error}</p>
 				{/if}
 
 				<button
 					type="submit"
 					disabled={loading}
-					class="!mt-5 w-full rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-3 text-[14px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:pointer-events-none disabled:opacity-50"
+					class="!mt-5 w-full rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-3 text-body font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:pointer-events-none disabled:opacity-50"
 				>
 					{#if loading}
 						<span class="inline-flex items-center gap-2">
@@ -272,7 +280,7 @@
 			</form>
 
 			<!-- Switch mode -->
-			<p class="mt-6 text-center text-[13px] text-[var(--color-text-secondary)]">
+			<p class="mt-6 text-center text-ui text-[var(--color-text-secondary)]">
 				{switchText}
 				<button
 					type="button"

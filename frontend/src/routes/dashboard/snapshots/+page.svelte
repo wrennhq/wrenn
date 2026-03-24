@@ -171,14 +171,14 @@
 	<div class="flex flex-1 flex-col overflow-hidden">
 		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
-			<div class="px-7 pt-6">
+			<div class="px-7 pt-8">
 				<div class="flex items-start justify-between">
 					<div>
-						<h1 class="font-serif text-[24px] tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
 							Templates
 						</h1>
-						<p class="mt-1 text-[13px] text-[var(--color-text-tertiary)]">
-							Point-in-time captures and base environments for launching capsules.
+						<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
+							Saved capsule states and base images. Launch a new capsule from any template.
 						</p>
 					</div>
 				</div>
@@ -188,7 +188,7 @@
 					<!-- Snapshots tab (active) -->
 					<button
 						onclick={() => (pageTab = 'snapshots')}
-						class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors duration-150 {pageTab === 'snapshots'
+						class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150 {pageTab === 'snapshots'
 							? 'border-[var(--color-accent)] text-[var(--color-accent-bright)]'
 							: 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
 					>
@@ -203,7 +203,7 @@
 					<button
 						disabled
 						title="Coming soon"
-						class="flex cursor-not-allowed items-center gap-2 border-b-2 border-transparent px-4 py-2.5 text-[13px] font-medium opacity-40"
+						class="flex cursor-not-allowed items-center gap-2 border-b-2 border-transparent px-4 py-2.5 text-ui font-medium opacity-40"
 					>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
@@ -211,7 +211,7 @@
 							<polyline points="21 15 16 10 5 21" />
 						</svg>
 						Images
-						<span class="rounded-[3px] bg-[var(--color-bg-4)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
+						<span class="rounded-[3px] bg-[var(--color-bg-4)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
 							Soon
 						</span>
 					</button>
@@ -220,16 +220,16 @@
 
 			<!-- Snapshots tab content -->
 			{#if pageTab === 'snapshots'}
-				<div class="p-7" style="animation: fadeUp 0.35s ease both">
+				<div class="p-8" style="animation: fadeUp 0.35s ease both">
 					{#if error}
-						<div class="mb-4 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-[13px] text-[var(--color-red)]">
+						<div class="mb-4 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-ui text-[var(--color-red)]">
 							{error}
 						</div>
 					{/if}
 
 					{#if loading}
 						<div class="flex items-center justify-center py-24">
-							<div class="flex items-center gap-3 text-[13px] text-[var(--color-text-secondary)]">
+							<div class="flex items-center gap-3 text-ui text-[var(--color-text-secondary)]">
 								<svg class="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 									<path d="M21 12a9 9 0 1 1-6.219-8.56" />
 								</svg>
@@ -243,7 +243,7 @@
 								{#each ([['all', 'All'], ['snapshot', 'Snapshots'], ['base', 'Images']] as const) as [val, label]}
 									<button
 										onclick={() => (typeFilter = val)}
-										class="rounded-full border px-3 py-1 text-[12px] font-medium transition-colors duration-150 {typeFilter === val
+										class="rounded-full border px-3 py-1 text-meta font-medium transition-colors duration-150 {typeFilter === val
 											? 'border-[var(--color-border-mid)] bg-[var(--color-bg-5)] text-[var(--color-text-bright)]'
 											: 'border-[var(--color-border)] bg-[var(--color-bg-3)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
 									>
@@ -251,7 +251,7 @@
 									</button>
 								{/each}
 							</div>
-							<span class="text-[12px] text-[var(--color-text-muted)]">
+							<span class="text-meta text-[var(--color-text-muted)]">
 								{filteredSnapshots.length}
 								{filteredSnapshots.length === 1 ? 'snapshot' : 'snapshots'}
 							</span>
@@ -266,16 +266,16 @@
 										<polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" />
 									</svg>
 								</div>
-								<p class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">
+								<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
 									{emptyHeading(typeFilter)}
 								</p>
-								<p class="mt-1.5 max-w-[340px] text-center text-[13px] text-[var(--color-text-tertiary)]">
+								<p class="mt-1.5 max-w-[340px] text-center text-ui text-[var(--color-text-tertiary)]">
 									{emptyDescription(typeFilter)}
 								</p>
 								{#if typeFilter === 'all' || typeFilter === 'snapshot'}
 									<a
 										href="/dashboard/capsules"
-										class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)] px-4 py-2 text-[13px] font-medium text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]"
+										class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)] px-4 py-2 text-ui font-medium text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]"
 									>
 										Go to Capsules
 										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -290,13 +290,13 @@
 							<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]">
 								<!-- Header -->
 								<div class="grid border-b border-[var(--color-border)] bg-[var(--color-bg-3)]" style="grid-template-columns: 2fr 1fr 0.7fr 0.9fr 0.8fr 1.3fr 140px">
-									<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Name</div>
-									<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Type</div>
-									<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">vCPUs</div>
-									<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Memory</div>
-									<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Size</div>
-									<div class="px-4 py-[11px] text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created</div>
-									<div class="px-4 py-[11px] text-right text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Actions</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Name</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Type</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">vCPUs</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Memory</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Size</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created</div>
+									<div class="px-5 py-3 text-right text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Actions</div>
 								</div>
 
 								<!-- Rows -->
@@ -306,19 +306,19 @@
 										style="grid-template-columns: 2fr 1fr 0.7fr 0.9fr 0.8fr 1.3fr 140px; animation: fadeUp 0.35s ease both; animation-delay: {i * 40}ms"
 									>
 										<!-- Name -->
-										<div class="px-4 py-3">
-											<span class="font-mono text-[13px] text-[var(--color-text-bright)]">{snapshot.name}</span>
+										<div class="min-w-0 px-5 py-4">
+											<span class="block truncate font-mono text-ui text-[var(--color-text-bright)]">{snapshot.name}</span>
 										</div>
 
 										<!-- Type badge -->
-										<div class="px-4 py-3">
+										<div class="px-5 py-4">
 											{#if snapshot.type === 'snapshot'}
-												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-accent)]/20 bg-[var(--color-accent-glow-mid)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
+												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-accent)]/20 bg-[var(--color-accent-glow-mid)] px-2 py-0.5 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
 													<span class="inline-block h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]" style="box-shadow: 0 0 6px rgba(94,140,88,0.5)"></span>
 													Snapshot
 												</span>
 											{:else}
-												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-blue)]/20 bg-[var(--color-blue)]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--color-blue)]">
+												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-blue)]/20 bg-[var(--color-blue)]/10 px-2 py-0.5 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-blue)]">
 													<span class="inline-block h-[5px] w-[5px] rounded-full bg-[var(--color-blue)]"></span>
 													Image
 												</span>
@@ -326,31 +326,31 @@
 										</div>
 
 										<!-- vCPUs -->
-										<div class="px-4 py-3">
+										<div class="px-5 py-4">
 											{#if snapshot.type === 'snapshot' && snapshot.vcpus != null}
-												<span class="font-mono text-[13px] text-[var(--color-text-secondary)]">{snapshot.vcpus}</span>
+												<span class="font-mono text-ui text-[var(--color-text-secondary)]">{snapshot.vcpus}</span>
 											{:else}
-												<span class="text-[13px] text-[var(--color-text-muted)]">—</span>
+												<span class="text-ui text-[var(--color-text-muted)]">—</span>
 											{/if}
 										</div>
 
 										<!-- Memory -->
-										<div class="px-4 py-3">
+										<div class="px-5 py-4">
 											{#if snapshot.type === 'snapshot' && snapshot.memory_mb != null}
-												<span class="font-mono text-[13px] text-[var(--color-text-secondary)]">{snapshot.memory_mb} MB</span>
+												<span class="font-mono text-ui text-[var(--color-text-secondary)]">{snapshot.memory_mb} MB</span>
 											{:else}
-												<span class="text-[13px] text-[var(--color-text-muted)]">—</span>
+												<span class="text-ui text-[var(--color-text-muted)]">—</span>
 											{/if}
 										</div>
 
 										<!-- Size -->
-										<div class="px-4 py-3">
-											<span class="font-mono text-[13px] text-[var(--color-text-muted)]">{formatBytes(snapshot.size_bytes)}</span>
+										<div class="px-5 py-4">
+											<span class="font-mono text-ui text-[var(--color-text-muted)]">{formatBytes(snapshot.size_bytes)}</span>
 										</div>
 
 										<!-- Created -->
-										<div class="px-4 py-3" title={formatDate(snapshot.created_at)}>
-											<span class="text-[13px] text-[var(--color-text-secondary)]">{timeAgo(snapshot.created_at)}</span>
+										<div class="px-5 py-4" title={formatDate(snapshot.created_at)}>
+											<span class="text-ui text-[var(--color-text-secondary)]">{timeAgo(snapshot.created_at)}</span>
 										</div>
 
 										<!-- Actions: split button -->
@@ -359,7 +359,7 @@
 												<!-- Launch part -->
 												<button
 													onclick={() => openLaunch(snapshot)}
-													class="flex items-center px-3 py-1.5 text-[12px] font-medium text-[var(--color-text-primary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-bright)]"
+													class="flex items-center px-3 py-1.5 text-meta font-medium text-[var(--color-text-primary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-bright)]"
 												>
 													Launch
 												</button>
@@ -392,7 +392,7 @@
 								{/each}
 							</div>
 
-							<p class="mt-3 text-[12px] text-[var(--color-text-muted)]">
+							<p class="mt-3 text-meta text-[var(--color-text-muted)]">
 								{filteredSnapshots.length} {filteredSnapshots.length === 1 ? 'snapshot' : 'snapshots'}
 								{typeFilter !== 'all' ? `· filtered` : '· total'}
 							</p>
@@ -406,7 +406,7 @@
 		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
 			<div class="flex items-center gap-1.5">
 				<span class="inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
-				<span class="font-mono text-[11px] uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
+				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
 	</div>
@@ -427,7 +427,7 @@
 					openDropdownName = null;
 					if (target) { deleteTarget = target; deleteError = null; }
 				}}
-				class="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
+				class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
 			>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
 					<polyline points="3 6 5 6 21 6" />
@@ -452,8 +452,8 @@
 			class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
 			style="animation: fadeUp 0.2s ease both"
 		>
-			<h2 class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">Delete Snapshot</h2>
-			<p class="mt-2 text-[13px] text-[var(--color-text-tertiary)]">
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Delete Snapshot</h2>
+			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Delete <span class="font-mono font-medium text-[var(--color-text-secondary)]">{deleteTarget.name}</span>?
 				This action cannot be undone.
 			</p>
@@ -464,14 +464,14 @@
 						<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
 						<line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
 					</svg>
-					<p class="text-[12px] leading-relaxed text-[var(--color-amber)]">
+					<p class="text-meta leading-relaxed text-[var(--color-amber)]">
 						This live capture includes saved memory state. Any capsule relying on it will be unable to resume.
 					</p>
 				</div>
 			{/if}
 
 			{#if deleteError}
-				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-[12px] text-[var(--color-red)]">
+				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
 					{deleteError}
 				</div>
 			{/if}
@@ -480,14 +480,14 @@
 				<button
 					onclick={() => (deleteTarget = null)}
 					disabled={deleting}
-					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
 				>
 					Cancel
 				</button>
 				<button
 					onclick={handleDelete}
 					disabled={deleting}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
 				>
 					{#if deleting}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -517,20 +517,20 @@
 			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
 			style="animation: fadeUp 0.2s ease both"
 		>
-			<h2 class="font-serif text-[20px] tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
-			<p class="mt-1 text-[13px] text-[var(--color-text-tertiary)]">
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
+			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Start a new capsule from this template.
 			</p>
 
 			{#if launchError}
-				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-[12px] text-[var(--color-red)]">
+				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
 					{launchError}
 				</div>
 			{/if}
 
 			<!-- Template name (readonly) -->
 			<div class="mt-5">
-				<label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
+				<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
 					Template
 				</label>
 				<div class="flex items-center gap-2 rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-0)] px-3 py-2">
@@ -539,8 +539,8 @@
 					{:else}
 						<span class="inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-blue)]"></span>
 					{/if}
-					<span class="flex-1 font-mono text-[13px] text-[var(--color-text-bright)]">{launchTarget.name}</span>
-					<span class="text-[11px] text-[var(--color-text-muted)]">
+					<span class="flex-1 font-mono text-ui text-[var(--color-text-bright)]">{launchTarget.name}</span>
+					<span class="text-label text-[var(--color-text-muted)]">
 						{launchTarget.type === 'snapshot' ? 'Snapshot' : 'Image'}
 					</span>
 				</div>
@@ -549,11 +549,11 @@
 			<!-- vCPUs + Memory -->
 			<div class="mt-4 grid grid-cols-2 gap-3">
 				<div>
-					<label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="launch-vcpus">
+					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="launch-vcpus">
 						vCPUs
 					</label>
 					{#if launchTarget.type === 'snapshot'}
-						<div class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-0)] px-3 py-2 font-mono text-[13px] text-[var(--color-text-muted)]">
+						<div class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-0)] px-3 py-2 font-mono text-ui text-[var(--color-text-muted)]">
 							{launchTarget.vcpus ?? 1}
 						</div>
 					{:else}
@@ -563,17 +563,17 @@
 							min="1"
 							max="32"
 							bind:value={launchVcpus}
-							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-[13px] text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
+							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
 						/>
 					{/if}
 				</div>
 
 				<div>
-					<label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="launch-memory">
+					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="launch-memory">
 						Memory (MB)
 					</label>
 					{#if launchTarget.type === 'snapshot'}
-						<div class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-0)] px-3 py-2 font-mono text-[13px] text-[var(--color-text-muted)]">
+						<div class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-0)] px-3 py-2 font-mono text-ui text-[var(--color-text-muted)]">
 							{launchTarget.memory_mb ?? 512}
 						</div>
 					{:else}
@@ -583,7 +583,7 @@
 							min="128"
 							step="128"
 							bind:value={launchMemoryMb}
-							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-[13px] text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
+							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
 						/>
 					{/if}
 				</div>
@@ -591,13 +591,13 @@
 
 			<!-- Timeout -->
 			<div class="mt-4">
-				<label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="launch-timeout">Auto-pause timeout (seconds, 0 = never)</label>
+				<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="launch-timeout">Auto-pause timeout (seconds, 0 = never)</label>
 				<input
 					id="launch-timeout"
 					type="number"
 					min="0"
 					bind:value={launchTimeoutSec}
-					class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-[13px] text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
+					class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
 				/>
 			</div>
 
@@ -605,14 +605,14 @@
 				<button
 					onclick={() => (launchTarget = null)}
 					disabled={launching}
-					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-[13px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
 				>
 					Cancel
 				</button>
 				<button
 					onclick={handleLaunch}
 					disabled={launching}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
 				>
 					{#if launching}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
