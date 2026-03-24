@@ -8,12 +8,14 @@ const authCtxKey contextKey = 0
 
 // AuthContext is stamped into request context by auth middleware.
 type AuthContext struct {
-	TeamID  string
-	UserID  string // empty when authenticated via API key
-	Email   string // empty when authenticated via API key
-	Name    string // empty when authenticated via API key
-	Role    string // owner, admin, or member; empty when authenticated via API key
-	IsAdmin bool   // platform-level admin; always false when authenticated via API key
+	TeamID     string
+	UserID     string // empty when authenticated via API key
+	Email      string // empty when authenticated via API key
+	Name       string // empty when authenticated via API key
+	Role       string // owner, admin, or member; empty when authenticated via API key
+	IsAdmin    bool   // platform-level admin; always false when authenticated via API key
+	APIKeyID   string // populated when authenticated via API key; empty for JWT auth
+	APIKeyName string // display name of the key, snapshotted at auth time; empty for JWT auth
 }
 
 // WithAuthContext returns a new context with the given AuthContext.

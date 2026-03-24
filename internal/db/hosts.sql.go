@@ -583,10 +583,13 @@ WHERE id = $1
 `
 
 // Updates last_heartbeat_at and transitions unreachable hosts back to online.
-// Returns 0 if no host was found (deleted).
+// Returns 0 if no host was found (deleted), which the caller treats as 404.
 func (q *Queries) UpdateHostHeartbeatAndStatus(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.Exec(ctx, updateHostHeartbeatAndStatus, id)
-	return result.RowsAffected(), err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateHostStatus = `-- name: UpdateHostStatus :exec

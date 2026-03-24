@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
@@ -44,19 +45,23 @@ func New(
 	templateSvc := &service.TemplateService{DB: queries}
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool}
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
+	auditSvc := &service.AuditService{DB: queries}
 
-	sandbox := newSandboxHandler(sandboxSvc)
+	al := audit.New(queries)
+
+	sandbox := newSandboxHandler(sandboxSvc, al)
 	exec := newExecHandler(queries, pool)
 	execStream := newExecStreamHandler(queries, pool)
 	files := newFilesHandler(queries, pool)
 	filesStream := newFilesStreamHandler(queries, pool)
-	snapshots := newSnapshotHandler(templateSvc, queries, pool)
+	snapshots := newSnapshotHandler(templateSvc, queries, pool, al)
 	authH := newAuthHandler(queries, pgPool, jwtSecret)
 	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, oauthRegistry, oauthRedirectURL)
-	apiKeys := newAPIKeyHandler(apiKeySvc)
-	hostH := newHostHandler(hostSvc, queries)
-	teamH := newTeamHandler(teamSvc)
+	apiKeys := newAPIKeyHandler(apiKeySvc, al)
+	hostH := newHostHandler(hostSvc, queries, al)
+	teamH := newTeamHandler(teamSvc, al)
 	usersH := newUsersHandler(teamSvc)
+	auditH := newAuditHandler(auditSvc)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -155,6 +160,9 @@ func New(
 			})
 		})
 	})
+
+	// JWT-authenticated: audit log.
+	r.With(requireJWT(jwtSecret)).Get("/v1/audit-logs", auditH.List)
 
 	// Platform admin routes — require JWT + DB-validated admin status.
 	r.Route("/v1/admin", func(r chi.Router) {

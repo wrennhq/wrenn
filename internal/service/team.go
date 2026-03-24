@@ -22,9 +22,9 @@ var teamNameRE = regexp.MustCompile(`^[A-Za-z0-9 _\-@']{1,128}$`)
 
 // TeamService provides team management operations.
 type TeamService struct {
-	DB         *db.Queries
-	Pool       *pgxpool.Pool
-	HostPool   *lifecycle.HostClientPool
+	DB       *db.Queries
+	Pool     *pgxpool.Pool
+	HostPool *lifecycle.HostClientPool
 }
 
 // TeamWithRole pairs a team with the calling user's role in it.

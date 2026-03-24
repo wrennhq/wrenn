@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/sandbox/internal/api"
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
 	"git.omukk.dev/wrenn/sandbox/internal/config"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
@@ -90,7 +91,7 @@ func main() {
 	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL)
 
 	// Start host monitor (passive + active reconciliation every 30s).
-	monitor := api.NewHostMonitor(queries, hostPool, 30*time.Second)
+	monitor := api.NewHostMonitor(queries, hostPool, audit.New(queries), 30*time.Second)
 	monitor.Start(ctx)
 
 	httpServer := &http.Server{

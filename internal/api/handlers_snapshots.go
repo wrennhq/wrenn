@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
@@ -22,13 +23,14 @@ import (
 )
 
 type snapshotHandler struct {
-	svc  *service.TemplateService
-	db   *db.Queries
-	pool *lifecycle.HostClientPool
+	svc   *service.TemplateService
+	db    *db.Queries
+	pool  *lifecycle.HostClientPool
+	audit *audit.AuditLogger
 }
 
-func newSnapshotHandler(svc *service.TemplateService, db *db.Queries, pool *lifecycle.HostClientPool) *snapshotHandler {
-	return &snapshotHandler{svc: svc, db: db, pool: pool}
+func newSnapshotHandler(svc *service.TemplateService, db *db.Queries, pool *lifecycle.HostClientPool, al *audit.AuditLogger) *snapshotHandler {
+	return &snapshotHandler{svc: svc, db: db, pool: pool, audit: al}
 }
 
 // deleteSnapshotBroadcast attempts to delete snapshot files on all online hosts.
@@ -180,6 +182,7 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogSnapshotCreate(r.Context(), ac, req.Name)
 	writeJSON(w, http.StatusCreated, templateToResponse(tmpl))
 }
 
@@ -227,5 +230,6 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogSnapshotDelete(r.Context(), ac, name)
 	w.WriteHeader(http.StatusNoContent)
 }
