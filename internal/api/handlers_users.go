@@ -18,13 +18,13 @@ func newUsersHandler(svc *service.TeamService) *usersHandler {
 
 // Search handles GET /v1/users/search?email=<prefix>
 // Returns up to 10 users whose email starts with the given prefix.
-// The prefix must contain "@" to scope searches and prevent broad enumeration.
+// The prefix must be at least 3 characters long.
 func (h *usersHandler) Search(w http.ResponseWriter, r *http.Request) {
 	auth.MustFromContext(r.Context()) // ensure authenticated
 
 	prefix := strings.TrimSpace(r.URL.Query().Get("email"))
-	if !strings.Contains(prefix, "@") {
-		writeError(w, http.StatusBadRequest, "invalid_request", "email prefix must contain '@'")
+	if len(prefix) < 3 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "email prefix must be at least 3 characters")
 		return
 	}
 
