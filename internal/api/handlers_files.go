@@ -11,17 +11,17 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type filesHandler struct {
-	db    *db.Queries
-	agent hostagentv1connect.HostAgentServiceClient
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newFilesHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *filesHandler {
-	return &filesHandler{db: db, agent: agent}
+func newFilesHandler(db *db.Queries, pool *lifecycle.HostClientPool) *filesHandler {
+	return &filesHandler{db: db, pool: pool}
 }
 
 // Upload handles POST /v1/sandboxes/{id}/files/write.
@@ -75,7 +75,13 @@ func (h *filesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.agent.WriteFile(ctx, connect.NewRequest(&pb.WriteFileRequest{
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
+	if _, err := agent.WriteFile(ctx, connect.NewRequest(&pb.WriteFileRequest{
 		SandboxId: sandboxID,
 		Path:      filePath,
 		Content:   content,
@@ -120,7 +126,13 @@ func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.agent.ReadFile(ctx, connect.NewRequest(&pb.ReadFileRequest{
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
+	resp, err := agent.ReadFile(ctx, connect.NewRequest(&pb.ReadFileRequest{
 		SandboxId: sandboxID,
 		Path:      req.Path,
 	}))

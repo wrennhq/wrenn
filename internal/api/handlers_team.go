@@ -25,6 +25,7 @@ type teamResponse struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Slug      string `json:"slug"`
+	IsByoc    bool   `json:"is_byoc"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -44,9 +45,10 @@ type memberResponse struct {
 
 func teamToResponse(t db.Team) teamResponse {
 	resp := teamResponse{
-		ID:   t.ID,
-		Name: t.Name,
-		Slug: t.Slug,
+		ID:     t.ID,
+		Name:   t.Name,
+		Slug:   t.Slug,
+		IsByoc: t.IsByoc,
 	}
 	if t.CreatedAt.Valid {
 		resp.CreatedAt = t.CreatedAt.Time.Format(time.RFC3339)
@@ -314,6 +316,28 @@ func (h *teamHandler) Leave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.LeaveTeam(r.Context(), teamID, ac.UserID); err != nil {
+		status, code, msg := serviceErrToHTTP(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetBYOC handles PUT /v1/admin/teams/{id}/byoc (admin only).
+// Enables or disables the BYOC feature flag for a team.
+func (h *teamHandler) SetBYOC(w http.ResponseWriter, r *http.Request) {
+	teamID := chi.URLParam(r, "id")
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+
+	if err := h.svc.SetBYOC(r.Context(), teamID, req.Enabled); err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return

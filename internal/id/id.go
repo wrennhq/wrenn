@@ -67,3 +67,17 @@ func NewRegistrationToken() string {
 	}
 	return hex.EncodeToString(b)
 }
+
+// NewRefreshTokenID generates a new refresh token record ID in the format "hrt-" + 8 hex chars.
+func NewRefreshTokenID() string {
+	return "hrt-" + hex8()
+}
+
+// NewRefreshToken generates a 64-char hex token (32 bytes of entropy) for use as a host refresh token.
+func NewRefreshToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+	return hex.EncodeToString(b)
+}

@@ -23,3 +23,6 @@ export { default as IconBell } from './IconBell.svelte';
 export { default as IconDocs } from './IconDocs.svelte';
 export { default as IconAudit } from './IconAudit.svelte';
 export { default as IconBox } from './IconBox.svelte';
+export { default as IconServer } from './IconServer.svelte';
+export { default as IconGear } from './IconGear.svelte';
+export { default as IconShield } from './IconShield.svelte';

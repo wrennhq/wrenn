@@ -1193,8 +1193,16 @@ paths:
       security:
         - bearerAuth: []
       description: |
-        Admins can delete any host. Team owners can delete BYOC hosts
-        belonging to their team.
+        Admins can delete any host. Team owners and admins can delete BYOC hosts
+        belonging to their team. Without `?force=true`, returns 409 if the host
+        has active sandboxes. With `?force=true`, destroys all sandboxes first.
+      parameters:
+        - name: force
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: If true, destroy all sandboxes on the host before deleting.
       responses:
         "204":
           description: Host deleted
@@ -1204,6 +1212,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "409":
+          description: Host has active sandboxes (only when force is not set)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostHasSandboxesError"
 
   /v1/hosts/{id}/token:
     parameters:
@@ -1312,6 +1326,72 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/hosts/auth/refresh:
+    post:
+      summary: Refresh host JWT
+      operationId: refreshHostToken
+      tags: [hosts]
+      description: |
+        Exchanges a refresh token for a new JWT and rotated refresh token.
+        The old refresh token is immediately revoked. No authentication required —
+        the refresh token itself is the credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshHostTokenRequest"
+      responses:
+        "200":
+          description: New JWT and rotated refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshHostTokenResponse"
+        "401":
+          description: Invalid, expired, or revoked refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/delete-preview:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Preview host deletion
+      operationId: getHostDeletePreview
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Returns the list of sandbox IDs that would be destroyed if the host
+        were deleted with `?force=true`. No state is modified.
+      responses:
+        "200":
+          description: Deletion preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostDeletePreview"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Host not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/hosts/{id}/tags:
     parameters:
       - name: id
@@ -1405,7 +1485,7 @@ components:
       type: apiKey
       in: header
       name: X-Host-Token
-      description: Long-lived host JWT returned from POST /v1/hosts/register. Valid for 1 year.
+      description: Host JWT returned from POST /v1/hosts/register or POST /v1/hosts/auth/refresh. Valid for 7 days.
 
   schemas:
     SignupRequest:
@@ -1505,7 +1585,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, running, paused, stopped, error]
+          enum: [pending, starting, running, paused, hibernated, stopped, missing, error]
         template:
           type: string
         vcpus:
@@ -1661,7 +1741,10 @@ components:
           $ref: "#/components/schemas/Host"
         token:
           type: string
-          description: Long-lived host JWT for X-Host-Token header. Valid for 1 year.
+          description: Host JWT for X-Host-Token header. Valid for 7 days.
+        refresh_token:
+          type: string
+          description: Refresh token for obtaining new JWTs. Valid for 60 days; rotated on each use.
 
     Host:
       type: object
@@ -1697,7 +1780,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: [pending, online, offline, draining]
+          enum: [pending, online, offline, draining, unreachable]
         last_heartbeat_at:
           type: string
           format: date-time
@@ -1710,6 +1793,54 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    RefreshHostTokenRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          description: Refresh token obtained from registration or a previous refresh.
+
+    RefreshHostTokenResponse:
+      type: object
+      properties:
+        host:
+          $ref: "#/components/schemas/Host"
+        token:
+          type: string
+          description: New host JWT. Valid for 7 days.
+        refresh_token:
+          type: string
+          description: New refresh token. Valid for 60 days; old token is revoked.
+
+    HostDeletePreview:
+      type: object
+      properties:
+        host:
+          $ref: "#/components/schemas/Host"
+        sandbox_ids:
+          type: array
+          items:
+            type: string
+          description: IDs of sandboxes that would be destroyed on force-delete.
+
+    HostHasSandboxesError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: host_has_sandboxes
+            message:
+              type: string
+            sandbox_ids:
+              type: array
+              items:
+                type: string
+              description: IDs of active sandboxes blocking deletion.
 
     AddTagRequest:
       type: object

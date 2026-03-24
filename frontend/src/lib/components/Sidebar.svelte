@@ -19,7 +19,9 @@
 		IconSidebar,
 		IconBell,
 		IconDocs,
-		IconAudit
+		IconAudit,
+		IconServer,
+		IconShield
 	} from './icons';
 
 	let { collapsed = $bindable(false) }: { collapsed: boolean } = $props();
@@ -39,6 +41,8 @@
 		label: string;
 		icon: typeof IconMonitor;
 		href: string;
+		disabled?: boolean;
+		disabledHint?: string;
 	};
 
 	const platformItems: NavItem[] = [
@@ -46,11 +50,24 @@
 		{ label: 'Templates', icon: IconBox, href: '/dashboard/snapshots' }
 	];
 
-	const managementItems: NavItem[] = [
+	let currentTeamIsByoc = $derived(
+		teamsStore.list.find((t) => t.id === auth.teamId)?.is_byoc ?? false
+	);
+
+	let managementItems = $derived<NavItem[]>([
 		{ label: 'Keys', icon: IconKey, href: '/dashboard/keys' },
 		{ label: 'Team', icon: IconMembers, href: '/dashboard/team' },
-		{ label: 'Audit Logs', icon: IconAudit, href: '/dashboard/audit' }
-	];
+		{ label: 'Audit Logs', icon: IconAudit, href: '/dashboard/audit' },
+		...(currentTeamIsByoc
+			? [{
+					label: 'BYOC',
+					icon: IconServer,
+					href: '/dashboard/byoc',
+					disabled: auth.role === 'member',
+					disabledHint: 'Available to team owners and admins only'
+				}]
+			: [])
+	]);
 
 	const billingItems: NavItem[] = [
 		{ label: 'Usage', icon: IconUsage, href: '/dashboard/usage' },
@@ -232,6 +249,16 @@
 
 	<!-- Bottom links -->
 	<div class="shrink-0 px-3 pb-1 {collapsed ? 'px-1.5' : ''}">
+		{#if auth.isAdmin}
+			<a
+				href="/admin"
+				class="group flex items-center rounded-[var(--radius-input)] px-2.5 py-2.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)] {collapsed ? 'justify-center px-2' : 'gap-3'}"
+				title={collapsed ? 'Admin' : undefined}
+			>
+				<IconShield size={16} class="shrink-0 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
+				{#if !collapsed}<span class="text-ui">Admin</span>{/if}
+			</a>
+		{/if}
 		<a
 			href="/docs"
 			class="group flex items-center rounded-[var(--radius-input)] px-2.5 py-2.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)] {collapsed ? 'justify-center px-2' : 'gap-3'}"
@@ -300,7 +327,19 @@
 			</div>
 		{/if}
 		{#each items as item}
-			{#if isActive(item.href)}
+			{#if item.disabled}
+				<div
+					class="flex cursor-not-allowed items-center rounded-[var(--radius-input)] px-2.5 py-2.5 opacity-35 {collapsed
+						? 'justify-center px-2'
+						: 'gap-3'}"
+					title={collapsed ? item.disabledHint ?? item.label : item.disabledHint}
+				>
+					<item.icon size={16} class="shrink-0" />
+					{#if !collapsed}
+						<span class="text-ui text-[var(--color-text-primary)]">{item.label}</span>
+					{/if}
+				</div>
+			{:else if isActive(item.href)}
 				<a
 					href={item.href}
 					class="group relative flex items-center rounded-[var(--radius-input)] bg-[var(--color-accent-glow-mid)] px-2.5 py-2.5 transition-colors duration-150 {collapsed

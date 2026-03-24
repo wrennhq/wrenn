@@ -26,12 +26,14 @@ func requireJWT(secret []byte) func(http.Handler) http.Handler {
 			}
 
 			ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{
-				TeamID: claims.TeamID,
-				UserID: claims.Subject,
-				Email:  claims.Email,
-				Name:   claims.Name,
-				Role:   claims.Role,
+				TeamID:  claims.TeamID,
+				UserID:  claims.Subject,
+				Email:   claims.Email,
+				Name:    claims.Name,
+				Role:    claims.Role,
+				IsAdmin: claims.IsAdmin,
 			})
+
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

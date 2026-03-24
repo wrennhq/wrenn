@@ -56,3 +56,20 @@ WHERE id = ANY($1::text[]);
 SELECT * FROM sandboxes
 WHERE team_id = $1 AND status IN ('running', 'paused', 'starting')
 ORDER BY created_at DESC;
+
+-- name: MarkSandboxesMissingByHost :exec
+-- Called when the host monitor marks a host unreachable.
+-- Marks running/starting/pending sandboxes on that host as 'missing' so users see
+-- the sandbox is not currently reachable, without permanently losing the record.
+UPDATE sandboxes
+SET status       = 'missing',
+    last_updated = NOW()
+WHERE host_id = $1 AND status IN ('running', 'starting', 'pending');
+
+-- name: BulkRestoreRunning :exec
+-- Called by the reconciler when a host comes back online and its sandboxes are
+-- confirmed alive. Restores only sandboxes that are in 'missing' state.
+UPDATE sandboxes
+SET status       = 'running',
+    last_updated = NOW()
+WHERE id = ANY($1::text[]) AND status = 'missing';

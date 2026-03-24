@@ -168,7 +168,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, req.Email, req.Name, "owner")
+	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, req.Email, req.Name, "owner", false)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
@@ -228,7 +228,7 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role)
+	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, user.IsAdmin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
@@ -298,7 +298,7 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, ac.UserID, req.TeamID, ac.Email, user.Name, membership.Role)
+	token, err := auth.SignJWT(h.jwtSecret, ac.UserID, req.TeamID, ac.Email, user.Name, membership.Role, user.IsAdmin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return

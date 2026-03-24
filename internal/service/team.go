@@ -14,17 +14,17 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 var teamNameRE = regexp.MustCompile(`^[A-Za-z0-9 _\-@']{1,128}$`)
 
 // TeamService provides team management operations.
 type TeamService struct {
-	DB    *db.Queries
-	Pool  *pgxpool.Pool
-	Agent hostagentv1connect.HostAgentServiceClient
+	DB         *db.Queries
+	Pool       *pgxpool.Pool
+	HostPool   *lifecycle.HostClientPool
 }
 
 // TeamWithRole pairs a team with the calling user's role in it.
@@ -177,10 +177,16 @@ func (s *TeamService) DeleteTeam(ctx context.Context, teamID, callerUserID strin
 
 	var stopIDs []string
 	for _, sb := range sandboxes {
-		if _, err := s.Agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
-			SandboxId: sb.ID,
-		})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
-			slog.Warn("team delete: failed to destroy sandbox", "sandbox_id", sb.ID, "error", err)
+		host, hostErr := s.DB.GetHost(ctx, sb.HostID)
+		if hostErr == nil {
+			agent, agentErr := s.HostPool.GetForHost(host)
+			if agentErr == nil {
+				if _, err := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
+					SandboxId: sb.ID,
+				})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
+					slog.Warn("team delete: failed to destroy sandbox", "sandbox_id", sb.ID, "error", err)
+				}
+			}
 		}
 		stopIDs = append(stopIDs, sb.ID)
 	}
@@ -367,4 +373,28 @@ func (s *TeamService) LeaveTeam(ctx context.Context, teamID, callerUserID string
 // The prefix must contain "@" to prevent broad enumeration.
 func (s *TeamService) SearchUsersByEmailPrefix(ctx context.Context, prefix string) ([]db.SearchUsersByEmailPrefixRow, error) {
 	return s.DB.SearchUsersByEmailPrefix(ctx, pgtype.Text{String: prefix, Valid: true})
+}
+
+// SetBYOC enables the BYOC feature flag for a team. Once enabled, BYOC cannot
+// be disabled — it is a one-way transition.
+// Admin-only — the caller must verify admin status before invoking this.
+func (s *TeamService) SetBYOC(ctx context.Context, teamID string, enabled bool) error {
+	team, err := s.DB.GetTeam(ctx, teamID)
+	if err != nil {
+		return fmt.Errorf("team not found: %w", err)
+	}
+	if team.DeletedAt.Valid {
+		return fmt.Errorf("team not found")
+	}
+	if !enabled {
+		return fmt.Errorf("invalid request: BYOC cannot be disabled once enabled")
+	}
+	if team.IsByoc {
+		// Already enabled — idempotent, no-op.
+		return nil
+	}
+	if err := s.DB.SetTeamBYOC(ctx, db.SetTeamBYOCParams{ID: teamID, IsByoc: true}); err != nil {
+		return fmt.Errorf("set byoc: %w", err)
+	}
+	return nil
 }

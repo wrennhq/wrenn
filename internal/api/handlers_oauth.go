@@ -156,7 +156,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, redirectBase, "db_error")
 			return
 		}
-		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role)
+		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, user.IsAdmin)
 		if err != nil {
 			slog.Error("oauth login: failed to sign jwt", "error", err)
 			redirectWithError(w, r, redirectBase, "internal_error")
@@ -255,7 +255,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, profile.Name, "owner")
+	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, profile.Name, "owner", false)
 	if err != nil {
 		slog.Error("oauth: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
@@ -290,7 +290,7 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
 	}
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role)
+	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, user.IsAdmin)
 	if err != nil {
 		slog.Error("oauth: retry login: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
