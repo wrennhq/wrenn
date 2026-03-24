@@ -3,7 +3,8 @@
 	import { onMount } from 'svelte';
 	import { Popover } from 'bits-ui';
 	import { auth } from '$lib/auth.svelte';
-	import { listTeams, createTeam, switchTeam, type TeamWithRole } from '$lib/api/team';
+	import { teams as teamsStore } from '$lib/teams.svelte';
+	import { createTeam, switchTeam } from '$lib/api/team';
 	import {
 		IconMonitor,
 		IconBox,
@@ -25,9 +26,7 @@
 
 	let teamPopoverOpen = $state(false);
 
-	// Real teams from API
-	let teams = $state<TeamWithRole[]>([]);
-	let currentTeamName = $derived(teams.find((t) => t.id === auth.teamId)?.name ?? '');
+	let currentTeamName = $derived(teamsStore.list.find((t) => t.id === auth.teamId)?.name ?? '');
 	let userName = $derived(auth.email ?? '');
 
 	// Create team dialog
@@ -69,10 +68,7 @@
 	}
 
 	async function fetchTeams() {
-		const result = await listTeams();
-		if (result.ok) {
-			teams = result.data;
-		}
+		await teamsStore.fetch();
 	}
 
 	async function handleSwitchTeam(teamId: string) {
@@ -180,7 +176,7 @@
 					>
 						Teams
 					</div>
-					{#each teams as team (team.id)}
+					{#each teamsStore.list as team (team.id)}
 						<button
 							class="flex w-full items-center gap-2.5 rounded-[var(--radius-input)] px-2.5 py-2 text-ui transition-colors duration-150 hover:bg-[var(--color-bg-3)] {team.id ===
 							auth.teamId

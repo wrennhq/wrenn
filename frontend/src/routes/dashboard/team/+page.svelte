@@ -17,9 +17,9 @@
 		searchUsers,
 		type TeamInfo,
 		type TeamMember,
-		type TeamWithRole,
 		type UserSearchResult
 	} from '$lib/api/team';
+	import { teams as teamsStore } from '$lib/teams.svelte';
 
 	let collapsed = $state(
 		typeof window !== 'undefined'
@@ -30,12 +30,11 @@
 	// Page data
 	let team = $state<TeamInfo | null>(null);
 	let members = $state<TeamMember[]>([]);
-	let allTeams = $state<TeamWithRole[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
 	// True when this is the user's only team — deleting/leaving would leave them teamless
-	let isLastTeam = $derived(allTeams.length <= 1);
+	let isLastTeam = $derived(teamsStore.list.length <= 1);
 
 	// Current user's role — derived from members list
 	let myRole = $derived(members.find((m) => m.user_id === auth.userId)?.role ?? 'member');
@@ -86,18 +85,15 @@
 			loading = false;
 			return;
 		}
-		const [teamResult, teamsResult] = await Promise.all([
+		const [teamResult] = await Promise.all([
 			getTeam(auth.teamId),
-			listTeams()
+			teamsStore.fetch()
 		]);
 		if (teamResult.ok) {
 			team = teamResult.data.team;
 			members = teamResult.data.members;
 		} else {
 			error = teamResult.error;
-		}
-		if (teamsResult.ok) {
-			allTeams = teamsResult.data;
 		}
 		loading = false;
 	}
