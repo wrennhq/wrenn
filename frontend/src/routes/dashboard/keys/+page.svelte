@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { listKeys, createKey, revokeKey, type APIKey } from '$lib/api/keys';
 	import { toast } from '$lib/toast.svelte';
+	import { formatDate, timeAgo } from '$lib/utils/format';
 
 	let collapsed = $state(
 		typeof window !== 'undefined'
@@ -24,6 +25,10 @@
 	// Reveal state — shown immediately after creation
 	let newKey = $state<APIKey | null>(null);
 	let copied = $state(false);
+	let copyCount = $state(0); // increment to re-trigger bounce animation
+
+	// Delight: flash the row for a key once its reveal dialog is dismissed
+	let flashKeyId = $state<string | null>(null);
 
 	// Revoke state
 	let revokeTarget = $state<APIKey | null>(null);
@@ -53,6 +58,7 @@
 			showCreate = false;
 			createName = '';
 			copied = false;
+			copyCount = 0;
 		} else {
 			createError = result.error;
 		}
@@ -74,44 +80,32 @@
 		revoking = false;
 	}
 
+	function dismissReveal() {
+		const id = newKey?.id ?? null;
+		newKey = null;
+		if (id) {
+			flashKeyId = id;
+			setTimeout(() => { flashKeyId = null; }, 1600);
+		}
+	}
+
 	async function copyKey() {
 		if (!newKey?.key) return;
 		try {
 			await navigator.clipboard.writeText(newKey.key);
 			copied = true;
+			copyCount += 1;
 			setTimeout(() => (copied = false), 2000);
 		} catch {
 			toast.error('Copy failed — select the key text and copy it manually.');
 		}
 	}
 
-	function formatDate(iso: string | undefined): string {
-		if (!iso) return '—';
-		return new Date(iso).toLocaleString('en-US', {
-			month: 'short',
-			day: 'numeric',
-			year: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-			hour12: false
-		});
-	}
-
-	function timeAgo(iso: string | undefined): string {
-		if (!iso) return '';
-		const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-		if (seconds < 60) return `${seconds}s ago`;
-		if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-		if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-		return `${Math.floor(seconds / 86400)}d ago`;
-	}
-
-
 	onMount(fetchKeys);
 </script>
 
 <svelte:head>
-	<title>Wrenn - API Keys</title>
+	<title>Wrenn — API Keys</title>
 </svelte:head>
 
 <div class="flex h-screen overflow-hidden">
@@ -170,7 +164,7 @@
 					</div>
 				{:else if keys.length === 0}
 					<div class="flex flex-col items-center justify-center py-[72px]">
-						<div class="mb-5 flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]">
+						<div class="mb-5 flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]" style="animation: iconFloat 4s ease-in-out infinite">
 							<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-secondary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
 								<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
 							</svg>
@@ -191,7 +185,7 @@
 					<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] overflow-hidden">
 						<!-- Table header -->
 						<div class="grid grid-cols-[2fr_1.2fr_1.4fr_1.4fr_80px] border-b border-[var(--color-border)] bg-[var(--color-bg-3)]">
-							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Name / Key</div>
+							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Key</div>
 							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created By</div>
 							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created</div>
 							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Last Used</div>
@@ -200,13 +194,14 @@
 
 						{#each keys as key, i (key.id)}
 							<div
-								class="grid grid-cols-[2fr_1.2fr_1.4fr_1.4fr_80px] items-center border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0"
+								class="key-row relative grid grid-cols-[2fr_1.2fr_1.4fr_1.4fr_80px] items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {flashKeyId === key.id ? 'key-born' : ''}"
 								style="animation: fadeUp 0.35s ease both; animation-delay: {i * 40}ms"
 							>
+								<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-0.5 bg-[var(--color-accent)]"></div>
 								<!-- Name + prefix -->
-								<div class="min-w-0 flex flex-col gap-0.5 px-5 py-4">
+								<div class="min-w-0 flex flex-col gap-1 px-5 py-4">
 									<span class="truncate text-ui font-medium text-[var(--color-text-bright)]">{key.name || '—'}</span>
-									<span class="font-mono text-meta text-[var(--color-text-muted)]">{key.key_prefix}…</span>
+									<span class="inline-flex w-fit items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-text-muted)]">{key.key_prefix}…</span>
 								</div>
 
 								<!-- Created by -->
@@ -264,7 +259,7 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !creating) showCreate = false; }}
 		></div>
 
-		<div class="relative w-full max-w-[400px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
+		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">New API Key</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Give your key a name to identify it later.</p>
 
@@ -321,19 +316,19 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="absolute inset-0 bg-black/60"
-			onclick={() => { newKey = null; }}
-			onkeydown={(e) => { if (e.key === 'Escape') newKey = null; }}
+			onclick={dismissReveal}
+			onkeydown={(e) => { if (e.key === 'Escape') dismissReveal(); }}
 		></div>
 
 		<div class="relative w-full max-w-[480px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
 			<!-- Success indicator -->
 			<div class="mb-4 flex items-center gap-2.5">
-				<span class="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-accent-glow-mid)]">
+				<span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-glow-mid)]" style="animation: circlePop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both">
 					<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent-bright)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-						<polyline points="20 6 9 17 4 12" />
+						<polyline points="20 6 9 17 4 12" style="stroke-dasharray: 24; animation: checkDraw 0.35s 0.2s ease both" />
 					</svg>
 				</span>
-				<span class="text-meta font-semibold text-[var(--color-accent-mid)]">Key created successfully</span>
+				<span class="text-meta font-semibold text-[var(--color-accent-mid)]" style="animation: fadeUp 0.3s 0.15s ease both">Key created successfully</span>
 			</div>
 
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">{newKey.name || 'API Key'}</h2>
@@ -342,31 +337,34 @@
 			</p>
 
 			<!-- Key display -->
-			<div class="mt-5 rounded-[var(--radius-input)] border border-[var(--color-border-mid)] bg-[var(--color-bg-0)] p-4">
+			<div class="mt-5 rounded-[var(--radius-input)] border bg-[var(--color-bg-0)] p-4" style="animation: keyRevealGlow 1.4s 0.1s ease-out both">
 				<div class="flex items-center gap-3">
 					<span class="min-w-0 flex-1 break-all font-mono text-ui leading-relaxed text-[var(--color-text-bright)]">
 						{newKey.key ?? ''}
 					</span>
-					<button
-						onclick={copyKey}
-						class="shrink-0 flex items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
-							{copied
-								? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
-								: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
-					>
-						{#if copied}
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-								<polyline points="20 6 9 17 4 12" />
-							</svg>
-							Copied
-						{:else}
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-								<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-							</svg>
-							Copy
-						{/if}
-					</button>
+					{#key copyCount}
+						<button
+							onclick={copyKey}
+							style={copied ? 'animation: copyBounce 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both' : ''}
+							class="shrink-0 flex items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
+								{copied
+									? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
+									: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
+						>
+							{#if copied}
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+									<polyline points="20 6 9 17 4 12" />
+								</svg>
+								Copied
+							{:else}
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+									<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+								</svg>
+								Copy
+							{/if}
+						</button>
+					{/key}
 				</div>
 			</div>
 
@@ -383,7 +381,7 @@
 
 			<div class="mt-6 flex justify-end">
 				<button
-					onclick={() => { newKey = null; }}
+					onclick={dismissReveal}
 					class="rounded-[var(--radius-button)] bg-[var(--color-bg-4)] border border-[var(--color-border-mid)] px-5 py-2 text-ui font-semibold text-[var(--color-text-primary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:bg-[var(--color-bg-5)]"
 				>
 					Done
@@ -409,7 +407,7 @@
 				Revoke <span class="font-medium text-[var(--color-text-secondary)]">{revokeTarget.name || revokeTarget.id}</span>?
 				Any request using it will stop working immediately.
 			</p>
-			<p class="mt-1.5 font-mono text-meta text-[var(--color-text-muted)]">{revokeTarget.key_prefix}…</p>
+			<span class="mt-2 inline-flex items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-text-muted)]">{revokeTarget.key_prefix}…</span>
 
 			{#if revokeError}
 				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
@@ -443,3 +441,51 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	/* Checkmark stroke draw — plays on reveal dialog open */
+	@keyframes checkDraw {
+		from { stroke-dashoffset: 24; }
+		to   { stroke-dashoffset: 0; }
+	}
+
+	/* Success circle scales in with a spring overshoot */
+	@keyframes circlePop {
+		from { transform: scale(0); opacity: 0; }
+		60%  { transform: scale(1.18); opacity: 1; }
+		to   { transform: scale(1);    opacity: 1; }
+	}
+
+	/* Key display area pulses accent border on dialog open — draws eye to "copy this" */
+	@keyframes keyRevealGlow {
+		0%   { border-color: var(--color-accent); box-shadow: 0 0 0 3px rgba(94,140,88,0.16); }
+		60%  { border-color: var(--color-accent); box-shadow: 0 0 0 3px rgba(94,140,88,0.08); }
+		100% { border-color: var(--color-border-mid); box-shadow: none; }
+	}
+
+	/* Copy button spring bounce on successful copy */
+	@keyframes copyBounce {
+		0%   { transform: scale(1);    }
+		40%  { transform: scale(1.12); }
+		100% { transform: scale(1);    }
+	}
+
+	/* Row born flash — matches capsule-born pattern */
+	@keyframes key-born {
+		0%, 25% { background-color: rgba(94, 140, 88, 0.1); }
+		100%    { background-color: transparent; }
+	}
+	.key-born {
+		animation: key-born 1.6s ease-out forwards;
+	}
+
+	/* Left accent stripe — slides in on row hover */
+	.row-stripe {
+		transform: scaleY(0);
+		transform-origin: center;
+		transition: transform 0.18s cubic-bezier(0.25, 1, 0.5, 1);
+	}
+	.key-row:hover .row-stripe {
+		transform: scaleY(1);
+	}
+</style>
