@@ -6,15 +6,18 @@
 	import { toast } from '$lib/toast.svelte';
 	import {
 		getTeam,
+		listTeams,
 		updateTeam,
 		addMember,
 		removeMember,
 		updateMemberRole,
 		deleteTeam,
 		leaveTeam,
+		switchTeam,
 		searchUsers,
 		type TeamInfo,
 		type TeamMember,
+		type TeamWithRole,
 		type UserSearchResult
 	} from '$lib/api/team';
 
@@ -27,8 +30,12 @@
 	// Page data
 	let team = $state<TeamInfo | null>(null);
 	let members = $state<TeamMember[]>([]);
+	let allTeams = $state<TeamWithRole[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+
+	// True when this is the user's only team — deleting/leaving would leave them teamless
+	let isLastTeam = $derived(allTeams.length <= 1);
 
 	// Current user's role — derived from members list
 	let myRole = $derived(members.find((m) => m.user_id === auth.userId)?.role ?? 'member');
@@ -73,15 +80,24 @@
 	let dangerError = $state<string | null>(null);
 
 	async function fetchTeam() {
-		if (!auth.teamId) return;
 		loading = true;
 		error = null;
-		const result = await getTeam(auth.teamId);
-		if (result.ok) {
-			team = result.data.team;
-			members = result.data.members;
+		if (!auth.teamId) {
+			loading = false;
+			return;
+		}
+		const [teamResult, teamsResult] = await Promise.all([
+			getTeam(auth.teamId),
+			listTeams()
+		]);
+		if (teamResult.ok) {
+			team = teamResult.data.team;
+			members = teamResult.data.members;
 		} else {
-			error = result.error;
+			error = teamResult.error;
+		}
+		if (teamsResult.ok) {
+			allTeams = teamsResult.data;
 		}
 		loading = false;
 	}
@@ -218,7 +234,21 @@
 		dangerError = null;
 		const result = myRole === 'owner' ? await deleteTeam(team.id) : await leaveTeam(team.id);
 		if (result.ok) {
-			auth.logout();
+			// Fetch remaining teams and switch to the first available one
+			const teamsResult = await listTeams();
+			const remaining = teamsResult.ok ? teamsResult.data : [];
+			if (remaining.length > 0) {
+				const switchResult = await switchTeam(remaining[0].id);
+				if (switchResult.ok) {
+					auth.login(switchResult.data);
+					window.location.reload();
+					return;
+				}
+			}
+			// No teams left — prompt user to create one
+			dangerLoading = false;
+			showDangerConfirm = false;
+			toast.error('No teams remaining. Use the sidebar to create a new team.');
 		} else {
 			dangerError = result.error;
 			dangerLoading = false;
@@ -330,6 +360,19 @@
 							</svg>
 							Loading team...
 						</div>
+					</div>
+				{:else if !auth.teamId}
+					<div class="flex flex-col items-center justify-center py-[72px]">
+						<div class="mb-5 flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]">
+							<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-secondary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+								<path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+							</svg>
+						</div>
+						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No team yet</p>
+						<p class="mt-1.5 max-w-xs text-center text-ui text-[var(--color-text-tertiary)]">
+							Use the team switcher in the sidebar to create your first team.
+						</p>
 					</div>
 				{:else if team}
 					<!-- ── Team Info ── -->
@@ -765,16 +808,13 @@
 											Delete this team
 										</p>
 										<p class="mt-0.5 text-meta text-[var(--color-text-tertiary)]">
-											Permanently deletes the team and destroys all running capsules. This cannot
-											be undone.
+											{#if isLastTeam}Create another team before deleting this one.{:else}Permanently deletes the team and destroys all running capsules. This cannot be undone.{/if}
 										</p>
 									</div>
 									<button
-										onclick={() => {
-											showDangerConfirm = true;
-											dangerError = null;
-										}}
-										class="shrink-0 rounded-[var(--radius-button)] border border-[var(--color-red)]/40 px-4 py-2 text-ui font-semibold text-[var(--color-red)] transition-all duration-150 hover:bg-[var(--color-red)]/10 hover:border-[var(--color-red)]/60"
+										onclick={() => { showDangerConfirm = true; dangerError = null; }}
+										disabled={isLastTeam}
+										class="shrink-0 rounded-[var(--radius-button)] border px-4 py-2 text-ui font-semibold transition-all duration-150 {isLastTeam ? 'cursor-not-allowed border-[var(--color-border)] text-[var(--color-text-muted)] opacity-50' : 'border-[var(--color-red)]/40 text-[var(--color-red)] hover:bg-[var(--color-red)]/10 hover:border-[var(--color-red)]/60'}"
 									>
 										Delete Team
 									</button>
@@ -784,15 +824,13 @@
 											Leave this team
 										</p>
 										<p class="mt-0.5 text-meta text-[var(--color-text-tertiary)]">
-											You will lose access to all capsules and resources belonging to this team.
+											{#if isLastTeam}Create another team before leaving this one.{:else}You will lose access to all capsules and resources belonging to this team.{/if}
 										</p>
 									</div>
 									<button
-										onclick={() => {
-											showDangerConfirm = true;
-											dangerError = null;
-										}}
-										class="shrink-0 rounded-[var(--radius-button)] border border-[var(--color-red)]/40 px-4 py-2 text-ui font-semibold text-[var(--color-red)] transition-all duration-150 hover:bg-[var(--color-red)]/10 hover:border-[var(--color-red)]/60"
+										onclick={() => { showDangerConfirm = true; dangerError = null; }}
+										disabled={isLastTeam}
+										class="shrink-0 rounded-[var(--radius-button)] border px-4 py-2 text-ui font-semibold transition-all duration-150 {isLastTeam ? 'cursor-not-allowed border-[var(--color-border)] text-[var(--color-text-muted)] opacity-50' : 'border-[var(--color-red)]/40 text-[var(--color-red)] hover:bg-[var(--color-red)]/10 hover:border-[var(--color-red)]/60'}"
 									>
 										Leave Team
 									</button>

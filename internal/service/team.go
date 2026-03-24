@@ -18,7 +18,7 @@ import (
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
-var teamNameRE = regexp.MustCompile(`^[A-Za-z0-9 _]{1,128}$`)
+var teamNameRE = regexp.MustCompile(`^[A-Za-z0-9 _\-@']{1,128}$`)
 
 // TeamService provides team management operations.
 type TeamService struct {
