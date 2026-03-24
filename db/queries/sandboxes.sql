@@ -51,3 +51,8 @@ UPDATE sandboxes
 SET status = $2,
     last_updated = NOW()
 WHERE id = ANY($1::text[]);
+
+-- name: ListActiveSandboxesByTeam :many
+SELECT * FROM sandboxes
+WHERE team_id = $1 AND status IN ('running', 'paused', 'starting')
+ORDER BY created_at DESC;

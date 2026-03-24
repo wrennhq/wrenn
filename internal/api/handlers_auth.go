@@ -15,6 +15,10 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
+type switchTeamRequest struct {
+	TeamID string `json:"team_id"`
+}
+
 type authHandler struct {
 	db        *db.Queries
 	pool      *pgxpool.Pool
@@ -99,6 +103,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	if _, err := qtx.InsertTeam(ctx, db.InsertTeamParams{
 		ID:   teamID,
 		Name: req.Email + "'s Team",
+		Slug: id.NewTeamSlug(),
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to create team")
 		return
@@ -119,7 +124,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, req.Email)
+	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, req.Email, "owner")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
@@ -174,7 +179,13 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email)
+	membership, err := h.db.GetTeamMembership(ctx, db.GetTeamMembershipParams{UserID: user.ID, TeamID: team.ID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up membership")
+		return
+	}
+
+	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, membership.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
@@ -185,5 +196,67 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 		UserID: user.ID,
 		TeamID: team.ID,
 		Email:  user.Email,
+	})
+}
+
+// SwitchTeam handles POST /v1/auth/switch-team.
+// Verifies from DB that the user is a member of the target team, then re-issues
+// a JWT scoped to that team. The JWT's team_id is used as a pre-filter on all
+// subsequent team-scoped requests; DB is the source of truth for actual permissions.
+func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
+	ac := auth.MustFromContext(r.Context())
+
+	var req switchTeamRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if req.TeamID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "team_id is required")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Verify team exists and is not deleted.
+	team, err := h.db.GetTeam(ctx, req.TeamID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "not_found", "team not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up team")
+		return
+	}
+	if team.DeletedAt.Valid {
+		writeError(w, http.StatusNotFound, "not_found", "team not found")
+		return
+	}
+
+	// Verify membership from DB — JWT role is not trusted here.
+	membership, err := h.db.GetTeamMembership(ctx, db.GetTeamMembershipParams{
+		UserID: ac.UserID,
+		TeamID: req.TeamID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusForbidden, "forbidden", "not a member of this team")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up membership")
+		return
+	}
+
+	token, err := auth.SignJWT(h.jwtSecret, ac.UserID, req.TeamID, ac.Email, membership.Role)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, authResponse{
+		Token:  token,
+		UserID: ac.UserID,
+		TeamID: req.TeamID,
+		Email:  ac.Email,
 	})
 }

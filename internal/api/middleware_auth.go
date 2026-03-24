@@ -45,6 +45,7 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 					TeamID: claims.TeamID,
 					UserID: claims.Subject,
 					Email:  claims.Email,
+					Role:   claims.Role,
 				})
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

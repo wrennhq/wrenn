@@ -34,3 +34,6 @@ SELECT * FROM admin_permissions WHERE user_id = $1 ORDER BY permission;
 SELECT EXISTS(
     SELECT 1 FROM admin_permissions WHERE user_id = $1 AND permission = $2
 ) AS has_permission;
+
+-- name: SearchUsersByEmailPrefix :many
+SELECT id, email FROM users WHERE email LIKE $1 || '%' ORDER BY email LIMIT 10;

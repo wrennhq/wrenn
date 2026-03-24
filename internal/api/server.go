@@ -33,6 +33,7 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	apiKeySvc := &service.APIKeyService{DB: queries}
 	templateSvc := &service.TemplateService{DB: queries}
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret}
+	teamSvc := &service.TeamService{DB: queries, Pool: pool, Agent: agent}
 
 	sandbox := newSandboxHandler(sandboxSvc)
 	exec := newExecHandler(queries, agent)
@@ -44,6 +45,8 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	oauthH := newOAuthHandler(queries, pool, jwtSecret, oauthRegistry, oauthRedirectURL)
 	apiKeys := newAPIKeyHandler(apiKeySvc)
 	hostH := newHostHandler(hostSvc, queries)
+	teamH := newTeamHandler(teamSvc)
+	usersH := newUsersHandler(teamSvc)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -55,6 +58,9 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	r.Get("/auth/oauth/{provider}", oauthH.Redirect)
 	r.Get("/auth/oauth/{provider}/callback", oauthH.Callback)
 
+	// JWT-authenticated: switch active team.
+	r.With(requireJWT(jwtSecret)).Post("/v1/auth/switch-team", authH.SwitchTeam)
+
 	// JWT-authenticated: API key management.
 	r.Route("/v1/api-keys", func(r chi.Router) {
 		r.Use(requireJWT(jwtSecret))
@@ -62,6 +68,26 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 		r.Get("/", apiKeys.List)
 		r.Delete("/{id}", apiKeys.Delete)
 	})
+
+	// JWT-authenticated: team management.
+	r.Route("/v1/teams", func(r chi.Router) {
+		r.Use(requireJWT(jwtSecret))
+		r.Get("/", teamH.List)
+		r.Post("/", teamH.Create)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", teamH.Get)
+			r.Patch("/", teamH.Rename)
+			r.Delete("/", teamH.Delete)
+			r.Get("/members", teamH.ListMembers)
+			r.Post("/members", teamH.AddMember)
+			r.Patch("/members/{uid}", teamH.UpdateMemberRole)
+			r.Delete("/members/{uid}", teamH.RemoveMember)
+			r.Post("/leave", teamH.Leave)
+		})
+	})
+
+	// JWT-authenticated: user search (for add-member UI).
+	r.With(requireJWT(jwtSecret)).Get("/v1/users/search", usersH.Search)
 
 	// Sandbox lifecycle: accepts API key or JWT bearer token.
 	r.Route("/v1/sandboxes", func(r chi.Router) {

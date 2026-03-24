@@ -206,6 +206,35 @@ func (q *Queries) InsertUserOAuth(ctx context.Context, arg InsertUserOAuthParams
 	return i, err
 }
 
+const searchUsersByEmailPrefix = `-- name: SearchUsersByEmailPrefix :many
+SELECT id, email FROM users WHERE email LIKE $1 || '%' ORDER BY email LIMIT 10
+`
+
+type SearchUsersByEmailPrefixRow struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+func (q *Queries) SearchUsersByEmailPrefix(ctx context.Context, dollar_1 pgtype.Text) ([]SearchUsersByEmailPrefixRow, error) {
+	rows, err := q.db.Query(ctx, searchUsersByEmailPrefix, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchUsersByEmailPrefixRow
+	for rows.Next() {
+		var i SearchUsersByEmailPrefixRow
+		if err := rows.Scan(&i.ID, &i.Email); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setUserAdmin = `-- name: SetUserAdmin :exec
 UPDATE users SET is_admin = $2, updated_at = NOW() WHERE id = $1
 `

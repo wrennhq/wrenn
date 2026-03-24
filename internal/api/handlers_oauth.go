@@ -156,7 +156,13 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, redirectBase, "db_error")
 			return
 		}
-		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email)
+		membership, err := h.db.GetTeamMembership(ctx, db.GetTeamMembershipParams{UserID: user.ID, TeamID: team.ID})
+		if err != nil {
+			slog.Error("oauth login: failed to get membership", "error", err)
+			redirectWithError(w, r, redirectBase, "db_error")
+			return
+		}
+		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, membership.Role)
 		if err != nil {
 			slog.Error("oauth login: failed to sign jwt", "error", err)
 			redirectWithError(w, r, redirectBase, "internal_error")
@@ -219,6 +225,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if _, err := qtx.InsertTeam(ctx, db.InsertTeamParams{
 		ID:   teamID,
 		Name: teamName,
+		Slug: id.NewTeamSlug(),
 	}); err != nil {
 		slog.Error("oauth: failed to create team", "error", err)
 		redirectWithError(w, r, redirectBase, "db_error")
@@ -253,7 +260,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email)
+	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, "owner")
 	if err != nil {
 		slog.Error("oauth: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
@@ -288,7 +295,13 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
 	}
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email)
+	membership, err := h.db.GetTeamMembership(ctx, db.GetTeamMembershipParams{UserID: user.ID, TeamID: team.ID})
+	if err != nil {
+		slog.Error("oauth: retry login: failed to get membership", "error", err)
+		redirectWithError(w, r, redirectBase, "db_error")
+		return
+	}
+	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, membership.Role)
 	if err != nil {
 		slog.Error("oauth: retry login: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")

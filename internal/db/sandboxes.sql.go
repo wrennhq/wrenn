@@ -133,6 +133,47 @@ func (q *Queries) InsertSandbox(ctx context.Context, arg InsertSandboxParams) (S
 	return i, err
 }
 
+const listActiveSandboxesByTeam = `-- name: ListActiveSandboxesByTeam :many
+SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes
+WHERE team_id = $1 AND status IN ('running', 'paused', 'starting')
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListActiveSandboxesByTeam(ctx context.Context, teamID string) ([]Sandbox, error) {
+	rows, err := q.db.Query(ctx, listActiveSandboxesByTeam, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Sandbox
+	for rows.Next() {
+		var i Sandbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.HostID,
+			&i.Template,
+			&i.Status,
+			&i.Vcpus,
+			&i.MemoryMb,
+			&i.TimeoutSec,
+			&i.GuestIp,
+			&i.HostIp,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.LastActiveAt,
+			&i.LastUpdated,
+			&i.TeamID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSandboxes = `-- name: ListSandboxes :many
 SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes ORDER BY created_at DESC
 `
