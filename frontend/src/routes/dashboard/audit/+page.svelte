@@ -20,7 +20,6 @@
 
 	// ─── UI state ─────────────────────────────────────────────────────────────
 
-	let expandedId = $state<string | null>(null);
 	let sentinel = $state<HTMLElement | null>(null);
 	let filterDropdownOpen = $state(false);
 	let filterDropdownEl = $state<HTMLElement | null>(null);
@@ -67,16 +66,6 @@
 		role_update: 'Role updated',
 		marked_down: 'Marked down',
 		marked_up: 'Marked up'
-	};
-
-	const META_LABELS: Record<string, string> = {
-		template: 'Template',
-		old_name: 'Previous name',
-		new_name: 'New name',
-		name: 'Name',
-		email: 'Email',
-		role: 'Role',
-		new_role: 'New role'
 	};
 
 	// ─── Derived ──────────────────────────────────────────────────────────────
@@ -209,14 +198,6 @@
 	}
 
 	// ─── UI helpers ───────────────────────────────────────────────────────────
-
-	function toggleExpand(id: string) {
-		expandedId = expandedId === id ? null : id;
-	}
-
-	function hasMetadata(log: AuditLog): boolean {
-		return !!log.metadata && Object.keys(log.metadata).length > 0;
-	}
 
 	function describeEvent(log: AuditLog): string {
 		const actor = log.actor_name || (log.actor_type === 'system' ? 'System' : 'Unknown');
@@ -497,11 +478,10 @@
 					<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]">
 
 						<!-- Table header -->
-						<div class="grid grid-cols-[168px_1.4fr_3fr_36px] border-b border-[var(--color-border)] bg-[var(--color-bg-3)]">
+						<div class="grid grid-cols-[168px_1.4fr_3fr] border-b border-[var(--color-border)] bg-[var(--color-bg-3)]">
 							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Time</div>
 							<div class="px-4 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Actor</div>
 							<div class="px-4 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Event</div>
-							<div></div>
 						</div>
 
 						<!-- Rows -->
@@ -520,11 +500,7 @@
 								></div>
 
 								<!-- Main row -->
-								<button
-									class="log-row w-full grid grid-cols-[168px_1.4fr_3fr_36px] items-start text-left transition-colors duration-150 hover:bg-[var(--color-bg-2)] {expandedId === log.id ? 'bg-[var(--color-bg-2)]' : ''} {!hasMetadata(log) ? 'cursor-default' : ''}"
-									onclick={() => { if (hasMetadata(log)) toggleExpand(log.id); }}
-									disabled={!hasMetadata(log)}
-								>
+								<div class="grid grid-cols-[168px_1.4fr_3fr] items-start">
 									<!-- Time -->
 									<div class="flex flex-col gap-0.5 px-5 py-4">
 										<span class="text-ui text-[var(--color-text-secondary)]">{ts.date}</span>
@@ -550,38 +526,7 @@
 											<span class="mt-1 inline-flex items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-text-muted)]">{log.resource_id}</span>
 										{/if}
 									</div>
-
-									<!-- Expand chevron -->
-									<div class="flex items-center justify-center px-2 py-4">
-										{#if hasMetadata(log)}
-											<svg
-												class="shrink-0 transition-transform duration-200 {expandedId === log.id ? 'rotate-180 text-[var(--color-accent)]' : 'text-[var(--color-text-tertiary)]'}"
-												width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-											>
-												<polyline points="6 9 12 15 18 9" />
-											</svg>
-										{/if}
-									</div>
-								</button>
-
-								<!-- Expanded metadata -->
-								{#if expandedId === log.id && hasMetadata(log)}
-									<div
-										class="border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-5 py-4"
-										style="animation: fadeUp 0.15s ease both"
-									>
-										<div class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-2">
-											{#each Object.entries(log.metadata ?? {}) as [key, value]}
-												<span class="text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">
-													{META_LABELS[key] ?? key.replace(/_/g, ' ')}
-												</span>
-												<span class="font-mono text-meta text-[var(--color-text-secondary)]">
-													{String(value)}
-												</span>
-											{/each}
-										</div>
-									</div>
-								{/if}
+								</div>
 							</div>
 						{/each}
 					</div>
@@ -636,9 +581,5 @@
 
 	.stripe-pulse {
 		animation: stripePulse 2.5s ease-in-out infinite;
-	}
-
-	.log-row:disabled {
-		opacity: 1;
 	}
 </style>
