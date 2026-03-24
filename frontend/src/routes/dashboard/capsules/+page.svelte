@@ -57,6 +57,9 @@
 	let destroying = $state(false);
 	let destroyError = $state<string | null>(null);
 
+	// Delight: briefly highlight a newly created capsule row
+	let newCapsuleId = $state<string | null>(null);
+
 	let filteredCapsules = $derived.by(() => {
 		let list = searchQuery
 			? capsules.filter((c) => c.id.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -217,6 +220,9 @@
 			capsules = [result.data, ...capsules];
 			showCreateDialog = false;
 			createForm = { template: 'minimal', vcpus: 1, memory_mb: 512, timeout_sec: 0 };
+			// Flash the new row briefly
+			newCapsuleId = result.data.id;
+			setTimeout(() => { newCapsuleId = null; }, 1600);
 		} else {
 			createError = result.error;
 		}
@@ -260,12 +266,27 @@
 </script>
 
 <style>
-	@keyframes spin-once {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
-	}
 	.refresh-spin {
 		animation: spin-once 0.6s ease-in-out;
+	}
+
+	/* Row born flash — new capsule appears with a brief accent glow */
+	@keyframes capsule-born {
+		0%, 25% { background-color: rgba(94, 140, 88, 0.1); }
+		100% { background-color: transparent; }
+	}
+	.capsule-born {
+		animation: capsule-born 1.6s ease-out forwards;
+	}
+
+	/* Left accent stripe — slides in on row hover */
+	.row-stripe {
+		transform: scaleY(0);
+		transform-origin: center;
+		transition: transform 0.18s cubic-bezier(0.25, 1, 0.5, 1);
+	}
+	.capsule-row:hover .row-stripe {
+		transform: scaleY(1);
 	}
 </style>
 
@@ -273,7 +294,7 @@
 <svelte:window onclick={handleClickOutside} onkeydown={(e) => { if (e.key === 'Escape') openMenuId = null; }} />
 
 <svelte:head>
-	<title>Wrenn - Capsules</title>
+	<title>Wrenn — Capsules</title>
 </svelte:head>
 
 <div class="flex h-screen overflow-hidden">
@@ -397,6 +418,20 @@
 							title={autoRefresh ? 'Click to disable auto-refresh' : 'Click to enable auto-refresh (30s)'}
 						>
 							{#if autoRefresh}
+								<!-- Radial progress ring — drains as countdown ticks down -->
+								<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+									<circle cx="8" cy="8" r="5" stroke="var(--color-accent-glow-mid)" stroke-width="1.5" />
+									<circle
+										cx="8" cy="8" r="5"
+										stroke="var(--color-accent)"
+										stroke-width="1.5"
+										stroke-linecap="round"
+										stroke-dasharray="31.416"
+										stroke-dashoffset={31.416 * (1 - countdown / REFRESH_INTERVAL)}
+										transform="rotate(-90 8 8)"
+										style="transition: stroke-dashoffset 1s linear"
+									/>
+								</svg>
 								{countdown}s
 							{:else}
 								Off
@@ -469,10 +504,14 @@
 							</div>
 						{:else}
 							{#each filteredCapsules as capsule, i (capsule.id)}
+								{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : capsule.status === 'paused' ? 'bg-[var(--color-amber)]' : 'bg-[var(--color-text-muted)]'}
 								<div
-									class="grid grid-cols-[1.6fr_0.8fr_0.5fr_0.5fr_0.6fr_1fr_0.9fr] items-center border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0"
+									class="capsule-row relative grid grid-cols-[1.6fr_0.8fr_0.5fr_0.5fr_0.6fr_1fr_0.9fr] items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {newCapsuleId === capsule.id ? 'capsule-born' : ''}"
 									style="animation: fadeUp 0.35s ease both; animation-delay: {i * 40}ms"
 								>
+									<!-- Left accent stripe — slides in on hover, color-keyed to status -->
+									<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-0.5 {stripeColor}"></div>
+
 									<!-- ID with status dot -->
 									<div class="flex items-center gap-2.5 px-5 py-4">
 										{#if capsule.status === 'running'}
@@ -485,7 +524,12 @@
 										{:else}
 											<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-text-muted)]"></span>
 										{/if}
-										<span class="font-mono text-ui text-[var(--color-text-bright)]">{capsule.id}</span>
+										{#if searchQuery && capsule.id.toLowerCase().includes(searchQuery.toLowerCase())}
+											{@const matchIdx = capsule.id.toLowerCase().indexOf(searchQuery.toLowerCase())}
+											<span class="font-mono text-ui text-[var(--color-text-bright)]">{capsule.id.slice(0, matchIdx)}<mark class="rounded-[2px] bg-[var(--color-accent-glow-mid)] px-0.5 text-[var(--color-accent-bright)] not-italic">{capsule.id.slice(matchIdx, matchIdx + searchQuery.length)}</mark>{capsule.id.slice(matchIdx + searchQuery.length)}</span>
+										{:else}
+											<span class="font-mono text-ui text-[var(--color-text-bright)]">{capsule.id}</span>
+										{/if}
 									</div>
 
 									<!-- Template -->
@@ -536,7 +580,7 @@
 														openMenuId = capsule.id;
 													}
 												}}
-												class="inline-flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-2)] px-2.5 py-1 text-label font-semibold uppercase tracking-[0.04em] text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]"
+												class="inline-flex items-center gap-1.5 rounded-[var(--radius-button)] border px-2.5 py-1 text-label font-semibold uppercase tracking-[0.04em] transition-colors duration-150 {capsule.status === 'running' ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow)] text-[var(--color-accent-mid)] hover:border-[var(--color-accent)]/70 hover:text-[var(--color-accent-bright)]' : capsule.status === 'paused' ? 'border-[var(--color-amber)]/30 bg-[var(--color-amber)]/5 text-[var(--color-amber)] hover:border-[var(--color-amber)]/60' : 'border-[var(--color-border)] bg-[var(--color-bg-2)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
 											>
 												{capsule.status}
 												<svg

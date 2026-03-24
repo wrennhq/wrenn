@@ -143,6 +143,18 @@ body {
 	}
 }
 
+/* Refresh icon spin — one full rotation */
+@keyframes spin-once {
+	from { transform: rotate(0deg); }
+	to   { transform: rotate(360deg); }
+}
+
+/* Floating icon — used on empty-state icon containers */
+@keyframes iconFloat {
+	0%, 100% { transform: translateY(0);   }
+	50%       { transform: translateY(-6px); }
+}
+
 /* Respect user motion preferences — covers both CSS class animations and inline style animations */
 @media (prefers-reduced-motion: reduce) {
 	*,

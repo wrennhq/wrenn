@@ -266,7 +266,8 @@
 		return palette[email.charCodeAt(0) % palette.length];
 	}
 
-	function formatDate(iso: string): string {
+	function formatDate(iso: string | undefined): string {
+		if (!iso) return '—';
 		return new Date(iso).toLocaleDateString('en-US', {
 			month: 'short',
 			day: 'numeric',
@@ -292,7 +293,7 @@
 </script>
 
 <svelte:head>
-	<title>Wrenn - Team</title>
+	<title>Wrenn — Team</title>
 </svelte:head>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
