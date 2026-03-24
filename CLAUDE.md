@@ -230,186 +230,68 @@ The main module (`go.mod`) and envd (`envd/go.mod`) are fully independent. `make
 - Sandbox clones: `/var/lib/wrenn/sandboxes/`
 - Firecracker: `/usr/local/bin/firecracker` (e2b's fork of firecracker)
 
-## Web UI Styling
+## Design Context
 
-### Identity
- 
-Warm, confident developer tool with industrial precision and crafted organic character. The feel is sharp and data-forward — not cold or sterile, but not soft either. Think: an engineer's favorite tool, built with care.
- 
----
- 
-### Color Palette (Dark Mode)
- 
-**Background scale (6 steps, near-black-green):**
-`#0a0c0b` (bg-0, page base) → `#0f1211` (bg-1, sidebar/topbar) → `#141817` (bg-2, cards/surfaces) → `#1a1e1c` (bg-3, hover states/elevated) → `#212624` (bg-4, inputs/avatars) → `#2a302d` (bg-5, active controls)
- 
-**Text hierarchy (5 levels):**
-- Bright `#eae7e2` — page titles, metric values, active states
-- Primary `#d0cdc6` — body text, nav labels, readable content
-- Secondary `#9b9790` — supporting text, inactive nav, descriptions
-- Tertiary `#6b6862` — labels, section headers, timestamps
-- Muted `#454340` — ghost text, disabled states, grid labels
- 
-**Sage green brand accent (3 tiers + 2 glows):**
-- Solid `#5e8c58` — primary accent, buttons, borders, active indicators
-- Mid `#89a785` — badges, chart lines, secondary accent
-- Bright `#a4c89f` — active nav text, live counts, chart dots
-- Glow `rgba(94,140,88,0.07)` — active nav backgrounds, subtle highlights
-- Glow Mid `rgba(94,140,88,0.14)` — live badges, status badge backgrounds
- 
-**Borders (2 levels):**
-- Default `#1f2321` — card edges, dividers, sidebar borders
-- Mid `#2a2f2c` — hover states, interactive borders, stronger separation
- 
-**Semantic status colors:**
-- Amber `#d4a73c` — warning, building, countdown timers
-- Red `#cf8172` — error, failed, destructive actions
-- Blue `#5a9fd4` — info, stopped (use sparingly)
- 
-**Light mode:** (TBD — follow same warm-tinted approach. Background scale from `#f8f6f1` → `#dedbd5`. Text hierarchy inverts. Accent stays `#5e8c58` for solid.)
- 
----
- 
-### Typography
- 
-Four fonts, each with a clear role:
- 
-| Font | Role | Weights | Where |
-|------|------|---------|-------|
-| **Manrope** (variable) | Body, UI | 400–700 | All body text, nav labels, buttons, descriptions, section headers |
-| **Instrument Serif** | Display, metrics | 400 | Page titles (h1), large metric values, empty-state headings only |
-| **JetBrains Mono** | Code, data | 400–600 | Status bar, time range buttons, search inputs, IDs, commit SHAs, countdown timers, log viewer, URL paths, code blocks |
-| **Alice** | Brand wordmark | 400 | Sidebar wordmark only — never used elsewhere |
- 
-**Sizing:**
-- Base body: `14px`
-- Page title (h1): `24px` serif, `letter-spacing: -0.02em`
-- Card metric values: `36px` serif, `letter-spacing: -0.04em`
-- Chart inline metric: `30px` serif, `letter-spacing: -0.04em`
-- Nav items: `13px` body, weight 500
-- Section/group labels: `11px` body, uppercase, `letter-spacing: 0.06em`, weight 600
-- Chart section labels: `12px` body, uppercase, `letter-spacing: 0.05em`, weight 600
-- Stat cell labels: `11px` body, uppercase, `letter-spacing: 0.05em`, weight 600
-- Badge text: `10px`, uppercase, `letter-spacing: 0.04em`, weight 600
-- Status bar / footer links: `11–12px` mono
-- Table headers: `11px` body, uppercase, `letter-spacing: 0.05em`, weight 600, color muted
-- Table body cells: `13px`
- 
-**Key rule:** Instrument Serif is reserved exclusively for page-level titles and large numeric values. It provides warmth and character without softness. Everything else uses Manrope (UI) or JetBrains Mono (data/code).
- 
----
- 
-### Spacing
- 
-4px base unit (Tailwind scale). Moderate density — functional and confident, never cramped.
- 
-- Page content padding: `24–28px`
-- Card/surface internal padding: `18–20px`
-- Sidebar width: `230px`
-- Sidebar nav item padding: `8px 10px`
-- Sidebar brand area: `18px 16px 16px`
-- Tab bar items: `10px 16px`
-- Topbar: `16px 28px`
-- Metric strip cell: `18px 20px`
-- Chart header: `18px 20px`
-- Chart canvas: `14px 20px 12px`
-- Table header cells: `11px 16px`
-- Table body cells: `12px 16px`
-- Status bar: `6px 28px`
-- Between sections (cards): `20–24px` margin-bottom
- 
----
- 
-### Borders & Depth
- 
-**Flat aesthetic — no drop shadows.** Depth comes from background color stepping (bg-0 → bg-1 → bg-2 → bg-3), not shadows. `--shadow-sm: 0 0 #0000`.
- 
-- All borders: `1px solid` in warm muted tones
-- Corner radii: cards/surfaces `8px`, inputs/buttons `5px`, logo mark `6px`, avatars `5px`, dots `50%`
-- Connected metric cells use shared border container with `border-left: 1px solid` between cells (no gap/grid trick) — creates the industrial panel look
-- Tables wrapped in `border-radius: 8px` container with overflow hidden
- 
----
- 
-### Components
- 
-**Sidebar navigation:**
-- Active items use `3px left-border` in sage solid (`#5e8c58`) with accent glow background (`rgba(94,140,88,0.07)`)
-- Active text color: accent-bright (`#a4c89f`)
-- Icons at `16px`, opacity 0.5 default, 1.0 on active
-- Group labels: `11px` uppercase with `0.06em` tracking, muted color
- 
-**Status chip (live indicator):**
-- Rounded `8px` border, `bg-2` background, `border-mid` border
-- Pulsing dot: `7px`, accent-solid fill, `box-shadow: 0 0 8px rgba(94,140,88,0.5)` with glow animation
-- Count in mono at `14px` accent-bright, label in secondary text
- 
-**Live badges (inline):**
-- `10px` text, uppercase, `3px` border-radius
-- Background: accent-glow-mid (`rgba(94,140,88,0.14)`), text: accent mid
-- Includes `5px` pulsing dot with box-shadow
- 
-**Metric strip:**
-- 3-column grid, connected cells (single outer border, inner dividers)
-- Hover: background steps from bg-2 to bg-3
-- Value: `36px` serif, bright text
-- Label: `11px` uppercase, tertiary
-- Sub-metadata row with `1px` divider between items
- 
-**Chart cards:**
-- `8px` border-radius, bg-2 background, default border
-- Header: section label (12px uppercase) + large serif metric + live badge
-- Range group: segmented buttons with `1px` borders, mono text, active state uses bg-5
-- Chart area: SVG with `0.5px` grid lines in border color, `10px` mono axis labels in muted
-- Data line: `1.5px` accent-solid stroke, `stroke-linejoin: round`
-- Area fill: gradient from `rgba(94,140,88,0.28)` → transparent
-- Data dot: accent-bright fill, `2.5px` bg-2 stroke, `4px` radius
- 
-**Buttons hierarchy:**
-1. Ghost (icon-btn): transparent bg, default border, tertiary color → border-mid + secondary on hover
-2. Outline: no bg, border-mid border → accent-solid border + primary text on hover
-3. Tool: bg-2 background, default border → border-mid + primary on hover
-4. Filled/CTA: accent-solid background, white text → lighter green on hover, subtle `translateY(-1px)` lift
- 
-**Tables:**
-- Container: `8px` border-radius, border, overflow hidden
-- Header: bg-3 background, `11px` uppercase muted text
-- Body: default bg, `1px` border-bottom between rows
-- Row hover: bg-3
- 
-**Empty states:**
-- Centered, `72px` vertical padding
-- Icon container: `56px` square, bg-3, border-mid border, `8px` radius
-- Heading: `20px` serif, bright text
-- Description: `13px` body, tertiary text
-- CTA button below
- 
-**Inputs:**
-- bg-2 background, default border, `5px` radius
-- Mono font for search/filter inputs
-- Focus: `border-color: accent-solid` (clean single ring, no double-ring)
-- Placeholder: muted color
- 
-**Focus rings:** Single accent-solid border-color change on focus. Clean and minimal — no double-ring outlines.
- 
----
- 
-### Animation
- 
-- **All interactive transitions:** `150ms ease`
-- **Page load / section entrance:** `fadeUp` — `opacity: 0, translateY(6px)` → visible, `0.35s ease`, staggered with `60–80ms` delays between elements
-- **Chart data animation:** SVG `<animate>` on path `d`, polyline `points`, and circle `cy` — `0.5–0.6s` duration, `0.2–0.35s` begin delay, `fill: freeze`
-- **Live status dot:** `glow` keyframe — `2.5s ease infinite` box-shadow bloom from `0 0 6px rgba(94,140,88,0.5)` → `0 0 14px rgba(94,140,88,0.2)`
-- **CTA buttons:** subtle `translateY(-1px)` on hover for lift feel
- 
----
- 
-### Dark Mode
- 
-Primary and default mode. Very dark near-black-green backgrounds (`#0a0c0b` base) with warm off-white text and desaturated sage accent. Completely flat — no card shadows anywhere. System preference detection + localStorage persistence.
- 
----
- 
-### Overall Feel
- 
-Sharp, warm, industrial-confident. Avoids cold grays entirely — palette leans slightly warm/brown-tinted throughout. The serif display type provides organic character and warmth on titles and metrics, while Manrope handles readable UI text and JetBrains Mono anchors the data-forward, developer-tool identity. Connected metric panels, tight chart cards, and uppercase section labels create engineering density without sacrificing readability. The result is a tool that feels crafted and precise — designed by someone who uses developer tools daily.
+### Users
+Developers across the full spectrum — solo engineers building side projects, startup teams integrating sandboxed execution into products, and platform/infra engineers at larger organizations. The interface must feel at home for all three: approachable enough not to intimidate a hacker, precise enough to earn the trust of a production ops team. Never condescend, never oversimplify. Trust the user to understand what they're looking at.
+
+### Brand Personality
+**Precise. Warm. Uncompromising.**
+
+Wrenn is an engineer's favorite tool — built with visible care, not assembled from defaults. It runs real infrastructure (Firecracker microVMs), so the UI should reflect that seriousness without becoming cold or corporate. The warmth comes from the typography and color palette; the precision comes from hierarchy, density, and data fidelity.
+
+Emotional goal: **in control.** Users leave a session with full confidence in what's running, what happened, and what comes next. Nothing is hidden, nothing is ambiguous.
+
+### Aesthetic Direction
+**Dark-first, industrial-warm, data-forward.**
+
+The near-black-green background palette (`#0a0c0b` through `#2a302d`) reads as "black with intention" — not pitch black (cold) and not charcoal (dated). The sage green accent (`#5e8c58`) is muted and organic, a meaningful departure from the startup-green neon that saturates the developer tool space.
+
+**Anti-references:**
+- **Supabase**: avoid the friendly, approachable startup-green energy — too generic, too eager to please
+- **AWS / GCP consoles**: avoid utility-first density without craft — functional but joyless, visually dated
+
+**References that capture the right spirit:**
+- The precision of a well-calibrated instrument
+- Editorial typography from technical publications
+- The quiet confidence of tools that don't need to explain themselves
+
+### Type System
+Four fonts with strict roles — this is the design system's strongest personality trait and must be respected:
+
+| Font | Role | When to use |
+|------|------|-------------|
+| **Manrope** (variable, sans) | UI workhorse | All body copy, nav, labels, buttons, form text |
+| **Instrument Serif** | Display / editorial | Page titles (h1), dialog headings, metric values, hero moments |
+| **JetBrains Mono** (variable) | Data / code | IDs, timestamps, key prefixes, file paths, terminal output, metrics |
+| **Alice** | Brand wordmark | "Wrenn" in sidebar and login only — nowhere else |
+
+Instrument Serif at scale creates the signature editorial moments. Mono provides the precision signal for technical data. Never swap these roles.
+
+### Color System
+```
+Backgrounds: bg-0 (#0a0c0b) through bg-5 (#2a302d) — 6 steps
+Text:        bright > primary > secondary > tertiary > muted — 5 levels
+Accent:      accent (#5e8c58) / accent-mid / accent-bright / glow / glow-mid
+Status:      amber (#d4a73c) / red (#cf8172) / blue (#5a9fd4)
+```
+
+Use accent sparingly. It should feel earned — reserved for live/active state indicators, primary CTAs, focus rings, and active nav. When accent appears, it should register.
+
+### Upcoming Surfaces (design must accommodate)
+- **Terminal / shell output**: streaming exec output, TTY sessions. Needs strong mono treatment, high contrast for long sessions.
+- **File browser**: filesystem tree inside capsule. Density matters — breadcrumbs, file icons, permission bits.
+- **SDK / docs embedding**: code samples, quickstart flows inline in dashboard. Code blocks must feel premium, not afterthought.
+- **Billing / usage charts**: pool consumption, cost curves, usage over time. Instrument Serif at large scale for metrics; chart containers should feel like instruments, not dashboards.
+
+### Design Principles
+
+1. **Precision over friendliness.** Every element earns its place. Wrenn doesn't need to tell you it's developer-friendly — that should be self-evident from the quality of the information architecture.
+
+2. **Density with breathing room.** Data-forward doesn't mean cramped. Strategic whitespace creates calm hierarchy within dense contexts. Sections breathe; rows don't waste space.
+
+3. **Industrial warmth.** The serif + mono + warm-black combination prevents sterility. This is a forge, not a gallery. The warmth is in the details, not the primary colors.
+
+4. **Legible at speed.** Users scan dashboards in seconds. Strong typographic contrast (serif h1, mono IDs, sans body), consistent patterns, and predictable placement let users orientate instantly without reading everything.
+
+5. **Craft signals trust.** For infrastructure that runs production code, the quality of the UI is a proxy for the quality of the product. Pixel-level decisions matter. Polish is not decoration — it's a trust signal.
