@@ -145,7 +145,7 @@
 			<h1
 				class="font-serif text-[5rem] leading-[1.1] tracking-[-0.04em] text-[var(--color-text-bright)]"
 			>
-				Scale Up.<br />Spin Out.
+				Scale Up.<br /><span class="text-[var(--color-accent-bright)]">Spin Out.</span>
 			</h1>
 		</div>
 
@@ -154,7 +154,7 @@
 			class="relative z-10 mt-12 font-mono text-ui uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]"
 			style="animation: fadeUp 0.35s ease 0.2s both"
 		>
-			Run Anything. Worry about Nothing.
+			Isolated VMs. Milliseconds to live.
 		</p>
 	</div>
 

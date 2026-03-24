@@ -334,8 +334,8 @@
 				<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
 					Team
 				</h1>
-				<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-					Manage your team, its members, and account settings.
+				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+					Members, roles, and workspace configuration for your team.
 				</p>
 				<div class="mt-6 border-b border-[var(--color-border)]"></div>
 			</div>
@@ -715,7 +715,7 @@
 												>{member.name || member.email}</span
 											>
 											{#if member.user_id === auth.userId}
-												<span class="shrink-0 rounded-[2px] bg-[var(--color-bg-4)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">you</span>
+												<span class="shrink-0 rounded-[2px] bg-[var(--color-accent-glow-mid)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-accent-mid)]">you</span>
 											{/if}
 										</div>
 									</div>
@@ -745,7 +745,7 @@
 													{member.role === 'owner'
 													? 'bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
 													: member.role === 'admin'
-														? 'bg-[var(--color-bg-5)] text-[var(--color-text-secondary)]'
+														? 'bg-[var(--color-amber)]/8 text-[var(--color-amber)]'
 														: 'bg-[var(--color-bg-4)] text-[var(--color-text-muted)]'}"
 											>
 												{roleLabel(member.role)}
@@ -840,7 +840,7 @@
 											Delete this team
 										</p>
 										<p class="mt-0.5 text-meta text-[var(--color-text-tertiary)]">
-											{#if isLastTeam}Create another team before deleting this one.{:else}Permanently deletes the team and destroys all running capsules. This cannot be undone.{/if}
+											{#if isLastTeam}Create another team first — you can't delete your only team.{:else}Permanently deletes the team and destroys all running capsules. This cannot be undone.{/if}
 										</p>
 									</div>
 									<button
@@ -856,7 +856,7 @@
 											Leave this team
 										</p>
 										<p class="mt-0.5 text-meta text-[var(--color-text-tertiary)]">
-											{#if isLastTeam}Create another team before leaving this one.{:else}You will lose access to all capsules and resources belonging to this team.{/if}
+											{#if isLastTeam}Create another team first — you can't leave your only team.{:else}You'll immediately lose access to all capsules and resources in this team.{/if}
 										</p>
 									</div>
 									<button
@@ -964,7 +964,7 @@
 				Add Member
 			</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
-				Add an existing Wrenn user to your team by email.
+				Search by email. The user must already have a Wrenn account.
 			</p>
 
 			{#if addError}
@@ -1101,9 +1101,9 @@
 				Remove Member
 			</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-				Remove <span class="font-medium text-[var(--color-text-secondary)]"
+				<span class="font-medium text-[var(--color-text-secondary)]"
 					>{removeTarget.name || removeTarget.email}</span
-				> from the team? They will lose access immediately.
+				> will immediately lose access to all team capsules and resources.
 			</p>
 
 			{#if removeError}
@@ -1187,7 +1187,7 @@
 					Leave Team
 				</h2>
 				<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-					You will lose access to all capsules and resources in <span
+					You'll immediately lose access to all capsules and resources in <span
 						class="font-medium text-[var(--color-text-secondary)]">{team?.name}</span
 					>.
 				</p>

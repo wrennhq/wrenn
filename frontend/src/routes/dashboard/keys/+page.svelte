@@ -120,8 +120,8 @@
 						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
 							API Keys
 						</h1>
-						<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-							Keys authenticate SDK and direct API requests. Treat them like passwords.
+						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+							Bearer tokens for the Wrenn API and SDKs. Each key grants full access — guard it like a password.
 						</p>
 					</div>
 
@@ -164,13 +164,16 @@
 					</div>
 				{:else if keys.length === 0}
 					<div class="flex flex-col items-center justify-center py-[72px]">
-						<div class="mb-5 flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]" style="animation: iconFloat 4s ease-in-out infinite">
-							<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-secondary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
-							</svg>
+						<div class="relative mb-5">
+							<div class="absolute inset-0 -m-4 rounded-full" style="background: radial-gradient(circle, rgba(94,140,88,0.08) 0%, transparent 70%)"></div>
+							<div class="relative flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-accent)]/20 bg-[var(--color-bg-3)]" style="animation: iconFloat 4s ease-in-out infinite">
+								<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent-mid)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+								</svg>
+							</div>
 						</div>
 						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No API keys yet</p>
-						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">Create your first key to start making API requests.</p>
+						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">Nothing can call the API without a key. Create one to authenticate your SDK or HTTP requests.</p>
 						<button
 							onclick={() => { showCreate = true; createError = null; createName = ''; }}
 							class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
@@ -201,7 +204,7 @@
 								<!-- Name + prefix -->
 								<div class="min-w-0 flex flex-col gap-1 px-5 py-4">
 									<span class="truncate text-ui font-medium text-[var(--color-text-bright)]">{key.name || '—'}</span>
-									<span class="inline-flex w-fit items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-text-muted)]">{key.key_prefix}…</span>
+									<span class="inline-flex w-fit items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-accent-mid)]">{key.key_prefix}…</span>
 								</div>
 
 								<!-- Created by -->
@@ -261,7 +264,7 @@
 
 		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">New API Key</h2>
-			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Give your key a name to identify it later.</p>
+			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Name it after its environment or purpose — production, staging, CI. You can't rename it later.</p>
 
 			{#if createError}
 				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
@@ -375,7 +378,7 @@
 					<line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
 				</svg>
 				<p class="text-meta leading-relaxed text-[var(--color-amber)]">
-					Treat this like a password — store it in a secrets manager, not a document or chat message.
+					This is shown once. Store it in your secrets manager — not a note, not a chat message, not a commit.
 				</p>
 			</div>
 
@@ -404,8 +407,8 @@
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Revoke Key</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-				Revoke <span class="font-medium text-[var(--color-text-secondary)]">{revokeTarget.name || revokeTarget.id}</span>?
-				Any request using it will stop working immediately.
+				Permanently revoke <span class="font-medium text-[var(--color-text-secondary)]">{revokeTarget.name || revokeTarget.id}</span>.
+				Any request using this key will fail immediately.
 			</p>
 			<span class="mt-2 inline-flex items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-text-muted)]">{revokeTarget.key_prefix}…</span>
 

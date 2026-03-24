@@ -120,9 +120,9 @@
 	}
 
 	function emptyDescription(f: TypeFilter): string {
-		if (f === 'snapshot') return 'Capture a running capsule to create a snapshot.';
-		if (f === 'base') return 'Images appear here once added to your account.';
-		return 'Snapshots are created from the Capsules page. Pause or snapshot a running capsule to get started.';
+		if (f === 'snapshot') return 'Pause a capsule from the Capsules page, then snapshot it to capture its state.';
+		if (f === 'base') return 'Base images are added by the Wrenn team. Contact support to request a custom image.';
+		return 'To create a snapshot, go to Capsules, pause a running capsule, then choose Snapshot.';
 	}
 
 	onMount(fetchSnapshots);
@@ -161,8 +161,8 @@
 						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
 							Templates
 						</h1>
-						<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-							Saved capsule states and base images. Launch a new capsule from any template.
+						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+							Snapshots capture a live capsule state. Base images are the rootfs every capsule starts from. Launch a full VM from any template.
 						</p>
 					</div>
 				</div>
@@ -490,8 +490,8 @@
 		>
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Delete Snapshot</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-				Delete <span class="font-mono font-medium text-[var(--color-text-secondary)]">{deleteTarget.name}</span>?
-				This action cannot be undone.
+				Permanently delete <span class="font-mono font-medium text-[var(--color-text-secondary)]">{deleteTarget.name}</span>.
+				Any capsule using this template will not be affected, but you won't be able to launch from it again.
 			</p>
 
 			{#if deleteTarget.type === 'snapshot'}
@@ -555,7 +555,7 @@
 		>
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
-				Start a new capsule from this template.
+				Configure resources and launch. The VM will clone from this template and be ready in seconds.
 			</p>
 
 			{#if launchError}

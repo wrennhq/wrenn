@@ -311,8 +311,8 @@
 						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
 							Capsules
 						</h1>
-						<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-							Isolated VMs you can start, pause, and snapshot on demand.
+						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+							Isolated VMs. Start cold in under a second — pause, snapshot, or destroy at will.
 						</p>
 					</div>
 
@@ -329,7 +329,7 @@
 								<span class="relative inline-flex h-[7px] w-[7px] rounded-full bg-[var(--color-accent)]"></span>
 							</span>
 							<span class="font-mono text-body font-semibold text-[var(--color-accent-bright)]">{runningCount}</span>
-							<span class="text-ui text-[var(--color-text-secondary)]">concurrent capsules</span>
+							<span class="text-ui text-[var(--color-text-secondary)]">running now</span>
 						</div>
 					</div>
 				</div>
@@ -482,18 +482,21 @@
 							</div>
 						{:else if filteredCapsules.length === 0}
 							<div class="flex flex-col items-center justify-center py-[72px]">
-								<div class="mb-5 flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]">
-									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-secondary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-										<rect x="2" y="3" width="20" height="14" rx="2" />
-										<line x1="8" y1="21" x2="16" y2="21" />
-										<line x1="12" y1="17" x2="12" y2="21" />
-									</svg>
+								<div class="relative mb-5">
+									<div class="absolute inset-0 -m-4 rounded-full" style="background: radial-gradient(circle, rgba(94,140,88,0.08) 0%, transparent 70%)"></div>
+									<div class="relative flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-accent)]/20 bg-[var(--color-bg-3)]" style="animation: iconFloat 4s ease-in-out infinite">
+										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent-mid)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+											<rect x="2" y="3" width="20" height="14" rx="2" />
+											<line x1="8" y1="21" x2="16" y2="21" />
+											<line x1="12" y1="17" x2="12" y2="21" />
+										</svg>
+									</div>
 								</div>
 								<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
 									No capsules yet
 								</p>
 								<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
-									Launch a capsule to start running isolated code.
+									Each capsule is an isolated VM. Launch one to get started.
 								</p>
 								<button
 									onclick={() => { showCreateDialog = true; createError = null; }}
@@ -694,7 +697,7 @@
 
 		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
-			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Configure and launch a new isolated capsule.</p>
+			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Configure resources and launch. The VM will be ready in under a second.</p>
 
 			{#if createError}
 				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
@@ -741,7 +744,7 @@
 				</div>
 
 				<div>
-					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-timeout">Auto-pause timeout (seconds, 0 = never)</label>
+					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-timeout">Idle timeout (seconds — 0 = never pause)</label>
 					<input
 						id="create-timeout"
 						type="number"
@@ -792,7 +795,7 @@
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Destroy Capsule</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-				Destroy <span class="font-mono text-[var(--color-text-secondary)]">{destroyTarget.id}</span>? The capsule will be terminated and all data inside it lost.
+				Terminate <span class="font-mono text-[var(--color-text-secondary)]">{destroyTarget.id}</span> and destroy all data inside it. This cannot be undone.
 			</p>
 
 			{#if destroyError}
