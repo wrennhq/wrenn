@@ -209,8 +209,8 @@
 			);
 			toast.success(
 				newRole === 'admin'
-					? `${member.email} is now an admin`
-					: `${member.email} is now a member`
+					? `${member.name || member.email} is now an admin`
+					: `${member.name || member.email} is now a member`
 			);
 		} else {
 			toast.error(result.error);
@@ -675,12 +675,17 @@
 						>
 							<!-- Table header -->
 							<div
-								class="grid grid-cols-[1fr_120px_140px_120px] border-b border-[var(--color-border)] bg-[var(--color-bg-3)]"
+								class="grid grid-cols-[1fr_1fr_120px_140px_120px] border-b border-[var(--color-border)] bg-[var(--color-bg-3)]"
 							>
 								<div
 									class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
 								>
-									Member
+									Name
+								</div>
+								<div
+									class="px-4 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
+								>
+									Email
 								</div>
 								<div
 									class="px-4 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
@@ -699,20 +704,25 @@
 
 							{#each members as member, i (member.user_id)}
 								<div
-									class="grid grid-cols-[1fr_120px_140px_120px] items-center border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {recentlyAddedId === member.user_id ? 'member-flash' : ''}"
+									class="grid grid-cols-[1fr_1fr_120px_140px_120px] items-center border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {recentlyAddedId === member.user_id ? 'member-flash' : ''}"
 									in:fly={{ y: 6, duration: 200, delay: i * 30, easing: cubicOut }}
 									out:fly={{ x: -16, duration: 180, easing: cubicOut }}
 								>
-									<!-- Email -->
+									<!-- Name -->
 									<div class="min-w-0 px-5 py-4">
 										<div class="flex min-w-0 items-center gap-2">
 											<span class="truncate text-ui text-[var(--color-text-bright)]"
-												>{member.email}</span
+												>{member.name || member.email}</span
 											>
 											{#if member.user_id === auth.userId}
 												<span class="shrink-0 rounded-[2px] bg-[var(--color-bg-4)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">you</span>
 											{/if}
 										</div>
+									</div>
+
+									<!-- Email -->
+									<div class="min-w-0 px-4 py-4">
+										<span class="truncate font-mono text-ui text-[var(--color-text-secondary)]">{member.email}</span>
 									</div>
 
 									<!-- Role badge -->
@@ -1092,7 +1102,7 @@
 			</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Remove <span class="font-medium text-[var(--color-text-secondary)]"
-					>{removeTarget.email}</span
+					>{removeTarget.name || removeTarget.email}</span
 				> from the team? They will lose access immediately.
 			</p>
 

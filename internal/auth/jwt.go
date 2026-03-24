@@ -16,16 +16,18 @@ type Claims struct {
 	TeamID string `json:"team_id"`
 	Role   string `json:"role"` // owner, admin, or member within TeamID
 	Email  string `json:"email"`
+	Name   string `json:"name"`
 	jwt.RegisteredClaims
 }
 
 // SignJWT signs a new 6-hour JWT for the given user.
-func SignJWT(secret []byte, userID, teamID, email, role string) (string, error) {
+func SignJWT(secret []byte, userID, teamID, email, name, role string) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		TeamID: teamID,
 		Role:   role,
 		Email:  email,
+		Name:   name,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),

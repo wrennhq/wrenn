@@ -55,7 +55,7 @@ func (q *Queries) GetAdminPermissions(ctx context.Context, userID string) ([]Adm
 }
 
 const getAdminUsers = `-- name: GetAdminUsers :many
-SELECT id, email, password_hash, created_at, updated_at, is_admin FROM users WHERE is_admin = TRUE ORDER BY created_at
+SELECT id, email, password_hash, created_at, updated_at, is_admin, name FROM users WHERE is_admin = TRUE ORDER BY created_at
 `
 
 func (q *Queries) GetAdminUsers(ctx context.Context) ([]User, error) {
@@ -74,6 +74,7 @@ func (q *Queries) GetAdminUsers(ctx context.Context) ([]User, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.IsAdmin,
+			&i.Name,
 		); err != nil {
 			return nil, err
 		}
@@ -86,7 +87,7 @@ func (q *Queries) GetAdminUsers(ctx context.Context) ([]User, error) {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, created_at, updated_at, is_admin FROM users WHERE email = $1
+SELECT id, email, password_hash, created_at, updated_at, is_admin, name FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -99,12 +100,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsAdmin,
+		&i.Name,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, created_at, updated_at, is_admin FROM users WHERE id = $1
+SELECT id, email, password_hash, created_at, updated_at, is_admin, name FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -117,6 +119,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsAdmin,
+		&i.Name,
 	)
 	return i, err
 }
@@ -156,19 +159,25 @@ func (q *Queries) InsertAdminPermission(ctx context.Context, arg InsertAdminPerm
 }
 
 const insertUser = `-- name: InsertUser :one
-INSERT INTO users (id, email, password_hash)
-VALUES ($1, $2, $3)
-RETURNING id, email, password_hash, created_at, updated_at, is_admin
+INSERT INTO users (id, email, password_hash, name)
+VALUES ($1, $2, $3, $4)
+RETURNING id, email, password_hash, created_at, updated_at, is_admin, name
 `
 
 type InsertUserParams struct {
 	ID           string      `json:"id"`
 	Email        string      `json:"email"`
 	PasswordHash pgtype.Text `json:"password_hash"`
+	Name         string      `json:"name"`
 }
 
 func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, insertUser, arg.ID, arg.Email, arg.PasswordHash)
+	row := q.db.QueryRow(ctx, insertUser,
+		arg.ID,
+		arg.Email,
+		arg.PasswordHash,
+		arg.Name,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -177,23 +186,25 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsAdmin,
+		&i.Name,
 	)
 	return i, err
 }
 
 const insertUserOAuth = `-- name: InsertUserOAuth :one
-INSERT INTO users (id, email)
-VALUES ($1, $2)
-RETURNING id, email, password_hash, created_at, updated_at, is_admin
+INSERT INTO users (id, email, name)
+VALUES ($1, $2, $3)
+RETURNING id, email, password_hash, created_at, updated_at, is_admin, name
 `
 
 type InsertUserOAuthParams struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
+	Name  string `json:"name"`
 }
 
 func (q *Queries) InsertUserOAuth(ctx context.Context, arg InsertUserOAuthParams) (User, error) {
-	row := q.db.QueryRow(ctx, insertUserOAuth, arg.ID, arg.Email)
+	row := q.db.QueryRow(ctx, insertUserOAuth, arg.ID, arg.Email, arg.Name)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -202,6 +213,7 @@ func (q *Queries) InsertUserOAuth(ctx context.Context, arg InsertUserOAuthParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsAdmin,
+		&i.Name,
 	)
 	return i, err
 }
@@ -246,5 +258,19 @@ type SetUserAdminParams struct {
 
 func (q *Queries) SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error {
 	_, err := q.db.Exec(ctx, setUserAdmin, arg.ID, arg.IsAdmin)
+	return err
+}
+
+const updateUserName = `-- name: UpdateUserName :exec
+UPDATE users SET name = $2, updated_at = NOW() WHERE id = $1
+`
+
+type UpdateUserNameParams struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) UpdateUserName(ctx context.Context, arg UpdateUserNameParams) error {
+	_, err := q.db.Exec(ctx, updateUserName, arg.ID, arg.Name)
 	return err
 }

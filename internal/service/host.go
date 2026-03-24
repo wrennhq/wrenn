@@ -96,9 +96,10 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 		}
 	}
 
-	// Validate team exists for BYOC hosts.
+	// Validate team exists and is not deleted for BYOC hosts.
 	if p.TeamID != "" {
-		if _, err := s.DB.GetTeam(ctx, p.TeamID); err != nil {
+		team, err := s.DB.GetTeam(ctx, p.TeamID)
+		if err != nil || team.DeletedAt.Valid {
 			return HostCreateResult{}, fmt.Errorf("invalid request: team not found")
 		}
 	}

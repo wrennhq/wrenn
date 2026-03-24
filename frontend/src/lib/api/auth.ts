@@ -3,6 +3,7 @@ export type AuthResponse = {
 	user_id: string;
 	team_id: string;
 	email: string;
+	name: string;
 };
 
 export type AuthResult = { ok: true; data: AuthResponse } | { ok: false; error: string };
@@ -11,8 +12,8 @@ export async function apiLogin(email: string, password: string): Promise<AuthRes
 	return authFetch('/api/v1/auth/login', { email, password });
 }
 
-export async function apiSignup(email: string, password: string): Promise<AuthResult> {
-	return authFetch('/api/v1/auth/signup', { email, password });
+export async function apiSignup(email: string, password: string, name: string): Promise<AuthResult> {
+	return authFetch('/api/v1/auth/signup', { email, password, name });
 }
 
 async function authFetch(url: string, body: Record<string, string>): Promise<AuthResult> {

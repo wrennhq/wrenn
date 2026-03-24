@@ -1410,7 +1410,7 @@ components:
   schemas:
     SignupRequest:
       type: object
-      required: [email, password]
+      required: [email, password, name]
       properties:
         email:
           type: string
@@ -1418,6 +1418,9 @@ components:
         password:
           type: string
           minLength: 8
+        name:
+          type: string
+          maxLength: 100
 
     LoginRequest:
       type: object
@@ -1440,6 +1443,8 @@ components:
         team_id:
           type: string
         email:
+          type: string
+        name:
           type: string
 
     CreateAPIKeyRequest:

@@ -79,6 +79,10 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ac := auth.MustFromContext(r.Context())
+	if ac.TeamID == "" {
+		writeError(w, http.StatusForbidden, "no_team", "no active team context; re-authenticate")
+		return
+	}
 
 	sb, err := h.svc.Create(r.Context(), service.SandboxCreateParams{
 		TeamID:     ac.TeamID,

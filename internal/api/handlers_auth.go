@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -14,6 +15,41 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
+
+// loginTeam returns the team and role to stamp into a login JWT.
+// It prefers the user's default team; if none is flagged as default it falls
+// back to the earliest-joined team. Returns pgx.ErrNoRows when the user has
+// no team memberships at all.
+func loginTeam(ctx context.Context, q *db.Queries, userID string) (db.Team, string, error) {
+	team, err := q.GetDefaultTeamForUser(ctx, userID)
+	if err == nil {
+		membership, err := q.GetTeamMembership(ctx, db.GetTeamMembershipParams{UserID: userID, TeamID: team.ID})
+		if err != nil {
+			return db.Team{}, "", err
+		}
+		return team, membership.Role, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.Team{}, "", err
+	}
+	// No default set — fall back to earliest-joined team.
+	rows, err := q.GetTeamsForUser(ctx, userID)
+	if err != nil {
+		return db.Team{}, "", err
+	}
+	if len(rows) == 0 {
+		return db.Team{}, "", pgx.ErrNoRows
+	}
+	first := rows[0]
+	return db.Team{
+		ID:        first.ID,
+		Name:      first.Name,
+		Slug:      first.Slug,
+		IsByoc:    first.IsByoc,
+		CreatedAt: first.CreatedAt,
+		DeletedAt: first.DeletedAt,
+	}, first.Role, nil
+}
 
 type switchTeamRequest struct {
 	TeamID string `json:"team_id"`
@@ -32,6 +68,7 @@ func newAuthHandler(db *db.Queries, pool *pgxpool.Pool, jwtSecret []byte) *authH
 type signupRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Name     string `json:"name"`
 }
 
 type loginRequest struct {
@@ -44,6 +81,7 @@ type authResponse struct {
 	UserID string `json:"user_id"`
 	TeamID string `json:"team_id"`
 	Email  string `json:"email"`
+	Name   string `json:"name"`
 }
 
 // Signup handles POST /v1/auth/signup.
@@ -55,12 +93,17 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	req.Name = strings.TrimSpace(req.Name)
 	if !strings.Contains(req.Email, "@") || len(req.Email) < 3 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid email address")
 		return
 	}
 	if len(req.Password) < 8 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "password must be at least 8 characters")
+		return
+	}
+	if req.Name == "" || len(req.Name) > 100 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "name must be between 1 and 100 characters")
 		return
 	}
 
@@ -87,6 +130,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		ID:           userID,
 		Email:        req.Email,
 		PasswordHash: pgtype.Text{String: passwordHash, Valid: true},
+		Name:         req.Name,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -102,7 +146,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	teamID := id.NewTeamID()
 	if _, err := qtx.InsertTeam(ctx, db.InsertTeamParams{
 		ID:   teamID,
-		Name: req.Email + "'s Team",
+		Name: req.Name + "'s Team",
 		Slug: id.NewTeamSlug(),
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to create team")
@@ -124,7 +168,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, req.Email, "owner")
+	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, req.Email, req.Name, "owner")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
@@ -135,6 +179,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		UserID: userID,
 		TeamID: teamID,
 		Email:  req.Email,
+		Name:   req.Name,
 	})
 }
 
@@ -173,19 +218,17 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	team, err := h.db.GetDefaultTeamForUser(ctx, user.ID)
+	team, role, err := loginTeam(ctx, h.db, user.ID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusForbidden, "no_team", "user is not a member of any team")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up team")
 		return
 	}
 
-	membership, err := h.db.GetTeamMembership(ctx, db.GetTeamMembershipParams{UserID: user.ID, TeamID: team.ID})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up membership")
-		return
-	}
-
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, membership.Role)
+	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
@@ -196,6 +239,7 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 		UserID: user.ID,
 		TeamID: team.ID,
 		Email:  user.Email,
+		Name:   user.Name,
 	})
 }
 
@@ -247,7 +291,14 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, ac.UserID, req.TeamID, ac.Email, membership.Role)
+	// Fetch current name from DB — JWT name is not trusted here (may be stale or empty for old tokens).
+	user, err := h.db.GetUserByID(ctx, ac.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up user")
+		return
+	}
+
+	token, err := auth.SignJWT(h.jwtSecret, ac.UserID, req.TeamID, ac.Email, user.Name, membership.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
@@ -258,5 +309,6 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 		UserID: ac.UserID,
 		TeamID: req.TeamID,
 		Email:  ac.Email,
+		Name:   user.Name,
 	})
 }

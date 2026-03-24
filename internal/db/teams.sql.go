@@ -26,7 +26,7 @@ func (q *Queries) DeleteTeamMember(ctx context.Context, arg DeleteTeamMemberPara
 }
 
 const getBYOCTeams = `-- name: GetBYOCTeams :many
-SELECT id, name, created_at, is_byoc, slug, deleted_at FROM teams WHERE is_byoc = TRUE ORDER BY created_at
+SELECT id, name, created_at, is_byoc, slug, deleted_at FROM teams WHERE is_byoc = TRUE AND deleted_at IS NULL ORDER BY created_at
 `
 
 func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
@@ -59,7 +59,7 @@ func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
 const getDefaultTeamForUser = `-- name: GetDefaultTeamForUser :one
 SELECT t.id, t.name, t.created_at, t.is_byoc, t.slug, t.deleted_at FROM teams t
 JOIN users_teams ut ON ut.team_id = t.id
-WHERE ut.user_id = $1 AND ut.is_default = TRUE
+WHERE ut.user_id = $1 AND ut.is_default = TRUE AND t.deleted_at IS NULL
 LIMIT 1
 `
 
@@ -114,7 +114,7 @@ func (q *Queries) GetTeamBySlug(ctx context.Context, slug string) (Team, error) 
 }
 
 const getTeamMembers = `-- name: GetTeamMembers :many
-SELECT u.id, u.email, ut.role, ut.created_at AS joined_at
+SELECT u.id, u.name, u.email, ut.role, ut.created_at AS joined_at
 FROM users_teams ut
 JOIN users u ON u.id = ut.user_id
 WHERE ut.team_id = $1
@@ -123,6 +123,7 @@ ORDER BY ut.created_at
 
 type GetTeamMembersRow struct {
 	ID       string             `json:"id"`
+	Name     string             `json:"name"`
 	Email    string             `json:"email"`
 	Role     string             `json:"role"`
 	JoinedAt pgtype.Timestamptz `json:"joined_at"`
@@ -139,6 +140,7 @@ func (q *Queries) GetTeamMembers(ctx context.Context, teamID string) ([]GetTeamM
 		var i GetTeamMembersRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Name,
 			&i.Email,
 			&i.Role,
 			&i.JoinedAt,

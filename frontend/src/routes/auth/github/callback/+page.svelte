@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/auth.svelte';
+	import { teams } from '$lib/teams.svelte';
 
 	const params = $page.url.searchParams;
 	const error = params.get('error');
@@ -13,9 +14,11 @@
 		const userId = params.get('user_id');
 		const teamId = params.get('team_id');
 		const email = params.get('email');
+		const name = params.get('name') ?? '';
 
 		if (token && userId && teamId && email) {
-			auth.login({ token, user_id: userId, team_id: teamId, email });
+			teams.reset();
+			auth.login({ token, user_id: userId, team_id: teamId, email, name });
 			goto('/dashboard');
 		} else {
 			goto('/login?error=missing_token');

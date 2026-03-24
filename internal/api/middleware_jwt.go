@@ -29,6 +29,7 @@ func requireJWT(secret []byte) func(http.Handler) http.Handler {
 				TeamID: claims.TeamID,
 				UserID: claims.Subject,
 				Email:  claims.Email,
+				Name:   claims.Name,
 				Role:   claims.Role,
 			})
 			next.ServeHTTP(w, r.WithContext(ctx))

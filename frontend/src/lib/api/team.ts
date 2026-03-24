@@ -2,6 +2,7 @@ import { apiFetch, type ApiResult } from '$lib/api/client';
 
 export type TeamMember = {
 	user_id: string;
+	name: string;
 	email: string;
 	role: 'owner' | 'admin' | 'member';
 	joined_at: string;
@@ -42,7 +43,7 @@ export async function createTeam(name: string): Promise<ApiResult<TeamWithRole>>
 
 export async function switchTeam(
 	teamId: string
-): Promise<ApiResult<{ token: string; user_id: string; team_id: string; email: string }>> {
+): Promise<ApiResult<{ token: string; user_id: string; team_id: string; email: string; name: string }>> {
 	return apiFetch('POST', '/api/v1/auth/switch-team', { team_id: teamId });
 }
 

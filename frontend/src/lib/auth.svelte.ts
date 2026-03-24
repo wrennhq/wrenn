@@ -4,7 +4,8 @@ const STORAGE_KEYS = {
 	token: 'wrenn_token',
 	userId: 'wrenn_user_id',
 	teamId: 'wrenn_team_id',
-	email: 'wrenn_email'
+	email: 'wrenn_email',
+	name: 'wrenn_name'
 } as const;
 
 function isTokenExpired(token: string): boolean {
@@ -23,6 +24,7 @@ function createAuth() {
 	let userId = $state<string | null>(null);
 	let teamId = $state<string | null>(null);
 	let email = $state<string | null>(null);
+	let name = $state<string | null>(null);
 	let initialized = $state(false);
 
 	// Initialize from localStorage synchronously at module load.
@@ -33,6 +35,7 @@ function createAuth() {
 			userId = localStorage.getItem(STORAGE_KEYS.userId);
 			teamId = localStorage.getItem(STORAGE_KEYS.teamId);
 			email = localStorage.getItem(STORAGE_KEYS.email);
+			name = localStorage.getItem(STORAGE_KEYS.name);
 		} else if (stored) {
 			// Expired — clean up.
 			for (const key of Object.values(STORAGE_KEYS)) {
@@ -57,6 +60,9 @@ function createAuth() {
 		get email() {
 			return email;
 		},
+		get name() {
+			return name;
+		},
 		get isAuthenticated() {
 			return isAuthenticated;
 		},
@@ -64,16 +70,18 @@ function createAuth() {
 			return initialized;
 		},
 
-		login(data: { token: string; user_id: string; team_id: string; email: string }) {
+		login(data: { token: string; user_id: string; team_id: string; email: string; name: string }) {
 			token = data.token;
 			userId = data.user_id;
 			teamId = data.team_id;
 			email = data.email;
+			name = data.name;
 
 			localStorage.setItem(STORAGE_KEYS.token, data.token);
 			localStorage.setItem(STORAGE_KEYS.userId, data.user_id);
 			localStorage.setItem(STORAGE_KEYS.teamId, data.team_id);
 			localStorage.setItem(STORAGE_KEYS.email, data.email);
+			localStorage.setItem(STORAGE_KEYS.name, data.name);
 		},
 
 		logout() {
@@ -81,6 +89,7 @@ function createAuth() {
 			userId = null;
 			teamId = null;
 			email = null;
+			name = null;
 
 			for (const key of Object.values(STORAGE_KEYS)) {
 				localStorage.removeItem(key);

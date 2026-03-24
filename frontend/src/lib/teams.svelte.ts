@@ -24,6 +24,10 @@ function createTeamsStore() {
 		set(newTeams: TeamWithRole[]) {
 			teams = newTeams;
 			loaded = true;
+		},
+		reset() {
+			teams = [];
+			loaded = false;
 		}
 	};
 }

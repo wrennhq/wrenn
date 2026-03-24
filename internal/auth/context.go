@@ -11,6 +11,7 @@ type AuthContext struct {
 	TeamID string
 	UserID string // empty when authenticated via API key
 	Email  string // empty when authenticated via API key
+	Name   string // empty when authenticated via API key
 	Role   string // owner, admin, or member; empty when authenticated via API key
 }
 

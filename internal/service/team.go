@@ -33,9 +33,10 @@ type TeamWithRole struct {
 	Role string `json:"role"`
 }
 
-// MemberInfo is a team member with resolved email.
+// MemberInfo is a team member with resolved user details.
 type MemberInfo struct {
 	UserID   string    `json:"user_id"`
+	Name     string    `json:"name"`
 	Email    string    `json:"email"`
 	Role     string    `json:"role"`
 	JoinedAt time.Time `json:"joined_at"`
@@ -215,6 +216,7 @@ func (s *TeamService) GetMembers(ctx context.Context, teamID string) ([]MemberIn
 		}
 		members[i] = MemberInfo{
 			UserID:   r.ID,
+			Name:     r.Name,
 			Email:    r.Email,
 			Role:     r.Role,
 			JoinedAt: joinedAt,
@@ -262,7 +264,7 @@ func (s *TeamService) AddMember(ctx context.Context, teamID, callerUserID, email
 		return MemberInfo{}, fmt.Errorf("insert member: %w", err)
 	}
 
-	return MemberInfo{UserID: target.ID, Email: target.Email, Role: "member"}, nil
+	return MemberInfo{UserID: target.ID, Name: target.Name, Email: target.Email, Role: "member"}, nil
 }
 
 // RemoveMember removes a user from the team.

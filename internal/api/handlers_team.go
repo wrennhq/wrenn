@@ -36,6 +36,7 @@ type teamWithRoleResponse struct {
 
 type memberResponse struct {
 	UserID   string `json:"user_id"`
+	Name     string `json:"name"`
 	Email    string `json:"email"`
 	Role     string `json:"role"`
 	JoinedAt string `json:"joined_at,omitempty"`
@@ -56,6 +57,7 @@ func teamToResponse(t db.Team) teamResponse {
 func memberInfoToResponse(m service.MemberInfo) memberResponse {
 	return memberResponse{
 		UserID:   m.UserID,
+		Name:     m.Name,
 		Email:    m.Email,
 		Role:     m.Role,
 		JoinedAt: m.JoinedAt.Format(time.RFC3339),

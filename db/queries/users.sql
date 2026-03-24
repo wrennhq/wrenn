@@ -1,6 +1,6 @@
 -- name: InsertUser :one
-INSERT INTO users (id, email, password_hash)
-VALUES ($1, $2, $3)
+INSERT INTO users (id, email, password_hash, name)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetUserByEmail :one
@@ -10,8 +10,8 @@ SELECT * FROM users WHERE email = $1;
 SELECT * FROM users WHERE id = $1;
 
 -- name: InsertUserOAuth :one
-INSERT INTO users (id, email)
-VALUES ($1, $2)
+INSERT INTO users (id, email, name)
+VALUES ($1, $2, $3)
 RETURNING *;
 
 -- name: SetUserAdmin :exec
@@ -37,3 +37,6 @@ SELECT EXISTS(
 
 -- name: SearchUsersByEmailPrefix :many
 SELECT id, email FROM users WHERE email LIKE $1 || '%' ORDER BY email LIMIT 10;
+
+-- name: UpdateUserName :exec
+UPDATE users SET name = $2, updated_at = NOW() WHERE id = $1;

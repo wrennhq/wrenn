@@ -13,14 +13,14 @@ VALUES ($1, $2, $3, $4);
 -- name: GetDefaultTeamForUser :one
 SELECT t.* FROM teams t
 JOIN users_teams ut ON ut.team_id = t.id
-WHERE ut.user_id = $1 AND ut.is_default = TRUE
+WHERE ut.user_id = $1 AND ut.is_default = TRUE AND t.deleted_at IS NULL
 LIMIT 1;
 
 -- name: SetTeamBYOC :exec
 UPDATE teams SET is_byoc = $2 WHERE id = $1;
 
 -- name: GetBYOCTeams :many
-SELECT * FROM teams WHERE is_byoc = TRUE ORDER BY created_at;
+SELECT * FROM teams WHERE is_byoc = TRUE AND deleted_at IS NULL ORDER BY created_at;
 
 -- name: GetTeamMembership :one
 SELECT * FROM users_teams WHERE user_id = $1 AND team_id = $2;
@@ -42,7 +42,7 @@ WHERE ut.user_id = $1 AND t.deleted_at IS NULL
 ORDER BY ut.created_at;
 
 -- name: GetTeamMembers :many
-SELECT u.id, u.email, ut.role, ut.created_at AS joined_at
+SELECT u.id, u.name, u.email, ut.role, ut.created_at AS joined_at
 FROM users_teams ut
 JOIN users u ON u.id = ut.user_id
 WHERE ut.team_id = $1

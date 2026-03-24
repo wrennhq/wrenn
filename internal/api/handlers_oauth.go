@@ -150,25 +150,19 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, redirectBase, "db_error")
 			return
 		}
-		team, err := h.db.GetDefaultTeamForUser(ctx, user.ID)
+		team, role, err := loginTeam(ctx, h.db, user.ID)
 		if err != nil {
 			slog.Error("oauth login: failed to get team", "error", err)
 			redirectWithError(w, r, redirectBase, "db_error")
 			return
 		}
-		membership, err := h.db.GetTeamMembership(ctx, db.GetTeamMembershipParams{UserID: user.ID, TeamID: team.ID})
-		if err != nil {
-			slog.Error("oauth login: failed to get membership", "error", err)
-			redirectWithError(w, r, redirectBase, "db_error")
-			return
-		}
-		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, membership.Role)
+		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role)
 		if err != nil {
 			slog.Error("oauth login: failed to sign jwt", "error", err)
 			redirectWithError(w, r, redirectBase, "internal_error")
 			return
 		}
-		redirectWithToken(w, r, redirectBase, token, user.ID, team.ID, user.Email)
+		redirectWithToken(w, r, redirectBase, token, user.ID, team.ID, user.Email, user.Name)
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -205,6 +199,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	_, err = qtx.InsertUserOAuth(ctx, db.InsertUserOAuthParams{
 		ID:    userID,
 		Email: email,
+		Name:  profile.Name,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -260,14 +255,14 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, "owner")
+	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, profile.Name, "owner")
 	if err != nil {
 		slog.Error("oauth: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
 		return
 	}
 
-	redirectWithToken(w, r, redirectBase, token, userID, teamID, email)
+	redirectWithToken(w, r, redirectBase, token, userID, teamID, email, profile.Name)
 }
 
 // retryAsLogin handles the race where a concurrent request already created the user.
@@ -289,33 +284,28 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
 	}
-	team, err := h.db.GetDefaultTeamForUser(ctx, user.ID)
+	team, role, err := loginTeam(ctx, h.db, user.ID)
 	if err != nil {
 		slog.Error("oauth: retry login: failed to get team", "error", err)
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
 	}
-	membership, err := h.db.GetTeamMembership(ctx, db.GetTeamMembershipParams{UserID: user.ID, TeamID: team.ID})
-	if err != nil {
-		slog.Error("oauth: retry login: failed to get membership", "error", err)
-		redirectWithError(w, r, redirectBase, "db_error")
-		return
-	}
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, membership.Role)
+	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role)
 	if err != nil {
 		slog.Error("oauth: retry login: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
 		return
 	}
-	redirectWithToken(w, r, redirectBase, token, user.ID, team.ID, user.Email)
+	redirectWithToken(w, r, redirectBase, token, user.ID, team.ID, user.Email, user.Name)
 }
 
-func redirectWithToken(w http.ResponseWriter, r *http.Request, base, token, userID, teamID, email string) {
+func redirectWithToken(w http.ResponseWriter, r *http.Request, base, token, userID, teamID, email, name string) {
 	u := base + "?" + url.Values{
 		"token":   {token},
 		"user_id": {userID},
 		"team_id": {teamID},
 		"email":   {email},
+		"name":    {name},
 	}.Encode()
 	http.Redirect(w, r, u, http.StatusFound)
 }

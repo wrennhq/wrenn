@@ -112,6 +112,7 @@ type User struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	IsAdmin      bool               `json:"is_admin"`
+	Name         string             `json:"name"`
 }
 
 type UsersTeam struct {

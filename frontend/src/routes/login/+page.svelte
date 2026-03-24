@@ -3,11 +3,13 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/auth.svelte';
+	import { teams } from '$lib/teams.svelte';
 	import { apiLogin, apiSignup } from '$lib/api/auth';
 	import {
 		IconGithub,
 		IconMail,
 		IconLock,
+		IconUser,
 		IconEye,
 		IconEyeOff
 	} from '$lib/components/icons';
@@ -15,6 +17,7 @@
 	let mode: 'signin' | 'signup' = $state('signin');
 	let email = $state('');
 	let password = $state('');
+	let name = $state('');
 	let showPassword = $state(false);
 	let error = $state('');
 	let loading = $state(false);
@@ -77,6 +80,7 @@
 	function switchMode() {
 		mode = mode === 'signin' ? 'signup' : 'signin';
 		error = '';
+		name = '';
 	}
 
 	async function handleSubmit(e: Event) {
@@ -87,7 +91,7 @@
 		const result =
 			mode === 'signin'
 				? await apiLogin(email, password)
-				: await apiSignup(email, password);
+				: await apiSignup(email, password, name);
 
 		loading = false;
 
@@ -96,6 +100,7 @@
 			return;
 		}
 
+		teams.reset();
 		auth.login(result.data);
 		goto('/dashboard');
 	}
@@ -204,6 +209,22 @@
 
 			<!-- Form -->
 			<form onsubmit={handleSubmit} class="space-y-3">
+				{#if mode === 'signup'}
+					<div class="group relative">
+						<div
+							class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] transition-colors duration-150 group-focus-within:text-[var(--color-accent)]"
+						>
+							<IconUser size={14} />
+						</div>
+						<input
+							type="text"
+							bind:value={name}
+							placeholder="Full name"
+							autocomplete="name"
+							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-3 pl-9 pr-3 text-body text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
+						/>
+					</div>
+				{/if}
 				<div class="group relative">
 					<div
 						class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] transition-colors duration-150 group-focus-within:text-[var(--color-accent)]"

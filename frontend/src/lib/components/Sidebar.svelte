@@ -27,7 +27,7 @@
 	let teamPopoverOpen = $state(false);
 
 	let currentTeamName = $derived(teamsStore.list.find((t) => t.id === auth.teamId)?.name ?? '');
-	let userName = $derived(auth.email ?? '');
+	let userName = $derived(auth.name || auth.email || '');
 
 	// Create team dialog
 	let showCreateTeam = $state(false);
