@@ -15,6 +15,21 @@ type AdminPermission struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type AuditLog struct {
+	ID           string             `json:"id"`
+	TeamID       string             `json:"team_id"`
+	ActorType    string             `json:"actor_type"`
+	ActorID      pgtype.Text        `json:"actor_id"`
+	ActorName    pgtype.Text        `json:"actor_name"`
+	ResourceType string             `json:"resource_type"`
+	ResourceID   pgtype.Text        `json:"resource_id"`
+	Action       string             `json:"action"`
+	Scope        string             `json:"scope"`
+	Status       string             `json:"status"`
+	Metadata     []byte             `json:"metadata"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type Host struct {
 	ID               string             `json:"id"`
 	Type             string             `json:"type"`

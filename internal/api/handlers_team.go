@@ -1,23 +1,26 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 )
 
 type teamHandler struct {
-	svc *service.TeamService
+	svc   *service.TeamService
+	audit *audit.AuditLogger
 }
 
-func newTeamHandler(svc *service.TeamService) *teamHandler {
-	return &teamHandler{svc: svc}
+func newTeamHandler(svc *service.TeamService, al *audit.AuditLogger) *teamHandler {
+	return &teamHandler{svc: svc, audit: al}
 }
 
 // teamResponse is the JSON shape for a team.
@@ -179,12 +182,19 @@ func (h *teamHandler) Rename(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Name = strings.TrimSpace(req.Name)
 
+	// Fetch old name for audit log before renaming.
+	oldTeam, err := h.svc.GetTeam(r.Context(), teamID)
+	if err != nil {
+		slog.Warn("audit: could not fetch old team name for rename log", "team_id", teamID, "error", err)
+	}
+
 	if err := h.svc.RenameTeam(r.Context(), teamID, ac.UserID, req.Name); err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
+	h.audit.LogTeamRename(r.Context(), ac, teamID, oldTeam.Name, req.Name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -257,6 +267,7 @@ func (h *teamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogMemberAdd(r.Context(), ac, member.UserID, member.Email, member.Role)
 	writeJSON(w, http.StatusCreated, memberInfoToResponse(member))
 }
 
@@ -276,6 +287,7 @@ func (h *teamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogMemberRemove(r.Context(), ac, targetUserID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -303,6 +315,7 @@ func (h *teamHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogMemberRoleUpdate(r.Context(), ac, targetUserID, req.Role)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -321,6 +334,7 @@ func (h *teamHandler) Leave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogMemberLeave(r.Context(), ac)
 	w.WriteHeader(http.StatusNoContent)
 }
 

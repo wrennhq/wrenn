@@ -8,14 +8,14 @@ import (
 )
 
 const jwtExpiry = 6 * time.Hour
-const hostJWTExpiry = 7 * 24 * time.Hour       // 7 days; host refreshes via refresh token
+const hostJWTExpiry = 7 * 24 * time.Hour           // 7 days; host refreshes via refresh token
 const HostRefreshTokenExpiry = 60 * 24 * time.Hour // 60 days; exported for service layer
 
 // Claims are the JWT payload for user tokens.
 type Claims struct {
 	Type    string `json:"typ,omitempty"` // empty for user tokens; used to reject host tokens
 	TeamID  string `json:"team_id"`
-	Role    string `json:"role"`    // owner, admin, or member within TeamID
+	Role    string `json:"role"` // owner, admin, or member within TeamID
 	Email   string `json:"email"`
 	Name    string `json:"name"`
 	IsAdmin bool   `json:"is_admin,omitempty"` // platform-level admin flag

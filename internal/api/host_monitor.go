@@ -5,11 +5,12 @@ import (
 	"log/slog"
 	"time"
 
+	"connectrpc.com/connect"
+
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-
-	"connectrpc.com/connect"
 )
 
 // unreachableThreshold is how long a host can go without a heartbeat before
@@ -27,14 +28,16 @@ const unreachableThreshold = 90 * time.Second
 type HostMonitor struct {
 	db       *db.Queries
 	pool     *lifecycle.HostClientPool
+	audit    *audit.AuditLogger
 	interval time.Duration
 }
 
 // NewHostMonitor creates a HostMonitor.
-func NewHostMonitor(queries *db.Queries, pool *lifecycle.HostClientPool, interval time.Duration) *HostMonitor {
+func NewHostMonitor(queries *db.Queries, pool *lifecycle.HostClientPool, al *audit.AuditLogger, interval time.Duration) *HostMonitor {
 	return &HostMonitor{
 		db:       queries,
 		pool:     pool,
+		audit:    al,
 		interval: interval,
 	}
 }
@@ -87,6 +90,7 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		if err := m.db.MarkSandboxesMissingByHost(ctx, host.ID); err != nil {
 			slog.Warn("host monitor: failed to mark sandboxes missing", "host_id", host.ID, "error", err)
 		}
+		m.audit.LogHostMarkedDown(ctx, host.TeamID.String, host.ID)
 		return
 	}
 
@@ -170,7 +174,9 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 	}
 
 	var toPause, toStop []string
+	sbTeamID := make(map[string]string, len(runningSandboxes))
 	for _, sb := range runningSandboxes {
+		sbTeamID[sb.ID] = sb.TeamID
 		if _, ok := alive[sb.ID]; ok {
 			continue
 		}
@@ -188,6 +194,9 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 			Status:  "paused",
 		}); err != nil {
 			slog.Warn("host monitor: failed to mark paused", "host_id", host.ID, "error", err)
+		}
+		for _, sbID := range toPause {
+			m.audit.LogSandboxAutoPause(ctx, sbTeamID[sbID], sbID)
 		}
 	}
 	if len(toStop) > 0 {

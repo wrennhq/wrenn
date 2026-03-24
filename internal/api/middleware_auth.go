@@ -27,7 +27,11 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 					slog.Warn("failed to update api key last_used", "key_id", row.ID, "error", err)
 				}
 
-				ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{TeamID: row.TeamID})
+				ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{
+					TeamID:     row.TeamID,
+					APIKeyID:   row.ID,
+					APIKeyName: row.Name,
+				})
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}

@@ -7,17 +7,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 )
 
 type sandboxHandler struct {
-	svc *service.SandboxService
+	svc   *service.SandboxService
+	audit *audit.AuditLogger
 }
 
-func newSandboxHandler(svc *service.SandboxService) *sandboxHandler {
-	return &sandboxHandler{svc: svc}
+func newSandboxHandler(svc *service.SandboxService, al *audit.AuditLogger) *sandboxHandler {
+	return &sandboxHandler{svc: svc, audit: al}
 }
 
 type createSandboxRequest struct {
@@ -97,6 +99,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, sb.Template)
 	writeJSON(w, http.StatusCreated, sandboxToResponse(sb))
 }
 
@@ -143,6 +146,7 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogSandboxPause(r.Context(), ac, sandboxID)
 	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
 }
 
@@ -158,6 +162,7 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogSandboxResume(r.Context(), ac, sandboxID)
 	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
 }
 
@@ -186,5 +191,6 @@ func (h *sandboxHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID)
 	w.WriteHeader(http.StatusNoContent)
 }

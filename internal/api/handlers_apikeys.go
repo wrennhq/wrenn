@@ -6,17 +6,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 )
 
 type apiKeyHandler struct {
-	svc *service.APIKeyService
+	svc   *service.APIKeyService
+	audit *audit.AuditLogger
 }
 
-func newAPIKeyHandler(svc *service.APIKeyService) *apiKeyHandler {
-	return &apiKeyHandler{svc: svc}
+func newAPIKeyHandler(svc *service.APIKeyService, al *audit.AuditLogger) *apiKeyHandler {
+	return &apiKeyHandler{svc: svc, audit: al}
 }
 
 type createAPIKeyRequest struct {
@@ -91,6 +93,7 @@ func (h *apiKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	resp := apiKeyToResponse(result.Row)
 	resp.Key = &result.Plaintext
 
+	h.audit.LogAPIKeyCreate(r.Context(), ac, result.Row.ID, result.Row.Name)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -122,5 +125,6 @@ func (h *apiKeyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogAPIKeyRevoke(r.Context(), ac, keyID)
 	w.WriteHeader(http.StatusNoContent)
 }

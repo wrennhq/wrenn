@@ -2,11 +2,13 @@ package api
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
@@ -15,10 +17,11 @@ import (
 type hostHandler struct {
 	svc     *service.HostService
 	queries *db.Queries
+	audit   *audit.AuditLogger
 }
 
-func newHostHandler(svc *service.HostService, queries *db.Queries) *hostHandler {
-	return &hostHandler{svc: svc, queries: queries}
+func newHostHandler(svc *service.HostService, queries *db.Queries, al *audit.AuditLogger) *hostHandler {
+	return &hostHandler{svc: svc, queries: queries, audit: al}
 }
 
 // Request/response types.
@@ -48,10 +51,6 @@ type refreshTokenResponse struct {
 type deletePreviewResponse struct {
 	Host       hostResponse `json:"host"`
 	SandboxIDs []string     `json:"sandbox_ids"`
-}
-
-type hasSandboxesErrorResponse struct {
-	SandboxIDs []string `json:"sandbox_ids"`
 }
 
 type registerHostRequest struct {
@@ -166,6 +165,10 @@ func (h *hostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Log audit for the owning team (BYOC hosts have a team; shared hosts use caller's team).
+	hostTeamID := result.Host.TeamID.String
+	h.audit.LogHostCreate(r.Context(), ac, result.Host.ID, hostTeamID)
+
 	writeJSON(w, http.StatusCreated, createHostResponse{
 		Host:              hostToResponse(result.Host),
 		RegistrationToken: result.RegistrationToken,
@@ -257,8 +260,15 @@ func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 	force := r.URL.Query().Get("force") == "true"
 
+	// Fetch host before deletion to capture team_id for audit.
+	deletedHost, hostErr := h.queries.GetHost(r.Context(), hostID)
+	if hostErr != nil {
+		slog.Warn("audit: could not fetch host before delete", "host_id", hostID, "error", hostErr)
+	}
+
 	err := h.svc.Delete(r.Context(), hostID, ac.UserID, ac.TeamID, h.isAdmin(r, ac.UserID), force)
 	if err == nil {
+		h.audit.LogHostDelete(r.Context(), ac, hostID, deletedHost.TeamID.String)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -347,10 +357,18 @@ func (h *hostHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture pre-heartbeat status to detect unreachable → online transition.
+	prevHost, _ := h.queries.GetHost(r.Context(), hc.HostID)
+
 	if err := h.svc.Heartbeat(r.Context(), hc.HostID); err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
+	}
+
+	// Log marked_up if the host just recovered from unreachable.
+	if prevHost.Status == "unreachable" {
+		h.audit.LogHostMarkedUp(r.Context(), prevHost.TeamID.String, hc.HostID)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
