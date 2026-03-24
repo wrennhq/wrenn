@@ -34,6 +34,16 @@ func NewTeamID() string {
 	return "team-" + hex8()
 }
 
+// NewTeamSlug generates a unique team slug in the format "xxxxxx-yyyyyy"
+// where each part is 3 random bytes encoded as hex (6 hex chars each).
+func NewTeamSlug() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+	return hex.EncodeToString(b[:3]) + "-" + hex.EncodeToString(b[3:])
+}
+
 // NewAPIKeyID generates a new API key ID in the format "key-" + 8 hex chars.
 func NewAPIKeyID() string {
 	return "key-" + hex8()

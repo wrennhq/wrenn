@@ -14,15 +14,17 @@ const hostJWTExpiry = 8760 * time.Hour // 1 year
 type Claims struct {
 	Type   string `json:"typ,omitempty"` // empty for user tokens; used to reject host tokens
 	TeamID string `json:"team_id"`
+	Role   string `json:"role"` // owner, admin, or member within TeamID
 	Email  string `json:"email"`
 	jwt.RegisteredClaims
 }
 
 // SignJWT signs a new 6-hour JWT for the given user.
-func SignJWT(secret []byte, userID, teamID, email string) (string, error) {
+func SignJWT(secret []byte, userID, teamID, email, role string) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		TeamID: teamID,
+		Role:   role,
 		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,

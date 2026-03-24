@@ -7,10 +7,26 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteTeamMember = `-- name: DeleteTeamMember :exec
+DELETE FROM users_teams WHERE team_id = $1 AND user_id = $2
+`
+
+type DeleteTeamMemberParams struct {
+	TeamID string `json:"team_id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) DeleteTeamMember(ctx context.Context, arg DeleteTeamMemberParams) error {
+	_, err := q.db.Exec(ctx, deleteTeamMember, arg.TeamID, arg.UserID)
+	return err
+}
+
 const getBYOCTeams = `-- name: GetBYOCTeams :many
-SELECT id, name, created_at, is_byoc FROM teams WHERE is_byoc = TRUE ORDER BY created_at
+SELECT id, name, created_at, is_byoc, slug, deleted_at FROM teams WHERE is_byoc = TRUE ORDER BY created_at
 `
 
 func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
@@ -27,6 +43,8 @@ func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
 			&i.Name,
 			&i.CreatedAt,
 			&i.IsByoc,
+			&i.Slug,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -39,7 +57,7 @@ func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
 }
 
 const getDefaultTeamForUser = `-- name: GetDefaultTeamForUser :one
-SELECT t.id, t.name, t.created_at, t.is_byoc FROM teams t
+SELECT t.id, t.name, t.created_at, t.is_byoc, t.slug, t.deleted_at FROM teams t
 JOIN users_teams ut ON ut.team_id = t.id
 WHERE ut.user_id = $1 AND ut.is_default = TRUE
 LIMIT 1
@@ -53,12 +71,14 @@ func (q *Queries) GetDefaultTeamForUser(ctx context.Context, userID string) (Tea
 		&i.Name,
 		&i.CreatedAt,
 		&i.IsByoc,
+		&i.Slug,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getTeam = `-- name: GetTeam :one
-SELECT id, name, created_at, is_byoc FROM teams WHERE id = $1
+SELECT id, name, created_at, is_byoc, slug, deleted_at FROM teams WHERE id = $1
 `
 
 func (q *Queries) GetTeam(ctx context.Context, id string) (Team, error) {
@@ -69,8 +89,68 @@ func (q *Queries) GetTeam(ctx context.Context, id string) (Team, error) {
 		&i.Name,
 		&i.CreatedAt,
 		&i.IsByoc,
+		&i.Slug,
+		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const getTeamBySlug = `-- name: GetTeamBySlug :one
+SELECT id, name, created_at, is_byoc, slug, deleted_at FROM teams WHERE slug = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) GetTeamBySlug(ctx context.Context, slug string) (Team, error) {
+	row := q.db.QueryRow(ctx, getTeamBySlug, slug)
+	var i Team
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.IsByoc,
+		&i.Slug,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getTeamMembers = `-- name: GetTeamMembers :many
+SELECT u.id, u.email, ut.role, ut.created_at AS joined_at
+FROM users_teams ut
+JOIN users u ON u.id = ut.user_id
+WHERE ut.team_id = $1
+ORDER BY ut.created_at
+`
+
+type GetTeamMembersRow struct {
+	ID       string             `json:"id"`
+	Email    string             `json:"email"`
+	Role     string             `json:"role"`
+	JoinedAt pgtype.Timestamptz `json:"joined_at"`
+}
+
+func (q *Queries) GetTeamMembers(ctx context.Context, teamID string) ([]GetTeamMembersRow, error) {
+	rows, err := q.db.Query(ctx, getTeamMembers, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTeamMembersRow
+	for rows.Next() {
+		var i GetTeamMembersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Role,
+			&i.JoinedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getTeamMembership = `-- name: GetTeamMembership :one
@@ -95,25 +175,74 @@ func (q *Queries) GetTeamMembership(ctx context.Context, arg GetTeamMembershipPa
 	return i, err
 }
 
+const getTeamsForUser = `-- name: GetTeamsForUser :many
+SELECT t.id, t.name, t.slug, t.is_byoc, t.created_at, t.deleted_at, ut.role
+FROM teams t
+JOIN users_teams ut ON ut.team_id = t.id
+WHERE ut.user_id = $1 AND t.deleted_at IS NULL
+ORDER BY ut.created_at
+`
+
+type GetTeamsForUserRow struct {
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	Slug      string             `json:"slug"`
+	IsByoc    bool               `json:"is_byoc"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	Role      string             `json:"role"`
+}
+
+func (q *Queries) GetTeamsForUser(ctx context.Context, userID string) ([]GetTeamsForUserRow, error) {
+	rows, err := q.db.Query(ctx, getTeamsForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTeamsForUserRow
+	for rows.Next() {
+		var i GetTeamsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Slug,
+			&i.IsByoc,
+			&i.CreatedAt,
+			&i.DeletedAt,
+			&i.Role,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertTeam = `-- name: InsertTeam :one
-INSERT INTO teams (id, name)
-VALUES ($1, $2)
-RETURNING id, name, created_at, is_byoc
+INSERT INTO teams (id, name, slug)
+VALUES ($1, $2, $3)
+RETURNING id, name, created_at, is_byoc, slug, deleted_at
 `
 
 type InsertTeamParams struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	Slug string `json:"slug"`
 }
 
 func (q *Queries) InsertTeam(ctx context.Context, arg InsertTeamParams) (Team, error) {
-	row := q.db.QueryRow(ctx, insertTeam, arg.ID, arg.Name)
+	row := q.db.QueryRow(ctx, insertTeam, arg.ID, arg.Name, arg.Slug)
 	var i Team
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.CreatedAt,
 		&i.IsByoc,
+		&i.Slug,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -151,5 +280,43 @@ type SetTeamBYOCParams struct {
 
 func (q *Queries) SetTeamBYOC(ctx context.Context, arg SetTeamBYOCParams) error {
 	_, err := q.db.Exec(ctx, setTeamBYOC, arg.ID, arg.IsByoc)
+	return err
+}
+
+const softDeleteTeam = `-- name: SoftDeleteTeam :exec
+UPDATE teams SET deleted_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) SoftDeleteTeam(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, softDeleteTeam, id)
+	return err
+}
+
+const updateMemberRole = `-- name: UpdateMemberRole :exec
+UPDATE users_teams SET role = $3 WHERE team_id = $1 AND user_id = $2
+`
+
+type UpdateMemberRoleParams struct {
+	TeamID string `json:"team_id"`
+	UserID string `json:"user_id"`
+	Role   string `json:"role"`
+}
+
+func (q *Queries) UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error {
+	_, err := q.db.Exec(ctx, updateMemberRole, arg.TeamID, arg.UserID, arg.Role)
+	return err
+}
+
+const updateTeamName = `-- name: UpdateTeamName :exec
+UPDATE teams SET name = $2 WHERE id = $1 AND deleted_at IS NULL
+`
+
+type UpdateTeamNameParams struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) UpdateTeamName(ctx context.Context, arg UpdateTeamNameParams) error {
+	_, err := q.db.Exec(ctx, updateTeamName, arg.ID, arg.Name)
 	return err
 }

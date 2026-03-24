@@ -80,6 +80,8 @@ type Team struct {
 	Name      string             `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	IsByoc    bool               `json:"is_byoc"`
+	Slug      string             `json:"slug"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type TeamApiKey struct {
