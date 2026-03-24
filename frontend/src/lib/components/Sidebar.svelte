@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { onMount } from 'svelte';
 	import { Popover } from 'bits-ui';
 	import { auth } from '$lib/auth.svelte';
+	import { listTeams, createTeam, switchTeam, type TeamWithRole } from '$lib/api/team';
 	import {
 		IconMonitor,
 		IconBox,
@@ -23,8 +25,16 @@
 
 	let teamPopoverOpen = $state(false);
 
-	const currentTeam = 'default';
-	const userName = $derived(auth.email ?? '');
+	// Real teams from API
+	let teams = $state<TeamWithRole[]>([]);
+	let currentTeamName = $derived(teams.find((t) => t.id === auth.teamId)?.name ?? '');
+	let userName = $derived(auth.email ?? '');
+
+	// Create team dialog
+	let showCreateTeam = $state(false);
+	let newTeamName = $state('');
+	let creatingTeam = $state(false);
+	let createTeamError = $state<string | null>(null);
 
 	type NavItem = {
 		label: string;
@@ -39,7 +49,7 @@
 
 	const managementItems: NavItem[] = [
 		{ label: 'Keys', icon: IconKey, href: '/dashboard/keys' },
-		{ label: 'Members', icon: IconMembers, href: '/dashboard/members' },
+		{ label: 'Team', icon: IconMembers, href: '/dashboard/team' },
 		{ label: 'Audit Logs', icon: IconAudit, href: '/dashboard/audit' }
 	];
 
@@ -47,8 +57,6 @@
 		{ label: 'Usage', icon: IconUsage, href: '/dashboard/usage' },
 		{ label: 'Billing', icon: IconBilling, href: '/dashboard/billing' }
 	];
-
-	const teams = ['default', 'Wrenn Labs', 'Acme Corp'];
 
 	function isActive(href: string): boolean {
 		const p = $page.url.pathname;
@@ -59,6 +67,48 @@
 		collapsed = !collapsed;
 		localStorage.setItem('wrenn_sidebar_collapsed', String(collapsed));
 	}
+
+	async function fetchTeams() {
+		const result = await listTeams();
+		if (result.ok) {
+			teams = result.data;
+		}
+	}
+
+	async function handleSwitchTeam(teamId: string) {
+		if (teamId === auth.teamId) {
+			teamPopoverOpen = false;
+			return;
+		}
+		teamPopoverOpen = false;
+		const result = await switchTeam(teamId);
+		if (result.ok) {
+			auth.login(result.data);
+			window.location.reload();
+		}
+	}
+
+	async function handleCreateTeam() {
+		if (!newTeamName.trim()) return;
+		creatingTeam = true;
+		createTeamError = null;
+		const result = await createTeam(newTeamName.trim());
+		if (result.ok) {
+			const switchResult = await switchTeam(result.data.id);
+			if (switchResult.ok) {
+				auth.login(switchResult.data);
+				window.location.reload();
+			} else {
+				createTeamError = switchResult.error;
+				creatingTeam = false;
+			}
+		} else {
+			createTeamError = result.error;
+			creatingTeam = false;
+		}
+	}
+
+	onMount(fetchTeams);
 </script>
 
 <aside
@@ -97,7 +147,7 @@
 				<div
 					class="flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-avatar)] bg-[var(--color-bg-4)] text-badge font-bold uppercase text-[var(--color-text-secondary)]"
 				>
-					{currentTeam[0]}
+					{(currentTeamName || '?')[0].toUpperCase()}
 				</div>
 				{#if !collapsed}
 					<div class="min-w-0 flex-1 overflow-hidden whitespace-nowrap">
@@ -107,7 +157,7 @@
 							Team
 						</div>
 						<div class="truncate text-ui text-[var(--color-text-primary)]">
-							{currentTeam}
+							{currentTeamName || '…'}
 						</div>
 					</div>
 					<IconChevron
@@ -130,33 +180,39 @@
 					>
 						Teams
 					</div>
-					{#each teams as team}
+					{#each teams as team (team.id)}
 						<button
-							class="flex w-full items-center gap-2.5 rounded-[var(--radius-input)] px-2.5 py-2 text-ui transition-colors duration-150 hover:bg-[var(--color-bg-3)] {team ===
-							currentTeam
+							class="flex w-full items-center gap-2.5 rounded-[var(--radius-input)] px-2.5 py-2 text-ui transition-colors duration-150 hover:bg-[var(--color-bg-3)] {team.id ===
+							auth.teamId
 								? 'bg-[var(--color-accent-glow)]'
 								: ''}"
-							onclick={() => (teamPopoverOpen = false)}
+							onclick={() => handleSwitchTeam(team.id)}
 						>
 							<div
-								class="flex h-5 w-5 items-center justify-center rounded-[var(--radius-avatar)] text-badge font-bold uppercase text-white {team ===
-								currentTeam
+								class="flex h-5 w-5 items-center justify-center rounded-[var(--radius-avatar)] text-badge font-bold uppercase text-white {team.id ===
+								auth.teamId
 									? 'bg-[var(--color-accent)]'
 									: 'bg-[var(--color-bg-5)]'}"
 							>
-								{team[0]}
+								{team.name[0].toUpperCase()}
 							</div>
 							<span
-								class={team === currentTeam
+								class={team.id === auth.teamId
 									? 'font-medium text-[var(--color-text-bright)]'
 									: 'text-[var(--color-text-primary)]'}
 							>
-								{team}
+								{team.name}
 							</span>
 						</button>
 					{/each}
 					<div class="mt-0.5 border-t border-[var(--color-border)] pt-0.5">
 						<button
+							onclick={() => {
+								teamPopoverOpen = false;
+								newTeamName = '';
+								createTeamError = null;
+								showCreateTeam = true;
+							}}
 							class="flex w-full items-center gap-2.5 rounded-[var(--radius-input)] px-2.5 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
 						>
 							<IconPlus size={14} />
@@ -293,6 +349,79 @@
 	</div>
 {/snippet}
 
+<!-- Create Team Dialog -->
+{#if showCreateTeam}
+	<div class="fixed inset-0 z-50 flex items-center justify-center">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="absolute inset-0 bg-black/60"
+			onclick={() => { if (!creatingTeam) showCreateTeam = false; }}
+			onkeydown={(e) => { if (e.key === 'Escape' && !creatingTeam) showCreateTeam = false; }}
+		></div>
+
+		<div
+			class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
+			style="animation: fadeUp 0.2s ease both"
+		>
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+				Create Team
+			</h2>
+			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
+				Choose a name for your new team.
+			</p>
+
+			{#if createTeamError}
+				<div
+					class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]"
+				>
+					{createTeamError}
+				</div>
+			{/if}
+
+			<div class="mt-5">
+				<label
+					class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]"
+					for="new-team-name"
+				>
+					Team name
+				</label>
+				<input
+					id="new-team-name"
+					type="text"
+					placeholder="e.g. Acme Engineering"
+					bind:value={newTeamName}
+					onkeydown={(e) => { if (e.key === 'Enter' && !creatingTeam) handleCreateTeam(); }}
+					disabled={creatingTeam}
+					class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)] disabled:opacity-60"
+				/>
+			</div>
+
+			<div class="mt-6 flex justify-end gap-3">
+				<button
+					onclick={() => { showCreateTeam = false; }}
+					disabled={creatingTeam}
+					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+				>
+					Cancel
+				</button>
+				<button
+					onclick={handleCreateTeam}
+					disabled={creatingTeam || !newTeamName.trim()}
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+				>
+					{#if creatingTeam}
+						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M21 12a9 9 0 1 1-6.219-8.56" />
+						</svg>
+						Creating...
+					{:else}
+						Create Team
+					{/if}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <style>
 	@keyframes popoverSlideIn {
