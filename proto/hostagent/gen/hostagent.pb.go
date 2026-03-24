@@ -1830,6 +1830,78 @@ func (*PingSandboxResponse) Descriptor() ([]byte, []int) {
 	return file_hostagent_proto_rawDescGZIP(), []int{32}
 }
 
+type TerminateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminateRequest) Reset() {
+	*x = TerminateRequest{}
+	mi := &file_hostagent_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminateRequest) ProtoMessage() {}
+
+func (x *TerminateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminateRequest.ProtoReflect.Descriptor instead.
+func (*TerminateRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{33}
+}
+
+type TerminateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminateResponse) Reset() {
+	*x = TerminateResponse{}
+	mi := &file_hostagent_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminateResponse) ProtoMessage() {}
+
+func (x *TerminateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminateResponse.ProtoReflect.Descriptor instead.
+func (*TerminateResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{34}
+}
+
 var File_hostagent_proto protoreflect.FileDescriptor
 
 const file_hostagent_proto_rawDesc = "" +
@@ -1955,7 +2027,10 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x12PingSandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"\x15\n" +
-	"\x13PingSandboxResponse2\xce\t\n" +
+	"\x13PingSandboxResponse\"\x12\n" +
+	"\x10TerminateRequest\"\x13\n" +
+	"\x11TerminateResponse2\x9c\n" +
+	"\n" +
 	"\x10HostAgentService\x12X\n" +
 	"\rCreateSandbox\x12\".hostagent.v1.CreateSandboxRequest\x1a#.hostagent.v1.CreateSandboxResponse\x12[\n" +
 	"\x0eDestroySandbox\x12#.hostagent.v1.DestroySandboxRequest\x1a$.hostagent.v1.DestroySandboxResponse\x12U\n" +
@@ -1971,7 +2046,8 @@ const file_hostagent_proto_rawDesc = "" +
 	"ExecStream\x12\x1f.hostagent.v1.ExecStreamRequest\x1a .hostagent.v1.ExecStreamResponse0\x01\x12`\n" +
 	"\x0fWriteFileStream\x12$.hostagent.v1.WriteFileStreamRequest\x1a%.hostagent.v1.WriteFileStreamResponse(\x01\x12]\n" +
 	"\x0eReadFileStream\x12#.hostagent.v1.ReadFileStreamRequest\x1a$.hostagent.v1.ReadFileStreamResponse0\x01\x12R\n" +
-	"\vPingSandbox\x12 .hostagent.v1.PingSandboxRequest\x1a!.hostagent.v1.PingSandboxResponseB\xb0\x01\n" +
+	"\vPingSandbox\x12 .hostagent.v1.PingSandboxRequest\x1a!.hostagent.v1.PingSandboxResponse\x12L\n" +
+	"\tTerminate\x12\x1e.hostagent.v1.TerminateRequest\x1a\x1f.hostagent.v1.TerminateResponseB\xb0\x01\n" +
 	"\x10com.hostagent.v1B\x0eHostagentProtoP\x01Z;git.omukk.dev/wrenn/sandbox/proto/hostagent/gen;hostagentv1\xa2\x02\x03HXX\xaa\x02\fHostagent.V1\xca\x02\fHostagent\\V1\xe2\x02\x18Hostagent\\V1\\GPBMetadata\xea\x02\rHostagent::V1b\x06proto3"
 
 var (
@@ -1986,7 +2062,7 @@ func file_hostagent_proto_rawDescGZIP() []byte {
 	return file_hostagent_proto_rawDescData
 }
 
-var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_hostagent_proto_goTypes = []any{
 	(*CreateSandboxRequest)(nil),    // 0: hostagent.v1.CreateSandboxRequest
 	(*CreateSandboxResponse)(nil),   // 1: hostagent.v1.CreateSandboxResponse
@@ -2021,6 +2097,8 @@ var file_hostagent_proto_goTypes = []any{
 	(*ReadFileStreamResponse)(nil),  // 30: hostagent.v1.ReadFileStreamResponse
 	(*PingSandboxRequest)(nil),      // 31: hostagent.v1.PingSandboxRequest
 	(*PingSandboxResponse)(nil),     // 32: hostagent.v1.PingSandboxResponse
+	(*TerminateRequest)(nil),        // 33: hostagent.v1.TerminateRequest
+	(*TerminateResponse)(nil),       // 34: hostagent.v1.TerminateResponse
 }
 var file_hostagent_proto_depIdxs = []int32{
 	16, // 0: hostagent.v1.ListSandboxesResponse.sandboxes:type_name -> hostagent.v1.SandboxInfo
@@ -2042,22 +2120,24 @@ var file_hostagent_proto_depIdxs = []int32{
 	26, // 16: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
 	29, // 17: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
 	31, // 18: hostagent.v1.HostAgentService.PingSandbox:input_type -> hostagent.v1.PingSandboxRequest
-	1,  // 19: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
-	3,  // 20: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
-	5,  // 21: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
-	7,  // 22: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
-	13, // 23: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
-	15, // 24: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
-	18, // 25: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
-	20, // 26: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
-	9,  // 27: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
-	11, // 28: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
-	22, // 29: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
-	28, // 30: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
-	30, // 31: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
-	32, // 32: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
-	19, // [19:33] is the sub-list for method output_type
-	5,  // [5:19] is the sub-list for method input_type
+	33, // 19: hostagent.v1.HostAgentService.Terminate:input_type -> hostagent.v1.TerminateRequest
+	1,  // 20: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
+	3,  // 21: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
+	5,  // 22: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
+	7,  // 23: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
+	13, // 24: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
+	15, // 25: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
+	18, // 26: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
+	20, // 27: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
+	9,  // 28: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
+	11, // 29: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
+	22, // 30: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
+	28, // 31: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
+	30, // 32: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
+	32, // 33: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
+	34, // 34: hostagent.v1.HostAgentService.Terminate:output_type -> hostagent.v1.TerminateResponse
+	20, // [20:35] is the sub-list for method output_type
+	5,  // [5:20] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
 	5,  // [5:5] is the sub-list for extension extendee
 	0,  // [0:5] is the sub-list for field type_name
@@ -2087,7 +2167,7 @@ func file_hostagent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hostagent_proto_rawDesc), len(file_hostagent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   33,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

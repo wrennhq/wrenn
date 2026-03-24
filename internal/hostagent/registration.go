@@ -96,13 +96,14 @@ func saveTokenFile(path string, tf tokenFile) error {
 // Register calls the control plane to register this host agent and persists
 // the returned JWT and refresh token to disk. Returns the host JWT token string.
 func Register(ctx context.Context, cfg RegistrationConfig) (string, error) {
-	// Check if we already have a saved token.
-	if tf, err := loadTokenFile(cfg.TokenFile); err == nil && tf.JWT != "" {
-		slog.Info("loaded existing host token", "file", cfg.TokenFile, "host_id", tf.HostID)
-		return tf.JWT, nil
-	}
-
+	// If no explicit registration token was given, reuse the saved JWT.
+	// A --register flag always overrides the local file so operators can
+	// force re-registration without manually deleting host.jwt.
 	if cfg.RegistrationToken == "" {
+		if tf, err := loadTokenFile(cfg.TokenFile); err == nil && tf.JWT != "" {
+			slog.Info("loaded existing host token", "file", cfg.TokenFile, "host_id", tf.HostID)
+			return tf.JWT, nil
+		}
 		return "", fmt.Errorf("no saved host token and no registration token provided (use --register flag)")
 	}
 
@@ -239,7 +240,11 @@ func RefreshJWT(ctx context.Context, cpURL, tokenFilePath string) (string, error
 //
 // On repeated network failures (3 consecutive), it calls pauseAll but keeps
 // retrying — the connection may recover and the host should resume heartbeating.
-func StartHeartbeat(ctx context.Context, cpURL, tokenFilePath, hostID string, interval time.Duration, pauseAll func()) {
+//
+// onDeleted is called when CP returns 404, meaning this host record was deleted.
+// The token file is removed before calling onDeleted so subsequent starts prompt
+// for a new registration token.
+func StartHeartbeat(ctx context.Context, cpURL, tokenFilePath, hostID string, interval time.Duration, pauseAll func(), onDeleted func()) {
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	go func() {
@@ -255,62 +260,84 @@ func StartHeartbeat(ctx context.Context, cpURL, tokenFilePath, hostID string, in
 			currentJWT = tf.JWT
 		}
 
+		// beat sends one heartbeat. Returns true if the loop should stop.
+		beat := func() (stop bool) {
+			url := strings.TrimRight(cpURL, "/") + "/v1/hosts/" + hostID + "/heartbeat"
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+			if err != nil {
+				slog.Warn("heartbeat: failed to create request", "error", err)
+				return false
+			}
+			req.Header.Set("X-Host-Token", currentJWT)
+
+			resp, err := client.Do(req)
+			if err != nil {
+				consecutiveFailures++
+				slog.Warn("heartbeat: request failed", "error", err, "consecutive_failures", consecutiveFailures)
+				if consecutiveFailures >= 3 && !pausedDueToFailure {
+					slog.Error("heartbeat: CP unreachable after 3 failures — pausing all sandboxes")
+					if pauseAll != nil {
+						pauseAll()
+					}
+					pausedDueToFailure = true
+				}
+				return false
+			}
+			resp.Body.Close()
+
+			switch resp.StatusCode {
+			case http.StatusNoContent:
+				if consecutiveFailures > 0 || pausedDueToFailure {
+					slog.Info("heartbeat: CP connection restored")
+				}
+				consecutiveFailures = 0
+				pausedDueToFailure = false
+
+			case http.StatusUnauthorized, http.StatusForbidden:
+				slog.Warn("heartbeat: JWT rejected — attempting token refresh")
+				newJWT, refreshErr := RefreshJWT(ctx, cpURL, tokenFilePath)
+				if refreshErr != nil {
+					slog.Error("heartbeat: JWT refresh failed — pausing all sandboxes; manual re-registration required",
+						"error", refreshErr)
+					if pauseAll != nil && !pausedDueToFailure {
+						pauseAll()
+						pausedDueToFailure = true
+					}
+					// Stop the heartbeat loop — operator must re-register.
+					return true
+				}
+				currentJWT = newJWT
+				slog.Info("heartbeat: JWT refreshed successfully")
+
+			case http.StatusNotFound:
+				slog.Error("heartbeat: host no longer exists in CP — host was deleted; removing token file and exiting")
+				if err := os.Remove(tokenFilePath); err != nil && !os.IsNotExist(err) {
+					slog.Warn("heartbeat: failed to remove token file", "error", err)
+				}
+				if onDeleted != nil {
+					onDeleted()
+				}
+				return true
+
+			default:
+				slog.Warn("heartbeat: unexpected status", "status", resp.StatusCode)
+			}
+			return false
+		}
+
+		// Send an immediate heartbeat on startup so the CP sees the host as
+		// online without waiting for the first ticker tick.
+		if beat() {
+			return
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				url := strings.TrimRight(cpURL, "/") + "/v1/hosts/" + hostID + "/heartbeat"
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
-				if err != nil {
-					slog.Warn("heartbeat: failed to create request", "error", err)
-					continue
-				}
-				req.Header.Set("X-Host-Token", currentJWT)
-
-				resp, err := client.Do(req)
-				if err != nil {
-					consecutiveFailures++
-					slog.Warn("heartbeat: request failed", "error", err, "consecutive_failures", consecutiveFailures)
-
-					if consecutiveFailures >= 3 && !pausedDueToFailure {
-						slog.Error("heartbeat: CP unreachable after 3 failures — pausing all sandboxes")
-						if pauseAll != nil {
-							pauseAll()
-						}
-						pausedDueToFailure = true
-					}
-					continue
-				}
-				resp.Body.Close()
-
-				switch resp.StatusCode {
-				case http.StatusNoContent:
-					// Success.
-					if consecutiveFailures > 0 || pausedDueToFailure {
-						slog.Info("heartbeat: CP connection restored")
-					}
-					consecutiveFailures = 0
-					pausedDueToFailure = false
-
-				case http.StatusUnauthorized, http.StatusForbidden:
-					slog.Warn("heartbeat: JWT rejected — attempting token refresh")
-					newJWT, refreshErr := RefreshJWT(ctx, cpURL, tokenFilePath)
-					if refreshErr != nil {
-						slog.Error("heartbeat: JWT refresh failed — pausing all sandboxes; manual re-registration required",
-							"error", refreshErr)
-						if pauseAll != nil && !pausedDueToFailure {
-							pauseAll()
-							pausedDueToFailure = true
-						}
-						// Stop the heartbeat loop — operator must re-register.
-						return
-					}
-					currentJWT = newJWT
-					slog.Info("heartbeat: JWT refreshed successfully")
-
-				default:
-					slog.Warn("heartbeat: unexpected status", "status", resp.StatusCode)
+				if beat() {
+					return
 				}
 			}
 		}

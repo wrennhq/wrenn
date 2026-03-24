@@ -8,8 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
+
+	"github.com/joho/godotenv"
 
 	"git.omukk.dev/wrenn/sandbox/internal/devicemapper"
 	"git.omukk.dev/wrenn/sandbox/internal/hostagent"
@@ -18,6 +21,9 @@ import (
 )
 
 func main() {
+	// Best-effort load — missing .env file is fine.
+	_ = godotenv.Load()
+
 	registrationToken := flag.String("register", "", "One-time registration token from the control plane (required on first run)")
 	advertiseAddr := flag.String("address", "", "Externally-reachable address (ip:port) for this host agent")
 	flag.Parse()
@@ -87,41 +93,57 @@ func main() {
 
 	slog.Info("host registered", "host_id", hostID)
 
-	// Start heartbeat loop. On CP rejection: try JWT refresh. If that fails,
-	// pause all running sandboxes to ensure they're not left orphaned.
-	hostagent.StartHeartbeat(ctx, cpURL, tokenFile, hostID, 30*time.Second, func() {
-		pauseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		mgr.PauseAll(pauseCtx)
-	})
+	// httpServer is declared here so the shutdown func can reference it.
+	httpServer := &http.Server{Addr: listenAddr}
 
-	srv := hostagent.NewServer(mgr)
+	// doShutdown is the single shutdown path. sync.Once ensures mgr.Shutdown
+	// and httpServer.Shutdown are each called exactly once regardless of
+	// whether shutdown is triggered by a signal, a heartbeat 404, or the
+	// Terminate RPC.
+	var shutdownOnce sync.Once
+	doShutdown := func(reason string) {
+		shutdownOnce.Do(func() {
+			slog.Info("shutting down", "reason", reason)
+			cancel()
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer shutdownCancel()
+			mgr.Shutdown(shutdownCtx)
+			if err := httpServer.Shutdown(shutdownCtx); err != nil {
+				slog.Error("http server shutdown error", "error", err)
+			}
+		})
+	}
+
+	srv := hostagent.NewServer(mgr, func() {
+		doShutdown("Terminate RPC received")
+	})
 	path, handler := hostagentv1connect.NewHostAgentServiceHandler(srv)
 
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
+	httpServer.Handler = mux
 
-	httpServer := &http.Server{
-		Addr:    listenAddr,
-		Handler: mux,
-	}
+	// Start heartbeat loop. Handler must be set before this because the
+	// immediate beat can trigger doShutdown → httpServer.Shutdown synchronously.
+	hostagent.StartHeartbeat(ctx, cpURL, tokenFile, hostID, 30*time.Second,
+		// pauseAll: called on 3 consecutive network failures.
+		func() {
+			pauseCtx, pauseCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer pauseCancel()
+			mgr.PauseAll(pauseCtx)
+		},
+		// onDeleted: called when CP returns 404 (host was deleted).
+		func() {
+			doShutdown("host deleted from CP")
+		},
+	)
 
-	// Graceful shutdown on signal.
+	// Graceful shutdown on SIGINT/SIGTERM.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		slog.Info("received signal, shutting down", "signal", sig)
-		cancel()
-
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer shutdownCancel()
-
-		mgr.Shutdown(shutdownCtx)
-
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			slog.Error("http server shutdown error", "error", err)
-		}
+		doShutdown("signal: " + sig.String())
 	}()
 
 	slog.Info("host agent starting", "addr", listenAddr, "host_id", hostID)

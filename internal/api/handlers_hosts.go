@@ -77,6 +77,7 @@ type hostResponse struct {
 	ID               string  `json:"id"`
 	Type             string  `json:"type"`
 	TeamID           *string `json:"team_id,omitempty"`
+	TeamName         *string `json:"team_name,omitempty"`
 	Provider         *string `json:"provider,omitempty"`
 	AvailabilityZone *string `json:"availability_zone,omitempty"`
 	Arch             *string `json:"arch,omitempty"`
@@ -174,16 +175,41 @@ func (h *hostHandler) Create(w http.ResponseWriter, r *http.Request) {
 // List handles GET /v1/hosts.
 func (h *hostHandler) List(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
+	admin := h.isAdmin(r, ac.UserID)
 
-	hosts, err := h.svc.List(r.Context(), ac.TeamID, h.isAdmin(r, ac.UserID))
+	hosts, err := h.svc.List(r.Context(), ac.TeamID, admin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list hosts")
 		return
 	}
 
+	// Collect unique team IDs so we can fetch team names in one pass.
+	var teamNames map[string]string
+	if admin {
+		seen := make(map[string]struct{})
+		for _, host := range hosts {
+			if host.TeamID.Valid {
+				seen[host.TeamID.String] = struct{}{}
+			}
+		}
+		if len(seen) > 0 {
+			teamNames = make(map[string]string, len(seen))
+			for id := range seen {
+				if team, err := h.queries.GetTeam(r.Context(), id); err == nil {
+					teamNames[id] = team.Name
+				}
+			}
+		}
+	}
+
 	resp := make([]hostResponse, len(hosts))
 	for i, host := range hosts {
 		resp[i] = hostToResponse(host)
+		if host.TeamID.Valid {
+			if name, ok := teamNames[host.TeamID.String]; ok {
+				resp[i].TeamName = &name
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -322,7 +348,8 @@ func (h *hostHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.Heartbeat(r.Context(), hc.HostID); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to update heartbeat")
+		status, code, msg := serviceErrToHTTP(err)
+		writeError(w, status, code, msg)
 		return
 	}
 

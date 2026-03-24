@@ -74,6 +74,9 @@ const (
 	// HostAgentServicePingSandboxProcedure is the fully-qualified name of the HostAgentService's
 	// PingSandbox RPC.
 	HostAgentServicePingSandboxProcedure = "/hostagent.v1.HostAgentService/PingSandbox"
+	// HostAgentServiceTerminateProcedure is the fully-qualified name of the HostAgentService's
+	// Terminate RPC.
+	HostAgentServiceTerminateProcedure = "/hostagent.v1.HostAgentService/Terminate"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -108,6 +111,10 @@ type HostAgentServiceClient interface {
 	ReadFileStream(context.Context, *connect.Request[gen.ReadFileStreamRequest]) (*connect.ServerStreamForClient[gen.ReadFileStreamResponse], error)
 	// PingSandbox resets the inactivity timer for a running sandbox.
 	PingSandbox(context.Context, *connect.Request[gen.PingSandboxRequest]) (*connect.Response[gen.PingSandboxResponse], error)
+	// Terminate instructs the host agent to destroy all sandboxes and exit.
+	// Called by the control plane immediately when a host is deleted so the
+	// agent shuts down without waiting for the next heartbeat cycle.
+	Terminate(context.Context, *connect.Request[gen.TerminateRequest]) (*connect.Response[gen.TerminateResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -205,6 +212,12 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("PingSandbox")),
 			connect.WithClientOptions(opts...),
 		),
+		terminate: connect.NewClient[gen.TerminateRequest, gen.TerminateResponse](
+			httpClient,
+			baseURL+HostAgentServiceTerminateProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("Terminate")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -224,6 +237,7 @@ type hostAgentServiceClient struct {
 	writeFileStream *connect.Client[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse]
 	readFileStream  *connect.Client[gen.ReadFileStreamRequest, gen.ReadFileStreamResponse]
 	pingSandbox     *connect.Client[gen.PingSandboxRequest, gen.PingSandboxResponse]
+	terminate       *connect.Client[gen.TerminateRequest, gen.TerminateResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -296,6 +310,11 @@ func (c *hostAgentServiceClient) PingSandbox(ctx context.Context, req *connect.R
 	return c.pingSandbox.CallUnary(ctx, req)
 }
 
+// Terminate calls hostagent.v1.HostAgentService.Terminate.
+func (c *hostAgentServiceClient) Terminate(ctx context.Context, req *connect.Request[gen.TerminateRequest]) (*connect.Response[gen.TerminateResponse], error) {
+	return c.terminate.CallUnary(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -328,6 +347,10 @@ type HostAgentServiceHandler interface {
 	ReadFileStream(context.Context, *connect.Request[gen.ReadFileStreamRequest], *connect.ServerStream[gen.ReadFileStreamResponse]) error
 	// PingSandbox resets the inactivity timer for a running sandbox.
 	PingSandbox(context.Context, *connect.Request[gen.PingSandboxRequest]) (*connect.Response[gen.PingSandboxResponse], error)
+	// Terminate instructs the host agent to destroy all sandboxes and exit.
+	// Called by the control plane immediately when a host is deleted so the
+	// agent shuts down without waiting for the next heartbeat cycle.
+	Terminate(context.Context, *connect.Request[gen.TerminateRequest]) (*connect.Response[gen.TerminateResponse], error)
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -421,6 +444,12 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("PingSandbox")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServiceTerminateHandler := connect.NewUnaryHandler(
+		HostAgentServiceTerminateProcedure,
+		svc.Terminate,
+		connect.WithSchema(hostAgentServiceMethods.ByName("Terminate")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -451,6 +480,8 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceReadFileStreamHandler.ServeHTTP(w, r)
 		case HostAgentServicePingSandboxProcedure:
 			hostAgentServicePingSandboxHandler.ServeHTTP(w, r)
+		case HostAgentServiceTerminateProcedure:
+			hostAgentServiceTerminateHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -514,4 +545,8 @@ func (UnimplementedHostAgentServiceHandler) ReadFileStream(context.Context, *con
 
 func (UnimplementedHostAgentServiceHandler) PingSandbox(context.Context, *connect.Request[gen.PingSandboxRequest]) (*connect.Response[gen.PingSandboxResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PingSandbox is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) Terminate(context.Context, *connect.Request[gen.TerminateRequest]) (*connect.Response[gen.TerminateResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.Terminate is not implemented"))
 }

@@ -22,12 +22,15 @@ import (
 // Server implements the HostAgentService Connect RPC handler.
 type Server struct {
 	hostagentv1connect.UnimplementedHostAgentServiceHandler
-	mgr *sandbox.Manager
+	mgr       *sandbox.Manager
+	terminate func() // called when the CP requests agent termination
 }
 
 // NewServer creates a new host agent RPC server.
-func NewServer(mgr *sandbox.Manager) *Server {
-	return &Server{mgr: mgr}
+// terminate is invoked (in a goroutine) when the CP calls the Terminate RPC,
+// allowing main to perform a clean shutdown.
+func NewServer(mgr *sandbox.Manager, terminate func()) *Server {
+	return &Server{mgr: mgr, terminate: terminate}
 }
 
 func (s *Server) CreateSandbox(
@@ -411,4 +414,15 @@ func (s *Server) ListSandboxes(
 		Sandboxes:            infos,
 		AutoPausedSandboxIds: s.mgr.DrainAutoPausedIDs(),
 	}), nil
+}
+
+func (s *Server) Terminate(
+	_ context.Context,
+	_ *connect.Request[pb.TerminateRequest],
+) (*connect.Response[pb.TerminateResponse], error) {
+	slog.Info("terminate RPC received — scheduling shutdown")
+	if s.terminate != nil {
+		go s.terminate()
+	}
+	return connect.NewResponse(&pb.TerminateResponse{}), nil
 }

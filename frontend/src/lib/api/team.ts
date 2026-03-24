@@ -29,6 +29,7 @@ export type TeamWithRole = {
 	id: string;
 	name: string;
 	slug: string;
+	is_byoc: boolean;
 	created_at: string;
 	role: string;
 };

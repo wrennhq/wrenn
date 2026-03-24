@@ -123,11 +123,14 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 		}
 	}
 
-	// Validate team exists and is not deleted for BYOC hosts.
+	// Validate team exists, is not deleted, and has BYOC enabled.
 	if p.TeamID != "" {
 		team, err := s.DB.GetTeam(ctx, p.TeamID)
 		if err != nil || team.DeletedAt.Valid {
 			return HostCreateResult{}, fmt.Errorf("invalid request: team not found")
+		}
+		if !team.IsByoc {
+			return HostCreateResult{}, fmt.Errorf("forbidden: BYOC is not enabled for this team")
 		}
 	}
 
@@ -370,9 +373,17 @@ func hashToken(token string) string {
 }
 
 // Heartbeat updates the last heartbeat timestamp for a host and transitions
-// any 'unreachable' host back to 'online'.
+// any 'unreachable' host back to 'online'. Returns a "host not found" error
+// (which becomes 404) if the host record no longer exists (e.g., was deleted).
 func (s *HostService) Heartbeat(ctx context.Context, hostID string) error {
-	return s.DB.UpdateHostHeartbeatAndStatus(ctx, hostID)
+	n, err := s.DB.UpdateHostHeartbeatAndStatus(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("host not found")
+	}
+	return nil
 }
 
 // List returns hosts visible to the caller.
@@ -447,8 +458,8 @@ func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID string,
 		return &HostHasSandboxesError{SandboxIDs: ids}
 	}
 
-	// Gracefully destroy running sandboxes on the host agent (best-effort).
-	if len(sandboxes) > 0 && host.Address.Valid && host.Address.String != "" {
+	// Gracefully destroy running sandboxes and terminate the agent (best-effort).
+	if host.Address.Valid && host.Address.String != "" {
 		agent, err := s.Pool.GetForHost(host)
 		if err == nil {
 			for _, sb := range sandboxes {
@@ -460,6 +471,10 @@ func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID string,
 						slog.Warn("delete host: failed to destroy sandbox on agent", "sandbox_id", sb.ID, "error", rpcErr)
 					}
 				}
+			}
+			// Tell the agent to shut itself down immediately.
+			if _, rpcErr := agent.Terminate(ctx, connect.NewRequest(&pb.TerminateRequest{})); rpcErr != nil {
+				slog.Warn("delete host: failed to send Terminate to agent", "host_id", hostID, "error", rpcErr)
 			}
 		}
 	}

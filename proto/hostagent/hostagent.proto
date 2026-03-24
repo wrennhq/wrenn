@@ -49,6 +49,11 @@ service HostAgentService {
   // PingSandbox resets the inactivity timer for a running sandbox.
   rpc PingSandbox(PingSandboxRequest) returns (PingSandboxResponse);
 
+  // Terminate instructs the host agent to destroy all sandboxes and exit.
+  // Called by the control plane immediately when a host is deleted so the
+  // agent shuts down without waiting for the next heartbeat cycle.
+  rpc Terminate(TerminateRequest) returns (TerminateResponse);
+
 }
 
 message CreateSandboxRequest {
@@ -236,3 +241,10 @@ message PingSandboxRequest {
 
 message PingSandboxResponse {}
 
+
+
+// ── Terminate ────────────────────────────────────────────────────────
+
+message TerminateRequest {}
+
+message TerminateResponse {}

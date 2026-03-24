@@ -574,7 +574,7 @@ func (q *Queries) UpdateHostHeartbeat(ctx context.Context, id string) error {
 	return err
 }
 
-const updateHostHeartbeatAndStatus = `-- name: UpdateHostHeartbeatAndStatus :exec
+const updateHostHeartbeatAndStatus = `-- name: UpdateHostHeartbeatAndStatus :execrows
 UPDATE hosts
 SET last_heartbeat_at = NOW(),
     status            = CASE WHEN status = 'unreachable' THEN 'online' ELSE status END,
@@ -583,9 +583,10 @@ WHERE id = $1
 `
 
 // Updates last_heartbeat_at and transitions unreachable hosts back to online.
-func (q *Queries) UpdateHostHeartbeatAndStatus(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, updateHostHeartbeatAndStatus, id)
-	return err
+// Returns 0 if no host was found (deleted).
+func (q *Queries) UpdateHostHeartbeatAndStatus(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, updateHostHeartbeatAndStatus, id)
+	return result.RowsAffected(), err
 }
 
 const updateHostStatus = `-- name: UpdateHostStatus :exec

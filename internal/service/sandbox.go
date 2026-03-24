@@ -86,8 +86,18 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		}
 	}
 
+	if p.TeamID == "" {
+		return db.Sandbox{}, fmt.Errorf("invalid request: team_id is required")
+	}
+
+	// Determine whether this team uses BYOC hosts or platform hosts.
+	team, err := s.DB.GetTeam(ctx, p.TeamID)
+	if err != nil {
+		return db.Sandbox{}, fmt.Errorf("team not found: %w", err)
+	}
+
 	// Pick a host for this sandbox.
-	host, err := s.Scheduler.SelectHost(ctx)
+	host, err := s.Scheduler.SelectHost(ctx, p.TeamID, team.IsByoc)
 	if err != nil {
 		return db.Sandbox{}, fmt.Errorf("select host: %w", err)
 	}

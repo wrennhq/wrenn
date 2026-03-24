@@ -156,6 +156,13 @@ func New(
 		})
 	})
 
+	// Platform admin routes — require JWT + DB-validated admin status.
+	r.Route("/v1/admin", func(r chi.Router) {
+		r.Use(requireJWT(jwtSecret))
+		r.Use(requireAdmin(queries))
+		r.Put("/teams/{id}/byoc", teamH.SetBYOC)
+	})
+
 	return &Server{router: r}
 }
 

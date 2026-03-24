@@ -72,8 +72,9 @@ SELECT * FROM hosts WHERE id = $1 AND team_id = $2;
 -- Returns all hosts that have completed registration (not pending/offline).
 SELECT * FROM hosts WHERE status NOT IN ('pending', 'offline') ORDER BY created_at;
 
--- name: UpdateHostHeartbeatAndStatus :exec
+-- name: UpdateHostHeartbeatAndStatus :execrows
 -- Updates last_heartbeat_at and transitions unreachable hosts back to online.
+-- Returns 0 if no host was found (deleted), which the caller treats as 404.
 UPDATE hosts
 SET last_heartbeat_at = NOW(),
     status            = CASE WHEN status = 'unreachable' THEN 'online' ELSE status END,

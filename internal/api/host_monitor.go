@@ -45,6 +45,10 @@ func (m *HostMonitor) Start(ctx context.Context) {
 		ticker := time.NewTicker(m.interval)
 		defer ticker.Stop()
 
+		// Run immediately on startup so the CP doesn't wait one full interval
+		// before reconciling host and sandbox state.
+		m.run(ctx)
+
 		for {
 			select {
 			case <-ctx.Done():
