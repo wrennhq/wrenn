@@ -14,17 +14,17 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type execHandler struct {
-	db    *db.Queries
-	agent hostagentv1connect.HostAgentServiceClient
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newExecHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *execHandler {
-	return &execHandler{db: db, agent: agent}
+func newExecHandler(db *db.Queries, pool *lifecycle.HostClientPool) *execHandler {
+	return &execHandler{db: db, pool: pool}
 }
 
 type execRequest struct {
@@ -73,7 +73,13 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	resp, err := h.agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
+	resp, err := agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
 		SandboxId:  sandboxID,
 		Cmd:        req.Cmd,
 		Args:       req.Args,

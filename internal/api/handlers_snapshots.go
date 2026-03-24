@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,20 +15,45 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 	"git.omukk.dev/wrenn/sandbox/internal/validate"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type snapshotHandler struct {
-	svc   *service.TemplateService
-	db    *db.Queries
-	agent hostagentv1connect.HostAgentServiceClient
+	svc  *service.TemplateService
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newSnapshotHandler(svc *service.TemplateService, db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *snapshotHandler {
-	return &snapshotHandler{svc: svc, db: db, agent: agent}
+func newSnapshotHandler(svc *service.TemplateService, db *db.Queries, pool *lifecycle.HostClientPool) *snapshotHandler {
+	return &snapshotHandler{svc: svc, db: db, pool: pool}
+}
+
+// deleteSnapshotBroadcast attempts to delete snapshot files on all online hosts.
+// Snapshots aren't currently host-tracked in the DB, so we broadcast to all hosts
+// and ignore NotFound errors. TODO: add host_id to templates table.
+func (h *snapshotHandler) deleteSnapshotBroadcast(ctx context.Context, name string) error {
+	hosts, err := h.db.ListActiveHosts(ctx)
+	if err != nil {
+		return fmt.Errorf("list hosts: %w", err)
+	}
+	for _, host := range hosts {
+		if host.Status != "online" {
+			continue
+		}
+		agent, err := h.pool.GetForHost(host)
+		if err != nil {
+			continue
+		}
+		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{Name: name})); err != nil {
+			if connect.CodeOf(err) != connect.CodeNotFound {
+				slog.Warn("snapshot: failed to delete on host", "host_id", host.ID, "name", name, "error", err)
+			}
+		}
+	}
+	return nil
 }
 
 type createSnapshotRequest struct {
@@ -93,10 +119,9 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "already_exists", "snapshot name already exists; use ?overwrite=true to replace")
 			return
 		}
-		// Delete old files from the agent before removing the DB record.
-		if _, err := h.agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{Name: req.Name})); err != nil {
-			status, code, msg := agentErrToHTTP(err)
-			writeError(w, status, code, "failed to delete existing snapshot files: "+msg)
+		// Delete old snapshot files from all hosts before removing the DB record.
+		if err := h.deleteSnapshotBroadcast(ctx, req.Name); err != nil {
+			writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete existing snapshot files")
 			return
 		}
 		if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err != nil {
@@ -116,7 +141,13 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
+	resp, err := agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
 		SandboxId: req.SandboxID,
 		Name:      req.Name,
 	}))
@@ -186,11 +217,8 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{
-		Name: name,
-	})); err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, "failed to delete snapshot files: "+msg)
+	if err := h.deleteSnapshotBroadcast(ctx, name); err != nil {
+		writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete snapshot files")
 		return
 	}
 

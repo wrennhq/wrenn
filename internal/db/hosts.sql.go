@@ -234,6 +234,50 @@ func (q *Queries) InsertHostToken(ctx context.Context, arg InsertHostTokenParams
 	return i, err
 }
 
+const listActiveHosts = `-- name: ListActiveHosts :many
+SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts WHERE status NOT IN ('pending', 'offline') ORDER BY created_at
+`
+
+// Returns all hosts that have completed registration (not pending/offline).
+func (q *Queries) ListActiveHosts(ctx context.Context) ([]Host, error) {
+	rows, err := q.db.Query(ctx, listActiveHosts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Host
+	for rows.Next() {
+		var i Host
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.TeamID,
+			&i.Provider,
+			&i.AvailabilityZone,
+			&i.Arch,
+			&i.CpuCores,
+			&i.MemoryMb,
+			&i.DiskGb,
+			&i.Address,
+			&i.Status,
+			&i.LastHeartbeatAt,
+			&i.Metadata,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CertFingerprint,
+			&i.MtlsEnabled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHosts = `-- name: ListHosts :many
 SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts ORDER BY created_at DESC
 `
@@ -461,6 +505,15 @@ func (q *Queries) MarkHostTokenUsed(ctx context.Context, id string) error {
 	return err
 }
 
+const markHostUnreachable = `-- name: MarkHostUnreachable :exec
+UPDATE hosts SET status = 'unreachable', updated_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) MarkHostUnreachable(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, markHostUnreachable, id)
+	return err
+}
+
 const registerHost = `-- name: RegisterHost :execrows
 UPDATE hosts
 SET arch = $2,
@@ -518,6 +571,20 @@ UPDATE hosts SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1
 
 func (q *Queries) UpdateHostHeartbeat(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, updateHostHeartbeat, id)
+	return err
+}
+
+const updateHostHeartbeatAndStatus = `-- name: UpdateHostHeartbeatAndStatus :exec
+UPDATE hosts
+SET last_heartbeat_at = NOW(),
+    status            = CASE WHEN status = 'unreachable' THEN 'online' ELSE status END,
+    updated_at        = NOW()
+WHERE id = $1
+`
+
+// Updates last_heartbeat_at and transitions unreachable hosts back to online.
+func (q *Queries) UpdateHostHeartbeatAndStatus(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, updateHostHeartbeatAndStatus, id)
 	return err
 }
 

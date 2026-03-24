@@ -11,8 +11,9 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
+	"git.omukk.dev/wrenn/sandbox/internal/scheduler"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 //go:embed openapi.yaml
@@ -24,25 +25,34 @@ type Server struct {
 }
 
 // New constructs the chi router and registers all routes.
-func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, pool *pgxpool.Pool, rdb *redis.Client, jwtSecret []byte, oauthRegistry *oauth.Registry, oauthRedirectURL string) *Server {
+func New(
+	queries *db.Queries,
+	pool *lifecycle.HostClientPool,
+	sched scheduler.HostScheduler,
+	pgPool *pgxpool.Pool,
+	rdb *redis.Client,
+	jwtSecret []byte,
+	oauthRegistry *oauth.Registry,
+	oauthRedirectURL string,
+) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
 
 	// Shared service layer.
-	sandboxSvc := &service.SandboxService{DB: queries, Agent: agent}
+	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
 	apiKeySvc := &service.APIKeyService{DB: queries}
 	templateSvc := &service.TemplateService{DB: queries}
-	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret}
-	teamSvc := &service.TeamService{DB: queries, Pool: pool, Agent: agent}
+	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool}
+	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
 
 	sandbox := newSandboxHandler(sandboxSvc)
-	exec := newExecHandler(queries, agent)
-	execStream := newExecStreamHandler(queries, agent)
-	files := newFilesHandler(queries, agent)
-	filesStream := newFilesStreamHandler(queries, agent)
-	snapshots := newSnapshotHandler(templateSvc, queries, agent)
-	authH := newAuthHandler(queries, pool, jwtSecret)
-	oauthH := newOAuthHandler(queries, pool, jwtSecret, oauthRegistry, oauthRedirectURL)
+	exec := newExecHandler(queries, pool)
+	execStream := newExecStreamHandler(queries, pool)
+	files := newFilesHandler(queries, pool)
+	filesStream := newFilesStreamHandler(queries, pool)
+	snapshots := newSnapshotHandler(templateSvc, queries, pool)
+	authH := newAuthHandler(queries, pgPool, jwtSecret)
+	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, oauthRegistry, oauthRedirectURL)
 	apiKeys := newAPIKeyHandler(apiKeySvc)
 	hostH := newHostHandler(hostSvc, queries)
 	teamH := newTeamHandler(teamSvc)
@@ -123,6 +133,9 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 		// Unauthenticated: one-time registration token.
 		r.Post("/register", hostH.Register)
 
+		// Unauthenticated: refresh token exchange.
+		r.Post("/auth/refresh", hostH.RefreshToken)
+
 		// Host-token-authenticated: heartbeat.
 		r.With(requireHostToken(jwtSecret)).Post("/{id}/heartbeat", hostH.Heartbeat)
 
@@ -134,6 +147,7 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 			r.Route("/{id}", func(r chi.Router) {
 				r.Get("/", hostH.Get)
 				r.Delete("/", hostH.Delete)
+				r.Get("/delete-preview", hostH.DeletePreview)
 				r.Post("/token", hostH.RegenerateToken)
 				r.Get("/tags", hostH.ListTags)
 				r.Post("/tags", hostH.AddTag)

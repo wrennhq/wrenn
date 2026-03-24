@@ -12,17 +12,17 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type filesStreamHandler struct {
-	db    *db.Queries
-	agent hostagentv1connect.HostAgentServiceClient
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newFilesStreamHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *filesStreamHandler {
-	return &filesStreamHandler{db: db, agent: agent}
+func newFilesStreamHandler(db *db.Queries, pool *lifecycle.HostClientPool) *filesStreamHandler {
+	return &filesStreamHandler{db: db, pool: pool}
 }
 
 // StreamUpload handles POST /v1/sandboxes/{id}/files/stream/write.
@@ -88,8 +88,14 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	}
 	defer filePart.Close()
 
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
 	// Open client-streaming RPC to host agent.
-	stream := h.agent.WriteFileStream(ctx)
+	stream := agent.WriteFileStream(ctx)
 
 	// Send metadata first.
 	if err := stream.Send(&pb.WriteFileStreamRequest{
@@ -164,8 +170,14 @@ func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
 	// Open server-streaming RPC to host agent.
-	stream, err := h.agent.ReadFileStream(ctx, connect.NewRequest(&pb.ReadFileStreamRequest{
+	stream, err := agent.ReadFileStream(ctx, connect.NewRequest(&pb.ReadFileStreamRequest{
 		SandboxId: sandboxID,
 		Path:      req.Path,
 	}))

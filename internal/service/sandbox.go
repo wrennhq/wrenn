@@ -11,16 +11,18 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
+	"git.omukk.dev/wrenn/sandbox/internal/scheduler"
 	"git.omukk.dev/wrenn/sandbox/internal/validate"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 // SandboxService provides sandbox lifecycle operations shared between the
 // REST API and the dashboard.
 type SandboxService struct {
-	DB    *db.Queries
-	Agent hostagentv1connect.HostAgentServiceClient
+	DB        *db.Queries
+	Pool      *lifecycle.HostClientPool
+	Scheduler scheduler.HostScheduler
 }
 
 // SandboxCreateParams holds the parameters for creating a sandbox.
@@ -32,8 +34,34 @@ type SandboxCreateParams struct {
 	TimeoutSec int32
 }
 
-// Create creates a new sandbox: inserts a pending DB record, calls the host agent,
-// and updates the record to running. Returns the sandbox DB row.
+// agentForSandbox looks up the host for the given sandbox and returns a client.
+func (s *SandboxService) agentForSandbox(ctx context.Context, sandboxID string) (hostagentClient, db.Sandbox, error) {
+	sb, err := s.DB.GetSandbox(ctx, sandboxID)
+	if err != nil {
+		return nil, db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
+	}
+	host, err := s.DB.GetHost(ctx, sb.HostID)
+	if err != nil {
+		return nil, db.Sandbox{}, fmt.Errorf("host not found for sandbox: %w", err)
+	}
+	agent, err := s.Pool.GetForHost(host)
+	if err != nil {
+		return nil, db.Sandbox{}, fmt.Errorf("get agent client: %w", err)
+	}
+	return agent, sb, nil
+}
+
+// hostagentClient is a local alias to avoid the full package path in signatures.
+type hostagentClient = interface {
+	CreateSandbox(ctx context.Context, req *connect.Request[pb.CreateSandboxRequest]) (*connect.Response[pb.CreateSandboxResponse], error)
+	DestroySandbox(ctx context.Context, req *connect.Request[pb.DestroySandboxRequest]) (*connect.Response[pb.DestroySandboxResponse], error)
+	PauseSandbox(ctx context.Context, req *connect.Request[pb.PauseSandboxRequest]) (*connect.Response[pb.PauseSandboxResponse], error)
+	ResumeSandbox(ctx context.Context, req *connect.Request[pb.ResumeSandboxRequest]) (*connect.Response[pb.ResumeSandboxResponse], error)
+	PingSandbox(ctx context.Context, req *connect.Request[pb.PingSandboxRequest]) (*connect.Response[pb.PingSandboxResponse], error)
+}
+
+// Create creates a new sandbox: picks a host via the scheduler, inserts a pending
+// DB record, calls the host agent, and updates the record to running.
 func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.Sandbox, error) {
 	if p.Template == "" {
 		p.Template = "minimal"
@@ -58,12 +86,23 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		}
 	}
 
+	// Pick a host for this sandbox.
+	host, err := s.Scheduler.SelectHost(ctx)
+	if err != nil {
+		return db.Sandbox{}, fmt.Errorf("select host: %w", err)
+	}
+
+	agent, err := s.Pool.GetForHost(host)
+	if err != nil {
+		return db.Sandbox{}, fmt.Errorf("get agent client: %w", err)
+	}
+
 	sandboxID := id.NewSandboxID()
 
 	if _, err := s.DB.InsertSandbox(ctx, db.InsertSandboxParams{
 		ID:         sandboxID,
 		TeamID:     p.TeamID,
-		HostID:     "default",
+		HostID:     host.ID,
 		Template:   p.Template,
 		Status:     "pending",
 		Vcpus:      p.VCPUs,
@@ -73,7 +112,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		return db.Sandbox{}, fmt.Errorf("insert sandbox: %w", err)
 	}
 
-	resp, err := s.Agent.CreateSandbox(ctx, connect.NewRequest(&pb.CreateSandboxRequest{
+	resp, err := agent.CreateSandbox(ctx, connect.NewRequest(&pb.CreateSandboxRequest{
 		SandboxId:  sandboxID,
 		Template:   p.Template,
 		Vcpus:      p.VCPUs,
@@ -126,7 +165,12 @@ func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID string) (d
 		return db.Sandbox{}, fmt.Errorf("sandbox is not running (status: %s)", sb.Status)
 	}
 
-	if _, err := s.Agent.PauseSandbox(ctx, connect.NewRequest(&pb.PauseSandboxRequest{
+	agent, _, err := s.agentForSandbox(ctx, sandboxID)
+	if err != nil {
+		return db.Sandbox{}, err
+	}
+
+	if _, err := agent.PauseSandbox(ctx, connect.NewRequest(&pb.PauseSandboxRequest{
 		SandboxId: sandboxID,
 	})); err != nil {
 		return db.Sandbox{}, fmt.Errorf("agent pause: %w", err)
@@ -151,7 +195,12 @@ func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID string) (
 		return db.Sandbox{}, fmt.Errorf("sandbox is not paused (status: %s)", sb.Status)
 	}
 
-	resp, err := s.Agent.ResumeSandbox(ctx, connect.NewRequest(&pb.ResumeSandboxRequest{
+	agent, _, err := s.agentForSandbox(ctx, sandboxID)
+	if err != nil {
+		return db.Sandbox{}, err
+	}
+
+	resp, err := agent.ResumeSandbox(ctx, connect.NewRequest(&pb.ResumeSandboxRequest{
 		SandboxId:  sandboxID,
 		TimeoutSec: sb.TimeoutSec,
 	}))
@@ -181,8 +230,13 @@ func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID string) 
 		return fmt.Errorf("sandbox not found: %w", err)
 	}
 
+	agent, _, err := s.agentForSandbox(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+
 	// Destroy on host agent. A not-found response is fine — sandbox is already gone.
-	if _, err := s.Agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
+	if _, err := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
 		SandboxId: sandboxID,
 	})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
 		return fmt.Errorf("agent destroy: %w", err)
@@ -206,7 +260,12 @@ func (s *SandboxService) Ping(ctx context.Context, sandboxID, teamID string) err
 		return fmt.Errorf("sandbox is not running (status: %s)", sb.Status)
 	}
 
-	if _, err := s.Agent.PingSandbox(ctx, connect.NewRequest(&pb.PingSandboxRequest{
+	agent, _, err := s.agentForSandbox(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+
+	if _, err := agent.PingSandbox(ctx, connect.NewRequest(&pb.PingSandboxRequest{
 		SandboxId: sandboxID,
 	})); err != nil {
 		return fmt.Errorf("agent ping: %w", err)

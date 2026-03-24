@@ -36,6 +36,15 @@ type Host struct {
 	MtlsEnabled      bool               `json:"mtls_enabled"`
 }
 
+type HostRefreshToken struct {
+	ID        string             `json:"id"`
+	HostID    string             `json:"host_id"`
+	TokenHash string             `json:"token_hash"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type HostTag struct {
 	HostID string `json:"host_id"`
 	Tag    string `json:"tag"`

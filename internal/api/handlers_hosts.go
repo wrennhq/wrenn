@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -34,6 +35,25 @@ type createHostResponse struct {
 	RegistrationToken string       `json:"registration_token"`
 }
 
+type refreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+type refreshTokenResponse struct {
+	Host         hostResponse `json:"host"`
+	Token        string       `json:"token"`
+	RefreshToken string       `json:"refresh_token"`
+}
+
+type deletePreviewResponse struct {
+	Host       hostResponse `json:"host"`
+	SandboxIDs []string     `json:"sandbox_ids"`
+}
+
+type hasSandboxesErrorResponse struct {
+	SandboxIDs []string `json:"sandbox_ids"`
+}
+
 type registerHostRequest struct {
 	Token    string `json:"token"`
 	Arch     string `json:"arch,omitempty"`
@@ -44,8 +64,9 @@ type registerHostRequest struct {
 }
 
 type registerHostResponse struct {
-	Host  hostResponse `json:"host"`
-	Token string       `json:"token"`
+	Host         hostResponse `json:"host"`
+	Token        string       `json:"token"`
+	RefreshToken string       `json:"refresh_token"`
 }
 
 type addTagRequest struct {
@@ -183,18 +204,54 @@ func (h *hostHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, hostToResponse(host))
 }
 
-// Delete handles DELETE /v1/hosts/{id}.
-func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
+// DeletePreview handles GET /v1/hosts/{id}/delete-preview.
+// Returns what would be affected without making changes, for confirmation UI.
+func (h *hostHandler) DeletePreview(w http.ResponseWriter, r *http.Request) {
 	hostID := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
 
-	if err := h.svc.Delete(r.Context(), hostID, ac.UserID, ac.TeamID, h.isAdmin(r, ac.UserID)); err != nil {
+	preview, err := h.svc.DeletePreview(r.Context(), hostID, ac.TeamID, h.isAdmin(r, ac.UserID))
+	if err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, deletePreviewResponse{
+		Host:       hostToResponse(preview.Host),
+		SandboxIDs: preview.SandboxIDs,
+	})
+}
+
+// Delete handles DELETE /v1/hosts/{id}.
+// Without ?force=true: returns 409 with affected sandbox IDs if any are active.
+// With ?force=true: gracefully stops all sandboxes then deletes the host.
+func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	hostID := chi.URLParam(r, "id")
+	ac := auth.MustFromContext(r.Context())
+	force := r.URL.Query().Get("force") == "true"
+
+	err := h.svc.Delete(r.Context(), hostID, ac.UserID, ac.TeamID, h.isAdmin(r, ac.UserID), force)
+	if err == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// Check if it's a "has running sandboxes" error and return a structured 409.
+	var hasSandboxes *service.HostHasSandboxesError
+	if errors.As(err, &hasSandboxes) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": map[string]any{
+				"code":        "has_active_sandboxes",
+				"message":     "host has active sandboxes; use ?force=true to destroy them and delete the host",
+				"sandbox_ids": hasSandboxes.SandboxIDs,
+			},
+		})
+		return
+	}
+
+	status, code, msg := serviceErrToHTTP(err)
+	writeError(w, status, code, msg)
 }
 
 // RegenerateToken handles POST /v1/hosts/{id}/token.
@@ -247,8 +304,9 @@ func (h *hostHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, registerHostResponse{
-		Host:  hostToResponse(result.Host),
-		Token: result.JWT,
+		Host:         hostToResponse(result.Host),
+		Token:        result.JWT,
+		RefreshToken: result.RefreshToken,
 	})
 }
 
@@ -309,6 +367,33 @@ func (h *hostHandler) RemoveTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RefreshToken handles POST /v1/hosts/auth/refresh (unauthenticated).
+// The host agent sends its refresh token to receive a new JWT and rotated refresh token.
+func (h *hostHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	var req refreshTokenRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if req.RefreshToken == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
+		return
+	}
+
+	result, err := h.svc.Refresh(r.Context(), req.RefreshToken)
+	if err != nil {
+		status, code, msg := serviceErrToHTTP(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, refreshTokenResponse{
+		Host:         hostToResponse(result.Host),
+		Token:        result.JWT,
+		RefreshToken: result.RefreshToken,
+	})
 }
 
 // ListTags handles GET /v1/hosts/{id}/tags.

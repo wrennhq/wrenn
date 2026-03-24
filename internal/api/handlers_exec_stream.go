@@ -14,17 +14,17 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type execStreamHandler struct {
-	db    *db.Queries
-	agent hostagentv1connect.HostAgentServiceClient
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newExecStreamHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *execStreamHandler {
-	return &execStreamHandler{db: db, agent: agent}
+func newExecStreamHandler(db *db.Queries, pool *lifecycle.HostClientPool) *execStreamHandler {
+	return &execStreamHandler{db: db, pool: pool}
 }
 
 var upgrader = websocket.Upgrader{
@@ -80,11 +80,17 @@ func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		sendWSError(conn, "sandbox host is not reachable")
+		return
+	}
+
 	// Open streaming exec to host agent.
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	stream, err := h.agent.ExecStream(streamCtx, connect.NewRequest(&pb.ExecStreamRequest{
+	stream, err := agent.ExecStream(streamCtx, connect.NewRequest(&pb.ExecStreamRequest{
 		SandboxId: sandboxID,
 		Cmd:       startMsg.Cmd,
 		Args:      startMsg.Args,

@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bulkRestoreRunning = `-- name: BulkRestoreRunning :exec
+UPDATE sandboxes
+SET status       = 'running',
+    last_updated = NOW()
+WHERE id = ANY($1::text[]) AND status = 'missing'
+`
+
+// Called by the reconciler when a host comes back online and its sandboxes are
+// confirmed alive. Restores only sandboxes that are in 'missing' state.
+func (q *Queries) BulkRestoreRunning(ctx context.Context, dollar_1 []string) error {
+	_, err := q.db.Exec(ctx, bulkRestoreRunning, dollar_1)
+	return err
+}
+
 const bulkUpdateStatusByIDs = `-- name: BulkUpdateStatusByIDs :exec
 UPDATE sandboxes
 SET status = $2,
@@ -298,6 +312,21 @@ func (q *Queries) ListSandboxesByTeam(ctx context.Context, teamID string) ([]San
 		return nil, err
 	}
 	return items, nil
+}
+
+const markSandboxesMissingByHost = `-- name: MarkSandboxesMissingByHost :exec
+UPDATE sandboxes
+SET status       = 'missing',
+    last_updated = NOW()
+WHERE host_id = $1 AND status IN ('running', 'starting', 'pending')
+`
+
+// Called when the host monitor marks a host unreachable.
+// Marks running/starting/pending sandboxes on that host as 'missing' so users see
+// the sandbox is not currently reachable, without permanently losing the record.
+func (q *Queries) MarkSandboxesMissingByHost(ctx context.Context, hostID string) error {
+	_, err := q.db.Exec(ctx, markSandboxesMissingByHost, hostID)
+	return err
 }
 
 const updateLastActive = `-- name: UpdateLastActive :exec

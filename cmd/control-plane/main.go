@@ -17,7 +17,8 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
 	"git.omukk.dev/wrenn/sandbox/internal/config"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
+	"git.omukk.dev/wrenn/sandbox/internal/scheduler"
 )
 
 func main() {
@@ -66,12 +67,11 @@ func main() {
 	}
 	slog.Info("connected to redis")
 
-	// Connect RPC client for the host agent.
-	agentHTTP := &http.Client{Timeout: 10 * time.Minute}
-	agentClient := hostagentv1connect.NewHostAgentServiceClient(
-		agentHTTP,
-		cfg.HostAgentAddr,
-	)
+	// Host client pool — manages Connect RPC clients to host agents.
+	hostPool := lifecycle.NewHostClientPool()
+
+	// Scheduler — picks a host for each new sandbox (round-robin for now).
+	hostScheduler := scheduler.NewRoundRobinScheduler(queries)
 
 	// OAuth provider registry.
 	oauthRegistry := oauth.NewRegistry()
@@ -87,11 +87,11 @@ func main() {
 	}
 
 	// API server.
-	srv := api.New(queries, agentClient, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL)
+	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL)
 
-	// Start reconciler.
-	reconciler := api.NewReconciler(queries, agentClient, "default", 5*time.Second)
-	reconciler.Start(ctx)
+	// Start host monitor (passive + active reconciliation every 30s).
+	monitor := api.NewHostMonitor(queries, hostPool, 30*time.Second)
+	monitor.Start(ctx)
 
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
@@ -114,7 +114,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("control plane starting", "addr", cfg.ListenAddr, "agent", cfg.HostAgentAddr)
+	slog.Info("control plane starting", "addr", cfg.ListenAddr)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("http server error", "error", err)
 		os.Exit(1)

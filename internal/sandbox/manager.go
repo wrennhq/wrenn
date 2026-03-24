@@ -1183,6 +1183,28 @@ func (m *Manager) Shutdown(ctx context.Context) {
 	m.loops.ReleaseAll()
 }
 
+// PauseAll pauses every running sandbox managed by this host agent.
+// Called when the host loses connectivity to the control plane to avoid
+// leaving running VMs unmanaged. It is best-effort: failures for individual
+// sandboxes are logged but do not stop the rest.
+func (m *Manager) PauseAll(ctx context.Context) {
+	m.mu.RLock()
+	ids := make([]string, 0, len(m.boxes))
+	for id, sb := range m.boxes {
+		if sb.Status == models.StatusRunning {
+			ids = append(ids, id)
+		}
+	}
+	m.mu.RUnlock()
+
+	slog.Info("pausing all running sandboxes due to CP connection loss", "count", len(ids))
+	for _, sbID := range ids {
+		if err := m.Pause(ctx, sbID); err != nil {
+			slog.Warn("PauseAll: failed to pause sandbox", "id", sbID, "error", err)
+		}
+	}
+}
+
 // warnErr logs a warning if err is non-nil. Used for best-effort cleanup
 // in error paths where the primary error has already been captured.
 func warnErr(msg string, id string, err error) {

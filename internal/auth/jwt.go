@@ -8,7 +8,8 @@ import (
 )
 
 const jwtExpiry = 6 * time.Hour
-const hostJWTExpiry = 8760 * time.Hour // 1 year
+const hostJWTExpiry = 7 * 24 * time.Hour       // 7 days; host refreshes via refresh token
+const HostRefreshTokenExpiry = 60 * 24 * time.Hour // 60 days; exported for service layer
 
 // Claims are the JWT payload for user tokens.
 type Claims struct {

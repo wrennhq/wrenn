@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
@@ -15,6 +17,8 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
+	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 )
 
 // HostService provides host management operations.
@@ -22,6 +26,7 @@ type HostService struct {
 	DB    *db.Queries
 	Redis *redis.Client
 	JWT   []byte
+	Pool  *lifecycle.HostClientPool
 }
 
 // HostCreateParams holds the parameters for creating a host.
@@ -50,10 +55,24 @@ type HostRegisterParams struct {
 	Address  string
 }
 
-// HostRegisterResult holds the registered host and its long-lived JWT.
+// HostRegisterResult holds the registered host, its short-lived JWT, and a long-lived refresh token.
 type HostRegisterResult struct {
-	Host db.Host
-	JWT  string
+	Host         db.Host
+	JWT          string
+	RefreshToken string
+}
+
+// HostRefreshResult holds a new JWT and rotated refresh token after a successful refresh.
+type HostRefreshResult struct {
+	Host         db.Host
+	JWT          string
+	RefreshToken string
+}
+
+// HostDeletePreview describes what will be affected by deleting a host.
+type HostDeletePreview struct {
+	Host       db.Host
+	SandboxIDs []string
 }
 
 // regTokenPayload is the JSON stored in Redis for registration tokens.
@@ -63,6 +82,14 @@ type regTokenPayload struct {
 }
 
 const regTokenTTL = time.Hour
+
+// requireAdminOrOwner returns nil iff the role is "owner" or "admin".
+func requireAdminOrOwner(role string) error {
+	if role == "owner" || role == "admin" {
+		return nil
+	}
+	return fmt.Errorf("forbidden: only team owners and admins can manage BYOC hosts")
+}
 
 // Create creates a new host record and generates a one-time registration token.
 func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreateResult, error) {
@@ -75,7 +102,7 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 			return HostCreateResult{}, fmt.Errorf("forbidden: only admins can create regular hosts")
 		}
 	} else {
-		// BYOC: admin or team owner.
+		// BYOC: platform admin, or team owner/admin.
 		if p.TeamID == "" {
 			return HostCreateResult{}, fmt.Errorf("invalid request: team_id is required for BYOC hosts")
 		}
@@ -90,8 +117,8 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 			if err != nil {
 				return HostCreateResult{}, fmt.Errorf("check team membership: %w", err)
 			}
-			if membership.Role != "owner" {
-				return HostCreateResult{}, fmt.Errorf("forbidden: only team owners can create BYOC hosts")
+			if err := requireAdminOrOwner(membership.Role); err != nil {
+				return HostCreateResult{}, err
 			}
 		}
 	}
@@ -168,7 +195,6 @@ func (s *HostService) RegenerateToken(ctx context.Context, hostID, userID, teamI
 		return HostCreateResult{}, fmt.Errorf("invalid state: can only regenerate token for pending hosts (status: %s)", host.Status)
 	}
 
-	// Same permission model as Create/Delete.
 	if !isAdmin {
 		if host.Type != "byoc" {
 			return HostCreateResult{}, fmt.Errorf("forbidden: only admins can manage regular hosts")
@@ -186,8 +212,8 @@ func (s *HostService) RegenerateToken(ctx context.Context, hostID, userID, teamI
 		if err != nil {
 			return HostCreateResult{}, fmt.Errorf("check team membership: %w", err)
 		}
-		if membership.Role != "owner" {
-			return HostCreateResult{}, fmt.Errorf("forbidden: only team owners can regenerate tokens")
+		if err := requireAdminOrOwner(membership.Role); err != nil {
+			return HostCreateResult{}, err
 		}
 	}
 
@@ -216,7 +242,7 @@ func (s *HostService) RegenerateToken(ctx context.Context, hostID, userID, teamI
 }
 
 // Register validates a one-time registration token, updates the host with
-// machine specs, and returns a long-lived host JWT.
+// machine specs, and returns a short-lived host JWT plus a long-lived refresh token.
 func (s *HostService) Register(ctx context.Context, p HostRegisterParams) (HostRegisterResult, error) {
 	// Atomic consume: GetDel returns the value and deletes in one operation,
 	// preventing concurrent requests from consuming the same token.
@@ -264,18 +290,89 @@ func (s *HostService) Register(ctx context.Context, p HostRegisterParams) (HostR
 		slog.Warn("failed to mark host token used", "token_id", payload.TokenID, "error", err)
 	}
 
+	// Issue a long-lived refresh token.
+	refreshToken, err := s.issueRefreshToken(ctx, payload.HostID)
+	if err != nil {
+		return HostRegisterResult{}, fmt.Errorf("issue refresh token: %w", err)
+	}
+
 	// Re-fetch the host to get the updated state.
 	host, err := s.DB.GetHost(ctx, payload.HostID)
 	if err != nil {
 		return HostRegisterResult{}, fmt.Errorf("fetch updated host: %w", err)
 	}
 
-	return HostRegisterResult{Host: host, JWT: hostJWT}, nil
+	return HostRegisterResult{Host: host, JWT: hostJWT, RefreshToken: refreshToken}, nil
 }
 
-// Heartbeat updates the last heartbeat timestamp for a host.
+// Refresh validates a refresh token, rotates it (revokes old, issues new),
+// and returns a fresh JWT plus the new refresh token.
+func (s *HostService) Refresh(ctx context.Context, refreshToken string) (HostRefreshResult, error) {
+	hash := hashToken(refreshToken)
+
+	row, err := s.DB.GetHostRefreshTokenByHash(ctx, hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return HostRefreshResult{}, fmt.Errorf("invalid or expired refresh token")
+	}
+	if err != nil {
+		return HostRefreshResult{}, fmt.Errorf("lookup refresh token: %w", err)
+	}
+
+	host, err := s.DB.GetHost(ctx, row.HostID)
+	if err != nil {
+		return HostRefreshResult{}, fmt.Errorf("host not found: %w", err)
+	}
+
+	// Sign new JWT.
+	hostJWT, err := auth.SignHostJWT(s.JWT, host.ID)
+	if err != nil {
+		return HostRefreshResult{}, fmt.Errorf("sign host JWT: %w", err)
+	}
+
+	// Issue-then-revoke rotation: insert new token first so a crash between
+	// the two DB calls leaves the host with two valid tokens rather than zero.
+	newRefreshToken, err := s.issueRefreshToken(ctx, host.ID)
+	if err != nil {
+		return HostRefreshResult{}, fmt.Errorf("issue new refresh token: %w", err)
+	}
+
+	// Revoke old refresh token after the new one is safely persisted.
+	if err := s.DB.RevokeHostRefreshToken(ctx, row.ID); err != nil {
+		return HostRefreshResult{}, fmt.Errorf("revoke old refresh token: %w", err)
+	}
+
+	return HostRefreshResult{Host: host, JWT: hostJWT, RefreshToken: newRefreshToken}, nil
+}
+
+// issueRefreshToken creates a new refresh token record in the DB and returns
+// the opaque token string.
+func (s *HostService) issueRefreshToken(ctx context.Context, hostID string) (string, error) {
+	token := id.NewRefreshToken()
+	hash := hashToken(token)
+	now := time.Now()
+
+	if _, err := s.DB.InsertHostRefreshToken(ctx, db.InsertHostRefreshTokenParams{
+		ID:        id.NewRefreshTokenID(),
+		HostID:    hostID,
+		TokenHash: hash,
+		ExpiresAt: pgtype.Timestamptz{Time: now.Add(auth.HostRefreshTokenExpiry), Valid: true},
+	}); err != nil {
+		return "", fmt.Errorf("insert refresh token: %w", err)
+	}
+
+	return token, nil
+}
+
+// hashToken returns the hex-encoded SHA-256 hash of the token.
+func hashToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", h)
+}
+
+// Heartbeat updates the last heartbeat timestamp for a host and transitions
+// any 'unreachable' host back to 'online'.
 func (s *HostService) Heartbeat(ctx context.Context, hostID string) error {
-	return s.DB.UpdateHostHeartbeat(ctx, hostID)
+	return s.DB.UpdateHostHeartbeatAndStatus(ctx, hostID)
 }
 
 // List returns hosts visible to the caller.
@@ -301,37 +398,135 @@ func (s *HostService) Get(ctx context.Context, hostID, teamID string, isAdmin bo
 	return host, nil
 }
 
-// Delete removes a host. Admins can delete any host. Team owners can delete
-// BYOC hosts belonging to their team.
-func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID string, isAdmin bool) error {
-	host, err := s.DB.GetHost(ctx, hostID)
+// DeletePreview returns what would be affected by deleting the host, without
+// making any changes. Use this to show the user a confirmation prompt.
+func (s *HostService) DeletePreview(ctx context.Context, hostID, teamID string, isAdmin bool) (HostDeletePreview, error) {
+	host, err := s.checkDeletePermission(ctx, hostID, "", teamID, isAdmin)
 	if err != nil {
-		return fmt.Errorf("host not found: %w", err)
+		return HostDeletePreview{}, err
 	}
 
-	if !isAdmin {
-		if host.Type != "byoc" {
-			return fmt.Errorf("forbidden: only admins can delete regular hosts")
+	sandboxes, err := s.DB.ListSandboxesByHostAndStatus(ctx, db.ListSandboxesByHostAndStatusParams{
+		HostID:  hostID,
+		Column2: []string{"pending", "starting", "running", "missing"},
+	})
+	if err != nil {
+		return HostDeletePreview{}, fmt.Errorf("list sandboxes: %w", err)
+	}
+
+	ids := make([]string, len(sandboxes))
+	for i, sb := range sandboxes {
+		ids[i] = sb.ID
+	}
+
+	return HostDeletePreview{Host: host, SandboxIDs: ids}, nil
+}
+
+// Delete removes a host. Without force it returns an error listing active
+// sandboxes so the caller can present a confirmation. With force it gracefully
+// destroys all running sandboxes before deleting the host record.
+func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID string, isAdmin, force bool) error {
+	host, err := s.checkDeletePermission(ctx, hostID, userID, teamID, isAdmin)
+	if err != nil {
+		return err
+	}
+
+	sandboxes, err := s.DB.ListSandboxesByHostAndStatus(ctx, db.ListSandboxesByHostAndStatusParams{
+		HostID:  hostID,
+		Column2: []string{"pending", "starting", "running", "missing"},
+	})
+	if err != nil {
+		return fmt.Errorf("list sandboxes: %w", err)
+	}
+
+	if len(sandboxes) > 0 && !force {
+		ids := make([]string, len(sandboxes))
+		for i, sb := range sandboxes {
+			ids[i] = sb.ID
 		}
-		if !host.TeamID.Valid || host.TeamID.String != teamID {
-			return fmt.Errorf("forbidden: host does not belong to your team")
+		return &HostHasSandboxesError{SandboxIDs: ids}
+	}
+
+	// Gracefully destroy running sandboxes on the host agent (best-effort).
+	if len(sandboxes) > 0 && host.Address.Valid && host.Address.String != "" {
+		agent, err := s.Pool.GetForHost(host)
+		if err == nil {
+			for _, sb := range sandboxes {
+				if sb.Status == "running" || sb.Status == "starting" {
+					_, rpcErr := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
+						SandboxId: sb.ID,
+					}))
+					if rpcErr != nil && connect.CodeOf(rpcErr) != connect.CodeNotFound {
+						slog.Warn("delete host: failed to destroy sandbox on agent", "sandbox_id", sb.ID, "error", rpcErr)
+					}
+				}
+			}
 		}
+	}
+
+	// Mark all affected sandboxes as stopped in DB.
+	if len(sandboxes) > 0 {
+		sbIDs := make([]string, len(sandboxes))
+		for i, sb := range sandboxes {
+			sbIDs[i] = sb.ID
+		}
+		if err := s.DB.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
+			Column1: sbIDs,
+			Status:  "stopped",
+		}); err != nil {
+			slog.Warn("delete host: failed to mark sandboxes stopped", "host_id", hostID, "error", err)
+		}
+	}
+
+	// Revoke all refresh tokens for this host.
+	if err := s.DB.RevokeHostRefreshTokensByHost(ctx, hostID); err != nil {
+		slog.Warn("delete host: failed to revoke refresh tokens", "host_id", hostID, "error", err)
+	}
+
+	// Evict the client from the pool so no further RPCs are sent.
+	if s.Pool != nil {
+		s.Pool.Evict(hostID)
+	}
+
+	return s.DB.DeleteHost(ctx, hostID)
+}
+
+// checkDeletePermission verifies the caller has permission to delete the given
+// host and returns the host record on success.
+func (s *HostService) checkDeletePermission(ctx context.Context, hostID, userID, teamID string, isAdmin bool) (db.Host, error) {
+	host, err := s.DB.GetHost(ctx, hostID)
+	if err != nil {
+		return db.Host{}, fmt.Errorf("host not found: %w", err)
+	}
+
+	if isAdmin {
+		return host, nil
+	}
+
+	if host.Type != "byoc" {
+		return db.Host{}, fmt.Errorf("forbidden: only admins can delete regular hosts")
+	}
+	if !host.TeamID.Valid || host.TeamID.String != teamID {
+		return db.Host{}, fmt.Errorf("forbidden: host does not belong to your team")
+	}
+
+	if userID != "" {
 		membership, err := s.DB.GetTeamMembership(ctx, db.GetTeamMembershipParams{
 			UserID: userID,
 			TeamID: teamID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("forbidden: not a member of the specified team")
+			return db.Host{}, fmt.Errorf("forbidden: not a member of the specified team")
 		}
 		if err != nil {
-			return fmt.Errorf("check team membership: %w", err)
+			return db.Host{}, fmt.Errorf("check team membership: %w", err)
 		}
-		if membership.Role != "owner" {
-			return fmt.Errorf("forbidden: only team owners can delete BYOC hosts")
+		if err := requireAdminOrOwner(membership.Role); err != nil {
+			return db.Host{}, err
 		}
 	}
 
-	return s.DB.DeleteHost(ctx, hostID)
+	return host, nil
 }
 
 // AddTag adds a tag to a host.
@@ -356,4 +551,15 @@ func (s *HostService) ListTags(ctx context.Context, hostID, teamID string, isAdm
 		return nil, err
 	}
 	return s.DB.GetHostTags(ctx, hostID)
+}
+
+// HostHasSandboxesError is returned by Delete when the host has active sandboxes
+// and force was not set. The caller should present the list to the user and
+// re-call Delete with force=true if they confirm.
+type HostHasSandboxesError struct {
+	SandboxIDs []string
+}
+
+func (e *HostHasSandboxesError) Error() string {
+	return fmt.Sprintf("host has %d active sandbox(es): %v", len(e.SandboxIDs), e.SandboxIDs)
 }

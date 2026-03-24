@@ -67,3 +67,18 @@ SELECT * FROM host_tokens WHERE host_id = $1 ORDER BY created_at DESC;
 
 -- name: GetHostByTeam :one
 SELECT * FROM hosts WHERE id = $1 AND team_id = $2;
+
+-- name: ListActiveHosts :many
+-- Returns all hosts that have completed registration (not pending/offline).
+SELECT * FROM hosts WHERE status NOT IN ('pending', 'offline') ORDER BY created_at;
+
+-- name: UpdateHostHeartbeatAndStatus :exec
+-- Updates last_heartbeat_at and transitions unreachable hosts back to online.
+UPDATE hosts
+SET last_heartbeat_at = NOW(),
+    status            = CASE WHEN status = 'unreachable' THEN 'online' ELSE status END,
+    updated_at        = NOW()
+WHERE id = $1;
+
+-- name: MarkHostUnreachable :exec
+UPDATE hosts SET status = 'unreachable', updated_at = NOW() WHERE id = $1;
