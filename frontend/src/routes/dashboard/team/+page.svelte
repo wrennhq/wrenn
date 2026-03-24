@@ -2,6 +2,8 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import { auth } from '$lib/auth.svelte';
 	import { toast } from '$lib/toast.svelte';
 	import {
@@ -73,6 +75,10 @@
 	let removing = $state(false);
 	let removeError = $state<string | null>(null);
 
+	// Delight: new member row flash, name saved flash
+	let recentlyAddedId = $state<string | null>(null);
+	let nameSavedFlash = $state(false);
+
 	// Danger zone
 	let showDangerConfirm = $state(false);
 	let dangerLoading = $state(false);
@@ -124,6 +130,8 @@
 		if (result.ok) {
 			team = { ...team, name: trimmed };
 			editingName = false;
+			nameSavedFlash = true;
+			setTimeout(() => (nameSavedFlash = false), 900);
 			toast.success('Team name updated');
 		} else {
 			nameError = result.error;
@@ -177,6 +185,8 @@
 		const result = await addMember(team.id, addEmail.trim().toLowerCase());
 		if (result.ok) {
 			members = [...members, result.data];
+			recentlyAddedId = result.data.user_id;
+			setTimeout(() => (recentlyAddedId = null), 1200);
 			showAddMember = false;
 			addEmail = '';
 			searchResults = [];
@@ -249,6 +259,11 @@
 			dangerError = result.error;
 			dangerLoading = false;
 		}
+	}
+
+	function avatarColor(email: string): string {
+		const palette = ['#5e8c58', '#5a9fd4', '#d4a73c', '#a07ab0', '#cf8172'];
+		return palette[email.charCodeAt(0) % palette.length];
 	}
 
 	function formatDate(iso: string): string {
@@ -471,7 +486,7 @@
 											title={canManage ? 'Click to edit' : undefined}
 										>
 											<span
-												class="text-ui font-medium text-[var(--color-text-bright)] {canManage ? 'group-hover:text-[var(--color-text-bright)]' : ''}"
+												class="text-ui font-medium transition-colors duration-300 {nameSavedFlash ? 'text-[var(--color-accent-mid)]' : 'text-[var(--color-text-bright)]'} {canManage ? 'group-hover:text-[var(--color-text-bright)]' : ''}"
 											>
 												{team.name}
 											</span>
@@ -498,108 +513,115 @@
 								</div>
 							</div>
 
-							<!-- Slug row -->
-							<div class="flex items-center gap-4 border-b border-[var(--color-border)] px-5 py-4">
-								<div class="min-w-0 flex-1">
-									<div
-										class="mb-1.5 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
-									>
-										Slug
+							<!-- Slug + ID row (2-col grid) -->
+							<div class="grid grid-cols-2 divide-x divide-[var(--color-border)]">
+								<!-- Slug -->
+								<div class="flex items-center gap-3 px-5 py-4">
+									<div class="min-w-0 flex-1">
+										<div
+											class="mb-1 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
+										>
+											Slug
+										</div>
+										<span class="block truncate font-mono text-ui text-[var(--color-text-secondary)]"
+											>{team.slug}</span
+										>
 									</div>
-									<span class="font-mono text-ui text-[var(--color-text-secondary)]"
-										>{team.slug}</span
+									<button
+										onclick={() => copyToClipboard(team!.slug, 'slug')}
+										title="Copy slug"
+										class="flex shrink-0 items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
+											{copiedSlug
+											? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
+											: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
 									>
+										{#if copiedSlug}
+											<svg
+												width="12"
+												height="12"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="2.5"
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												class="checkmark-draw"
+											>
+												<polyline points="20 6 9 17 4 12" />
+											</svg>
+											Copied
+										{:else}
+											<svg
+												width="12"
+												height="12"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="2"
+												stroke-linecap="round"
+												stroke-linejoin="round"
+											>
+												<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+												<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+											</svg>
+											Copy
+										{/if}
+									</button>
 								</div>
-								<button
-									onclick={() => copyToClipboard(team!.slug, 'slug')}
-									class="flex shrink-0 items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
-										{copiedSlug
-										? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
-										: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
-								>
-									{#if copiedSlug}
-										<svg
-											width="12"
-											height="12"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="2.5"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										>
-											<polyline points="20 6 9 17 4 12" />
-										</svg>
-										Copied
-									{:else}
-										<svg
-											width="12"
-											height="12"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="2"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										>
-											<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-											<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-										</svg>
-										Copy
-									{/if}
-								</button>
-							</div>
 
-							<!-- Team ID row -->
-							<div class="flex items-center gap-4 px-5 py-4">
-								<div class="min-w-0 flex-1">
-									<div
-										class="mb-1.5 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
-									>
-										Team ID
+								<!-- Team ID -->
+								<div class="flex items-center gap-3 px-5 py-4">
+									<div class="min-w-0 flex-1">
+										<div
+											class="mb-1 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
+										>
+											Team ID
+										</div>
+										<span class="block truncate font-mono text-ui text-[var(--color-text-secondary)]"
+											>{team.id}</span
+										>
 									</div>
-									<span class="font-mono text-ui text-[var(--color-text-secondary)]"
-										>{team.id}</span
+									<button
+										onclick={() => copyToClipboard(team!.id, 'id')}
+										title="Copy team ID"
+										class="flex shrink-0 items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
+											{copiedId
+											? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
+											: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
 									>
+										{#if copiedId}
+											<svg
+												width="12"
+												height="12"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="2.5"
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												class="checkmark-draw"
+											>
+												<polyline points="20 6 9 17 4 12" />
+											</svg>
+											Copied
+										{:else}
+											<svg
+												width="12"
+												height="12"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="2"
+												stroke-linecap="round"
+												stroke-linejoin="round"
+											>
+												<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+												<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+											</svg>
+											Copy
+										{/if}
+									</button>
 								</div>
-								<button
-									onclick={() => copyToClipboard(team!.id, 'id')}
-									class="flex shrink-0 items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
-										{copiedId
-										? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
-										: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
-								>
-									{#if copiedId}
-										<svg
-											width="12"
-											height="12"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="2.5"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										>
-											<polyline points="20 6 9 17 4 12" />
-										</svg>
-										Copied
-									{:else}
-										<svg
-											width="12"
-											height="12"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											stroke-width="2"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										>
-											<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-											<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-										</svg>
-										Copy
-									{/if}
-								</button>
 							</div>
 						</div>
 					</section>
@@ -676,17 +698,20 @@
 
 							{#each members as member, i (member.user_id)}
 								<div
-									class="grid grid-cols-[1fr_120px_140px_120px] items-center border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0"
-									style="animation: fadeUp 0.35s ease both; animation-delay: {i * 40}ms"
+									class="grid grid-cols-[1fr_120px_140px_120px] items-center border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {recentlyAddedId === member.user_id ? 'member-flash' : ''}"
+									in:fly={{ y: 6, duration: 200, delay: i * 30, easing: cubicOut }}
+									out:fly={{ x: -16, duration: 180, easing: cubicOut }}
 								>
 									<!-- Email -->
 									<div class="min-w-0 px-5 py-4">
-										<span class="block truncate text-ui text-[var(--color-text-bright)]"
-											>{member.email}</span
-										>
-										{#if member.user_id === auth.userId}
-											<span class="text-meta text-[var(--color-text-muted)]">you</span>
-										{/if}
+										<div class="flex min-w-0 items-center gap-2">
+											<span class="truncate text-ui text-[var(--color-text-bright)]"
+												>{member.email}</span
+											>
+											{#if member.user_id === auth.userId}
+												<span class="shrink-0 rounded-[2px] bg-[var(--color-bg-4)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">you</span>
+											{/if}
+										</div>
 									</div>
 
 									<!-- Role badge -->
@@ -989,7 +1014,8 @@
 									class="flex w-full items-center gap-2.5 px-3 py-2 text-ui transition-colors duration-150 hover:bg-[var(--color-bg-3)]"
 								>
 									<div
-										class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-5)] text-badge font-bold uppercase text-[var(--color-text-secondary)]"
+										class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-badge font-bold uppercase"
+										style="background: {avatarColor(result.email)}22; color: {avatarColor(result.email)}"
 									>
 										{result.email[0]}
 									</div>
@@ -1228,3 +1254,27 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	/* Checkmark SVG path draw animation for copy buttons */
+	.checkmark-draw polyline {
+		stroke-dasharray: 24;
+		stroke-dashoffset: 24;
+		animation: draw-check 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+	}
+	@keyframes draw-check {
+		to {
+			stroke-dashoffset: 0;
+		}
+	}
+
+	/* New member row entrance flash */
+	.member-flash {
+		animation: member-added 1.2s ease forwards;
+	}
+	@keyframes member-added {
+		0%   { background-color: transparent; }
+		15%  { background-color: var(--color-accent-glow-mid); }
+		100% { background-color: transparent; }
+	}
+</style>
