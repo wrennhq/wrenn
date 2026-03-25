@@ -250,13 +250,24 @@
 						<!-- Filter row -->
 						<div class="mb-4 flex items-center justify-between">
 							<div class="flex gap-1.5">
-								{#each ([['all', 'All'], ['snapshot', 'Snapshots'], ['base', 'Images']] as const) as [val, label]}
+								{#each ([['all', 'All', ''], ['snapshot', 'Snapshots', 'var(--color-accent)'], ['base', 'Images', 'var(--color-blue)']] as const) as [val, label, color]}
 									<button
 										onclick={() => (typeFilter = val)}
-										class="rounded-full border px-3 py-1 text-meta font-medium transition-all duration-150 active:scale-95 {typeFilter === val
-											? 'border-[var(--color-border-mid)] bg-[var(--color-bg-5)] text-[var(--color-text-bright)]'
-											: 'border-[var(--color-border)] bg-[var(--color-bg-3)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
+										class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-meta font-medium transition-all duration-150 active:scale-95
+											{typeFilter === val
+												? val === 'all'
+													? 'border-[var(--color-border-mid)] bg-[var(--color-bg-5)] text-[var(--color-text-bright)]'
+													: val === 'snapshot'
+														? 'border-[var(--color-accent)]/30 bg-[var(--color-accent)]/8 text-[var(--color-accent-bright)]'
+														: 'border-[var(--color-blue)]/30 bg-[var(--color-blue)]/8 text-[var(--color-blue)]'
+												: 'border-[var(--color-border)] bg-[var(--color-bg-3)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
 									>
+										{#if val !== 'all'}
+											<span
+												class="inline-block h-1.5 w-1.5 rounded-full"
+												style="background: {color}"
+											></span>
+										{/if}
 										{label}
 									</button>
 								{/each}
@@ -322,14 +333,18 @@
 
 								<!-- Rows -->
 								{#each filteredSnapshots as snapshot, i (snapshot.name)}
-									{@const stripeColor = snapshot.type === 'snapshot' ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-blue)]'}
+									{@const isSnapshot = snapshot.type === 'snapshot'}
+									{@const typeColor = isSnapshot ? 'var(--color-accent)' : 'var(--color-blue)'}
 									<div
-										class="snapshot-row row-item relative grid items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0"
+										class="snapshot-row row-item relative grid items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 last:border-b-0
+											{isSnapshot ? 'type-snapshot' : 'type-image'}"
 										style="grid-template-columns: 2fr 1fr 0.7fr 0.9fr 0.8fr 1.3fr 140px"
 										in:fly={{ y: 6, duration: 350, delay: i * 40, easing: cubicOut }}
 										out:fly={{ x: -12, duration: 180, easing: cubicIn }}
 									>
-										<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-0.5 {stripeColor}"></div>
+										<!-- Left accent stripe -->
+										<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-[3px]" style="background: {typeColor}"></div>
+
 										<!-- Name -->
 										<div class="min-w-0 px-5 py-4">
 											<span class="block truncate font-mono text-ui text-[var(--color-text-bright)]">{snapshot.name}</span>
@@ -337,8 +352,8 @@
 
 										<!-- Type badge -->
 										<div class="px-5 py-4">
-											{#if snapshot.type === 'snapshot'}
-												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-accent)]/20 bg-[var(--color-accent-glow-mid)] px-2 py-0.5 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
+											{#if isSnapshot}
+												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-accent)]/25 bg-[var(--color-accent)]/10 px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
 													<span
 														class="inline-block h-[5px] w-[5px] shrink-0 rounded-full bg-[var(--color-accent)]"
 														style="box-shadow: 0 0 6px rgba(94,140,88,0.5); animation: wrenn-glow 1.8s ease-in-out infinite"
@@ -346,7 +361,7 @@
 													Snapshot
 												</span>
 											{:else}
-												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-blue)]/20 bg-[var(--color-blue)]/10 px-2 py-0.5 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-blue)]">
+												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-blue)]/25 bg-[var(--color-blue)]/10 px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-blue)]">
 													<span class="inline-block h-[5px] w-[5px] shrink-0 rounded-full bg-[var(--color-blue)]"></span>
 													Image
 												</span>
@@ -356,7 +371,12 @@
 										<!-- vCPUs -->
 										<div class="px-5 py-4">
 											{#if snapshot.type === 'snapshot' && snapshot.vcpus != null}
-												<span class="font-mono text-ui text-[var(--color-text-secondary)]">{snapshot.vcpus}</span>
+												<span class="flex items-center gap-1.5">
+													<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={typeColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-50">
+														<rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" /><line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" /><line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" /><line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
+													</svg>
+													<span class="font-mono text-ui text-[var(--color-text-secondary)]">{snapshot.vcpus}</span>
+												</span>
 											{:else}
 												<span class="text-ui text-[var(--color-text-muted)]">—</span>
 											{/if}
@@ -365,7 +385,12 @@
 										<!-- Memory -->
 										<div class="px-5 py-4">
 											{#if snapshot.type === 'snapshot' && snapshot.memory_mb != null}
-												<span class="font-mono text-ui text-[var(--color-text-secondary)]">{snapshot.memory_mb} MB</span>
+												<span class="flex items-center gap-1.5">
+													<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={typeColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-50">
+														<rect x="2" y="6" width="20" height="12" rx="2" /><line x1="6" y1="12" x2="6" y2="12.01" /><line x1="10" y1="12" x2="10" y2="12.01" /><line x1="14" y1="12" x2="14" y2="12.01" /><line x1="18" y1="12" x2="18" y2="12.01" />
+													</svg>
+													<span class="font-mono text-ui text-[var(--color-text-secondary)]">{snapshot.memory_mb} <span class="text-[var(--color-text-muted)]">MB</span></span>
+												</span>
 											{:else}
 												<span class="text-ui text-[var(--color-text-muted)]">—</span>
 											{/if}
@@ -373,7 +398,7 @@
 
 										<!-- Size -->
 										<div class="px-5 py-4">
-											<span class="font-mono text-ui text-[var(--color-text-muted)]">{formatBytes(snapshot.size_bytes)}</span>
+											<span class="font-mono text-ui text-[var(--color-text-secondary)]">{formatBytes(snapshot.size_bytes)}</span>
 										</div>
 
 										<!-- Created -->
@@ -693,5 +718,13 @@
 	}
 	.snapshot-row:hover .row-stripe {
 		transform: scaleY(1);
+	}
+
+	/* Type-tinted row hover backgrounds */
+	.snapshot-row.type-snapshot:hover {
+		background: rgba(94, 140, 88, 0.04);
+	}
+	.snapshot-row.type-image:hover {
+		background: rgba(90, 159, 212, 0.04);
 	}
 </style>
