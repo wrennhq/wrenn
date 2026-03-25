@@ -58,6 +58,8 @@ type hostagentClient = interface {
 	PauseSandbox(ctx context.Context, req *connect.Request[pb.PauseSandboxRequest]) (*connect.Response[pb.PauseSandboxResponse], error)
 	ResumeSandbox(ctx context.Context, req *connect.Request[pb.ResumeSandboxRequest]) (*connect.Response[pb.ResumeSandboxResponse], error)
 	PingSandbox(ctx context.Context, req *connect.Request[pb.PingSandboxRequest]) (*connect.Response[pb.PingSandboxResponse], error)
+	GetSandboxMetrics(ctx context.Context, req *connect.Request[pb.GetSandboxMetricsRequest]) (*connect.Response[pb.GetSandboxMetricsResponse], error)
+	FlushSandboxMetrics(ctx context.Context, req *connect.Request[pb.FlushSandboxMetricsRequest]) (*connect.Response[pb.FlushSandboxMetricsResponse], error)
 }
 
 // Create creates a new sandbox: picks a host via the scheduler, inserts a pending
@@ -180,6 +182,9 @@ func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID string) (d
 		return db.Sandbox{}, err
 	}
 
+	// Flush all metrics tiers before pausing so data survives in DB.
+	s.flushAndPersistMetrics(ctx, agent, sandboxID, true)
+
 	if _, err := agent.PauseSandbox(ctx, connect.NewRequest(&pb.PauseSandboxRequest{
 		SandboxId: sandboxID,
 	})); err != nil {
@@ -236,13 +241,19 @@ func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID string) (
 
 // Destroy stops a sandbox and marks it as stopped.
 func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID string) error {
-	if _, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID}); err != nil {
+	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
+	if err != nil {
 		return fmt.Errorf("sandbox not found: %w", err)
 	}
 
 	agent, _, err := s.agentForSandbox(ctx, sandboxID)
 	if err != nil {
 		return err
+	}
+
+	// If running, flush 24h tier metrics for analytics before destroying.
+	if sb.Status == "running" {
+		s.flushAndPersistMetrics(ctx, agent, sandboxID, false)
 	}
 
 	// Destroy on host agent. A not-found response is fine — sandbox is already gone.
@@ -252,12 +263,57 @@ func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID string) 
 		return fmt.Errorf("agent destroy: %w", err)
 	}
 
+	// For a paused sandbox, only keep 24h tier; remove the finer-grained tiers.
+	if sb.Status == "paused" {
+		_ = s.DB.DeleteSandboxMetricPointsByTier(ctx, db.DeleteSandboxMetricPointsByTierParams{
+			SandboxID: sandboxID, Tier: "10m",
+		})
+		_ = s.DB.DeleteSandboxMetricPointsByTier(ctx, db.DeleteSandboxMetricPointsByTierParams{
+			SandboxID: sandboxID, Tier: "2h",
+		})
+	}
+
 	if _, err := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
 		ID: sandboxID, Status: "stopped",
 	}); err != nil {
 		return fmt.Errorf("update status: %w", err)
 	}
 	return nil
+}
+
+// flushAndPersistMetrics calls FlushSandboxMetrics on the agent and stores
+// the returned data to DB. If allTiers is true, all three tiers are saved;
+// otherwise only the 24h tier (for post-destroy analytics).
+func (s *SandboxService) flushAndPersistMetrics(ctx context.Context, agent hostagentClient, sandboxID string, allTiers bool) {
+	resp, err := agent.FlushSandboxMetrics(ctx, connect.NewRequest(&pb.FlushSandboxMetricsRequest{
+		SandboxId: sandboxID,
+	}))
+	if err != nil {
+		slog.Warn("flush metrics failed (best-effort)", "sandbox_id", sandboxID, "error", err)
+		return
+	}
+	msg := resp.Msg
+
+	if allTiers {
+		s.persistMetricPoints(ctx, sandboxID, "10m", msg.Points_10M)
+		s.persistMetricPoints(ctx, sandboxID, "2h", msg.Points_2H)
+	}
+	s.persistMetricPoints(ctx, sandboxID, "24h", msg.Points_24H)
+}
+
+func (s *SandboxService) persistMetricPoints(ctx context.Context, sandboxID, tier string, points []*pb.MetricPoint) {
+	for _, p := range points {
+		if err := s.DB.InsertSandboxMetricPoint(ctx, db.InsertSandboxMetricPointParams{
+			SandboxID: sandboxID,
+			Tier:      tier,
+			Ts:        p.TimestampUnix,
+			CpuPct:    p.CpuPct,
+			MemBytes:  p.MemBytes,
+			DiskBytes: p.DiskBytes,
+		}); err != nil {
+			slog.Warn("persist metric point failed", "sandbox_id", sandboxID, "tier", tier, "error", err)
+		}
+	}
 }
 
 // Ping resets the inactivity timer for a running sandbox.

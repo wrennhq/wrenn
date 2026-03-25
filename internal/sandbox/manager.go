@@ -58,6 +58,12 @@ type sandboxState struct {
 	// sandbox was restored. Non-nil means re-pause should use "Diff" snapshot
 	// type instead of "Full", avoiding the UFFD fault-in storm.
 	parent *snapshotParent
+
+	// Metrics sampling state.
+	fcPID         int                // Firecracker process PID (child of unshare wrapper)
+	ring          *metricsRing       // tiered ring buffers for CPU/mem/disk metrics
+	samplerCancel context.CancelFunc // cancels the per-sandbox sampling goroutine
+	samplerDone   chan struct{}      // closed when the sampling goroutine exits
 }
 
 // snapshotParent stores the previous generation's snapshot state so that
@@ -232,6 +238,8 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 	m.boxes[sandboxID] = sb
 	m.mu.Unlock()
 
+	m.startSampler(sb)
+
 	slog.Info("sandbox created",
 		"id", sandboxID,
 		"template", template,
@@ -265,6 +273,7 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 
 // cleanup tears down all resources for a sandbox.
 func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
+	m.stopSampler(sb)
 	if err := m.vm.Destroy(ctx, sb.ID); err != nil {
 		slog.Warn("vm destroy error", "id", sb.ID, "error", err)
 	}
@@ -668,6 +677,8 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 	m.boxes[sandboxID] = sb
 	m.mu.Unlock()
 
+	m.startSampler(sb)
+
 	// Don't delete snapshot dir — diff files are needed for re-pause.
 	// The CoW file was already moved out. The dir will be cleaned up
 	// on destroy or overwritten on re-pause.
@@ -987,6 +998,8 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 	m.boxes[sandboxID] = sb
 	m.mu.Unlock()
 
+	m.startSampler(sb)
+
 	slog.Info("sandbox created from snapshot",
 		"id", sandboxID,
 		"snapshot", snapshotName,
@@ -1211,6 +1224,177 @@ func warnErr(msg string, id string, err error) {
 	if err != nil {
 		slog.Warn(msg, "id", id, "error", err)
 	}
+}
+
+// startSampler resolves the Firecracker PID and starts a background goroutine
+// that samples CPU/mem/disk at 500ms intervals into the ring buffer.
+// Must be called after the sandbox is registered in m.boxes.
+func (m *Manager) startSampler(sb *sandboxState) {
+	v, ok := m.vm.Get(sb.ID)
+	if !ok {
+		slog.Warn("metrics: VM not found, skipping sampler", "id", sb.ID)
+		return
+	}
+
+	// v.PID() is the cmd.Process.Pid of the "unshare -m -- bash -c script"
+	// invocation. Because unshare(2) modifies the current process's namespace
+	// before exec-replacing itself with bash, and bash exec-replaces itself
+	// with ip-netns-exec, which exec-replaces itself with firecracker, the
+	// entire exec chain occupies the same PID. v.PID() IS the Firecracker PID.
+	fcPID := v.PID()
+
+	sb.fcPID = fcPID
+	sb.ring = newMetricsRing()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sb.samplerCancel = cancel
+	sb.samplerDone = make(chan struct{})
+
+	// Read initial CPU counters for delta calculation.
+	// Passed to goroutine as local state — no shared mutation.
+	initialCPU, err := readCPUStat(fcPID)
+	if err != nil {
+		slog.Warn("metrics: could not read initial CPU stat", "id", sb.ID, "error", err)
+	}
+
+	go m.samplerLoop(ctx, sb, fcPID, sb.VCPUs, initialCPU)
+}
+
+// samplerLoop samples /proc metrics at 500ms intervals.
+// lastCPU is goroutine-local to avoid shared-state races.
+func (m *Manager) samplerLoop(ctx context.Context, sb *sandboxState, fcPID, vcpus int, lastCPU cpuStat) {
+	defer close(sb.samplerDone)
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	clkTck := 100.0 // sysconf(_SC_CLK_TCK), almost always 100 on Linux
+	lastTime := time.Now()
+	cpuInitialized := lastCPU != (cpuStat{})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			elapsed := now.Sub(lastTime).Seconds()
+			lastTime = now
+
+			// CPU: delta jiffies / (elapsed * CLK_TCK * vcpus) * 100
+			var cpuPct float64
+			cur, err := readCPUStat(fcPID)
+			if err == nil {
+				if cpuInitialized && elapsed > 0 && vcpus > 0 {
+					deltaJiffies := float64((cur.utime + cur.stime) - (lastCPU.utime + lastCPU.stime))
+					cpuPct = (deltaJiffies / (elapsed * clkTck * float64(vcpus))) * 100.0
+					if cpuPct > 100.0 {
+						cpuPct = 100.0
+					}
+					if cpuPct < 0 {
+						cpuPct = 0
+					}
+				}
+				lastCPU = cur
+				cpuInitialized = true
+			}
+
+			// Memory: VmRSS of the Firecracker process.
+			memBytes, _ := readMemRSS(fcPID)
+
+			// Disk: allocated bytes of the CoW sparse file.
+			var diskBytes int64
+			if sb.dmDevice != nil {
+				diskBytes, _ = readDiskAllocated(sb.dmDevice.CowPath)
+			}
+
+			sb.ring.Push(MetricPoint{
+				Timestamp: now,
+				CPUPct:    cpuPct,
+				MemBytes:  memBytes,
+				DiskBytes: diskBytes,
+			})
+		}
+	}
+}
+
+// stopSampler stops the metrics sampling goroutine and waits for it to exit.
+func (m *Manager) stopSampler(sb *sandboxState) {
+	if sb.samplerCancel != nil {
+		sb.samplerCancel()
+		<-sb.samplerDone
+		sb.samplerCancel = nil
+	}
+}
+
+// GetMetrics returns the ring buffer data for the given range tier.
+// Valid ranges: "10m", "2h", "24h".
+func (m *Manager) GetMetrics(sandboxID, rangeTier string) ([]MetricPoint, error) {
+	m.mu.RLock()
+	sb, ok := m.boxes[sandboxID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+	}
+	if sb.ring == nil {
+		return nil, nil
+	}
+
+	// Map the requested range to the appropriate ring tier and time cutoff.
+	var points []MetricPoint
+	var cutoff time.Duration
+	switch rangeTier {
+	case "5m":
+		points = sb.ring.Get10m()
+		cutoff = 5 * time.Minute
+	case "10m":
+		points = sb.ring.Get10m()
+		cutoff = 10 * time.Minute
+	case "1h":
+		points = sb.ring.Get2h()
+		cutoff = 1 * time.Hour
+	case "2h":
+		points = sb.ring.Get2h()
+		cutoff = 2 * time.Hour
+	case "6h":
+		points = sb.ring.Get24h()
+		cutoff = 6 * time.Hour
+	case "12h":
+		points = sb.ring.Get24h()
+		cutoff = 12 * time.Hour
+	case "24h":
+		points = sb.ring.Get24h()
+		cutoff = 24 * time.Hour
+	default:
+		return nil, fmt.Errorf("invalid range: %s (valid: 5m, 10m, 1h, 2h, 6h, 12h, 24h)", rangeTier)
+	}
+
+	// Filter points to the requested time window.
+	threshold := time.Now().Add(-cutoff)
+	filtered := points[:0:0]
+	for _, p := range points {
+		if !p.Timestamp.Before(threshold) {
+			filtered = append(filtered, p)
+		}
+	}
+	return filtered, nil
+}
+
+// FlushMetrics returns all three tier ring buffers, clears the ring, and
+// stops the sampler goroutine. Called by the control plane before pause/destroy.
+func (m *Manager) FlushMetrics(sandboxID string) (pts10m, pts2h, pts24h []MetricPoint, err error) {
+	m.mu.RLock()
+	sb, ok := m.boxes[sandboxID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+	}
+
+	m.stopSampler(sb)
+	if sb.ring == nil {
+		return nil, nil, nil, nil
+	}
+	pts10m, pts2h, pts24h = sb.ring.Flush()
+	return pts10m, pts2h, pts24h, nil
 }
 
 // copyFile copies a regular file from src to dst using streaming I/O.

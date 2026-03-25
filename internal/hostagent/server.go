@@ -426,3 +426,55 @@ func (s *Server) Terminate(
 	}
 	return connect.NewResponse(&pb.TerminateResponse{}), nil
 }
+
+func (s *Server) GetSandboxMetrics(
+	_ context.Context,
+	req *connect.Request[pb.GetSandboxMetricsRequest],
+) (*connect.Response[pb.GetSandboxMetricsResponse], error) {
+	msg := req.Msg
+
+	points, err := s.mgr.GetMetrics(msg.SandboxId, msg.Range)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		if strings.Contains(err.Error(), "invalid range") {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	return connect.NewResponse(&pb.GetSandboxMetricsResponse{Points: metricPointsToPB(points)}), nil
+}
+
+func (s *Server) FlushSandboxMetrics(
+	_ context.Context,
+	req *connect.Request[pb.FlushSandboxMetricsRequest],
+) (*connect.Response[pb.FlushSandboxMetricsResponse], error) {
+	pts10m, pts2h, pts24h, err := s.mgr.FlushMetrics(req.Msg.SandboxId)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	return connect.NewResponse(&pb.FlushSandboxMetricsResponse{
+		Points_10M: metricPointsToPB(pts10m),
+		Points_2H:  metricPointsToPB(pts2h),
+		Points_24H: metricPointsToPB(pts24h),
+	}), nil
+}
+
+func metricPointsToPB(pts []sandbox.MetricPoint) []*pb.MetricPoint {
+	out := make([]*pb.MetricPoint, len(pts))
+	for i, p := range pts {
+		out[i] = &pb.MetricPoint{
+			TimestampUnix: p.Timestamp.Unix(),
+			CpuPct:        p.CPUPct,
+			MemBytes:      p.MemBytes,
+			DiskBytes:     p.DiskBytes,
+		}
+	}
+	return out
+}

@@ -21,7 +21,8 @@
 		IconDocs,
 		IconAudit,
 		IconServer,
-		IconShield
+		IconShield,
+		IconMetrics
 	} from './icons';
 
 	let { collapsed = $bindable(false) }: { collapsed: boolean } = $props();
@@ -47,7 +48,8 @@
 
 	const platformItems: NavItem[] = [
 		{ label: 'Capsules', icon: IconMonitor, href: '/dashboard/capsules' },
-		{ label: 'Templates', icon: IconBox, href: '/dashboard/snapshots' }
+		{ label: 'Templates', icon: IconBox, href: '/dashboard/snapshots' },
+		{ label: 'Metrics', icon: IconMetrics, href: '/dashboard/metrics' }
 	];
 
 	let currentTeamIsByoc = $derived(
@@ -342,19 +344,19 @@
 			{:else if isActive(item.href)}
 				<a
 					href={item.href}
-					class="group relative flex items-center rounded-[var(--radius-input)] bg-[var(--color-accent-glow-mid)] px-2.5 py-2.5 transition-colors duration-150 {collapsed
-						? 'justify-center px-2'
-						: 'gap-3'}"
+					class="group relative flex items-center rounded-[var(--radius-input)] px-2.5 py-2.5 transition-colors duration-150 {collapsed
+						? 'justify-center px-2 bg-[var(--color-accent-glow-mid)]'
+						: 'gap-3 bg-[var(--color-accent)]/[0.12]'}"
 					title={collapsed ? item.label : undefined}
 				>
 					{#if !collapsed}
 						<div
-							class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--color-accent)]"
+							class="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-accent)]"
 						></div>
 					{/if}
 					<item.icon size={16} class="shrink-0 text-[var(--color-accent-bright)]" />
 					{#if !collapsed}
-						<span class="text-ui font-medium text-[var(--color-accent-bright)]">
+						<span class="text-ui font-semibold text-[var(--color-accent-bright)]">
 							{item.label}
 						</span>
 					{/if}
@@ -396,7 +398,7 @@
 
 		<div
 			class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
-			style="animation: fadeUp 0.2s ease both"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
 				Create Team

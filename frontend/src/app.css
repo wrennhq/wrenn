@@ -69,8 +69,10 @@
 	--radius-avatar: 5px;
 	--radius-logo: 6px;
 
-	/* Shadows — flat aesthetic */
-	--shadow-sm: 0 0 #0000;
+	/* Shadows */
+	--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.2);
+	--shadow-card: 0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.25);
+	--shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.35);
 }
 
 /* Base styles */
@@ -129,6 +131,24 @@ body {
 	50% {
 		opacity: 0.3;
 	}
+}
+
+/* Outward ring ripple — for live/running status dots; more delightful than opacity-only */
+@keyframes status-ping {
+	0% {
+		transform: scale(1);
+		opacity: 0.8;
+	}
+	80%,
+	100% {
+		transform: scale(2.8);
+		opacity: 0;
+	}
+}
+
+.animate-status-ping {
+	animation: status-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+	will-change: transform, opacity;
 }
 
 /* Fade-up entrance animation */

@@ -4,34 +4,38 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/service"
+	"git.omukk.dev/wrenn/sandbox/internal/db"
 )
 
 type usersHandler struct {
-	svc *service.TeamService
+	db *db.Queries
 }
 
-func newUsersHandler(svc *service.TeamService) *usersHandler {
-	return &usersHandler{svc: svc}
+func newUsersHandler(db *db.Queries) *usersHandler {
+	return &usersHandler{db: db}
 }
 
 // Search handles GET /v1/users/search?email=<prefix>
 // Returns up to 10 users whose email starts with the given prefix.
-// The prefix must be at least 3 characters long.
+// The prefix must be at least 3 characters long and contain "@".
 func (h *usersHandler) Search(w http.ResponseWriter, r *http.Request) {
 	auth.MustFromContext(r.Context()) // ensure authenticated
 
 	prefix := strings.TrimSpace(r.URL.Query().Get("email"))
-	if len(prefix) < 3 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "email prefix must be at least 3 characters")
+	if len(prefix) < 3 || !strings.Contains(prefix, "@") {
+		writeError(w, http.StatusBadRequest, "invalid_request", "email prefix must be at least 3 characters and contain '@'")
 		return
 	}
 
-	results, err := h.svc.SearchUsersByEmailPrefix(r.Context(), prefix)
+	// Escape LIKE metacharacters to prevent pattern injection.
+	escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(prefix)
+
+	results, err := h.db.SearchUsersByEmailPrefix(r.Context(), pgtype.Text{String: escaped, Valid: true})
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeError(w, http.StatusInternalServerError, "internal", "search failed")
 		return
 	}
 

@@ -250,6 +250,12 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapPath
 	return vm, nil
 }
 
+// PID returns the process ID of the unshare wrapper process.
+// The actual Firecracker process is a direct child of this PID.
+func (v *VM) PID() int {
+	return v.process.cmd.Process.Pid
+}
+
 // Get returns a running VM by sandbox ID.
 func (m *Manager) Get(sandboxID string) (*VM, bool) {
 	vm, ok := m.vms[sandboxID]

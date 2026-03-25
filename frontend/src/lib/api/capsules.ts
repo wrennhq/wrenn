@@ -20,6 +20,10 @@ export async function listCapsules(): Promise<ApiResult<Capsule[]>> {
 	return apiFetch('GET', '/api/v1/sandboxes');
 }
 
+export async function getCapsule(id: string): Promise<ApiResult<Capsule>> {
+	return apiFetch('GET', `/api/v1/sandboxes/${id}`);
+}
+
 export type CreateCapsuleParams = {
 	template?: string;
 	vcpus?: number;

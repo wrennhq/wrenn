@@ -9,7 +9,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
@@ -367,12 +366,6 @@ func (s *TeamService) LeaveTeam(ctx context.Context, teamID, callerUserID string
 		return fmt.Errorf("leave team: %w", err)
 	}
 	return nil
-}
-
-// SearchUsersByEmailPrefix returns up to 10 users whose email starts with the given prefix.
-// The prefix must contain "@" to prevent broad enumeration.
-func (s *TeamService) SearchUsersByEmailPrefix(ctx context.Context, prefix string) ([]db.SearchUsersByEmailPrefixRow, error) {
-	return s.DB.SearchUsersByEmailPrefix(ctx, pgtype.Text{String: prefix, Valid: true})
 }
 
 // SetBYOC enables the BYOC feature flag for a team. Once enabled, BYOC cannot

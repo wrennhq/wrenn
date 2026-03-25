@@ -77,6 +77,12 @@ const (
 	// HostAgentServiceTerminateProcedure is the fully-qualified name of the HostAgentService's
 	// Terminate RPC.
 	HostAgentServiceTerminateProcedure = "/hostagent.v1.HostAgentService/Terminate"
+	// HostAgentServiceGetSandboxMetricsProcedure is the fully-qualified name of the HostAgentService's
+	// GetSandboxMetrics RPC.
+	HostAgentServiceGetSandboxMetricsProcedure = "/hostagent.v1.HostAgentService/GetSandboxMetrics"
+	// HostAgentServiceFlushSandboxMetricsProcedure is the fully-qualified name of the
+	// HostAgentService's FlushSandboxMetrics RPC.
+	HostAgentServiceFlushSandboxMetricsProcedure = "/hostagent.v1.HostAgentService/FlushSandboxMetrics"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -115,6 +121,11 @@ type HostAgentServiceClient interface {
 	// Called by the control plane immediately when a host is deleted so the
 	// agent shuts down without waiting for the next heartbeat cycle.
 	Terminate(context.Context, *connect.Request[gen.TerminateRequest]) (*connect.Response[gen.TerminateResponse], error)
+	// GetSandboxMetrics returns ring buffer metrics for a running sandbox.
+	GetSandboxMetrics(context.Context, *connect.Request[gen.GetSandboxMetricsRequest]) (*connect.Response[gen.GetSandboxMetricsResponse], error)
+	// FlushSandboxMetrics returns all ring buffer tiers and clears them.
+	// Called by the control plane before pause/destroy to persist metrics to DB.
+	FlushSandboxMetrics(context.Context, *connect.Request[gen.FlushSandboxMetricsRequest]) (*connect.Response[gen.FlushSandboxMetricsResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -218,26 +229,40 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("Terminate")),
 			connect.WithClientOptions(opts...),
 		),
+		getSandboxMetrics: connect.NewClient[gen.GetSandboxMetricsRequest, gen.GetSandboxMetricsResponse](
+			httpClient,
+			baseURL+HostAgentServiceGetSandboxMetricsProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("GetSandboxMetrics")),
+			connect.WithClientOptions(opts...),
+		),
+		flushSandboxMetrics: connect.NewClient[gen.FlushSandboxMetricsRequest, gen.FlushSandboxMetricsResponse](
+			httpClient,
+			baseURL+HostAgentServiceFlushSandboxMetricsProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("FlushSandboxMetrics")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // hostAgentServiceClient implements HostAgentServiceClient.
 type hostAgentServiceClient struct {
-	createSandbox   *connect.Client[gen.CreateSandboxRequest, gen.CreateSandboxResponse]
-	destroySandbox  *connect.Client[gen.DestroySandboxRequest, gen.DestroySandboxResponse]
-	pauseSandbox    *connect.Client[gen.PauseSandboxRequest, gen.PauseSandboxResponse]
-	resumeSandbox   *connect.Client[gen.ResumeSandboxRequest, gen.ResumeSandboxResponse]
-	exec            *connect.Client[gen.ExecRequest, gen.ExecResponse]
-	listSandboxes   *connect.Client[gen.ListSandboxesRequest, gen.ListSandboxesResponse]
-	writeFile       *connect.Client[gen.WriteFileRequest, gen.WriteFileResponse]
-	readFile        *connect.Client[gen.ReadFileRequest, gen.ReadFileResponse]
-	createSnapshot  *connect.Client[gen.CreateSnapshotRequest, gen.CreateSnapshotResponse]
-	deleteSnapshot  *connect.Client[gen.DeleteSnapshotRequest, gen.DeleteSnapshotResponse]
-	execStream      *connect.Client[gen.ExecStreamRequest, gen.ExecStreamResponse]
-	writeFileStream *connect.Client[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse]
-	readFileStream  *connect.Client[gen.ReadFileStreamRequest, gen.ReadFileStreamResponse]
-	pingSandbox     *connect.Client[gen.PingSandboxRequest, gen.PingSandboxResponse]
-	terminate       *connect.Client[gen.TerminateRequest, gen.TerminateResponse]
+	createSandbox       *connect.Client[gen.CreateSandboxRequest, gen.CreateSandboxResponse]
+	destroySandbox      *connect.Client[gen.DestroySandboxRequest, gen.DestroySandboxResponse]
+	pauseSandbox        *connect.Client[gen.PauseSandboxRequest, gen.PauseSandboxResponse]
+	resumeSandbox       *connect.Client[gen.ResumeSandboxRequest, gen.ResumeSandboxResponse]
+	exec                *connect.Client[gen.ExecRequest, gen.ExecResponse]
+	listSandboxes       *connect.Client[gen.ListSandboxesRequest, gen.ListSandboxesResponse]
+	writeFile           *connect.Client[gen.WriteFileRequest, gen.WriteFileResponse]
+	readFile            *connect.Client[gen.ReadFileRequest, gen.ReadFileResponse]
+	createSnapshot      *connect.Client[gen.CreateSnapshotRequest, gen.CreateSnapshotResponse]
+	deleteSnapshot      *connect.Client[gen.DeleteSnapshotRequest, gen.DeleteSnapshotResponse]
+	execStream          *connect.Client[gen.ExecStreamRequest, gen.ExecStreamResponse]
+	writeFileStream     *connect.Client[gen.WriteFileStreamRequest, gen.WriteFileStreamResponse]
+	readFileStream      *connect.Client[gen.ReadFileStreamRequest, gen.ReadFileStreamResponse]
+	pingSandbox         *connect.Client[gen.PingSandboxRequest, gen.PingSandboxResponse]
+	terminate           *connect.Client[gen.TerminateRequest, gen.TerminateResponse]
+	getSandboxMetrics   *connect.Client[gen.GetSandboxMetricsRequest, gen.GetSandboxMetricsResponse]
+	flushSandboxMetrics *connect.Client[gen.FlushSandboxMetricsRequest, gen.FlushSandboxMetricsResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -315,6 +340,16 @@ func (c *hostAgentServiceClient) Terminate(ctx context.Context, req *connect.Req
 	return c.terminate.CallUnary(ctx, req)
 }
 
+// GetSandboxMetrics calls hostagent.v1.HostAgentService.GetSandboxMetrics.
+func (c *hostAgentServiceClient) GetSandboxMetrics(ctx context.Context, req *connect.Request[gen.GetSandboxMetricsRequest]) (*connect.Response[gen.GetSandboxMetricsResponse], error) {
+	return c.getSandboxMetrics.CallUnary(ctx, req)
+}
+
+// FlushSandboxMetrics calls hostagent.v1.HostAgentService.FlushSandboxMetrics.
+func (c *hostAgentServiceClient) FlushSandboxMetrics(ctx context.Context, req *connect.Request[gen.FlushSandboxMetricsRequest]) (*connect.Response[gen.FlushSandboxMetricsResponse], error) {
+	return c.flushSandboxMetrics.CallUnary(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -351,6 +386,11 @@ type HostAgentServiceHandler interface {
 	// Called by the control plane immediately when a host is deleted so the
 	// agent shuts down without waiting for the next heartbeat cycle.
 	Terminate(context.Context, *connect.Request[gen.TerminateRequest]) (*connect.Response[gen.TerminateResponse], error)
+	// GetSandboxMetrics returns ring buffer metrics for a running sandbox.
+	GetSandboxMetrics(context.Context, *connect.Request[gen.GetSandboxMetricsRequest]) (*connect.Response[gen.GetSandboxMetricsResponse], error)
+	// FlushSandboxMetrics returns all ring buffer tiers and clears them.
+	// Called by the control plane before pause/destroy to persist metrics to DB.
+	FlushSandboxMetrics(context.Context, *connect.Request[gen.FlushSandboxMetricsRequest]) (*connect.Response[gen.FlushSandboxMetricsResponse], error)
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -450,6 +490,18 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("Terminate")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServiceGetSandboxMetricsHandler := connect.NewUnaryHandler(
+		HostAgentServiceGetSandboxMetricsProcedure,
+		svc.GetSandboxMetrics,
+		connect.WithSchema(hostAgentServiceMethods.ByName("GetSandboxMetrics")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceFlushSandboxMetricsHandler := connect.NewUnaryHandler(
+		HostAgentServiceFlushSandboxMetricsProcedure,
+		svc.FlushSandboxMetrics,
+		connect.WithSchema(hostAgentServiceMethods.ByName("FlushSandboxMetrics")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -482,6 +534,10 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServicePingSandboxHandler.ServeHTTP(w, r)
 		case HostAgentServiceTerminateProcedure:
 			hostAgentServiceTerminateHandler.ServeHTTP(w, r)
+		case HostAgentServiceGetSandboxMetricsProcedure:
+			hostAgentServiceGetSandboxMetricsHandler.ServeHTTP(w, r)
+		case HostAgentServiceFlushSandboxMetricsProcedure:
+			hostAgentServiceFlushSandboxMetricsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -549,4 +605,12 @@ func (UnimplementedHostAgentServiceHandler) PingSandbox(context.Context, *connec
 
 func (UnimplementedHostAgentServiceHandler) Terminate(context.Context, *connect.Request[gen.TerminateRequest]) (*connect.Response[gen.TerminateResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.Terminate is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) GetSandboxMetrics(context.Context, *connect.Request[gen.GetSandboxMetricsRequest]) (*connect.Response[gen.GetSandboxMetricsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.GetSandboxMetrics is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) FlushSandboxMetrics(context.Context, *connect.Request[gen.FlushSandboxMetricsRequest]) (*connect.Response[gen.FlushSandboxMetricsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.FlushSandboxMetrics is not implemented"))
 }
