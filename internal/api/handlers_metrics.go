@@ -123,22 +123,20 @@ func (h *sandboxMetricsHandler) getFromDB(ctx context.Context, w http.ResponseWr
 	rows, err := h.db.GetSandboxMetricPoints(ctx, db.GetSandboxMetricPointsParams{
 		SandboxID: sandboxID,
 		Tier:      mapping.tier,
+		Ts:        time.Now().Add(-mapping.cutoff).Unix(),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to read metrics")
 		return
 	}
 
-	threshold := time.Now().Add(-mapping.cutoff).Unix()
-	var points []metricPointResponse
-	for _, row := range rows {
-		if row.Ts >= threshold {
-			points = append(points, metricPointResponse{
-				TimestampUnix: row.Ts,
-				CPUPct:        row.CpuPct,
-				MemBytes:      row.MemBytes,
-				DiskBytes:     row.DiskBytes,
-			})
+	points := make([]metricPointResponse, len(rows))
+	for i, row := range rows {
+		points[i] = metricPointResponse{
+			TimestampUnix: row.Ts,
+			CPUPct:        row.CpuPct,
+			MemBytes:      row.MemBytes,
+			DiskBytes:     row.DiskBytes,
 		}
 	}
 

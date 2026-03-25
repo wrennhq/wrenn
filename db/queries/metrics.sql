@@ -35,7 +35,7 @@ ON CONFLICT (sandbox_id, tier, ts) DO NOTHING;
 -- name: GetSandboxMetricPoints :many
 SELECT ts, cpu_pct, mem_bytes, disk_bytes
 FROM sandbox_metric_points
-WHERE sandbox_id = $1 AND tier = $2
+WHERE sandbox_id = $1 AND tier = $2 AND ts >= $3
 ORDER BY ts ASC;
 
 -- name: DeleteSandboxMetricPoints :exec

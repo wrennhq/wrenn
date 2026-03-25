@@ -86,13 +86,14 @@ func (q *Queries) GetPeakMetrics(ctx context.Context, teamID string) (GetPeakMet
 const getSandboxMetricPoints = `-- name: GetSandboxMetricPoints :many
 SELECT ts, cpu_pct, mem_bytes, disk_bytes
 FROM sandbox_metric_points
-WHERE sandbox_id = $1 AND tier = $2
+WHERE sandbox_id = $1 AND tier = $2 AND ts >= $3
 ORDER BY ts ASC
 `
 
 type GetSandboxMetricPointsParams struct {
 	SandboxID string `json:"sandbox_id"`
 	Tier      string `json:"tier"`
+	Ts        int64  `json:"ts"`
 }
 
 type GetSandboxMetricPointsRow struct {
@@ -103,7 +104,7 @@ type GetSandboxMetricPointsRow struct {
 }
 
 func (q *Queries) GetSandboxMetricPoints(ctx context.Context, arg GetSandboxMetricPointsParams) ([]GetSandboxMetricPointsRow, error) {
-	rows, err := q.db.Query(ctx, getSandboxMetricPoints, arg.SandboxID, arg.Tier)
+	rows, err := q.db.Query(ctx, getSandboxMetricPoints, arg.SandboxID, arg.Tier, arg.Ts)
 	if err != nil {
 		return nil, err
 	}
