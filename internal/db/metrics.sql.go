@@ -7,34 +7,31 @@ package db
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getCurrentMetrics = `-- name: GetCurrentMetrics :one
-SELECT running_count, vcpus_reserved, memory_mb_reserved, sampled_at
-FROM sandbox_metrics_snapshots
+const getLiveMetrics = `-- name: GetLiveMetrics :one
+SELECT
+    (COUNT(*) FILTER (WHERE status IN ('running', 'starting')))::INTEGER                                              AS running_count,
+    (COALESCE(SUM(vcpus)     FILTER (WHERE status IN ('running', 'starting')), 0))::INTEGER                          AS vcpus_reserved,
+    (COALESCE(SUM(memory_mb) FILTER (WHERE status IN ('running', 'starting')), 0)
+     + CEIL(COALESCE(SUM(memory_mb) FILTER (WHERE status = 'paused'), 0)::NUMERIC / 2))::INTEGER                     AS memory_mb_reserved
+FROM sandboxes
 WHERE team_id = $1
-ORDER BY sampled_at DESC
-LIMIT 1
 `
 
-type GetCurrentMetricsRow struct {
-	RunningCount     int32              `json:"running_count"`
-	VcpusReserved    int32              `json:"vcpus_reserved"`
-	MemoryMbReserved int32              `json:"memory_mb_reserved"`
-	SampledAt        pgtype.Timestamptz `json:"sampled_at"`
+type GetLiveMetricsRow struct {
+	RunningCount     int32 `json:"running_count"`
+	VcpusReserved    int32 `json:"vcpus_reserved"`
+	MemoryMbReserved int32 `json:"memory_mb_reserved"`
 }
 
-func (q *Queries) GetCurrentMetrics(ctx context.Context, teamID string) (GetCurrentMetricsRow, error) {
-	row := q.db.QueryRow(ctx, getCurrentMetrics, teamID)
-	var i GetCurrentMetricsRow
-	err := row.Scan(
-		&i.RunningCount,
-		&i.VcpusReserved,
-		&i.MemoryMbReserved,
-		&i.SampledAt,
-	)
+// Reads directly from sandboxes for accurate real-time current values.
+// CPU reserved = running + starting only (paused VMs release CPU).
+// RAM reserved = running + starting + ceil(paused/2) (capacity held for resume).
+func (q *Queries) GetLiveMetrics(ctx context.Context, teamID string) (GetLiveMetricsRow, error) {
+	row := q.db.QueryRow(ctx, getLiveMetrics, teamID)
+	var i GetLiveMetricsRow
+	err := row.Scan(&i.RunningCount, &i.VcpusReserved, &i.MemoryMbReserved)
 	return i, err
 }
 
@@ -97,8 +94,7 @@ const sampleSandboxMetrics = `-- name: SampleSandboxMetrics :many
 SELECT
     team_id,
     (COUNT(*) FILTER (WHERE status IN ('running', 'starting')))::INTEGER                                              AS running_count,
-    (COALESCE(SUM(vcpus)    FILTER (WHERE status IN ('running', 'starting')), 0)
-     + CEIL(COALESCE(SUM(vcpus)    FILTER (WHERE status = 'paused'), 0)::NUMERIC / 2))::INTEGER                      AS vcpus_reserved,
+    (COALESCE(SUM(vcpus)     FILTER (WHERE status IN ('running', 'starting')), 0))::INTEGER                          AS vcpus_reserved,
     (COALESCE(SUM(memory_mb) FILTER (WHERE status IN ('running', 'starting')), 0)
      + CEIL(COALESCE(SUM(memory_mb) FILTER (WHERE status = 'paused'), 0)::NUMERIC / 2))::INTEGER                     AS memory_mb_reserved
 FROM sandboxes
@@ -114,7 +110,8 @@ type SampleSandboxMetricsRow struct {
 }
 
 // Aggregates per-team resource usage from the live sandboxes table.
-// paused sandboxes count at 50% (ceil) for capacity reservation.
+// CPU reserved = running + starting only (paused VMs release CPU).
+// RAM reserved = running + starting + ceil(paused/2) (capacity held for resume).
 func (q *Queries) SampleSandboxMetrics(ctx context.Context) ([]SampleSandboxMetricsRow, error) {
 	rows, err := q.db.Query(ctx, sampleSandboxMetrics)
 	if err != nil {

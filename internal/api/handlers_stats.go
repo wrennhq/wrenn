@@ -18,10 +18,9 @@ func newStatsHandler(svc *service.StatsService) *statsHandler {
 }
 
 type statsCurrentResponse struct {
-	RunningCount     int32  `json:"running_count"`
-	VCPUsReserved    int32  `json:"vcpus_reserved"`
-	MemoryMBReserved int32  `json:"memory_mb_reserved"`
-	SampledAt        string `json:"sampled_at,omitempty"`
+	RunningCount     int32 `json:"running_count"`
+	VCPUsReserved    int32 `json:"vcpus_reserved"`
+	MemoryMBReserved int32 `json:"memory_mb_reserved"`
 }
 
 type statsPeaksResponse struct {
@@ -83,10 +82,6 @@ func (h *statsHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 			VCPUs:    make([]int32, len(series)),
 			MemoryMB: make([]int32, len(series)),
 		},
-	}
-
-	if !current.SampledAt.IsZero() {
-		resp.Current.SampledAt = current.SampledAt.UTC().Format(time.RFC3339)
 	}
 
 	for i, pt := range series {

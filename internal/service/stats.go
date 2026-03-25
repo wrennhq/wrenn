@@ -50,12 +50,11 @@ type StatPoint struct {
 	MemoryMBReserved int32
 }
 
-// CurrentStats holds the most recent sampled values for a team.
+// CurrentStats holds the live values for a team, read directly from sandboxes.
 type CurrentStats struct {
 	RunningCount     int32
 	VCPUsReserved    int32
 	MemoryMBReserved int32
-	SampledAt        time.Time
 }
 
 // PeakStats holds the 30-day maximum values for a team.
@@ -79,19 +78,16 @@ func (s *StatsService) GetStats(ctx context.Context, teamID string, r TimeRange)
 		return CurrentStats{}, PeakStats{}, nil, fmt.Errorf("unknown range: %s", r)
 	}
 
-	// Current snapshot.
-	var current CurrentStats
-	cur, err := s.DB.GetCurrentMetrics(ctx, teamID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return CurrentStats{}, PeakStats{}, nil, fmt.Errorf("get current metrics: %w", err)
+	// Current live values — read directly from sandboxes so we always reflect
+	// the true state even when no capsules are running.
+	cur, err := s.DB.GetLiveMetrics(ctx, teamID)
+	if err != nil {
+		return CurrentStats{}, PeakStats{}, nil, fmt.Errorf("get live metrics: %w", err)
 	}
-	if err == nil {
-		current = CurrentStats{
-			RunningCount:     cur.RunningCount,
-			VCPUsReserved:    cur.VcpusReserved,
-			MemoryMBReserved: cur.MemoryMbReserved,
-			SampledAt:        cur.SampledAt.Time,
-		}
+	current := CurrentStats{
+		RunningCount:     cur.RunningCount,
+		VCPUsReserved:    cur.VcpusReserved,
+		MemoryMBReserved: cur.MemoryMbReserved,
 	}
 
 	// 30-day peaks.
