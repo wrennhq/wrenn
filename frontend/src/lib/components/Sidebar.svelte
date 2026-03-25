@@ -48,8 +48,8 @@
 
 	const platformItems: NavItem[] = [
 		{ label: 'Capsules', icon: IconMonitor, href: '/dashboard/capsules' },
-		{ label: 'Metrics', icon: IconMetrics, href: '/dashboard/metrics' },
-		{ label: 'Templates', icon: IconBox, href: '/dashboard/snapshots' }
+		{ label: 'Templates', icon: IconBox, href: '/dashboard/snapshots' },
+		{ label: 'Metrics', icon: IconMetrics, href: '/dashboard/metrics' }
 	];
 
 	let currentTeamIsByoc = $derived(
