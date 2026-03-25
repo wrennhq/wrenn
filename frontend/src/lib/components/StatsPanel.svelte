@@ -91,13 +91,13 @@
 
 	// Chart colors (resolved from CSS vars, must match app.css)
 	const C_ACCENT       = '#5e8c58';
-	const C_ACCENT_FILL  = 'rgba(94,140,88,0.08)';
+	const C_ACCENT_FILL  = 'rgba(94,140,88,0.13)';
 	const C_BLUE         = '#5a9fd4';
-	const C_BLUE_FILL    = 'rgba(90,159,212,0.07)';
+	const C_BLUE_FILL    = 'rgba(90,159,212,0.11)';
 	const C_AMBER        = '#d4a73c';
-	const C_AMBER_FILL   = 'rgba(212,167,60,0.07)';
-	const C_GRID         = 'rgba(255,255,255,0.04)';
-	const C_TICK         = '#454340';
+	const C_AMBER_FILL   = 'rgba(212,167,60,0.11)';
+	const C_GRID         = 'rgba(255,255,255,0.05)';
+	const C_TICK         = '#635f5c';
 	const FONT_MONO      = "'JetBrains Mono', monospace";
 
 	const BASE_CHART_OPTIONS = {
@@ -150,7 +150,7 @@
 					data: [],
 					borderColor: C_ACCENT,
 					backgroundColor: C_ACCENT_FILL,
-					borderWidth: 1.5,
+					borderWidth: 2,
 					fill: true,
 					tension: 0,
 					pointRadius: 0,
@@ -169,7 +169,7 @@
 					data: [],
 					borderColor: C_BLUE,
 					backgroundColor: C_BLUE_FILL,
-					borderWidth: 1.5,
+					borderWidth: 2,
 					fill: true,
 					tension: 0,
 					pointRadius: 0,
@@ -200,7 +200,7 @@
 					data: [],
 					borderColor: C_AMBER,
 					backgroundColor: C_AMBER_FILL,
-					borderWidth: 1.5,
+					borderWidth: 2,
 					fill: true,
 					tension: 0,
 					pointRadius: 0,
@@ -250,7 +250,7 @@
 	}
 </script>
 
-<div class="flex flex-col gap-7 px-8 pb-8 pt-4" style="min-height: calc(100dvh - 200px); animation: fadeUp 0.35s ease both">
+<div class="flex flex-col gap-8 px-8 pb-10 pt-6" style="min-height: calc(100dvh - 200px); animation: fadeUp 0.35s ease both">
 
 	<!-- Controls row -->
 	<div class="flex items-center justify-between">
@@ -298,21 +298,21 @@
 	<div class="grid grid-cols-3 overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]">
 
 		<!-- Running capsules -->
-		<div class="border-r border-[var(--color-border)]" style="box-shadow: inset 3px 0 0 var(--color-accent)">
+		<div class="border-r border-[var(--color-border)]" style="box-shadow: inset 5px 0 0 var(--color-accent)">
 			<div class="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-6 py-3">
-				<span class="h-[6px] w-[6px] rounded-full bg-[var(--color-accent)]"></span>
+				<span class="h-2 w-2 rounded-full bg-[var(--color-accent)]"></span>
 				<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Running Capsules</span>
 			</div>
 			<div class="grid grid-cols-2 divide-x divide-[var(--color-border)]">
-				<div class="bg-[var(--color-bg-3)] px-6 py-5 transition-colors duration-150 hover:bg-[var(--color-bg-4)]">
-					<div class="text-label text-[var(--color-text-muted)]">Now</div>
-					<div class="mt-1.5 font-serif text-[2.571rem] leading-none tracking-[-0.04em] {(!loading && (stats?.current.running_count ?? 0) > 0) ? 'text-[var(--color-accent-bright)]' : 'text-[var(--color-text-bright)]'}">
+				<div class="bg-[var(--color-bg-3)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-4)]">
+					<div class="text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">Now</div>
+					<div class="mt-2 font-serif text-[2.571rem] leading-none tracking-[-0.04em] {(!loading && (stats?.current.running_count ?? 0) > 0) ? 'text-[var(--color-accent-bright)]' : 'text-[var(--color-text-bright)]'}">
 						{loading ? '—' : (stats?.current.running_count ?? 0)}
 					</div>
 				</div>
-				<div class="bg-[var(--color-bg-2)] px-6 py-5 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
+				<div class="bg-[var(--color-bg-2)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
 					<div class="text-label text-[var(--color-text-muted)]">Peak · 30d</div>
-					<div class="mt-1.5 font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
+					<div class="mt-2 font-serif text-[1.714rem] leading-none tracking-[-0.03em] text-[var(--color-text-secondary)]">
 						{loading ? '—' : (stats?.peaks.running_count ?? 0)}
 					</div>
 				</div>
@@ -320,21 +320,21 @@
 		</div>
 
 		<!-- Reserved CPU -->
-		<div class="border-r border-[var(--color-border)]" style="box-shadow: inset 3px 0 0 #5a9fd4">
+		<div class="border-r border-[var(--color-border)]" style="box-shadow: inset 5px 0 0 #5a9fd4">
 			<div class="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-6 py-3">
-				<span class="h-[6px] w-[6px] rounded-full" style="background: #5a9fd4"></span>
+				<span class="h-2 w-2 rounded-full" style="background: #5a9fd4"></span>
 				<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">CPU · vCPUs</span>
 			</div>
 			<div class="grid grid-cols-2 divide-x divide-[var(--color-border)]">
-				<div class="bg-[var(--color-bg-3)] px-6 py-5 transition-colors duration-150 hover:bg-[var(--color-bg-4)]">
-					<div class="text-label text-[var(--color-text-muted)]">Reserved now</div>
-					<div class="mt-1.5 font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
+				<div class="bg-[var(--color-bg-3)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-4)]">
+					<div class="text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">Reserved now</div>
+					<div class="mt-2 font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
 						{loading ? '—' : (stats?.current.vcpus_reserved ?? 0)}
 					</div>
 				</div>
-				<div class="bg-[var(--color-bg-2)] px-6 py-5 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
+				<div class="bg-[var(--color-bg-2)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
 					<div class="text-label text-[var(--color-text-muted)]">Peak · 30d</div>
-					<div class="mt-1.5 font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
+					<div class="mt-2 font-serif text-[1.714rem] leading-none tracking-[-0.03em] text-[var(--color-text-secondary)]">
 						{loading ? '—' : (stats?.peaks.vcpus ?? 0)}
 					</div>
 				</div>
@@ -342,21 +342,21 @@
 		</div>
 
 		<!-- Reserved RAM -->
-		<div style="box-shadow: inset 3px 0 0 #d4a73c">
+		<div style="box-shadow: inset 5px 0 0 #d4a73c">
 			<div class="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-6 py-3">
-				<span class="h-[6px] w-[6px] rounded-full" style="background: #d4a73c"></span>
+				<span class="h-2 w-2 rounded-full" style="background: #d4a73c"></span>
 				<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">RAM</span>
 			</div>
 			<div class="grid grid-cols-2 divide-x divide-[var(--color-border)]">
-				<div class="bg-[var(--color-bg-3)] px-6 py-5 transition-colors duration-150 hover:bg-[var(--color-bg-4)]">
-					<div class="text-label text-[var(--color-text-muted)]">Reserved now</div>
-					<div class="mt-1.5 font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
+				<div class="bg-[var(--color-bg-3)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-4)]">
+					<div class="text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">Reserved now</div>
+					<div class="mt-2 font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
 						{loading ? '—' : fmtGB(stats?.current.memory_mb_reserved ?? 0)}
 					</div>
 				</div>
-				<div class="bg-[var(--color-bg-2)] px-6 py-5 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
+				<div class="bg-[var(--color-bg-2)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
 					<div class="text-label text-[var(--color-text-muted)]">Peak · 30d</div>
-					<div class="mt-1.5 font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
+					<div class="mt-2 font-serif text-[1.714rem] leading-none tracking-[-0.03em] text-[var(--color-text-secondary)]">
 						{loading ? '—' : fmtGB(stats?.peaks.memory_mb ?? 0)}
 					</div>
 				</div>
@@ -382,11 +382,11 @@
 		<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
 			<div class="border-b border-[var(--color-border)] px-6 py-4">
 				<div class="flex items-center gap-2">
-					<span class="h-[6px] w-[6px] rounded-full bg-[var(--color-accent)]"></span>
+					<span class="h-2 w-2 rounded-full bg-[var(--color-accent)]"></span>
 					<div class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Running Capsules</div>
 				</div>
 			</div>
-			<div class="relative flex-1 px-5 pb-5 pt-3" style="min-height: 220px">
+			<div class="relative flex-1 px-5 pb-5 pt-3" style="min-height: 260px">
 				<canvas bind:this={canvasRunning}></canvas>
 			</div>
 		</div>
@@ -398,7 +398,7 @@
 			<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
 				<div class="border-b border-[var(--color-border)] px-6 py-4">
 					<div class="flex items-center gap-2">
-						<span class="h-[6px] w-[6px] rounded-full" style="background: #5a9fd4"></span>
+						<span class="h-2 w-2 rounded-full" style="background: #5a9fd4"></span>
 						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">CPU · vCPUs</span>
 					</div>
 				</div>
@@ -411,7 +411,7 @@
 			<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
 				<div class="border-b border-[var(--color-border)] px-6 py-4">
 					<div class="flex items-center gap-2">
-						<span class="h-[6px] w-[6px] rounded-full" style="background: #d4a73c"></span>
+						<span class="h-2 w-2 rounded-full" style="background: #d4a73c"></span>
 						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">RAM · GB</span>
 					</div>
 				</div>
