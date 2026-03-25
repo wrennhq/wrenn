@@ -21,7 +21,8 @@
 		IconDocs,
 		IconAudit,
 		IconServer,
-		IconShield
+		IconShield,
+		IconMetrics
 	} from './icons';
 
 	let { collapsed = $bindable(false) }: { collapsed: boolean } = $props();
@@ -47,6 +48,7 @@
 
 	const platformItems: NavItem[] = [
 		{ label: 'Capsules', icon: IconMonitor, href: '/dashboard/capsules' },
+		{ label: 'Metrics', icon: IconMetrics, href: '/dashboard/metrics' },
 		{ label: 'Templates', icon: IconBox, href: '/dashboard/snapshots' }
 	];
 

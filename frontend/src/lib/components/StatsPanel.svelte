@@ -250,22 +250,18 @@
 	}
 </script>
 
-<div class="flex flex-col gap-7 p-8" style="min-height: calc(100dvh - 200px); animation: fadeUp 0.35s ease both">
+<div class="flex flex-col gap-7 px-8 pb-8 pt-4" style="min-height: calc(100dvh - 200px); animation: fadeUp 0.35s ease both">
 
-	<!-- Header: title + controls -->
-	<div class="flex items-end justify-between">
-		<div>
-			<div class="flex items-center gap-2.5">
-				<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Usage Statistics</h2>
-				{#if !loading}
-					<span class="flex items-center gap-1 rounded-[3px] border border-[var(--color-accent)]/25 bg-[var(--color-accent-glow-mid)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-accent-mid)]">
-						<span class="h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]" style="animation: wrenn-glow 2.5s ease-in-out infinite"></span>
-						Live
-					</span>
-				{/if}
-			</div>
-			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Resource consumption across all capsules.</p>
-		</div>
+	<!-- Controls row -->
+	<div class="flex items-center justify-between">
+		{#if !loading}
+			<span class="flex items-center gap-1 rounded-[3px] border border-[var(--color-accent)]/25 bg-[var(--color-accent-glow-mid)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-accent-mid)]">
+				<span class="h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]" style="animation: wrenn-glow 2.5s ease-in-out infinite"></span>
+				Live
+			</span>
+		{:else}
+			<div></div>
+		{/if}
 		<div class="flex items-center gap-3">
 			<!-- Range selector -->
 			<div class="flex overflow-hidden rounded-[var(--radius-button)] border border-[var(--color-border)]">

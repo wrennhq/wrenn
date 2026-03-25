@@ -1,7 +1,6 @@
 <script lang="ts">
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { capsuleRunningCount } from '$lib/capsule-store.svelte';
-	import { page } from '$app/stores';
 
 	let { children } = $props();
 
@@ -9,10 +8,6 @@
 		typeof window !== 'undefined'
 			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
 			: false
-	);
-
-	let activeTab = $derived(
-		$page.url.pathname.startsWith('/dashboard/capsules/stats') ? 'stats' : 'list'
 	);
 </script>
 
@@ -26,8 +21,7 @@
 	<div class="flex flex-1 flex-col overflow-hidden">
 		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header area -->
-			<div class="px-7 pt-8">
-				<!-- Top row: title + status chip -->
+			<div class="px-7 pt-8 pb-6">
 				<div class="flex items-center justify-between">
 					<div>
 						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
@@ -39,7 +33,6 @@
 					</div>
 
 					<div class="flex items-center gap-3">
-						<!-- Status chip -->
 						<div
 							class="flex items-center gap-2.5 rounded-[var(--radius-card)] border border-[var(--color-accent)]/20 bg-[var(--color-bg-2)] px-3.5 py-2"
 						>
@@ -53,33 +46,6 @@
 							<span class="text-ui text-[var(--color-text-secondary)]">running now</span>
 						</div>
 					</div>
-				</div>
-
-				<!-- Tab bar -->
-				<div class="mt-5 flex gap-1 border-b border-[var(--color-border)]">
-					<a
-						href="/dashboard/capsules/list"
-						class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150 {activeTab === 'list'
-							? 'border-[var(--color-accent)] text-[var(--color-accent-bright)]'
-							: 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" />
-							<line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
-						</svg>
-						List
-					</a>
-					<a
-						href="/dashboard/capsules/stats"
-						class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150 {activeTab === 'stats'
-							? 'border-[var(--color-accent)] text-[var(--color-accent-bright)]'
-							: 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-						</svg>
-						Stats
-					</a>
 				</div>
 			</div>
 
