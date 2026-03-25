@@ -1226,31 +1226,22 @@ func warnErr(msg string, id string, err error) {
 	}
 }
 
-// startSampler resolves the Firecracker child PID and starts a background
-// goroutine that samples CPU/mem/disk at 500ms intervals into the ring buffer.
+// startSampler resolves the Firecracker PID and starts a background goroutine
+// that samples CPU/mem/disk at 500ms intervals into the ring buffer.
 // Must be called after the sandbox is registered in m.boxes.
 func (m *Manager) startSampler(sb *sandboxState) {
-	// Resolve the Firecracker PID (child of unshare wrapper).
 	v, ok := m.vm.Get(sb.ID)
 	if !ok {
 		slog.Warn("metrics: VM not found, skipping sampler", "id", sb.ID)
 		return
 	}
-	unshPID := v.PID()
 
-	var fcPID int
-	for attempt := 0; attempt < 5; attempt++ {
-		var err error
-		fcPID, err = findChildPID(unshPID)
-		if err == nil {
-			break
-		}
-		if attempt == 4 {
-			slog.Warn("metrics: could not resolve FC PID, skipping sampler", "id", sb.ID, "error", err)
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	// v.PID() is the cmd.Process.Pid of the "unshare -m -- bash -c script"
+	// invocation. Because unshare(2) modifies the current process's namespace
+	// before exec-replacing itself with bash, and bash exec-replaces itself
+	// with ip-netns-exec, which exec-replaces itself with firecracker, the
+	// entire exec chain occupies the same PID. v.PID() IS the Firecracker PID.
+	fcPID := v.PID()
 
 	sb.fcPID = fcPID
 	sb.ring = newMetricsRing()

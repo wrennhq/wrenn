@@ -8,28 +8,6 @@ import (
 	"syscall"
 )
 
-// findChildPID reads the direct child PID of a given parent process.
-// The Firecracker process is a direct child of the unshare wrapper because
-// the init script uses `exec ip netns exec ... firecracker`, which replaces
-// bash with ip-netns-exec, which in turn execs firecracker — same PID,
-// direct child of unshare.
-func findChildPID(parentPID int) (int, error) {
-	path := fmt.Sprintf("/proc/%d/task/%d/children", parentPID, parentPID)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, fmt.Errorf("read children: %w", err)
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return 0, fmt.Errorf("no child processes found for PID %d", parentPID)
-	}
-	pid, err := strconv.Atoi(fields[0])
-	if err != nil {
-		return 0, fmt.Errorf("parse child PID %q: %w", fields[0], err)
-	}
-	return pid, nil
-}
-
 // cpuStat holds raw CPU jiffies read from /proc/{pid}/stat.
 type cpuStat struct {
 	utime uint64

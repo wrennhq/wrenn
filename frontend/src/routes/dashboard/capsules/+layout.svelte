@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/stores';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { capsuleRunningCount } from '$lib/capsule-store.svelte';
 
@@ -19,35 +20,54 @@
 	<Sidebar bind:collapsed />
 
 	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+		<main class="flex flex-1 flex-col overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header area -->
-			<div class="px-7 pt-8 pb-6">
-				<div class="flex items-center justify-between">
-					<div>
-						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
-							Capsules
-						</h1>
-						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-							Isolated VMs. Start cold in under a second — pause, snapshot, or destroy at will.
-						</p>
-					</div>
-
-					<div class="flex items-center gap-3">
-						<div
-							class="flex items-center gap-2.5 rounded-[var(--radius-card)] border border-[var(--color-accent)]/20 bg-[var(--color-bg-2)] px-3.5 py-2"
+			{#if $page.params.id}
+				<!-- Breadcrumb header for capsule detail (no border-b — tabs provide it) -->
+				<div class="px-7 pt-8">
+					<div class="flex items-center gap-2.5">
+						<a
+							href="/dashboard/capsules"
+							class="font-serif text-page leading-none tracking-[-0.02em] text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-text-bright)]"
 						>
-							<span class="relative flex h-[8px] w-[8px]">
-								<span
-									class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"
-								></span>
-								<span class="relative inline-flex h-[8px] w-[8px] rounded-full bg-[var(--color-accent)]"></span>
-							</span>
-							<span class="font-mono text-body font-semibold text-[var(--color-accent-bright)]">{capsuleRunningCount.value}</span>
-							<span class="text-ui text-[var(--color-text-secondary)]">running now</span>
+							Capsules
+						</a>
+						<span class="text-[var(--color-text-muted)] select-none" style="font-size: 1.1rem">›</span>
+						<span class="font-mono text-[1.1rem] leading-none text-[var(--color-text-bright)]">
+							{$page.params.id}
+						</span>
+					</div>
+				</div>
+			{:else}
+				<!-- Default list header -->
+				<div class="px-7 pt-8 pb-6">
+					<div class="flex items-center justify-between">
+						<div>
+							<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+								Capsules
+							</h1>
+							<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+								Isolated VMs. Start cold in under a second — pause, snapshot, or destroy at will.
+							</p>
+						</div>
+
+						<div class="flex items-center gap-3">
+							<div
+								class="flex items-center gap-2.5 rounded-[var(--radius-card)] border border-[var(--color-accent)]/20 bg-[var(--color-bg-2)] px-3.5 py-2"
+							>
+								<span class="relative flex h-[8px] w-[8px]">
+									<span
+										class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"
+									></span>
+									<span class="relative inline-flex h-[8px] w-[8px] rounded-full bg-[var(--color-accent)]"></span>
+								</span>
+								<span class="font-mono text-body font-semibold text-[var(--color-accent-bright)]">{capsuleRunningCount.value}</span>
+								<span class="text-ui text-[var(--color-text-secondary)]">running now</span>
+							</div>
 						</div>
 					</div>
 				</div>
-			</div>
+			{/if}
 
 			{@render children()}
 		</main>

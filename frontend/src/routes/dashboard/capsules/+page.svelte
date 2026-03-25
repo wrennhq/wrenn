@@ -443,9 +443,9 @@
 						{/if}
 						{#if searchQuery && capsule.id.toLowerCase().includes(searchQuery.toLowerCase())}
 							{@const matchIdx = capsule.id.toLowerCase().indexOf(searchQuery.toLowerCase())}
-							<span class="font-mono text-ui text-[var(--color-text-bright)]">{capsule.id.slice(0, matchIdx)}<mark class="rounded-[2px] bg-[var(--color-accent-glow-mid)] px-0.5 text-[var(--color-accent-bright)] not-italic">{capsule.id.slice(matchIdx, matchIdx + searchQuery.length)}</mark>{capsule.id.slice(matchIdx + searchQuery.length)}</span>
+							<a href="/dashboard/capsules/{capsule.id}" class="font-mono text-ui text-[var(--color-text-bright)] hover:text-[var(--color-accent-bright)] transition-colors duration-150">{capsule.id.slice(0, matchIdx)}<mark class="rounded-[2px] bg-[var(--color-accent-glow-mid)] px-0.5 text-[var(--color-accent-bright)] not-italic">{capsule.id.slice(matchIdx, matchIdx + searchQuery.length)}</mark>{capsule.id.slice(matchIdx + searchQuery.length)}</a>
 						{:else}
-							<span class="font-mono text-ui text-[var(--color-text-bright)]">{capsule.id}</span>
+							<a href="/dashboard/capsules/{capsule.id}" class="font-mono text-ui text-[var(--color-text-bright)] hover:text-[var(--color-accent-bright)] transition-colors duration-150">{capsule.id}</a>
 						{/if}
 					</div>
 
