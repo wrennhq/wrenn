@@ -247,6 +247,13 @@
 		return `${Math.floor(seconds / 86400)}d ago`;
 	}
 
+	function fmtTimeout(sec: number): string {
+		if (!sec) return 'None';
+		if (sec < 60) return `${sec}s`;
+		if (sec < 3600) return `${Math.round(sec / 60)}m`;
+		return `${Math.round(sec / 3600)}h`;
+	}
+
 	function handleClickOutside(event: MouseEvent) {
 		if (openMenuId && !(event.target as Element)?.closest('.status-menu-container')) {
 			openMenuId = null;
@@ -300,7 +307,7 @@
 				class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-2 pl-9 pr-3 font-mono text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)]"
 			/>
 		</div>
-		<span class="text-ui text-[var(--color-text-secondary)]">{filteredCapsules.length} total</span>
+		<span class="text-ui text-[var(--color-text-secondary)]">{filteredCapsules.length} capsule{filteredCapsules.length !== 1 ? 's' : ''}</span>
 
 		<div class="flex-1"></div>
 
@@ -363,8 +370,11 @@
 	</div>
 
 	{#if error}
-		<div class="mb-4 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-ui text-[var(--color-red)]">
-			{error}
+		<div class="mb-4 flex items-start gap-3 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3">
+			<svg class="mt-0.5 shrink-0 text-[var(--color-red)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+			</svg>
+			<span class="text-ui text-[var(--color-red)]">{error}. Try refreshing the page.</span>
 		</div>
 	{/if}
 
@@ -466,14 +476,14 @@
 
 					<!-- Idle Timeout -->
 					<div class="px-5 py-4">
-						<span class="font-mono text-ui text-[var(--color-text-secondary)]">{capsule.timeout_sec ? `${capsule.timeout_sec}s` : '—'}</span>
+						<span class="font-mono text-ui text-[var(--color-text-secondary)]">{fmtTimeout(capsule.timeout_sec)}</span>
 					</div>
 
 					<!-- Started -->
 					<div class="px-5 py-4">
 						<span class="text-ui text-[var(--color-text-secondary)]" title={capsule.started_at ?? ''}>{formatTime(capsule.started_at)}</span>
 						{#if capsule.last_active_at}
-							<span class="ml-1.5 text-label text-[var(--color-text-muted)]">{timeAgo(capsule.last_active_at)}</span>
+							<span class="ml-1.5 text-label text-[var(--color-text-muted)]">active {timeAgo(capsule.last_active_at)}</span>
 						{/if}
 					</div>
 
@@ -612,7 +622,7 @@
 							<line x1="12" y1="9" x2="12" y2="13" />
 							<line x1="12" y1="17" x2="12.01" y2="17" />
 						</svg>
-						<p class="text-meta text-[var(--color-amber)] leading-relaxed">This capsule will be <strong class="font-semibold">paused first</strong> — memory state is captured at rest.</p>
+						<p class="text-meta text-[var(--color-amber)] leading-relaxed">This capsule will be <strong class="font-semibold">paused first</strong>, then its full state (memory + disk) will be captured.</p>
 					</div>
 				{:else}
 					<p class="text-ui text-[var(--color-text-tertiary)]">The capsule's current memory state will be captured and stored as a reusable snapshot.</p>
