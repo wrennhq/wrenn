@@ -16,11 +16,14 @@
 	let error = $state<string | null>(null);
 
 	let canvasRunning: HTMLCanvasElement;
-	let canvasResource: HTMLCanvasElement;
+	let canvasCpu: HTMLCanvasElement;
+	let canvasRam: HTMLCanvasElement;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let chartRunning: any = null;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let chartResource: any = null;
+	let chartCpu: any = null;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let chartRam: any = null;
 
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -48,11 +51,15 @@
 			chartRunning.data.datasets[0].data = Array.from(stats.series.running);
 			chartRunning.update();
 		}
-		if (chartResource) {
-			chartResource.data.labels = labels;
-			chartResource.data.datasets[0].data = Array.from(stats.series.vcpus);
-			chartResource.data.datasets[1].data = Array.from(stats.series.memory_mb).map((mb) => +(mb / 1024).toFixed(2));
-			chartResource.update();
+		if (chartCpu) {
+			chartCpu.data.labels = labels;
+			chartCpu.data.datasets[0].data = Array.from(stats.series.vcpus);
+			chartCpu.update();
+		}
+		if (chartRam) {
+			chartRam.data.labels = labels;
+			chartRam.data.datasets[0].data = Array.from(stats.series.memory_mb).map((mb) => +(mb / 1024).toFixed(2));
+			chartRam.update();
 		}
 	}
 
@@ -154,63 +161,61 @@
 			options: BASE_CHART_OPTIONS,
 		});
 
-		chartResource = new Chart(canvasResource, {
+		chartCpu = new Chart(canvasCpu, {
 			type: 'line',
 			data: {
 				labels: [],
-				datasets: [
-					{
-						label: 'vCPUs',
-						data: [],
-						borderColor: C_BLUE,
-						backgroundColor: C_BLUE_FILL,
-						borderWidth: 1.5,
-						fill: false,
-						tension: 0,
-						pointRadius: 0,
-						pointHoverRadius: 4,
-						pointHoverBackgroundColor: C_BLUE,
-						yAxisID: 'y',
+				datasets: [{
+					data: [],
+					borderColor: C_BLUE,
+					backgroundColor: C_BLUE_FILL,
+					borderWidth: 1.5,
+					fill: true,
+					tension: 0,
+					pointRadius: 0,
+					pointHoverRadius: 4,
+					pointHoverBackgroundColor: C_BLUE,
+				}],
+			},
+			options: {
+				...BASE_CHART_OPTIONS,
+				scales: {
+					...BASE_CHART_OPTIONS.scales,
+					y: {
+						...BASE_CHART_OPTIONS.scales.y,
+						ticks: {
+							...BASE_CHART_OPTIONS.scales.y.ticks,
+							callback: (v: number) => `${v}`,
+						},
 					},
-					{
-						label: 'RAM (GB)',
-						data: [],
-						borderColor: C_AMBER,
-						backgroundColor: C_AMBER_FILL,
-						borderWidth: 1.5,
-						fill: false,
-						tension: 0,
-						pointRadius: 0,
-						pointHoverRadius: 4,
-						pointHoverBackgroundColor: C_AMBER,
-						yAxisID: 'yRam',
-					},
-				],
+				},
+			},
+		});
+
+		chartRam = new Chart(canvasRam, {
+			type: 'line',
+			data: {
+				labels: [],
+				datasets: [{
+					data: [],
+					borderColor: C_AMBER,
+					backgroundColor: C_AMBER_FILL,
+					borderWidth: 1.5,
+					fill: true,
+					tension: 0,
+					pointRadius: 0,
+					pointHoverRadius: 4,
+					pointHoverBackgroundColor: C_AMBER,
+				}],
 			},
 			options: {
 				...BASE_CHART_OPTIONS,
 				plugins: {
 					...BASE_CHART_OPTIONS.plugins,
-					legend: {
-						display: true,
-						position: 'top' as const,
-						align: 'end' as const,
-						labels: {
-							color: C_TICK,
-							font: { family: FONT_MONO, size: 10 },
-							boxWidth: 12,
-							padding: 12,
-						},
-					},
 					tooltip: {
 						...BASE_CHART_OPTIONS.plugins.tooltip,
 						callbacks: {
-							label: (ctx: { dataset: { label?: string }; parsed: { y: number } }) => {
-								if (ctx.dataset.label === 'RAM (GB)') {
-									return ` RAM: ${ctx.parsed.y.toFixed(1)} GB`;
-								}
-								return ` vCPUs: ${ctx.parsed.y}`;
-							},
+							label: (ctx: { parsed: { y: number } }) => ` ${ctx.parsed.y.toFixed(1)} GB`,
 						},
 					},
 				},
@@ -218,16 +223,10 @@
 					...BASE_CHART_OPTIONS.scales,
 					y: {
 						...BASE_CHART_OPTIONS.scales.y,
-						position: 'left' as const,
-						title: { display: true, text: 'vCPUs', color: C_TICK, font: { family: FONT_MONO, size: 10 } },
-					},
-					yRam: {
-						grid: { color: C_GRID },
-						ticks: { color: C_TICK, font: { family: FONT_MONO, size: 10 } },
-						border: { color: C_GRID },
-						beginAtZero: true,
-						position: 'right' as const,
-						title: { display: true, text: 'GB', color: C_TICK, font: { family: FONT_MONO, size: 10 } },
+						ticks: {
+							...BASE_CHART_OPTIONS.scales.y.ticks,
+							callback: (v: number) => `${(+v).toFixed(1)} GB`,
+						},
 					},
 				},
 			},
@@ -242,7 +241,8 @@
 	onDestroy(() => {
 		if (pollInterval) clearInterval(pollInterval);
 		chartRunning?.destroy();
-		chartResource?.destroy();
+		chartCpu?.destroy();
+		chartRam?.destroy();
 	});
 
 	function fmtGB(mb: number): string {
@@ -391,24 +391,35 @@
 			</div>
 		</div>
 
-		<!-- Reserved CPU & RAM -->
-		<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
-			<div class="border-b border-[var(--color-border)] px-6 py-4">
-				<div class="flex items-center gap-3">
-					<span class="flex items-center gap-1.5">
+		<!-- CPU & RAM side by side -->
+		<div class="grid grid-cols-2 gap-5">
+
+			<!-- CPU -->
+			<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
+				<div class="border-b border-[var(--color-border)] px-6 py-4">
+					<div class="flex items-center gap-2">
 						<span class="h-[6px] w-[6px] rounded-full" style="background: #5a9fd4"></span>
-						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">CPU</span>
-					</span>
-					<span class="text-label text-[var(--color-text-muted)]">/</span>
-					<span class="flex items-center gap-1.5">
-						<span class="h-[6px] w-[6px] rounded-full" style="background: #d4a73c"></span>
-						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">RAM</span>
-					</span>
+						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">CPU · vCPUs</span>
+					</div>
+				</div>
+				<div class="relative flex-1 px-5 pb-5 pt-3" style="min-height: 220px">
+					<canvas bind:this={canvasCpu}></canvas>
 				</div>
 			</div>
-			<div class="relative flex-1 px-5 pb-5 pt-3" style="min-height: 220px">
-				<canvas bind:this={canvasResource}></canvas>
+
+			<!-- RAM -->
+			<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
+				<div class="border-b border-[var(--color-border)] px-6 py-4">
+					<div class="flex items-center gap-2">
+						<span class="h-[6px] w-[6px] rounded-full" style="background: #d4a73c"></span>
+						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">RAM · GB</span>
+					</div>
+				</div>
+				<div class="relative flex-1 px-5 pb-5 pt-3" style="min-height: 220px">
+					<canvas bind:this={canvasRam}></canvas>
+				</div>
 			</div>
+
 		</div>
 
 	</div>
