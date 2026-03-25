@@ -56,6 +56,9 @@
 	// Briefly highlight a newly created capsule row
 	let newCapsuleId = $state<string | null>(null);
 
+	// Track whether initial load animation has played (suppress on poll refreshes)
+	let initialAnimationDone = $state(false);
+
 	let filteredCapsules = $derived.by(() => {
 		let list = searchQuery
 			? capsules.filter((c) => c.id.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -121,26 +124,32 @@
 		}
 	}
 
-	async function fetchCapsules() {
+	async function fetchCapsules(manual = false) {
 		const wasEmpty = capsules.length === 0;
 		if (wasEmpty) loading = true;
 
-		spinning = true;
-		const spinTimer = new Promise<void>((resolve) => setTimeout(resolve, SPIN_DURATION));
+		if (manual) {
+			spinning = true;
+			var spinTimer = new Promise<void>((resolve) => setTimeout(resolve, SPIN_DURATION));
+		}
 
-		error = null;
 		const result = await listCapsules();
 		if (result.ok) {
 			capsules = result.data;
-		} else {
-			error = result.error;
 		}
 		loading = false;
 
+		// Mark initial entrance animation as done after first successful fetch
+		if (!initialAnimationDone) {
+			setTimeout(() => { initialAnimationDone = true; }, 400 + (capsules.length * 40));
+		}
+
 		if (autoRefresh) countdown = REFRESH_INTERVAL;
 
-		await spinTimer;
-		spinning = false;
+		if (manual) {
+			await spinTimer!;
+			spinning = false;
+		}
 	}
 
 	async function handlePause(id: string) {
@@ -297,7 +306,7 @@
 
 		<!-- Refresh button -->
 		<button
-			onclick={fetchCapsules}
+			onclick={() => fetchCapsules(true)}
 			disabled={spinning}
 			class="flex h-8 w-8 items-center justify-center rounded-[var(--radius-button)] border border-[var(--color-border)] text-[var(--color-text-tertiary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-secondary)] disabled:opacity-50"
 			title="Refresh"
@@ -415,7 +424,7 @@
 				{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : capsule.status === 'paused' ? 'bg-[var(--color-amber)]' : 'bg-[var(--color-text-muted)]'}
 				<div
 					class="capsule-row relative grid grid-cols-[1.6fr_0.8fr_0.5fr_0.5fr_0.6fr_1fr_0.9fr] items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {newCapsuleId === capsule.id ? 'capsule-born' : ''}"
-					style="animation: fadeUp 0.35s ease both; animation-delay: {i * 40}ms"
+					style={initialAnimationDone ? '' : `animation: fadeUp 0.35s ease both; animation-delay: ${i * 40}ms`}
 				>
 					<!-- Left accent stripe -->
 					<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-0.5 {stripeColor}"></div>
