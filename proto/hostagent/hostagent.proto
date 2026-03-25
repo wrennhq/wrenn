@@ -54,6 +54,13 @@ service HostAgentService {
   // agent shuts down without waiting for the next heartbeat cycle.
   rpc Terminate(TerminateRequest) returns (TerminateResponse);
 
+  // GetSandboxMetrics returns ring buffer metrics for a running sandbox.
+  rpc GetSandboxMetrics(GetSandboxMetricsRequest) returns (GetSandboxMetricsResponse);
+
+  // FlushSandboxMetrics returns all ring buffer tiers and clears them.
+  // Called by the control plane before pause/destroy to persist metrics to DB.
+  rpc FlushSandboxMetrics(FlushSandboxMetricsRequest) returns (FlushSandboxMetricsResponse);
+
 }
 
 message CreateSandboxRequest {
@@ -248,3 +255,32 @@ message PingSandboxResponse {}
 message TerminateRequest {}
 
 message TerminateResponse {}
+
+// ── Metrics ──────────────────────────────────────────────────────────
+
+message MetricPoint {
+  int64  timestamp_unix = 1;
+  double cpu_pct        = 2;
+  int64  mem_bytes      = 3;
+  int64  disk_bytes     = 4;
+}
+
+message GetSandboxMetricsRequest {
+  string sandbox_id = 1;
+  // Range tier: "10m", "2h", or "24h".
+  string range       = 2;
+}
+
+message GetSandboxMetricsResponse {
+  repeated MetricPoint points = 1;
+}
+
+message FlushSandboxMetricsRequest {
+  string sandbox_id = 1;
+}
+
+message FlushSandboxMetricsResponse {
+  repeated MetricPoint points_10m  = 1;
+  repeated MetricPoint points_2h   = 2;
+  repeated MetricPoint points_24h  = 3;
+}

@@ -27,6 +27,30 @@ WHERE team_id = $1
 DELETE FROM sandbox_metrics_snapshots
 WHERE sampled_at < NOW() - INTERVAL '60 days';
 
+-- name: InsertSandboxMetricPoint :exec
+INSERT INTO sandbox_metric_points (sandbox_id, tier, ts, cpu_pct, mem_bytes, disk_bytes)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (sandbox_id, tier, ts) DO NOTHING;
+
+-- name: GetSandboxMetricPoints :many
+SELECT ts, cpu_pct, mem_bytes, disk_bytes
+FROM sandbox_metric_points
+WHERE sandbox_id = $1 AND tier = $2
+ORDER BY ts ASC;
+
+-- name: DeleteSandboxMetricPoints :exec
+DELETE FROM sandbox_metric_points
+WHERE sandbox_id = $1;
+
+-- name: DeleteSandboxMetricPointsByTier :exec
+DELETE FROM sandbox_metric_points
+WHERE sandbox_id = $1 AND tier = $2;
+
+-- name: PruneSandboxMetricPoints :exec
+-- Remove metric points older than 30 days for destroyed sandboxes.
+DELETE FROM sandbox_metric_points
+WHERE ts < EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')::BIGINT;
+
 -- name: SampleSandboxMetrics :many
 -- Aggregates per-team resource usage from the live sandboxes table.
 -- Groups by all teams that have any sandbox row (including stopped) so that

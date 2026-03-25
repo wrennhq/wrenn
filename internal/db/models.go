@@ -99,6 +99,15 @@ type Sandbox struct {
 	TeamID       string             `json:"team_id"`
 }
 
+type SandboxMetricPoint struct {
+	SandboxID string  `json:"sandbox_id"`
+	Tier      string  `json:"tier"`
+	Ts        int64   `json:"ts"`
+	CpuPct    float64 `json:"cpu_pct"`
+	MemBytes  int64   `json:"mem_bytes"`
+	DiskBytes int64   `json:"disk_bytes"`
+}
+
 type SandboxMetricsSnapshot struct {
 	ID               int64              `json:"id"`
 	TeamID           string             `json:"team_id"`

@@ -751,6 +751,60 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/sandboxes/{id}/metrics:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get per-sandbox resource metrics
+      operationId: getSandboxMetrics
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+      description: |
+        Returns time-series CPU, memory, and disk metrics for a sandbox.
+        Three tiers are available with different granularity and retention:
+        - `10m`: 500ms samples, last 10 minutes
+        - `2h`: 30-second averages, last 2 hours
+        - `24h`: 5-minute averages, last 24 hours
+
+        For running sandboxes, data comes from the host agent's in-memory
+        ring buffer. For paused sandboxes, data is read from persisted
+        snapshots in the database. Stopped/destroyed sandboxes return 404.
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["10m", "2h", "24h"]
+            default: "10m"
+          description: Time range tier to query
+      responses:
+        "200":
+          description: Metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxMetrics"
+        "400":
+          description: Invalid range parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Sandbox not found or metrics not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/sandboxes/{id}/pause:
     parameters:
       - name: id
@@ -1980,6 +2034,38 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TeamMember"
+
+    SandboxMetrics:
+      type: object
+      properties:
+        sandbox_id:
+          type: string
+        range:
+          type: string
+          enum: ["10m", "2h", "24h"]
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricPoint"
+
+    MetricPoint:
+      type: object
+      properties:
+        timestamp_unix:
+          type: integer
+          format: int64
+        cpu_pct:
+          type: number
+          format: double
+          description: "CPU utilization percentage (0-100), normalized to vCPU count"
+        mem_bytes:
+          type: integer
+          format: int64
+          description: "Resident memory in bytes (VmRSS of Firecracker process)"
+        disk_bytes:
+          type: integer
+          format: int64
+          description: "Allocated disk bytes for the CoW sparse file"
 
     Error:
       type: object

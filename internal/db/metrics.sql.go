@@ -9,6 +9,31 @@ import (
 	"context"
 )
 
+const deleteSandboxMetricPoints = `-- name: DeleteSandboxMetricPoints :exec
+DELETE FROM sandbox_metric_points
+WHERE sandbox_id = $1
+`
+
+func (q *Queries) DeleteSandboxMetricPoints(ctx context.Context, sandboxID string) error {
+	_, err := q.db.Exec(ctx, deleteSandboxMetricPoints, sandboxID)
+	return err
+}
+
+const deleteSandboxMetricPointsByTier = `-- name: DeleteSandboxMetricPointsByTier :exec
+DELETE FROM sandbox_metric_points
+WHERE sandbox_id = $1 AND tier = $2
+`
+
+type DeleteSandboxMetricPointsByTierParams struct {
+	SandboxID string `json:"sandbox_id"`
+	Tier      string `json:"tier"`
+}
+
+func (q *Queries) DeleteSandboxMetricPointsByTier(ctx context.Context, arg DeleteSandboxMetricPointsByTierParams) error {
+	_, err := q.db.Exec(ctx, deleteSandboxMetricPointsByTier, arg.SandboxID, arg.Tier)
+	return err
+}
+
 const getLiveMetrics = `-- name: GetLiveMetrics :one
 SELECT
     (COUNT(*) FILTER (WHERE status IN ('running', 'starting')))::INTEGER                                              AS running_count,
@@ -58,6 +83,50 @@ func (q *Queries) GetPeakMetrics(ctx context.Context, teamID string) (GetPeakMet
 	return i, err
 }
 
+const getSandboxMetricPoints = `-- name: GetSandboxMetricPoints :many
+SELECT ts, cpu_pct, mem_bytes, disk_bytes
+FROM sandbox_metric_points
+WHERE sandbox_id = $1 AND tier = $2
+ORDER BY ts ASC
+`
+
+type GetSandboxMetricPointsParams struct {
+	SandboxID string `json:"sandbox_id"`
+	Tier      string `json:"tier"`
+}
+
+type GetSandboxMetricPointsRow struct {
+	Ts        int64   `json:"ts"`
+	CpuPct    float64 `json:"cpu_pct"`
+	MemBytes  int64   `json:"mem_bytes"`
+	DiskBytes int64   `json:"disk_bytes"`
+}
+
+func (q *Queries) GetSandboxMetricPoints(ctx context.Context, arg GetSandboxMetricPointsParams) ([]GetSandboxMetricPointsRow, error) {
+	rows, err := q.db.Query(ctx, getSandboxMetricPoints, arg.SandboxID, arg.Tier)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSandboxMetricPointsRow
+	for rows.Next() {
+		var i GetSandboxMetricPointsRow
+		if err := rows.Scan(
+			&i.Ts,
+			&i.CpuPct,
+			&i.MemBytes,
+			&i.DiskBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertMetricsSnapshot = `-- name: InsertMetricsSnapshot :exec
 INSERT INTO sandbox_metrics_snapshots (team_id, running_count, vcpus_reserved, memory_mb_reserved)
 VALUES ($1, $2, $3, $4)
@@ -80,6 +149,33 @@ func (q *Queries) InsertMetricsSnapshot(ctx context.Context, arg InsertMetricsSn
 	return err
 }
 
+const insertSandboxMetricPoint = `-- name: InsertSandboxMetricPoint :exec
+INSERT INTO sandbox_metric_points (sandbox_id, tier, ts, cpu_pct, mem_bytes, disk_bytes)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (sandbox_id, tier, ts) DO NOTHING
+`
+
+type InsertSandboxMetricPointParams struct {
+	SandboxID string  `json:"sandbox_id"`
+	Tier      string  `json:"tier"`
+	Ts        int64   `json:"ts"`
+	CpuPct    float64 `json:"cpu_pct"`
+	MemBytes  int64   `json:"mem_bytes"`
+	DiskBytes int64   `json:"disk_bytes"`
+}
+
+func (q *Queries) InsertSandboxMetricPoint(ctx context.Context, arg InsertSandboxMetricPointParams) error {
+	_, err := q.db.Exec(ctx, insertSandboxMetricPoint,
+		arg.SandboxID,
+		arg.Tier,
+		arg.Ts,
+		arg.CpuPct,
+		arg.MemBytes,
+		arg.DiskBytes,
+	)
+	return err
+}
+
 const pruneOldMetrics = `-- name: PruneOldMetrics :exec
 DELETE FROM sandbox_metrics_snapshots
 WHERE sampled_at < NOW() - INTERVAL '60 days'
@@ -87,6 +183,17 @@ WHERE sampled_at < NOW() - INTERVAL '60 days'
 
 func (q *Queries) PruneOldMetrics(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, pruneOldMetrics)
+	return err
+}
+
+const pruneSandboxMetricPoints = `-- name: PruneSandboxMetricPoints :exec
+DELETE FROM sandbox_metric_points
+WHERE ts < EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')::BIGINT
+`
+
+// Remove metric points older than 30 days for destroyed sandboxes.
+func (q *Queries) PruneSandboxMetricPoints(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, pruneSandboxMetricPoints)
 	return err
 }
 

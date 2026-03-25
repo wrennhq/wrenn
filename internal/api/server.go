@@ -64,6 +64,7 @@ func New(
 	usersH := newUsersHandler(teamSvc)
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)
+	metricsH := newSandboxMetricsHandler(queries, pool)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -125,6 +126,7 @@ func New(
 			r.Post("/files/read", files.Download)
 			r.Post("/files/stream/write", filesStream.StreamUpload)
 			r.Post("/files/stream/read", filesStream.StreamDownload)
+			r.Get("/metrics", metricsH.GetMetrics)
 		})
 	})
 

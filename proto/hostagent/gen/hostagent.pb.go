@@ -1902,6 +1902,275 @@ func (*TerminateResponse) Descriptor() ([]byte, []int) {
 	return file_hostagent_proto_rawDescGZIP(), []int{34}
 }
 
+type MetricPoint struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TimestampUnix int64                  `protobuf:"varint,1,opt,name=timestamp_unix,json=timestampUnix,proto3" json:"timestamp_unix,omitempty"`
+	CpuPct        float64                `protobuf:"fixed64,2,opt,name=cpu_pct,json=cpuPct,proto3" json:"cpu_pct,omitempty"`
+	MemBytes      int64                  `protobuf:"varint,3,opt,name=mem_bytes,json=memBytes,proto3" json:"mem_bytes,omitempty"`
+	DiskBytes     int64                  `protobuf:"varint,4,opt,name=disk_bytes,json=diskBytes,proto3" json:"disk_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetricPoint) Reset() {
+	*x = MetricPoint{}
+	mi := &file_hostagent_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricPoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricPoint) ProtoMessage() {}
+
+func (x *MetricPoint) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricPoint.ProtoReflect.Descriptor instead.
+func (*MetricPoint) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *MetricPoint) GetTimestampUnix() int64 {
+	if x != nil {
+		return x.TimestampUnix
+	}
+	return 0
+}
+
+func (x *MetricPoint) GetCpuPct() float64 {
+	if x != nil {
+		return x.CpuPct
+	}
+	return 0
+}
+
+func (x *MetricPoint) GetMemBytes() int64 {
+	if x != nil {
+		return x.MemBytes
+	}
+	return 0
+}
+
+func (x *MetricPoint) GetDiskBytes() int64 {
+	if x != nil {
+		return x.DiskBytes
+	}
+	return 0
+}
+
+type GetSandboxMetricsRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	// Range tier: "10m", "2h", or "24h".
+	Range         string `protobuf:"bytes,2,opt,name=range,proto3" json:"range,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSandboxMetricsRequest) Reset() {
+	*x = GetSandboxMetricsRequest{}
+	mi := &file_hostagent_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSandboxMetricsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSandboxMetricsRequest) ProtoMessage() {}
+
+func (x *GetSandboxMetricsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSandboxMetricsRequest.ProtoReflect.Descriptor instead.
+func (*GetSandboxMetricsRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *GetSandboxMetricsRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *GetSandboxMetricsRequest) GetRange() string {
+	if x != nil {
+		return x.Range
+	}
+	return ""
+}
+
+type GetSandboxMetricsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Points        []*MetricPoint         `protobuf:"bytes,1,rep,name=points,proto3" json:"points,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSandboxMetricsResponse) Reset() {
+	*x = GetSandboxMetricsResponse{}
+	mi := &file_hostagent_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSandboxMetricsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSandboxMetricsResponse) ProtoMessage() {}
+
+func (x *GetSandboxMetricsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSandboxMetricsResponse.ProtoReflect.Descriptor instead.
+func (*GetSandboxMetricsResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *GetSandboxMetricsResponse) GetPoints() []*MetricPoint {
+	if x != nil {
+		return x.Points
+	}
+	return nil
+}
+
+type FlushSandboxMetricsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlushSandboxMetricsRequest) Reset() {
+	*x = FlushSandboxMetricsRequest{}
+	mi := &file_hostagent_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlushSandboxMetricsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlushSandboxMetricsRequest) ProtoMessage() {}
+
+func (x *FlushSandboxMetricsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlushSandboxMetricsRequest.ProtoReflect.Descriptor instead.
+func (*FlushSandboxMetricsRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *FlushSandboxMetricsRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+type FlushSandboxMetricsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Points_10M    []*MetricPoint         `protobuf:"bytes,1,rep,name=points_10m,json=points10m,proto3" json:"points_10m,omitempty"`
+	Points_2H     []*MetricPoint         `protobuf:"bytes,2,rep,name=points_2h,json=points2h,proto3" json:"points_2h,omitempty"`
+	Points_24H    []*MetricPoint         `protobuf:"bytes,3,rep,name=points_24h,json=points24h,proto3" json:"points_24h,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlushSandboxMetricsResponse) Reset() {
+	*x = FlushSandboxMetricsResponse{}
+	mi := &file_hostagent_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlushSandboxMetricsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlushSandboxMetricsResponse) ProtoMessage() {}
+
+func (x *FlushSandboxMetricsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlushSandboxMetricsResponse.ProtoReflect.Descriptor instead.
+func (*FlushSandboxMetricsResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *FlushSandboxMetricsResponse) GetPoints_10M() []*MetricPoint {
+	if x != nil {
+		return x.Points_10M
+	}
+	return nil
+}
+
+func (x *FlushSandboxMetricsResponse) GetPoints_2H() []*MetricPoint {
+	if x != nil {
+		return x.Points_2H
+	}
+	return nil
+}
+
+func (x *FlushSandboxMetricsResponse) GetPoints_24H() []*MetricPoint {
+	if x != nil {
+		return x.Points_24H
+	}
+	return nil
+}
+
 var File_hostagent_proto protoreflect.FileDescriptor
 
 const file_hostagent_proto_rawDesc = "" +
@@ -2029,8 +2298,28 @@ const file_hostagent_proto_rawDesc = "" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"\x15\n" +
 	"\x13PingSandboxResponse\"\x12\n" +
 	"\x10TerminateRequest\"\x13\n" +
-	"\x11TerminateResponse2\x9c\n" +
+	"\x11TerminateResponse\"\x89\x01\n" +
+	"\vMetricPoint\x12%\n" +
+	"\x0etimestamp_unix\x18\x01 \x01(\x03R\rtimestampUnix\x12\x17\n" +
+	"\acpu_pct\x18\x02 \x01(\x01R\x06cpuPct\x12\x1b\n" +
+	"\tmem_bytes\x18\x03 \x01(\x03R\bmemBytes\x12\x1d\n" +
 	"\n" +
+	"disk_bytes\x18\x04 \x01(\x03R\tdiskBytes\"O\n" +
+	"\x18GetSandboxMetricsRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x14\n" +
+	"\x05range\x18\x02 \x01(\tR\x05range\"N\n" +
+	"\x19GetSandboxMetricsResponse\x121\n" +
+	"\x06points\x18\x01 \x03(\v2\x19.hostagent.v1.MetricPointR\x06points\";\n" +
+	"\x1aFlushSandboxMetricsRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"\xc9\x01\n" +
+	"\x1bFlushSandboxMetricsResponse\x128\n" +
+	"\n" +
+	"points_10m\x18\x01 \x03(\v2\x19.hostagent.v1.MetricPointR\tpoints10m\x126\n" +
+	"\tpoints_2h\x18\x02 \x03(\v2\x19.hostagent.v1.MetricPointR\bpoints2h\x128\n" +
+	"\n" +
+	"points_24h\x18\x03 \x03(\v2\x19.hostagent.v1.MetricPointR\tpoints24h2\xee\v\n" +
 	"\x10HostAgentService\x12X\n" +
 	"\rCreateSandbox\x12\".hostagent.v1.CreateSandboxRequest\x1a#.hostagent.v1.CreateSandboxResponse\x12[\n" +
 	"\x0eDestroySandbox\x12#.hostagent.v1.DestroySandboxRequest\x1a$.hostagent.v1.DestroySandboxResponse\x12U\n" +
@@ -2047,7 +2336,9 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x0fWriteFileStream\x12$.hostagent.v1.WriteFileStreamRequest\x1a%.hostagent.v1.WriteFileStreamResponse(\x01\x12]\n" +
 	"\x0eReadFileStream\x12#.hostagent.v1.ReadFileStreamRequest\x1a$.hostagent.v1.ReadFileStreamResponse0\x01\x12R\n" +
 	"\vPingSandbox\x12 .hostagent.v1.PingSandboxRequest\x1a!.hostagent.v1.PingSandboxResponse\x12L\n" +
-	"\tTerminate\x12\x1e.hostagent.v1.TerminateRequest\x1a\x1f.hostagent.v1.TerminateResponseB\xb0\x01\n" +
+	"\tTerminate\x12\x1e.hostagent.v1.TerminateRequest\x1a\x1f.hostagent.v1.TerminateResponse\x12d\n" +
+	"\x11GetSandboxMetrics\x12&.hostagent.v1.GetSandboxMetricsRequest\x1a'.hostagent.v1.GetSandboxMetricsResponse\x12j\n" +
+	"\x13FlushSandboxMetrics\x12(.hostagent.v1.FlushSandboxMetricsRequest\x1a).hostagent.v1.FlushSandboxMetricsResponseB\xb0\x01\n" +
 	"\x10com.hostagent.v1B\x0eHostagentProtoP\x01Z;git.omukk.dev/wrenn/sandbox/proto/hostagent/gen;hostagentv1\xa2\x02\x03HXX\xaa\x02\fHostagent.V1\xca\x02\fHostagent\\V1\xe2\x02\x18Hostagent\\V1\\GPBMetadata\xea\x02\rHostagent::V1b\x06proto3"
 
 var (
@@ -2062,43 +2353,48 @@ func file_hostagent_proto_rawDescGZIP() []byte {
 	return file_hostagent_proto_rawDescData
 }
 
-var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
 var file_hostagent_proto_goTypes = []any{
-	(*CreateSandboxRequest)(nil),    // 0: hostagent.v1.CreateSandboxRequest
-	(*CreateSandboxResponse)(nil),   // 1: hostagent.v1.CreateSandboxResponse
-	(*DestroySandboxRequest)(nil),   // 2: hostagent.v1.DestroySandboxRequest
-	(*DestroySandboxResponse)(nil),  // 3: hostagent.v1.DestroySandboxResponse
-	(*PauseSandboxRequest)(nil),     // 4: hostagent.v1.PauseSandboxRequest
-	(*PauseSandboxResponse)(nil),    // 5: hostagent.v1.PauseSandboxResponse
-	(*ResumeSandboxRequest)(nil),    // 6: hostagent.v1.ResumeSandboxRequest
-	(*ResumeSandboxResponse)(nil),   // 7: hostagent.v1.ResumeSandboxResponse
-	(*CreateSnapshotRequest)(nil),   // 8: hostagent.v1.CreateSnapshotRequest
-	(*CreateSnapshotResponse)(nil),  // 9: hostagent.v1.CreateSnapshotResponse
-	(*DeleteSnapshotRequest)(nil),   // 10: hostagent.v1.DeleteSnapshotRequest
-	(*DeleteSnapshotResponse)(nil),  // 11: hostagent.v1.DeleteSnapshotResponse
-	(*ExecRequest)(nil),             // 12: hostagent.v1.ExecRequest
-	(*ExecResponse)(nil),            // 13: hostagent.v1.ExecResponse
-	(*ListSandboxesRequest)(nil),    // 14: hostagent.v1.ListSandboxesRequest
-	(*ListSandboxesResponse)(nil),   // 15: hostagent.v1.ListSandboxesResponse
-	(*SandboxInfo)(nil),             // 16: hostagent.v1.SandboxInfo
-	(*WriteFileRequest)(nil),        // 17: hostagent.v1.WriteFileRequest
-	(*WriteFileResponse)(nil),       // 18: hostagent.v1.WriteFileResponse
-	(*ReadFileRequest)(nil),         // 19: hostagent.v1.ReadFileRequest
-	(*ReadFileResponse)(nil),        // 20: hostagent.v1.ReadFileResponse
-	(*ExecStreamRequest)(nil),       // 21: hostagent.v1.ExecStreamRequest
-	(*ExecStreamResponse)(nil),      // 22: hostagent.v1.ExecStreamResponse
-	(*ExecStreamStart)(nil),         // 23: hostagent.v1.ExecStreamStart
-	(*ExecStreamData)(nil),          // 24: hostagent.v1.ExecStreamData
-	(*ExecStreamEnd)(nil),           // 25: hostagent.v1.ExecStreamEnd
-	(*WriteFileStreamRequest)(nil),  // 26: hostagent.v1.WriteFileStreamRequest
-	(*WriteFileStreamMeta)(nil),     // 27: hostagent.v1.WriteFileStreamMeta
-	(*WriteFileStreamResponse)(nil), // 28: hostagent.v1.WriteFileStreamResponse
-	(*ReadFileStreamRequest)(nil),   // 29: hostagent.v1.ReadFileStreamRequest
-	(*ReadFileStreamResponse)(nil),  // 30: hostagent.v1.ReadFileStreamResponse
-	(*PingSandboxRequest)(nil),      // 31: hostagent.v1.PingSandboxRequest
-	(*PingSandboxResponse)(nil),     // 32: hostagent.v1.PingSandboxResponse
-	(*TerminateRequest)(nil),        // 33: hostagent.v1.TerminateRequest
-	(*TerminateResponse)(nil),       // 34: hostagent.v1.TerminateResponse
+	(*CreateSandboxRequest)(nil),        // 0: hostagent.v1.CreateSandboxRequest
+	(*CreateSandboxResponse)(nil),       // 1: hostagent.v1.CreateSandboxResponse
+	(*DestroySandboxRequest)(nil),       // 2: hostagent.v1.DestroySandboxRequest
+	(*DestroySandboxResponse)(nil),      // 3: hostagent.v1.DestroySandboxResponse
+	(*PauseSandboxRequest)(nil),         // 4: hostagent.v1.PauseSandboxRequest
+	(*PauseSandboxResponse)(nil),        // 5: hostagent.v1.PauseSandboxResponse
+	(*ResumeSandboxRequest)(nil),        // 6: hostagent.v1.ResumeSandboxRequest
+	(*ResumeSandboxResponse)(nil),       // 7: hostagent.v1.ResumeSandboxResponse
+	(*CreateSnapshotRequest)(nil),       // 8: hostagent.v1.CreateSnapshotRequest
+	(*CreateSnapshotResponse)(nil),      // 9: hostagent.v1.CreateSnapshotResponse
+	(*DeleteSnapshotRequest)(nil),       // 10: hostagent.v1.DeleteSnapshotRequest
+	(*DeleteSnapshotResponse)(nil),      // 11: hostagent.v1.DeleteSnapshotResponse
+	(*ExecRequest)(nil),                 // 12: hostagent.v1.ExecRequest
+	(*ExecResponse)(nil),                // 13: hostagent.v1.ExecResponse
+	(*ListSandboxesRequest)(nil),        // 14: hostagent.v1.ListSandboxesRequest
+	(*ListSandboxesResponse)(nil),       // 15: hostagent.v1.ListSandboxesResponse
+	(*SandboxInfo)(nil),                 // 16: hostagent.v1.SandboxInfo
+	(*WriteFileRequest)(nil),            // 17: hostagent.v1.WriteFileRequest
+	(*WriteFileResponse)(nil),           // 18: hostagent.v1.WriteFileResponse
+	(*ReadFileRequest)(nil),             // 19: hostagent.v1.ReadFileRequest
+	(*ReadFileResponse)(nil),            // 20: hostagent.v1.ReadFileResponse
+	(*ExecStreamRequest)(nil),           // 21: hostagent.v1.ExecStreamRequest
+	(*ExecStreamResponse)(nil),          // 22: hostagent.v1.ExecStreamResponse
+	(*ExecStreamStart)(nil),             // 23: hostagent.v1.ExecStreamStart
+	(*ExecStreamData)(nil),              // 24: hostagent.v1.ExecStreamData
+	(*ExecStreamEnd)(nil),               // 25: hostagent.v1.ExecStreamEnd
+	(*WriteFileStreamRequest)(nil),      // 26: hostagent.v1.WriteFileStreamRequest
+	(*WriteFileStreamMeta)(nil),         // 27: hostagent.v1.WriteFileStreamMeta
+	(*WriteFileStreamResponse)(nil),     // 28: hostagent.v1.WriteFileStreamResponse
+	(*ReadFileStreamRequest)(nil),       // 29: hostagent.v1.ReadFileStreamRequest
+	(*ReadFileStreamResponse)(nil),      // 30: hostagent.v1.ReadFileStreamResponse
+	(*PingSandboxRequest)(nil),          // 31: hostagent.v1.PingSandboxRequest
+	(*PingSandboxResponse)(nil),         // 32: hostagent.v1.PingSandboxResponse
+	(*TerminateRequest)(nil),            // 33: hostagent.v1.TerminateRequest
+	(*TerminateResponse)(nil),           // 34: hostagent.v1.TerminateResponse
+	(*MetricPoint)(nil),                 // 35: hostagent.v1.MetricPoint
+	(*GetSandboxMetricsRequest)(nil),    // 36: hostagent.v1.GetSandboxMetricsRequest
+	(*GetSandboxMetricsResponse)(nil),   // 37: hostagent.v1.GetSandboxMetricsResponse
+	(*FlushSandboxMetricsRequest)(nil),  // 38: hostagent.v1.FlushSandboxMetricsRequest
+	(*FlushSandboxMetricsResponse)(nil), // 39: hostagent.v1.FlushSandboxMetricsResponse
 }
 var file_hostagent_proto_depIdxs = []int32{
 	16, // 0: hostagent.v1.ListSandboxesResponse.sandboxes:type_name -> hostagent.v1.SandboxInfo
@@ -2106,41 +2402,49 @@ var file_hostagent_proto_depIdxs = []int32{
 	24, // 2: hostagent.v1.ExecStreamResponse.data:type_name -> hostagent.v1.ExecStreamData
 	25, // 3: hostagent.v1.ExecStreamResponse.end:type_name -> hostagent.v1.ExecStreamEnd
 	27, // 4: hostagent.v1.WriteFileStreamRequest.meta:type_name -> hostagent.v1.WriteFileStreamMeta
-	0,  // 5: hostagent.v1.HostAgentService.CreateSandbox:input_type -> hostagent.v1.CreateSandboxRequest
-	2,  // 6: hostagent.v1.HostAgentService.DestroySandbox:input_type -> hostagent.v1.DestroySandboxRequest
-	4,  // 7: hostagent.v1.HostAgentService.PauseSandbox:input_type -> hostagent.v1.PauseSandboxRequest
-	6,  // 8: hostagent.v1.HostAgentService.ResumeSandbox:input_type -> hostagent.v1.ResumeSandboxRequest
-	12, // 9: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
-	14, // 10: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
-	17, // 11: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
-	19, // 12: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
-	8,  // 13: hostagent.v1.HostAgentService.CreateSnapshot:input_type -> hostagent.v1.CreateSnapshotRequest
-	10, // 14: hostagent.v1.HostAgentService.DeleteSnapshot:input_type -> hostagent.v1.DeleteSnapshotRequest
-	21, // 15: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
-	26, // 16: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
-	29, // 17: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
-	31, // 18: hostagent.v1.HostAgentService.PingSandbox:input_type -> hostagent.v1.PingSandboxRequest
-	33, // 19: hostagent.v1.HostAgentService.Terminate:input_type -> hostagent.v1.TerminateRequest
-	1,  // 20: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
-	3,  // 21: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
-	5,  // 22: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
-	7,  // 23: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
-	13, // 24: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
-	15, // 25: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
-	18, // 26: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
-	20, // 27: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
-	9,  // 28: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
-	11, // 29: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
-	22, // 30: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
-	28, // 31: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
-	30, // 32: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
-	32, // 33: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
-	34, // 34: hostagent.v1.HostAgentService.Terminate:output_type -> hostagent.v1.TerminateResponse
-	20, // [20:35] is the sub-list for method output_type
-	5,  // [5:20] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	35, // 5: hostagent.v1.GetSandboxMetricsResponse.points:type_name -> hostagent.v1.MetricPoint
+	35, // 6: hostagent.v1.FlushSandboxMetricsResponse.points_10m:type_name -> hostagent.v1.MetricPoint
+	35, // 7: hostagent.v1.FlushSandboxMetricsResponse.points_2h:type_name -> hostagent.v1.MetricPoint
+	35, // 8: hostagent.v1.FlushSandboxMetricsResponse.points_24h:type_name -> hostagent.v1.MetricPoint
+	0,  // 9: hostagent.v1.HostAgentService.CreateSandbox:input_type -> hostagent.v1.CreateSandboxRequest
+	2,  // 10: hostagent.v1.HostAgentService.DestroySandbox:input_type -> hostagent.v1.DestroySandboxRequest
+	4,  // 11: hostagent.v1.HostAgentService.PauseSandbox:input_type -> hostagent.v1.PauseSandboxRequest
+	6,  // 12: hostagent.v1.HostAgentService.ResumeSandbox:input_type -> hostagent.v1.ResumeSandboxRequest
+	12, // 13: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
+	14, // 14: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
+	17, // 15: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
+	19, // 16: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
+	8,  // 17: hostagent.v1.HostAgentService.CreateSnapshot:input_type -> hostagent.v1.CreateSnapshotRequest
+	10, // 18: hostagent.v1.HostAgentService.DeleteSnapshot:input_type -> hostagent.v1.DeleteSnapshotRequest
+	21, // 19: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
+	26, // 20: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
+	29, // 21: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
+	31, // 22: hostagent.v1.HostAgentService.PingSandbox:input_type -> hostagent.v1.PingSandboxRequest
+	33, // 23: hostagent.v1.HostAgentService.Terminate:input_type -> hostagent.v1.TerminateRequest
+	36, // 24: hostagent.v1.HostAgentService.GetSandboxMetrics:input_type -> hostagent.v1.GetSandboxMetricsRequest
+	38, // 25: hostagent.v1.HostAgentService.FlushSandboxMetrics:input_type -> hostagent.v1.FlushSandboxMetricsRequest
+	1,  // 26: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
+	3,  // 27: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
+	5,  // 28: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
+	7,  // 29: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
+	13, // 30: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
+	15, // 31: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
+	18, // 32: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
+	20, // 33: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
+	9,  // 34: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
+	11, // 35: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
+	22, // 36: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
+	28, // 37: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
+	30, // 38: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
+	32, // 39: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
+	34, // 40: hostagent.v1.HostAgentService.Terminate:output_type -> hostagent.v1.TerminateResponse
+	37, // 41: hostagent.v1.HostAgentService.GetSandboxMetrics:output_type -> hostagent.v1.GetSandboxMetricsResponse
+	39, // 42: hostagent.v1.HostAgentService.FlushSandboxMetrics:output_type -> hostagent.v1.FlushSandboxMetricsResponse
+	26, // [26:43] is the sub-list for method output_type
+	9,  // [9:26] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_hostagent_proto_init() }
@@ -2167,7 +2471,7 @@ func file_hostagent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hostagent_proto_rawDesc), len(file_hostagent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   35,
+			NumMessages:   40,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
