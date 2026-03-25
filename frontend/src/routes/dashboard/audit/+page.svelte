@@ -556,15 +556,7 @@
 </div>
 
 <style>
-	@keyframes fadeUp {
-		from { opacity: 0; transform: translateY(8px); }
-		to   { opacity: 1; transform: translateY(0); }
-	}
-
-	@keyframes iconFloat {
-		0%, 100% { transform: translateY(0); }
-		50%       { transform: translateY(-6px); }
-	}
+	/* fadeUp and iconFloat are defined globally in app.css — no need to redeclare them here */
 
 	@keyframes stripePulse {
 		0%, 100% { opacity: 1; }

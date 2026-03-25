@@ -117,10 +117,17 @@
 		class="relative hidden w-1/2 flex-col items-center justify-center overflow-hidden bg-[var(--color-bg-1)] lg:flex"
 		onmousemove={handleMouseMove}
 	>
-		<!-- Mouse-reactive radial glow -->
+		<!-- Dot grid texture — industrial depth layer -->
+		<div
+			class="pointer-events-none absolute inset-0 opacity-60"
+			style="background-image: radial-gradient(circle, rgba(94,140,88,0.09) 1px, transparent 1px); background-size: 24px 24px;"
+			aria-hidden="true"
+		></div>
+
+		<!-- Mouse-reactive radial glow — renders above dot grid -->
 		<div
 			class="pointer-events-none absolute inset-0"
-			style="background: radial-gradient(ellipse 55% 45% at {glowX}% {glowY}%, rgba(94, 140, 88, 0.14) 0%, transparent 70%)"
+			style="background: radial-gradient(ellipse 60% 50% at {glowX}% {glowY}%, rgba(94, 140, 88, 0.18) 0%, transparent 70%)"
 			aria-hidden="true"
 		></div>
 
@@ -137,13 +144,13 @@
 			</span>
 		</div>
 
-		<!-- Tagline below logo -->
+		<!-- Tagline below logo — larger, more commanding -->
 		<div
-			class="relative z-10 mt-16 max-w-[360px] text-center"
+			class="relative z-10 mt-14 max-w-[460px] text-center"
 			style="animation: fadeUp 0.35s ease 0.1s both"
 		>
 			<h1
-				class="font-serif text-[5rem] leading-[1.1] tracking-[-0.04em] text-[var(--color-text-bright)]"
+				class="font-serif text-[6.5rem] leading-[0.95] tracking-[-0.06em] text-[var(--color-text-bright)]"
 			>
 				Scale Up.<br /><span class="text-[var(--color-accent-bright)]">Spin Out.</span>
 			</h1>
@@ -151,7 +158,7 @@
 
 		<!-- Sub-tagline -->
 		<p
-			class="relative z-10 mt-12 font-mono text-ui uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]"
+			class="relative z-10 mt-10 font-mono text-ui uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]"
 			style="animation: fadeUp 0.35s ease 0.2s both"
 		>
 			Isolated VMs. Milliseconds to live.

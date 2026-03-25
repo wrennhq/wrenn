@@ -262,7 +262,7 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !creating) showCreate = false; }}
 		></div>
 
-		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
+		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">New API Key</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Name it after its environment or purpose — production, staging, CI. You can't rename it later.</p>
 
@@ -323,7 +323,7 @@
 			onkeydown={(e) => { if (e.key === 'Escape') dismissReveal(); }}
 		></div>
 
-		<div class="relative w-full max-w-[480px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
+		<div class="relative w-full max-w-[480px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
 			<!-- Success indicator -->
 			<div class="mb-4 flex items-center gap-2.5">
 				<span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-glow-mid)]" style="animation: circlePop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both">
@@ -404,7 +404,7 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !revoking) revokeTarget = null; }}
 		></div>
 
-		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
+		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Revoke Key</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Permanently revoke <span class="font-medium text-[var(--color-text-secondary)]">{revokeTarget.name || revokeTarget.id}</span>.

@@ -327,14 +327,13 @@
 					<div class="flex items-center gap-3">
 						<!-- Status chip -->
 						<div
-							class="flex items-center gap-2.5 rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] px-3.5 py-2"
+							class="flex items-center gap-2.5 rounded-[var(--radius-card)] border border-[var(--color-accent)]/20 bg-[var(--color-bg-2)] px-3.5 py-2"
 						>
-							<span class="relative flex h-[7px] w-[7px]">
+							<span class="relative flex h-[8px] w-[8px]">
 								<span
-									class="absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"
-									style="animation: wrenn-glow 2.5s ease-in-out infinite"
+									class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"
 								></span>
-								<span class="relative inline-flex h-[7px] w-[7px] rounded-full bg-[var(--color-accent)]"></span>
+								<span class="relative inline-flex h-[8px] w-[8px] rounded-full bg-[var(--color-accent)]"></span>
 							</span>
 							<span class="font-mono text-body font-semibold text-[var(--color-accent-bright)]">{runningCount}</span>
 							<span class="text-ui text-[var(--color-text-secondary)]">running now</span>
@@ -531,7 +530,7 @@
 									<div class="flex items-center gap-2.5 px-5 py-4">
 										{#if capsule.status === 'running'}
 											<span class="relative flex h-[6px] w-[6px] shrink-0">
-												<span class="absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]" style="animation: wrenn-glow 2.5s ease-in-out infinite"></span>
+												<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
 												<span class="relative inline-flex h-[6px] w-[6px] rounded-full bg-[var(--color-accent)]"></span>
 											</span>
 										{:else if capsule.status === 'paused'}
@@ -621,7 +620,10 @@
 			class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7"
 		>
 			<div class="flex items-center gap-1.5">
-				<span class="inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+				<span class="relative flex h-[5px] w-[5px]">
+					<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+					<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+				</span>
 				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
@@ -703,7 +705,7 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !snapshotting) snapshotTarget = null; }}
 		></div>
 
-		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] overflow-hidden" style="animation: fadeUp 0.2s ease both">
+		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] overflow-hidden" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
 			<!-- Header band -->
 			<div class="flex items-center gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-6 py-5">
 				<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-input)] bg-[var(--color-accent)]/15 text-[var(--color-accent)] shadow-[0_0_12px_var(--color-accent-glow)]">
@@ -793,7 +795,7 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !creating) showCreateDialog = false; }}
 		></div>
 
-		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
+		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Configure resources and launch. The VM will be ready in under a second.</p>
 
