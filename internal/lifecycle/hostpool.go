@@ -45,7 +45,7 @@ func (p *HostClientPool) Get(hostID, address string) hostagentv1connect.HostAgen
 	if c, ok = p.clients[hostID]; ok {
 		return c
 	}
-	c = hostagentv1connect.NewHostAgentServiceClient(p.httpClient, ensureScheme(address))
+	c = hostagentv1connect.NewHostAgentServiceClient(p.httpClient, EnsureScheme(address))
 	p.clients[hostID] = c
 	return c
 }
@@ -68,8 +68,8 @@ func (p *HostClientPool) Evict(hostID string) {
 	p.mu.Unlock()
 }
 
-// ensureScheme adds "http://" if the address has no scheme.
-func ensureScheme(addr string) string {
+// EnsureScheme adds "http://" if the address has no scheme.
+func EnsureScheme(addr string) string {
 	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
 		return addr
 	}

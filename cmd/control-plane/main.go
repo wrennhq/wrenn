@@ -98,9 +98,14 @@ func main() {
 	sampler := api.NewMetricsSampler(queries, 10*time.Second)
 	sampler.Start(ctx)
 
+	// Wrap the API handler with the sandbox proxy so that requests with
+	// {port}-{sandbox_id}.{domain} Host headers are routed to the sandbox's
+	// host agent. All other requests pass through to the normal API router.
+	proxyWrapper := api.NewSandboxProxyWrapper(srv.Handler(), queries, hostPool)
+
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: srv.Handler(),
+		Handler: proxyWrapper,
 	}
 
 	// Graceful shutdown on signal.
