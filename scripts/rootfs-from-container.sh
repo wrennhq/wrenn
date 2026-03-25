@@ -15,7 +15,8 @@
 # Output:
 #   ${AGENT_FILES_ROOTDIR}/images/<image_name>/rootfs.ext4
 #
-# Requires: docker, mkfs.ext4, resize2fs, e2fsck, make (for building envd), curl (for tini download)
+# Requires: docker, mkfs.ext4, resize2fs, e2fsck, make (for building envd), curl (for tini/socat download),
+#           gcc, make (for building socat from source)
 # Sudo is used only for mount/umount/copy-into-image operations.
 
 set -euo pipefail
@@ -130,16 +131,51 @@ sudo mkdir -p "${MOUNT_DIR}/sbin"
 sudo cp "${TINI_BIN}" "${MOUNT_DIR}/sbin/tini"
 sudo chmod 755 "${MOUNT_DIR}/sbin/tini"
 
-# Step 6: Verify.
+echo "==> Installing socat..."
+SOCAT_BIN=""
+# 1. Already in the exported container image?
+for p in "${MOUNT_DIR}/usr/bin/socat" "${MOUNT_DIR}/usr/local/bin/socat"; do
+    if [ -f "$p" ]; then SOCAT_BIN="$p"; break; fi
+done
+# 2. Available on the host?
+if [ -z "${SOCAT_BIN}" ]; then
+    for p in /usr/bin/socat /usr/local/bin/socat; do
+        if [ -f "$p" ]; then SOCAT_BIN="$p"; break; fi
+    done
+fi
+# 3. Build from source.
+if [ -z "${SOCAT_BIN}" ]; then
+    SOCAT_VERSION="1.8.1.1"
+    SOCAT_URL="http://www.dest-unreach.org/socat/download/socat-${SOCAT_VERSION}.tar.gz"
+    SOCAT_BUILD_DIR="/tmp/socat-build"
+    echo "    Building socat ${SOCAT_VERSION} from source..."
+    rm -rf "${SOCAT_BUILD_DIR}"
+    mkdir -p "${SOCAT_BUILD_DIR}"
+    curl -fsSL "${SOCAT_URL}" | tar xz -C "${SOCAT_BUILD_DIR}" --strip-components=1
+    (cd "${SOCAT_BUILD_DIR}" && LDFLAGS="-static" ./configure --quiet && make -j"$(nproc)" -s)
+    SOCAT_BIN="${SOCAT_BUILD_DIR}/socat"
+    if [ ! -f "${SOCAT_BIN}" ]; then
+        echo "ERROR: socat build failed"
+        exit 1
+    fi
+    if ! file "${SOCAT_BIN}" | grep -q "statically linked"; then
+        echo "ERROR: socat is not statically linked!"
+        exit 1
+    fi
+fi
+sudo cp "${SOCAT_BIN}" "${MOUNT_DIR}/usr/local/bin/socat"
+sudo chmod 755 "${MOUNT_DIR}/usr/local/bin/socat"
+
+# Step 7: Verify.
 echo ""
 echo "==> Installed guest binaries:"
-ls -la "${MOUNT_DIR}/usr/local/bin/envd" "${MOUNT_DIR}/usr/local/bin/wrenn-init" "${MOUNT_DIR}/sbin/tini"
+ls -la "${MOUNT_DIR}/usr/local/bin/envd" "${MOUNT_DIR}/usr/local/bin/wrenn-init" "${MOUNT_DIR}/sbin/tini" "${MOUNT_DIR}/usr/local/bin/socat"
 
 # Unmount before shrinking.
 sudo umount "${MOUNT_DIR}"
 rmdir "${MOUNT_DIR}" 2>/dev/null || true
 
-# Step 7: Shrink the image to minimum size.
+# Step 8: Shrink the image to minimum size.
 echo ""
 echo "==> Shrinking image..."
 sudo e2fsck -fy "${OUTPUT_FILE}"
