@@ -61,7 +61,7 @@ func New(
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
 	hostH := newHostHandler(hostSvc, queries, al)
 	teamH := newTeamHandler(teamSvc, al)
-	usersH := newUsersHandler(teamSvc)
+	usersH := newUsersHandler(queries)
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
