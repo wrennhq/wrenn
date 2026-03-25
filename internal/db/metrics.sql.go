@@ -14,7 +14,7 @@ SELECT
     (COUNT(*) FILTER (WHERE status IN ('running', 'starting')))::INTEGER                                              AS running_count,
     (COALESCE(SUM(vcpus)     FILTER (WHERE status IN ('running', 'starting')), 0))::INTEGER                          AS vcpus_reserved,
     (COALESCE(SUM(memory_mb) FILTER (WHERE status IN ('running', 'starting')), 0)
-     + CEIL(COALESCE(SUM(memory_mb) FILTER (WHERE status = 'paused'), 0)::NUMERIC / 2))::INTEGER                     AS memory_mb_reserved
+     + COALESCE(SUM(CEIL(memory_mb::NUMERIC / 2)) FILTER (WHERE status = 'paused'), 0))::INTEGER                     AS memory_mb_reserved
 FROM sandboxes
 WHERE team_id = $1
 `
@@ -27,7 +27,7 @@ type GetLiveMetricsRow struct {
 
 // Reads directly from sandboxes for accurate real-time current values.
 // CPU reserved = running + starting only (paused VMs release CPU).
-// RAM reserved = running + starting + ceil(paused/2) (capacity held for resume).
+// RAM reserved = running + starting + sum(ceil(each_paused/2)) (per-VM ceiling).
 func (q *Queries) GetLiveMetrics(ctx context.Context, teamID string) (GetLiveMetricsRow, error) {
 	row := q.db.QueryRow(ctx, getLiveMetrics, teamID)
 	var i GetLiveMetricsRow
@@ -96,9 +96,8 @@ SELECT
     (COUNT(*) FILTER (WHERE status IN ('running', 'starting')))::INTEGER                                              AS running_count,
     (COALESCE(SUM(vcpus)     FILTER (WHERE status IN ('running', 'starting')), 0))::INTEGER                          AS vcpus_reserved,
     (COALESCE(SUM(memory_mb) FILTER (WHERE status IN ('running', 'starting')), 0)
-     + CEIL(COALESCE(SUM(memory_mb) FILTER (WHERE status = 'paused'), 0)::NUMERIC / 2))::INTEGER                     AS memory_mb_reserved
+     + COALESCE(SUM(CEIL(memory_mb::NUMERIC / 2)) FILTER (WHERE status = 'paused'), 0))::INTEGER                     AS memory_mb_reserved
 FROM sandboxes
-WHERE status IN ('running', 'starting', 'paused')
 GROUP BY team_id
 `
 
@@ -110,8 +109,11 @@ type SampleSandboxMetricsRow struct {
 }
 
 // Aggregates per-team resource usage from the live sandboxes table.
+// Groups by all teams that have any sandbox row (including stopped) so that
+// zero-value snapshots are recorded when all capsules are stopped, keeping the
+// time-series charts continuous rather than trailing off into empty space.
 // CPU reserved = running + starting only (paused VMs release CPU).
-// RAM reserved = running + starting + ceil(paused/2) (capacity held for resume).
+// RAM reserved = running + starting + sum(ceil(each_paused/2)) (per-VM ceiling).
 func (q *Queries) SampleSandboxMetrics(ctx context.Context) ([]SampleSandboxMetricsRow, error) {
 	rows, err := q.db.Query(ctx, sampleSandboxMetrics)
 	if err != nil {
