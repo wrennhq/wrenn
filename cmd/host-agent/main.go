@@ -119,8 +119,11 @@ func main() {
 	})
 	path, handler := hostagentv1connect.NewHostAgentServiceHandler(srv)
 
+	proxyHandler := hostagent.NewProxyHandler(mgr)
+
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
+	mux.Handle("/proxy/", proxyHandler)
 	httpServer.Handler = mux
 
 	// Start heartbeat loop. Handler must be set before this because the
