@@ -3,7 +3,10 @@
 # rootfs-from-container.sh — Create a bootable Wrenn rootfs from a Docker container.
 #
 # Exports a container's filesystem, writes it into an ext4 image, injects
-# envd + wrenn-init, and shrinks the image to minimum size.
+# envd + wrenn-init + tini, and shrinks the image to minimum size.
+#
+# The container image must already include: socat, chrony, curl, ca-certificates, git.
+# These are installed via apt in the container before export, not injected here.
 #
 # Usage:
 #   bash scripts/rootfs-from-container.sh <container> <image_name>
@@ -15,8 +18,7 @@
 # Output:
 #   ${AGENT_FILES_ROOTDIR}/images/<image_name>/rootfs.ext4
 #
-# Requires: docker, mkfs.ext4, resize2fs, e2fsck, make (for building envd), curl (for tini/socat download),
-#           gcc, make (for building socat from source)
+# Requires: docker, mkfs.ext4, resize2fs, e2fsck, make (for building envd), curl (for tini download)
 # Sudo is used only for mount/umount/copy-into-image operations.
 
 set -euo pipefail
@@ -131,45 +133,23 @@ sudo mkdir -p "${MOUNT_DIR}/sbin"
 sudo cp "${TINI_BIN}" "${MOUNT_DIR}/sbin/tini"
 sudo chmod 755 "${MOUNT_DIR}/sbin/tini"
 
-echo "==> Installing socat..."
-SOCAT_BIN=""
-# 1. Already in the exported container image?
-for p in "${MOUNT_DIR}/usr/bin/socat" "${MOUNT_DIR}/usr/local/bin/socat"; do
-    if [ -f "$p" ]; then SOCAT_BIN="$p"; break; fi
-done
-# 2. Available on the host?
-if [ -z "${SOCAT_BIN}" ]; then
-    for p in /usr/bin/socat /usr/local/bin/socat; do
-        if [ -f "$p" ]; then SOCAT_BIN="$p"; break; fi
-    done
-fi
-# 3. Build from source.
-if [ -z "${SOCAT_BIN}" ]; then
-    SOCAT_VERSION="1.8.1.1"
-    SOCAT_URL="http://www.dest-unreach.org/socat/download/socat-${SOCAT_VERSION}.tar.gz"
-    SOCAT_BUILD_DIR="/tmp/socat-build"
-    echo "    Building socat ${SOCAT_VERSION} from source..."
-    rm -rf "${SOCAT_BUILD_DIR}"
-    mkdir -p "${SOCAT_BUILD_DIR}"
-    curl -fsSL "${SOCAT_URL}" | tar xz -C "${SOCAT_BUILD_DIR}" --strip-components=1
-    (cd "${SOCAT_BUILD_DIR}" && LDFLAGS="-static" ./configure --quiet && make -j"$(nproc)" -s)
-    SOCAT_BIN="${SOCAT_BUILD_DIR}/socat"
-    if [ ! -f "${SOCAT_BIN}" ]; then
-        echo "ERROR: socat build failed"
-        exit 1
-    fi
-    if ! file "${SOCAT_BIN}" | grep -q "statically linked"; then
-        echo "ERROR: socat is not statically linked!"
-        exit 1
-    fi
-fi
-sudo cp "${SOCAT_BIN}" "${MOUNT_DIR}/usr/local/bin/socat"
-sudo chmod 755 "${MOUNT_DIR}/usr/local/bin/socat"
-
-# Step 7: Verify.
+# Step 6: Verify injected binaries and required container packages.
 echo ""
 echo "==> Installed guest binaries:"
-ls -la "${MOUNT_DIR}/usr/local/bin/envd" "${MOUNT_DIR}/usr/local/bin/wrenn-init" "${MOUNT_DIR}/sbin/tini" "${MOUNT_DIR}/usr/local/bin/socat"
+ls -la "${MOUNT_DIR}/usr/local/bin/envd" "${MOUNT_DIR}/usr/local/bin/wrenn-init" "${MOUNT_DIR}/sbin/tini"
+
+echo ""
+echo "==> Checking required container packages..."
+MISSING_PKGS=""
+for bin in socat chronyd curl git; do
+    if ! find "${MOUNT_DIR}" -name "${bin}" -type f 2>/dev/null | head -1 | grep -q .; then
+        MISSING_PKGS="${MISSING_PKGS} ${bin}"
+    fi
+done
+if [ -n "${MISSING_PKGS}" ]; then
+    echo "WARNING: The following binaries were not found in the container image:${MISSING_PKGS}"
+    echo "         Install them in the container (via apt) before exporting."
+fi
 
 # Unmount before shrinking.
 sudo umount "${MOUNT_DIR}"

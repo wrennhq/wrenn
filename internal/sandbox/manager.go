@@ -203,16 +203,6 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
-	// Sync guest clock in background. Non-fatal — sandbox is usable before this completes.
-	// Run in a goroutine so Init latency doesn't block the RPC response back to the control plane.
-	go func() {
-		initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer initCancel()
-		if err := client.Init(initCtx); err != nil {
-			slog.Warn("envd init (clock sync) failed", "sandbox", sandboxID, "error", err)
-		}
-	}()
-
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -636,16 +626,6 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
-	// Sync guest clock in background. Non-fatal — sandbox is usable before this completes.
-	// Run in a goroutine so Init latency doesn't block the RPC response back to the control plane.
-	go func() {
-		initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer initCancel()
-		if err := client.Init(initCtx); err != nil {
-			slog.Warn("envd init (clock sync) failed", "sandbox", sandboxID, "error", err)
-		}
-	}()
-
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -956,16 +936,6 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
-
-	// Sync guest clock in background. Non-fatal — sandbox is usable before this completes.
-	// Run in a goroutine so Init latency doesn't block the RPC response back to the control plane.
-	go func() {
-		initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer initCancel()
-		if err := client.Init(initCtx); err != nil {
-			slog.Warn("envd init (clock sync) failed", "sandbox", sandboxID, "error", err)
-		}
-	}()
 
 	now := time.Now()
 	sb := &sandboxState{

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# update-debug-rootfs.sh — Build envd and inject it (plus wrenn-init) into the debug rootfs.
+# update-debug-rootfs.sh — Build envd and inject it (plus wrenn-init + tini) into the debug rootfs.
 #
 # This script:
 #   1. Builds a fresh envd static binary via make
 #   2. Mounts the rootfs image
-#   3. Copies envd and wrenn-init into the image
+#   3. Copies envd, wrenn-init, and tini into the image
 #   4. Unmounts cleanly
 #
 # Usage:
@@ -96,45 +96,10 @@ sudo mkdir -p "${MOUNT_DIR}/sbin"
 sudo cp "${TINI_BIN}" "${MOUNT_DIR}/sbin/tini"
 sudo chmod 755 "${MOUNT_DIR}/sbin/tini"
 
-echo "==> Installing socat..."
-SOCAT_BIN=""
-# 1. Already in the rootfs?
-for p in "${MOUNT_DIR}/usr/bin/socat" "${MOUNT_DIR}/usr/local/bin/socat"; do
-    if [ -f "$p" ]; then SOCAT_BIN="$p"; break; fi
-done
-# 2. Available on the host?
-if [ -z "${SOCAT_BIN}" ]; then
-    for p in /usr/bin/socat /usr/local/bin/socat; do
-        if [ -f "$p" ]; then SOCAT_BIN="$p"; break; fi
-    done
-fi
-# 3. Build from source.
-if [ -z "${SOCAT_BIN}" ]; then
-    SOCAT_VERSION="1.8.1.1"
-    SOCAT_URL="http://www.dest-unreach.org/socat/download/socat-${SOCAT_VERSION}.tar.gz"
-    SOCAT_BUILD_DIR="/tmp/socat-build"
-    echo "    Building socat ${SOCAT_VERSION} from source..."
-    rm -rf "${SOCAT_BUILD_DIR}"
-    mkdir -p "${SOCAT_BUILD_DIR}"
-    curl -fsSL "${SOCAT_URL}" | tar xz -C "${SOCAT_BUILD_DIR}" --strip-components=1
-    (cd "${SOCAT_BUILD_DIR}" && LDFLAGS="-static" ./configure --quiet && make -j"$(nproc)" -s)
-    SOCAT_BIN="${SOCAT_BUILD_DIR}/socat"
-    if [ ! -f "${SOCAT_BIN}" ]; then
-        echo "ERROR: socat build failed"
-        exit 1
-    fi
-    if ! file "${SOCAT_BIN}" | grep -q "statically linked"; then
-        echo "ERROR: socat is not statically linked!"
-        exit 1
-    fi
-fi
-sudo cp "${SOCAT_BIN}" "${MOUNT_DIR}/usr/local/bin/socat"
-sudo chmod 755 "${MOUNT_DIR}/usr/local/bin/socat"
-
 # Step 4: Verify.
 echo ""
 echo "==> Installed files:"
-ls -la "${MOUNT_DIR}/usr/local/bin/envd" "${MOUNT_DIR}/usr/local/bin/wrenn-init" "${MOUNT_DIR}/sbin/tini" "${MOUNT_DIR}/usr/local/bin/socat"
+ls -la "${MOUNT_DIR}/usr/local/bin/envd" "${MOUNT_DIR}/usr/local/bin/wrenn-init" "${MOUNT_DIR}/sbin/tini"
 
 echo ""
 echo "==> Done. Rootfs updated: ${ROOTFS}"

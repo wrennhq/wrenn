@@ -91,7 +91,7 @@ func (c *VMConfig) kernelArgs() string {
 	)
 
 	return fmt.Sprintf(
-		"console=ttyS0 reboot=k panic=1 pci=off quiet loglevel=1 init=%s %s",
+		"console=ttyS0 reboot=k panic=1 pci=off quiet loglevel=1 clocksource=kvm-clock init=%s %s",
 		c.InitPath, ipArg,
 	)
 }

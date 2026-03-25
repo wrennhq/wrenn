@@ -17,8 +17,6 @@ import (
 	"github.com/awnumar/memguard"
 	"github.com/rs/zerolog"
 	"github.com/txn2/txeh"
-	"golang.org/x/sys/unix"
-
 	"git.omukk.dev/wrenn/sandbox/envd/internal/host"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/logs"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/shared/keys"
@@ -27,11 +25,6 @@ import (
 var (
 	ErrAccessTokenMismatch           = errors.New("access token validation failed")
 	ErrAccessTokenResetNotAuthorized = errors.New("access token reset not authorized")
-)
-
-const (
-	maxTimeInPast   = 50 * time.Millisecond
-	maxTimeInFuture = 5 * time.Second
 )
 
 // validateInitAccessToken validates the access token for /init requests.
@@ -172,20 +165,6 @@ func (a *API) SetData(ctx context.Context, logger zerolog.Logger, data PostInitJ
 		return err
 	}
 
-	if data.Timestamp != nil {
-		// Check if current time differs significantly from the received timestamp
-		if shouldSetSystemTime(time.Now(), *data.Timestamp) {
-			logger.Debug().Msgf("Setting sandbox start time to: %v", *data.Timestamp)
-			ts := unix.NsecToTimespec(data.Timestamp.UnixNano())
-			err := unix.ClockSettime(unix.CLOCK_REALTIME, &ts)
-			if err != nil {
-				logger.Error().Msgf("Failed to set system time: %v", err)
-			}
-		} else {
-			logger.Debug().Msgf("Current time is within acceptable range of timestamp %v, not setting system time", *data.Timestamp)
-		}
-	}
-
 	if data.EnvVars != nil {
 		logger.Debug().Msg(fmt.Sprintf("Setting %d env vars", len(*data.EnvVars)))
 
@@ -309,9 +288,3 @@ func getIPFamily(address string) (txeh.IPFamily, error) {
 	}
 }
 
-// shouldSetSystemTime returns true if the current time differs significantly from the received timestamp,
-// indicating the system clock should be adjusted. Returns true when the sandboxTime is more than
-// maxTimeInPast before the hostTime or more than maxTimeInFuture after the hostTime.
-func shouldSetSystemTime(sandboxTime, hostTime time.Time) bool {
-	return sandboxTime.Before(hostTime.Add(-maxTimeInPast)) || sandboxTime.After(hostTime.Add(maxTimeInFuture))
-}
