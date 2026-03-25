@@ -94,6 +94,10 @@ func main() {
 	monitor := api.NewHostMonitor(queries, hostPool, audit.New(queries), 30*time.Second)
 	monitor.Start(ctx)
 
+	// Start metrics sampler (records per-team sandbox stats every 10s).
+	sampler := api.NewMetricsSampler(queries, 10*time.Second)
+	sampler.Start(ctx)
+
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: srv.Handler(),

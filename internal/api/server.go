@@ -46,6 +46,7 @@ func New(
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool}
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
 	auditSvc := &service.AuditService{DB: queries}
+	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
 
 	al := audit.New(queries)
 
@@ -62,6 +63,7 @@ func New(
 	teamH := newTeamHandler(teamSvc, al)
 	usersH := newUsersHandler(teamSvc)
 	auditH := newAuditHandler(auditSvc)
+	statsH := newStatsHandler(statsSvc)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -109,6 +111,7 @@ func New(
 		r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
 		r.Post("/", sandbox.Create)
 		r.Get("/", sandbox.List)
+		r.Get("/stats", statsH.GetStats)
 
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", sandbox.Get)

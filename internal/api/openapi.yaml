@@ -613,6 +613,32 @@ paths:
                 items:
                   $ref: "#/components/schemas/Sandbox"
 
+  /v1/sandboxes/stats:
+    get:
+      summary: Get sandbox usage stats for your team
+      operationId: getSandboxStats
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [5m, 1h, 6h, 24h, 30d]
+            default: 1h
+          description: Time window for the time-series data.
+      responses:
+        "200":
+          description: Sandbox stats for the team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxStats"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
   /v1/sandboxes/{id}:
     parameters:
       - name: id
@@ -1577,6 +1603,57 @@ components:
             Auto-pause TTL in seconds. The sandbox is automatically paused
             after this duration of inactivity (no exec or ping). 0 means
             no auto-pause.
+
+    SandboxStats:
+      type: object
+      properties:
+        range:
+          type: string
+          enum: [5m, 1h, 6h, 24h, 30d]
+        current:
+          type: object
+          properties:
+            running_count:
+              type: integer
+            vcpus_reserved:
+              type: integer
+            memory_mb_reserved:
+              type: integer
+            sampled_at:
+              type: string
+              format: date-time
+              nullable: true
+        peaks:
+          type: object
+          description: Maximum values over the last 30 days.
+          properties:
+            running_count:
+              type: integer
+            vcpus:
+              type: integer
+            memory_mb:
+              type: integer
+        series:
+          type: object
+          description: Parallel arrays for chart rendering.
+          properties:
+            labels:
+              type: array
+              items:
+                type: string
+                format: date-time
+            running:
+              type: array
+              items:
+                type: integer
+            vcpus:
+              type: array
+              items:
+                type: integer
+            memory_mb:
+              type: array
+              items:
+                type: integer
 
     Sandbox:
       type: object
