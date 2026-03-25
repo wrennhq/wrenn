@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
@@ -45,8 +46,9 @@ func (h *sandboxMetricsHandler) GetMetrics(w http.ResponseWriter, r *http.Reques
 	if rangeTier == "" {
 		rangeTier = "10m"
 	}
-	if rangeTier != "10m" && rangeTier != "2h" && rangeTier != "24h" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "range must be 10m, 2h, or 24h")
+	validRanges := map[string]bool{"5m": true, "10m": true, "1h": true, "2h": true, "6h": true, "12h": true, "24h": true}
+	if !validRanges[rangeTier] {
+		writeError(w, http.StatusBadRequest, "invalid_request", "range must be one of: 5m, 10m, 1h, 2h, 6h, 12h, 24h")
 		return
 	}
 
@@ -102,23 +104,41 @@ func (h *sandboxMetricsHandler) getFromAgent(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// rangeToDB maps a user-facing range filter to the DB tier and cutoff duration.
+var rangeToDB = map[string]struct {
+	tier   string
+	cutoff time.Duration
+}{
+	"5m":  {"10m", 5 * time.Minute},
+	"10m": {"10m", 10 * time.Minute},
+	"1h":  {"2h", 1 * time.Hour},
+	"2h":  {"2h", 2 * time.Hour},
+	"6h":  {"24h", 6 * time.Hour},
+	"12h": {"24h", 12 * time.Hour},
+	"24h": {"24h", 24 * time.Hour},
+}
+
 func (h *sandboxMetricsHandler) getFromDB(ctx context.Context, w http.ResponseWriter, sandboxID, rangeTier string) {
+	mapping := rangeToDB[rangeTier]
 	rows, err := h.db.GetSandboxMetricPoints(ctx, db.GetSandboxMetricPointsParams{
 		SandboxID: sandboxID,
-		Tier:      rangeTier,
+		Tier:      mapping.tier,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to read metrics")
 		return
 	}
 
-	points := make([]metricPointResponse, len(rows))
-	for i, row := range rows {
-		points[i] = metricPointResponse{
-			TimestampUnix: row.Ts,
-			CPUPct:        row.CpuPct,
-			MemBytes:      row.MemBytes,
-			DiskBytes:     row.DiskBytes,
+	threshold := time.Now().Add(-mapping.cutoff).Unix()
+	var points []metricPointResponse
+	for _, row := range rows {
+		if row.Ts >= threshold {
+			points = append(points, metricPointResponse{
+				TimestampUnix: row.Ts,
+				CPUPct:        row.CpuPct,
+				MemBytes:      row.MemBytes,
+				DiskBytes:     row.DiskBytes,
+			})
 		}
 	}
 

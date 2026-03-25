@@ -1348,16 +1348,44 @@ func (m *Manager) GetMetrics(sandboxID, rangeTier string) ([]MetricPoint, error)
 		return nil, nil
 	}
 
+	// Map the requested range to the appropriate ring tier and time cutoff.
+	var points []MetricPoint
+	var cutoff time.Duration
 	switch rangeTier {
+	case "5m":
+		points = sb.ring.Get10m()
+		cutoff = 5 * time.Minute
 	case "10m":
-		return sb.ring.Get10m(), nil
+		points = sb.ring.Get10m()
+		cutoff = 10 * time.Minute
+	case "1h":
+		points = sb.ring.Get2h()
+		cutoff = 1 * time.Hour
 	case "2h":
-		return sb.ring.Get2h(), nil
+		points = sb.ring.Get2h()
+		cutoff = 2 * time.Hour
+	case "6h":
+		points = sb.ring.Get24h()
+		cutoff = 6 * time.Hour
+	case "12h":
+		points = sb.ring.Get24h()
+		cutoff = 12 * time.Hour
 	case "24h":
-		return sb.ring.Get24h(), nil
+		points = sb.ring.Get24h()
+		cutoff = 24 * time.Hour
 	default:
-		return nil, fmt.Errorf("invalid range: %s (valid: 10m, 2h, 24h)", rangeTier)
+		return nil, fmt.Errorf("invalid range: %s (valid: 5m, 10m, 1h, 2h, 6h, 12h, 24h)", rangeTier)
 	}
+
+	// Filter points to the requested time window.
+	threshold := time.Now().Add(-cutoff)
+	filtered := points[:0:0]
+	for _, p := range points {
+		if !p.Timestamp.Before(threshold) {
+			filtered = append(filtered, p)
+		}
+	}
+	return filtered, nil
 }
 
 // FlushMetrics returns all three tier ring buffers, clears the ring, and

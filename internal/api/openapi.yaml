@@ -782,9 +782,9 @@ paths:
           required: false
           schema:
             type: string
-            enum: ["10m", "2h", "24h"]
+            enum: ["5m", "10m", "1h", "2h", "6h", "12h", "24h"]
             default: "10m"
-          description: Time range tier to query
+          description: Time range filter to query
       responses:
         "200":
           description: Metrics retrieved
@@ -2042,7 +2042,7 @@ components:
           type: string
         range:
           type: string
-          enum: ["10m", "2h", "24h"]
+          enum: ["5m", "10m", "1h", "2h", "6h", "12h", "24h"]
         points:
           type: array
           items:
