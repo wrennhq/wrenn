@@ -39,7 +39,7 @@ dev: dev-infra migrate-up dev-cp
 dev-infra:
 	docker compose -f deploy/docker-compose.dev.yml up -d
 	@echo "Waiting for PostgreSQL..."
-	@until pg_isready -h localhost -p 5432 -q; do sleep 0.5; done
+	@until docker compose -f deploy/docker-compose.dev.yml exec -T postgres pg_isready -q 2>/dev/null; do sleep 0.5; done
 	@echo "Dev infrastructure ready."
 
 dev-down:
@@ -53,7 +53,7 @@ dev-agent:
 	sudo go run ./cmd/host-agent
 
 dev-frontend:
-	cd frontend && pnpm dev --port 5173
+	cd frontend && pnpm dev --port 5173 --host 0.0.0.0
 
 dev-envd:
 	cd $(ENVD_DIR) && go run . --debug --listen-tcp :3002
