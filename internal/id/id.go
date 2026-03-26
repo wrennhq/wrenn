@@ -4,11 +4,19 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const (
+	base36Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+	base36IDLen    = 25 // ceil(128 * log2 / log36) = 25 chars for a full UUID
+)
+
+var base36Base = big.NewInt(36)
 
 // --- Generation ---
 
@@ -68,8 +76,41 @@ const (
 	PrefixAdminPermission = "perm-"
 )
 
+// uuidToBase36 encodes 16 UUID bytes as a 25-char base36 string (0-9a-z).
+func uuidToBase36(b [16]byte) string {
+	n := new(big.Int).SetBytes(b[:])
+	buf := make([]byte, base36IDLen)
+	mod := new(big.Int)
+	for i := base36IDLen - 1; i >= 0; i-- {
+		n.DivMod(n, base36Base, mod)
+		buf[i] = base36Alphabet[mod.Int64()]
+	}
+	return string(buf)
+}
+
+// base36ToUUID decodes a 25-char base36 string back to 16 UUID bytes.
+func base36ToUUID(s string) ([16]byte, error) {
+	if len(s) != base36IDLen {
+		return [16]byte{}, fmt.Errorf("expected %d-char base36 ID, got %d", base36IDLen, len(s))
+	}
+	n := new(big.Int)
+	for _, c := range s {
+		idx := strings.IndexRune(base36Alphabet, c)
+		if idx < 0 {
+			return [16]byte{}, fmt.Errorf("invalid base36 character: %c", c)
+		}
+		n.Mul(n, base36Base)
+		n.Add(n, big.NewInt(int64(idx)))
+	}
+	b := n.Bytes()
+	var out [16]byte
+	// big.Int.Bytes() strips leading zeros; right-align into 16-byte array.
+	copy(out[16-len(b):], b)
+	return out, nil
+}
+
 func formatUUID(prefix string, id pgtype.UUID) string {
-	return prefix + uuid.UUID(id.Bytes).String()
+	return prefix + uuidToBase36(id.Bytes)
 }
 
 func FormatSandboxID(id pgtype.UUID) string      { return formatUUID(PrefixSandbox, id) }
@@ -88,11 +129,11 @@ func parseUUID(prefix, s string) (pgtype.UUID, error) {
 	if !strings.HasPrefix(s, prefix) {
 		return pgtype.UUID{}, fmt.Errorf("invalid ID: expected %q prefix, got %q", prefix, s)
 	}
-	u, err := uuid.Parse(strings.TrimPrefix(s, prefix))
+	b, err := base36ToUUID(strings.TrimPrefix(s, prefix))
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("invalid ID %q: %w", s, err)
 	}
-	return pgtype.UUID{Bytes: u, Valid: true}, nil
+	return pgtype.UUID{Bytes: b, Valid: true}, nil
 }
 
 func ParseSandboxID(s string) (pgtype.UUID, error)   { return parseUUID(PrefixSandbox, s) }
