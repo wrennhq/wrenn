@@ -3,11 +3,11 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { toast } from '$lib/toast.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
-	import { deleteSnapshot } from '$lib/api/capsules';
 	import {
 		listBuilds,
 		createBuild,
 		listAdminTemplates,
+		deleteAdminTemplate,
 		type Build,
 		type BuildLogEntry,
 		type AdminTemplate
@@ -145,7 +145,7 @@
 		deleting = true;
 		deleteError = null;
 		const name = deleteTarget.name;
-		const result = await deleteSnapshot(name);
+		const result = await deleteAdminTemplate(name);
 		if (result.ok) {
 			templates = templates.filter((t) => t.name !== name);
 			deleteTarget = null;
@@ -413,14 +413,12 @@
 							</span>
 						</td>
 						<td class="px-4 py-3.5 text-right">
-							{#if tmpl.type === 'snapshot'}
-								<button
-									onclick={() => { deleteTarget = tmpl; deleteError = null; }}
-									class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta text-[var(--color-text-tertiary)] transition-colors duration-150 hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]"
-								>
-									Delete
-								</button>
-							{/if}
+							<button
+								onclick={() => { deleteTarget = tmpl; deleteError = null; }}
+								class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta text-[var(--color-text-tertiary)] transition-colors duration-150 hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]"
+							>
+								Delete
+							</button>
 						</td>
 					</tr>
 				{/each}

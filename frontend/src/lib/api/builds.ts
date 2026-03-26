@@ -64,3 +64,7 @@ export type AdminTemplate = {
 export async function listAdminTemplates(): Promise<ApiResult<AdminTemplate[]>> {
 	return apiFetch('GET', '/api/v1/admin/templates');
 }
+
+export async function deleteAdminTemplate(name: string): Promise<ApiResult<void>> {
+	return apiFetch('DELETE', `/api/v1/admin/templates/${name}`);
+}

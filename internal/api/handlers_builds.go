@@ -7,21 +7,25 @@ import (
 	"net/http"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 	"git.omukk.dev/wrenn/sandbox/internal/validate"
+	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 )
 
 type buildHandler struct {
-	svc *service.BuildService
-	db  *db.Queries
+	svc  *service.BuildService
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newBuildHandler(svc *service.BuildService, db *db.Queries) *buildHandler {
-	return &buildHandler{svc: svc, db: db}
+func newBuildHandler(svc *service.BuildService, db *db.Queries, pool *lifecycle.HostClientPool) *buildHandler {
+	return &buildHandler{svc: svc, db: db, pool: pool}
 }
 
 type createBuildRequest struct {
@@ -201,4 +205,43 @@ func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// DeleteTemplate handles DELETE /v1/admin/templates/{name}.
+func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := validate.SafeName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid template name: %s", err))
+		return
+	}
+	ctx := r.Context()
+
+	if _, err := h.db.GetTemplate(ctx, name); err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "template not found")
+		return
+	}
+
+	// Broadcast delete to all online hosts.
+	hosts, _ := h.db.ListActiveHosts(ctx)
+	for _, host := range hosts {
+		if host.Status != "online" {
+			continue
+		}
+		agent, err := h.pool.GetForHost(host)
+		if err != nil {
+			continue
+		}
+		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{Name: name})); err != nil {
+			if connect.CodeOf(err) != connect.CodeNotFound {
+				slog.Warn("admin: failed to delete template on host", "host_id", id.FormatHostID(host.ID), "name", name, "error", err)
+			}
+		}
+	}
+
+	if err := h.db.DeleteTemplate(ctx, name); err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete template record")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
