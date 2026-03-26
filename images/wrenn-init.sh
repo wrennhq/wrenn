@@ -25,7 +25,7 @@ echo "nameserver 8.8.8.8" > /etc/resolv.conf
 echo "nameserver 8.8.4.4" >> /etc/resolv.conf
 
 # Set a standard PATH so envd and all child processes can find common binaries.
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games
 
 # Write chrony config to sync time from the KVM PTP hardware clock.
 # /dev/ptp0 is a paravirtual clock exposed by KVM — no network required.

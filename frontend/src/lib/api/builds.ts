@@ -2,6 +2,7 @@ import { apiFetch, type ApiResult } from '$lib/api/client';
 
 export type BuildLogEntry = {
 	step: number;
+	phase: string; // "pre-build", "recipe", or "post-build"
 	cmd: string;
 	stdout: string;
 	stderr: string;

@@ -521,6 +521,9 @@
 									{#if build.logs && build.logs.length > 0}
 										<div class="space-y-1">
 											{#each build.logs as log, i (i)}
+												{@const isInternal = log.phase === 'pre-build' || log.phase === 'post-build'}
+												{@const recipeIdx = log.phase === 'recipe' ? build.logs.filter(l => l.phase === 'recipe' && l.step <= log.step).length : 0}
+												{@const phaseLabel = isInternal ? (log.phase === 'pre-build' ? 'Pre-build' : 'Post-build') : `Step ${recipeIdx}`}
 												<div class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden">
 													<!-- Step header -->
 													<button
@@ -533,10 +536,16 @@
 														{:else}
 															<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 														{/if}
-														<span class="text-label font-semibold text-[var(--color-text-tertiary)]">
-															Step {log.step}
-														</span>
-														<code class="flex-1 truncate font-mono text-meta text-[var(--color-text-primary)]">{log.cmd}</code>
+														{#if isInternal}
+															<span class="flex-1 text-label font-semibold text-[var(--color-text-tertiary)]">
+																{phaseLabel}
+															</span>
+														{:else}
+															<span class="text-label font-semibold text-[var(--color-text-tertiary)]">
+																{phaseLabel}
+															</span>
+															<code class="flex-1 truncate font-mono text-meta text-[var(--color-text-primary)]">{log.cmd}</code>
+														{/if}
 														<span class="shrink-0 font-mono text-label text-[var(--color-text-muted)]">{log.elapsed_ms}ms</span>
 														{#if log.exit !== 0}
 															<span class="shrink-0 rounded-full bg-[var(--color-red)]/10 px-1.5 py-0.5 font-mono text-label text-[var(--color-red)]">

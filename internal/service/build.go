@@ -49,6 +49,7 @@ type buildAgentClient interface {
 // BuildLogEntry represents a single entry in the build log JSONB array.
 type BuildLogEntry struct {
 	Step    int    `json:"step"`
+	Phase   string `json:"phase"` // "pre-build", "recipe", or "post-build"
 	Cmd     string `json:"cmd"`
 	Stdout  string `json:"stdout"`
 	Stderr  string `json:"stderr"`
@@ -182,17 +183,12 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		return
 	}
 
-	// Parse user recipe and wrap with pre/post build stages.
-	var userRecipe []string
-	if err := json.Unmarshal(build.Recipe, &userRecipe); err != nil {
+	// Parse user recipe.
+	var recipe []string
+	if err := json.Unmarshal(build.Recipe, &recipe); err != nil {
 		s.failBuild(ctx, buildID, fmt.Sprintf("invalid recipe JSON: %v", err))
 		return
 	}
-
-	recipe := make([]string, 0, len(userRecipe)+len(preBuildCmds)+len(postBuildCmds))
-	recipe = append(recipe, preBuildCmds...)
-	recipe = append(recipe, userRecipe...)
-	recipe = append(recipe, postBuildCmds...)
 
 	// Pick a platform host and create a sandbox.
 	host, err := s.Scheduler.SelectHost(ctx, id.PlatformTeamID, false)
@@ -232,51 +228,79 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		HostID:    host.ID,
 	})
 
-	// Execute recipe commands.
+	// Execute build phases: pre-build → user recipe → post-build.
 	var logs []BuildLogEntry
-	for i, cmd := range recipe {
-		log.Info("executing build step", "step", i+1, "cmd", cmd)
+	step := 0
 
-		execCtx, cancel := context.WithTimeout(ctx, buildCommandTimeout)
-		start := time.Now()
+	// Helper to run a list of commands in a given phase.
+	// timeout=0 means no timeout (uses parent context).
+	runPhase := func(phase string, cmds []string, timeout time.Duration) bool {
+		for _, cmd := range cmds {
+			step++
+			log.Info("executing build step", "phase", phase, "step", step, "cmd", cmd)
 
-		execResp, err := agent.Exec(execCtx, connect.NewRequest(&pb.ExecRequest{
-			SandboxId:  sandboxIDStr,
-			Cmd:        "/bin/sh",
-			Args:       []string{"-c", cmd},
-			TimeoutSec: int32(buildCommandTimeout.Seconds()),
-		}))
-		cancel()
+			execCtx := ctx
+			var cancel context.CancelFunc
+			// When no timeout is specified, use 10 minutes as a generous upper
+			// bound. The host agent defaults TimeoutSec=0 to 30s, so we must
+			// always send an explicit value.
+			effectiveTimeout := timeout
+			if effectiveTimeout <= 0 {
+				effectiveTimeout = 10 * time.Minute
+			}
+			execCtx, cancel = context.WithTimeout(ctx, effectiveTimeout)
+			timeoutSec := int32(effectiveTimeout.Seconds())
 
-		entry := BuildLogEntry{
-			Step:    i + 1,
-			Cmd:     cmd,
-			Elapsed: time.Since(start).Milliseconds(),
-		}
+			start := time.Now()
+			execResp, err := agent.Exec(execCtx, connect.NewRequest(&pb.ExecRequest{
+				SandboxId:  sandboxIDStr,
+				Cmd:        "/bin/sh",
+				Args:       []string{"-c", cmd},
+				TimeoutSec: timeoutSec,
+			}))
+			cancel()
 
-		if err != nil {
-			entry.Stderr = err.Error()
-			entry.Ok = false
+			entry := BuildLogEntry{
+				Step:    step,
+				Phase:   phase,
+				Cmd:     cmd,
+				Elapsed: time.Since(start).Milliseconds(),
+			}
+
+			if err != nil {
+				entry.Stderr = err.Error()
+				entry.Ok = false
+				logs = append(logs, entry)
+				s.updateLogs(ctx, buildID, step, logs)
+				s.destroySandbox(ctx, agent, sandboxIDStr)
+				s.failBuild(ctx, buildID, fmt.Sprintf("%s step %d failed: %v", phase, step, err))
+				return false
+			}
+
+			entry.Stdout = string(execResp.Msg.Stdout)
+			entry.Stderr = string(execResp.Msg.Stderr)
+			entry.Exit = execResp.Msg.ExitCode
+			entry.Ok = execResp.Msg.ExitCode == 0
 			logs = append(logs, entry)
-			s.updateLogs(ctx, buildID, i+1, logs)
-			s.destroySandbox(ctx, agent, sandboxIDStr)
-			s.failBuild(ctx, buildID, fmt.Sprintf("step %d exec error: %v", i+1, err))
-			return
+			s.updateLogs(ctx, buildID, step, logs)
+
+			if execResp.Msg.ExitCode != 0 {
+				s.destroySandbox(ctx, agent, sandboxIDStr)
+				s.failBuild(ctx, buildID, fmt.Sprintf("%s step %d failed with exit code %d", phase, step, execResp.Msg.ExitCode))
+				return false
+			}
 		}
+		return true
+	}
 
-		entry.Stdout = string(execResp.Msg.Stdout)
-		entry.Stderr = string(execResp.Msg.Stderr)
-		entry.Exit = execResp.Msg.ExitCode
-		entry.Ok = execResp.Msg.ExitCode == 0
-		logs = append(logs, entry)
-
-		s.updateLogs(ctx, buildID, i+1, logs)
-
-		if execResp.Msg.ExitCode != 0 {
-			s.destroySandbox(ctx, agent, sandboxIDStr)
-			s.failBuild(ctx, buildID, fmt.Sprintf("step %d failed with exit code %d", i+1, execResp.Msg.ExitCode))
-			return
-		}
+	if !runPhase("pre-build", preBuildCmds, 0) {
+		return
+	}
+	if !runPhase("recipe", recipe, buildCommandTimeout) {
+		return
+	}
+	if !runPhase("post-build", postBuildCmds, 0) {
+		return
 	}
 
 	// Healthcheck or direct snapshot.
