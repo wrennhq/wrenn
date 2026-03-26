@@ -144,6 +144,7 @@ CREATE TABLE sandboxes (
     vcpus          INTEGER NOT NULL DEFAULT 1,
     memory_mb      INTEGER NOT NULL DEFAULT 512,
     timeout_sec    INTEGER NOT NULL DEFAULT 300,
+    disk_size_mb   INTEGER NOT NULL DEFAULT 20480,
     guest_ip       TEXT NOT NULL DEFAULT '',
     host_ip        TEXT NOT NULL DEFAULT '',
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),

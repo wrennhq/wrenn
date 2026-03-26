@@ -59,6 +59,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Expand base images to the standard disk size (sparse, no extra physical
+	// disk). This ensures dm-snapshot sandboxes see the full size from boot.
+	imagesDir := filepath.Join(rootDir, "images")
+	if err := sandbox.EnsureImageSizes(imagesDir, sandbox.DefaultDiskSizeMB); err != nil {
+		slog.Error("failed to expand base images", "error", err)
+		os.Exit(1)
+	}
+
 	cfg := sandbox.Config{
 		KernelPath:   filepath.Join(rootDir, "kernels", "vmlinux"),
 		ImagesDir:    filepath.Join(rootDir, "images"),

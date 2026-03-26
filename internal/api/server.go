@@ -67,7 +67,7 @@ func New(
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
-	buildH := newBuildHandler(buildSvc)
+	buildH := newBuildHandler(buildSvc, queries)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -177,6 +177,7 @@ func New(
 		r.Use(requireJWT(jwtSecret))
 		r.Use(requireAdmin(queries))
 		r.Put("/teams/{id}/byoc", teamH.SetBYOC)
+		r.Get("/templates", buildH.ListTemplates)
 		r.Post("/builds", buildH.Create)
 		r.Get("/builds", buildH.List)
 		r.Get("/builds/{id}", buildH.Get)

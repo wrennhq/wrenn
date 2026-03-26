@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -51,8 +52,8 @@ type sandboxState struct {
 	slot           *network.Slot
 	client         *envdclient.Client
 	uffdSocketPath string // non-empty for sandboxes restored from snapshot
-	dmDevice       *devicemapper.SnapshotDevice
-	baseImagePath  string // path to the base template rootfs (for loop registry release)
+	dmDevice      *devicemapper.SnapshotDevice
+	baseImagePath string // path to the base template rootfs (for loop registry release)
 
 	// parent holds the snapshot header and diff file paths from which this
 	// sandbox was restored. Non-nil means re-pause should use "Diff" snapshot
@@ -94,7 +95,7 @@ func New(cfg Config) *Manager {
 
 // Create boots a new sandbox: clone rootfs, set up network, start VM, wait for envd.
 // If sandboxID is empty, a new ID is generated.
-func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus, memoryMB, timeoutSec int) (*models.Sandbox, error) {
+func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus, memoryMB, timeoutSec, diskSizeMB int) (*models.Sandbox, error) {
 	if sandboxID == "" {
 		sandboxID = id.FormatSandboxID(id.NewSandboxID())
 	}
@@ -104,6 +105,9 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 	}
 	if memoryMB <= 0 {
 		memoryMB = 512
+	}
+	if diskSizeMB <= 0 {
+		diskSizeMB = 20480 // 20 GB default
 	}
 
 	if template == "" {
@@ -115,7 +119,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 
 	// Check if template refers to a snapshot (has snapfile + memfile + header + rootfs).
 	if snapshot.IsSnapshot(m.cfg.ImagesDir, template) {
-		return m.createFromSnapshot(ctx, sandboxID, template, vcpus, memoryMB, timeoutSec)
+		return m.createFromSnapshot(ctx, sandboxID, template, vcpus, memoryMB, timeoutSec, diskSizeMB)
 	}
 
 	// Resolve base rootfs image: /var/lib/wrenn/images/{template}/rootfs.ext4
@@ -139,7 +143,8 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 	// Create dm-snapshot with per-sandbox CoW file.
 	dmName := "wrenn-" + sandboxID
 	cowPath := filepath.Join(m.cfg.SandboxesDir, fmt.Sprintf("%s.cow", sandboxID))
-	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize)
+	cowSize := int64(diskSizeMB) * 1024 * 1024
+	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("create dm-snapshot: %w", err)
@@ -853,6 +858,17 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID, name string) (in
 	// Clean up dm device and loop device now that flatten is complete.
 	m.cleanupDM(sb)
 
+	// Shrink the flattened image to its minimum size so stored templates are
+	// compact. EnsureImageSizes will re-expand them on the next agent startup.
+	if out, err := exec.Command("e2fsck", "-fy", outputPath).CombinedOutput(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() > 1 {
+			slog.Warn("e2fsck before shrink failed (non-fatal)", "output", string(out), "error", err)
+		}
+	}
+	if out, err := exec.Command("resize2fs", "-M", outputPath).CombinedOutput(); err != nil {
+		slog.Warn("resize2fs -M failed (non-fatal)", "output", string(out), "error", err)
+	}
+
 	sizeBytes, err := snapshot.DirSize(m.cfg.ImagesDir, name)
 	if err != nil {
 		slog.Warn("failed to calculate template size", "error", err)
@@ -891,7 +907,7 @@ func (m *Manager) DeleteSnapshot(name string) error {
 // in ImagesDir/{snapshotName}/. Uses UFFD for lazy memory loading.
 // The template's rootfs.ext4 is a flattened standalone image — we create a
 // dm-snapshot on top of it just like a normal Create.
-func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotName string, vcpus, _, timeoutSec int) (*models.Sandbox, error) {
+func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotName string, vcpus, _, timeoutSec, diskSizeMB int) (*models.Sandbox, error) {
 	imagesDir := m.cfg.ImagesDir
 
 	// Read the header.
@@ -936,7 +952,8 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID, snapshotNam
 
 	dmName := "wrenn-" + sandboxID
 	cowPath := filepath.Join(m.cfg.SandboxesDir, fmt.Sprintf("%s.cow", sandboxID))
-	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize)
+	cowSize := int64(diskSizeMB) * 1024 * 1024
+	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
 		source.Close()
 		m.loops.Release(baseRootfs)

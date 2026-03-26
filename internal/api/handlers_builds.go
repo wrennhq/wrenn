@@ -17,10 +17,11 @@ import (
 
 type buildHandler struct {
 	svc *service.BuildService
+	db  *db.Queries
 }
 
-func newBuildHandler(svc *service.BuildService) *buildHandler {
-	return &buildHandler{svc: svc}
+func newBuildHandler(svc *service.BuildService, db *db.Queries) *buildHandler {
+	return &buildHandler{svc: svc, db: db}
 }
 
 type createBuildRequest struct {
@@ -164,4 +165,40 @@ func (h *buildHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, buildToResponse(build))
+}
+
+// ListTemplates handles GET /v1/admin/templates — returns all templates across all teams.
+func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
+	templates, err := h.db.ListTemplates(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to list templates")
+		return
+	}
+
+	type templateResponse struct {
+		Name      string  `json:"name"`
+		Type      string  `json:"type"`
+		VCPUs     int32   `json:"vcpus"`
+		MemoryMB  int32   `json:"memory_mb"`
+		SizeBytes int64   `json:"size_bytes"`
+		TeamID    string  `json:"team_id"`
+		CreatedAt string  `json:"created_at"`
+	}
+
+	resp := make([]templateResponse, len(templates))
+	for i, t := range templates {
+		resp[i] = templateResponse{
+			Name:      t.Name,
+			Type:      t.Type,
+			VCPUs:     t.Vcpus,
+			MemoryMB:  t.MemoryMb,
+			SizeBytes: t.SizeBytes,
+			TeamID:    id.FormatTeamID(t.TeamID),
+		}
+		if t.CreatedAt.Valid {
+			resp[i].CreatedAt = t.CreatedAt.Time.Format(time.RFC3339)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

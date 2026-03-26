@@ -32,6 +32,7 @@ type SandboxCreateParams struct {
 	VCPUs      int32
 	MemoryMB   int32
 	TimeoutSec int32
+	DiskSizeMB int32
 }
 
 // agentForSandbox looks up the host for the given sandbox and returns a client.
@@ -77,6 +78,9 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	if p.MemoryMB <= 0 {
 		p.MemoryMB = 512
 	}
+	if p.DiskSizeMB <= 0 {
+		p.DiskSizeMB = 20480 // 20 GB default
+	}
 
 	// If the template is a snapshot, use its baked-in vcpus/memory.
 	if tmpl, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: p.Template, TeamID: p.TeamID}); err == nil && tmpl.Type == "snapshot" {
@@ -117,6 +121,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		Vcpus:      p.VCPUs,
 		MemoryMb:   p.MemoryMB,
 		TimeoutSec: p.TimeoutSec,
+		DiskSizeMb: p.DiskSizeMB,
 	}); err != nil {
 		return db.Sandbox{}, fmt.Errorf("insert sandbox: %w", err)
 	}
@@ -127,6 +132,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		Vcpus:      p.VCPUs,
 		MemoryMb:   p.MemoryMB,
 		TimeoutSec: p.TimeoutSec,
+		DiskSizeMb: p.DiskSizeMB,
 	}))
 	if err != nil {
 		if _, dbErr := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{

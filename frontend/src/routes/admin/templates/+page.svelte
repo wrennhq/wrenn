@@ -3,12 +3,14 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { toast } from '$lib/toast.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
-	import { listSnapshots, deleteSnapshot, type Snapshot } from '$lib/api/capsules';
+	import { deleteSnapshot } from '$lib/api/capsules';
 	import {
 		listBuilds,
 		createBuild,
+		listAdminTemplates,
 		type Build,
-		type BuildLogEntry
+		type BuildLogEntry,
+		type AdminTemplate
 	} from '$lib/api/builds';
 
 	let collapsed = $state(
@@ -20,7 +22,7 @@
 	let activeTab = $state<'templates' | 'builds'>('templates');
 
 	// Templates state
-	let templates = $state<Snapshot[]>([]);
+	let templates = $state<AdminTemplate[]>([]);
 	let templatesLoading = $state(true);
 	let templatesError = $state<string | null>(null);
 
@@ -38,7 +40,7 @@
 	let expandedSteps = $state<Set<number>>(new Set());
 
 	// Delete template state
-	let deleteTarget = $state<Snapshot | null>(null);
+	let deleteTarget = $state<AdminTemplate | null>(null);
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
 
@@ -64,7 +66,7 @@
 	async function fetchTemplates() {
 		templatesLoading = true;
 		templatesError = null;
-		const result = await listSnapshots();
+		const result = await listAdminTemplates();
 		if (result.ok) {
 			templates = result.data;
 		} else {

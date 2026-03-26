@@ -91,6 +91,7 @@ type Sandbox struct {
 	Vcpus        int32              `json:"vcpus"`
 	MemoryMb     int32              `json:"memory_mb"`
 	TimeoutSec   int32              `json:"timeout_sec"`
+	DiskSizeMb   int32              `json:"disk_size_mb"`
 	GuestIp      string             `json:"guest_ip"`
 	HostIp       string             `json:"host_ip"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`

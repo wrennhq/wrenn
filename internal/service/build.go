@@ -199,7 +199,8 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		Template:   build.BaseTemplate,
 		Vcpus:      build.Vcpus,
 		MemoryMb:   build.MemoryMb,
-		TimeoutSec: 0, // no auto-pause for builds
+		TimeoutSec: 0,     // no auto-pause for builds
+		DiskSizeMb: 20480, // 20 GB for template builds
 	}))
 	if err != nil {
 		s.failBuild(ctx, buildID, fmt.Sprintf("create sandbox failed: %v", err))

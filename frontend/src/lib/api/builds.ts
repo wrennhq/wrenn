@@ -50,3 +50,17 @@ export async function listBuilds(): Promise<ApiResult<Build[]>> {
 export async function getBuild(id: string): Promise<ApiResult<Build>> {
 	return apiFetch('GET', `/api/v1/admin/builds/${id}`);
 }
+
+export type AdminTemplate = {
+	name: string;
+	type: string;
+	vcpus: number;
+	memory_mb: number;
+	size_bytes: number;
+	team_id: string;
+	created_at: string;
+};
+
+export async function listAdminTemplates(): Promise<ApiResult<AdminTemplate[]>> {
+	return apiFetch('GET', '/api/v1/admin/templates');
+}

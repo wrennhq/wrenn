@@ -39,7 +39,7 @@ func (s *Server) CreateSandbox(
 ) (*connect.Response[pb.CreateSandboxResponse], error) {
 	msg := req.Msg
 
-	sb, err := s.mgr.Create(ctx, msg.SandboxId, msg.Template, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec))
+	sb, err := s.mgr.Create(ctx, msg.SandboxId, msg.Template, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create sandbox: %w", err))
 	}

@@ -54,7 +54,7 @@ func (q *Queries) GetTemplate(ctx context.Context, name string) (Template, error
 }
 
 const getTemplateByTeam = `-- name: GetTemplateByTeam :one
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE name = $1 AND team_id = $2
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000')
 `
 
 type GetTemplateByTeamParams struct {
@@ -62,6 +62,7 @@ type GetTemplateByTeamParams struct {
 	TeamID pgtype.UUID `json:"team_id"`
 }
 
+// Platform templates (team_id = 00000000-...) are visible to all teams.
 func (q *Queries) GetTemplateByTeam(ctx context.Context, arg GetTemplateByTeamParams) (Template, error) {
 	row := q.db.QueryRow(ctx, getTemplateByTeam, arg.Name, arg.TeamID)
 	var i Template
@@ -147,9 +148,10 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
 }
 
 const listTemplatesByTeam = `-- name: ListTemplatesByTeam :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE team_id = $1 ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') ORDER BY created_at DESC
 `
 
+// Platform templates are visible to all teams.
 func (q *Queries) ListTemplatesByTeam(ctx context.Context, teamID pgtype.UUID) ([]Template, error) {
 	rows, err := q.db.Query(ctx, listTemplatesByTeam, teamID)
 	if err != nil {
@@ -179,7 +181,7 @@ func (q *Queries) ListTemplatesByTeam(ctx context.Context, teamID pgtype.UUID) (
 }
 
 const listTemplatesByTeamAndType = `-- name: ListTemplatesByTeamAndType :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE team_id = $1 AND type = $2 ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') AND type = $2 ORDER BY created_at DESC
 `
 
 type ListTemplatesByTeamAndTypeParams struct {
@@ -187,6 +189,7 @@ type ListTemplatesByTeamAndTypeParams struct {
 	Type   string      `json:"type"`
 }
 
+// Platform templates are visible to all teams.
 func (q *Queries) ListTemplatesByTeamAndType(ctx context.Context, arg ListTemplatesByTeamAndTypeParams) ([]Template, error) {
 	rows, err := q.db.Query(ctx, listTemplatesByTeamAndType, arg.TeamID, arg.Type)
 	if err != nil {

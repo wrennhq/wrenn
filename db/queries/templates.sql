@@ -7,7 +7,8 @@ RETURNING *;
 SELECT * FROM templates WHERE name = $1;
 
 -- name: GetTemplateByTeam :one
-SELECT * FROM templates WHERE name = $1 AND team_id = $2;
+-- Platform templates (team_id = 00000000-...) are visible to all teams.
+SELECT * FROM templates WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000');
 
 -- name: ListTemplates :many
 SELECT * FROM templates ORDER BY created_at DESC;
@@ -16,10 +17,12 @@ SELECT * FROM templates ORDER BY created_at DESC;
 SELECT * FROM templates WHERE type = $1 ORDER BY created_at DESC;
 
 -- name: ListTemplatesByTeam :many
-SELECT * FROM templates WHERE team_id = $1 ORDER BY created_at DESC;
+-- Platform templates are visible to all teams.
+SELECT * FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') ORDER BY created_at DESC;
 
 -- name: ListTemplatesByTeamAndType :many
-SELECT * FROM templates WHERE team_id = $1 AND type = $2 ORDER BY created_at DESC;
+-- Platform templates are visible to all teams.
+SELECT * FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') AND type = $2 ORDER BY created_at DESC;
 
 -- name: DeleteTemplate :exec
 DELETE FROM templates WHERE name = $1;

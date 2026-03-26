@@ -33,7 +33,10 @@ type CreateSandboxRequest struct {
 	MemoryMb int32 `protobuf:"varint,3,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
 	// TTL in seconds. Sandbox is auto-paused after this duration of
 	// inactivity. 0 means no auto-pause.
-	TimeoutSec    int32 `protobuf:"varint,4,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	TimeoutSec int32 `protobuf:"varint,4,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	// Disk size in MB for the sparse CoW file. Limits how much data the
+	// sandbox can write beyond the base image. Default: 20480 (20 GB).
+	DiskSizeMb    int32 `protobuf:"varint,6,opt,name=disk_size_mb,json=diskSizeMb,proto3" json:"disk_size_mb,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -99,6 +102,13 @@ func (x *CreateSandboxRequest) GetMemoryMb() int32 {
 func (x *CreateSandboxRequest) GetTimeoutSec() int32 {
 	if x != nil {
 		return x.TimeoutSec
+	}
+	return 0
+}
+
+func (x *CreateSandboxRequest) GetDiskSizeMb() int32 {
+	if x != nil {
+		return x.DiskSizeMb
 	}
 	return 0
 }
@@ -2271,7 +2281,7 @@ var File_hostagent_proto protoreflect.FileDescriptor
 
 const file_hostagent_proto_rawDesc = "" +
 	"\n" +
-	"\x0fhostagent.proto\x12\fhostagent.v1\"\xa5\x01\n" +
+	"\x0fhostagent.proto\x12\fhostagent.v1\"\xc7\x01\n" +
 	"\x14CreateSandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x05 \x01(\tR\tsandboxId\x12\x1a\n" +
@@ -2279,7 +2289,9 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x05vcpus\x18\x02 \x01(\x05R\x05vcpus\x12\x1b\n" +
 	"\tmemory_mb\x18\x03 \x01(\x05R\bmemoryMb\x12\x1f\n" +
 	"\vtimeout_sec\x18\x04 \x01(\x05R\n" +
-	"timeoutSec\"g\n" +
+	"timeoutSec\x12 \n" +
+	"\fdisk_size_mb\x18\x06 \x01(\x05R\n" +
+	"diskSizeMb\"g\n" +
 	"\x15CreateSandboxResponse\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +

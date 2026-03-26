@@ -1,6 +1,6 @@
 -- name: InsertSandbox :one
-INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: GetSandbox :one
