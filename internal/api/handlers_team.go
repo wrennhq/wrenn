@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 )
 
@@ -48,7 +50,7 @@ type memberResponse struct {
 
 func teamToResponse(t db.Team) teamResponse {
 	resp := teamResponse{
-		ID:     t.ID,
+		ID:     id.FormatTeamID(t.ID),
 		Name:   t.Name,
 		Slug:   t.Slug,
 		IsByoc: t.IsByoc,
@@ -72,11 +74,16 @@ func memberInfoToResponse(m service.MemberInfo) memberResponse {
 // requireTeamAccess is an inline check used by every team-scoped handler:
 // the JWT team_id must match the URL {id} before any DB call is made.
 // Returns false and writes 403 if they don't match.
-func requireTeamAccess(w http.ResponseWriter, r *http.Request, ac auth.AuthContext) (string, bool) {
-	teamID := chi.URLParam(r, "id")
+func requireTeamAccess(w http.ResponseWriter, r *http.Request, ac auth.AuthContext) (pgtype.UUID, bool) {
+	teamIDStr := chi.URLParam(r, "id")
+	teamID, err := id.ParseTeamID(teamIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid team ID")
+		return pgtype.UUID{}, false
+	}
 	if ac.TeamID != teamID {
 		writeError(w, http.StatusForbidden, "forbidden", "JWT team does not match requested team; use switch-team first")
-		return "", false
+		return pgtype.UUID{}, false
 	}
 	return teamID, true
 }
@@ -185,7 +192,7 @@ func (h *teamHandler) Rename(w http.ResponseWriter, r *http.Request) {
 	// Fetch old name for audit log before renaming.
 	oldTeam, err := h.svc.GetTeam(r.Context(), teamID)
 	if err != nil {
-		slog.Warn("audit: could not fetch old team name for rename log", "team_id", teamID, "error", err)
+		slog.Warn("audit: could not fetch old team name for rename log", "team_id", id.FormatTeamID(teamID), "error", err)
 	}
 
 	if err := h.svc.RenameTeam(r.Context(), teamID, ac.UserID, req.Name); err != nil {
@@ -267,7 +274,11 @@ func (h *teamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.audit.LogMemberAdd(r.Context(), ac, member.UserID, member.Email, member.Role)
+	// member.UserID is already formatted with prefix; parse it back for the audit logger.
+	targetUserID, parseErr := id.ParseUserID(member.UserID)
+	if parseErr == nil {
+		h.audit.LogMemberAdd(r.Context(), ac, targetUserID, member.Email, member.Role)
+	}
 	writeJSON(w, http.StatusCreated, memberInfoToResponse(member))
 }
 
@@ -279,7 +290,13 @@ func (h *teamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	targetUserID := chi.URLParam(r, "uid")
+	targetUserIDStr := chi.URLParam(r, "uid")
+
+	targetUserID, err := id.ParseUserID(targetUserIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid user ID")
+		return
+	}
 
 	if err := h.svc.RemoveMember(r.Context(), teamID, ac.UserID, targetUserID); err != nil {
 		status, code, msg := serviceErrToHTTP(err)
@@ -299,7 +316,13 @@ func (h *teamHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	targetUserID := chi.URLParam(r, "uid")
+	targetUserIDStr := chi.URLParam(r, "uid")
+
+	targetUserID, err := id.ParseUserID(targetUserIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid user ID")
+		return
+	}
 
 	var req struct {
 		Role string `json:"role"`
@@ -341,7 +364,13 @@ func (h *teamHandler) Leave(w http.ResponseWriter, r *http.Request) {
 // SetBYOC handles PUT /v1/admin/teams/{id}/byoc (admin only).
 // Enables or disables the BYOC feature flag for a team.
 func (h *teamHandler) SetBYOC(w http.ResponseWriter, r *http.Request) {
-	teamID := chi.URLParam(r, "id")
+	teamIDStr := chi.URLParam(r, "id")
+
+	teamID, err := id.ParseTeamID(teamIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid team ID")
+		return
+	}
 
 	var req struct {
 		Enabled bool `json:"enabled"`

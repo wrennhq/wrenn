@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
@@ -43,7 +44,7 @@ type MemberInfo struct {
 
 // callerRole fetches the calling user's role in the given team from DB.
 // Returns an error wrapping "forbidden" if the caller is not a member.
-func (s *TeamService) callerRole(ctx context.Context, teamID, callerUserID string) (string, error) {
+func (s *TeamService) callerRole(ctx context.Context, teamID, callerUserID pgtype.UUID) (string, error) {
 	m, err := s.DB.GetTeamMembership(ctx, db.GetTeamMembershipParams{
 		UserID: callerUserID,
 		TeamID: teamID,
@@ -66,7 +67,7 @@ func requireAdmin(role string) error {
 }
 
 // GetTeam returns the team by ID. Returns an error if the team is deleted or not found.
-func (s *TeamService) GetTeam(ctx context.Context, teamID string) (db.Team, error) {
+func (s *TeamService) GetTeam(ctx context.Context, teamID pgtype.UUID) (db.Team, error) {
 	team, err := s.DB.GetTeam(ctx, teamID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -81,7 +82,7 @@ func (s *TeamService) GetTeam(ctx context.Context, teamID string) (db.Team, erro
 }
 
 // ListTeamsForUser returns all active teams the user belongs to, with their role in each.
-func (s *TeamService) ListTeamsForUser(ctx context.Context, userID string) ([]TeamWithRole, error) {
+func (s *TeamService) ListTeamsForUser(ctx context.Context, userID pgtype.UUID) ([]TeamWithRole, error) {
 	rows, err := s.DB.GetTeamsForUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list teams: %w", err)
@@ -97,7 +98,7 @@ func (s *TeamService) ListTeamsForUser(ctx context.Context, userID string) ([]Te
 }
 
 // CreateTeam creates a new team owned by the given user.
-func (s *TeamService) CreateTeam(ctx context.Context, ownerUserID, name string) (TeamWithRole, error) {
+func (s *TeamService) CreateTeam(ctx context.Context, ownerUserID pgtype.UUID, name string) (TeamWithRole, error) {
 	if !teamNameRE.MatchString(name) {
 		return TeamWithRole{}, fmt.Errorf("invalid team name: must be 1-128 characters, A-Z a-z 0-9 space _")
 	}
@@ -137,7 +138,7 @@ func (s *TeamService) CreateTeam(ctx context.Context, ownerUserID, name string) 
 }
 
 // RenameTeam updates the team name. Caller must be admin or owner (verified from DB).
-func (s *TeamService) RenameTeam(ctx context.Context, teamID, callerUserID, newName string) error {
+func (s *TeamService) RenameTeam(ctx context.Context, teamID, callerUserID pgtype.UUID, newName string) error {
 	if !teamNameRE.MatchString(newName) {
 		return fmt.Errorf("invalid team name: must be 1-128 characters, A-Z a-z 0-9 space _")
 	}
@@ -159,7 +160,7 @@ func (s *TeamService) RenameTeam(ctx context.Context, teamID, callerUserID, newN
 // DeleteTeam soft-deletes the team and destroys all running/paused/starting sandboxes.
 // Caller must be owner (verified from DB). All DB records (sandboxes, keys, templates)
 // are preserved; only the team's deleted_at is set and active VMs are stopped.
-func (s *TeamService) DeleteTeam(ctx context.Context, teamID, callerUserID string) error {
+func (s *TeamService) DeleteTeam(ctx context.Context, teamID, callerUserID pgtype.UUID) error {
 	role, err := s.callerRole(ctx, teamID, callerUserID)
 	if err != nil {
 		return err
@@ -174,16 +175,16 @@ func (s *TeamService) DeleteTeam(ctx context.Context, teamID, callerUserID strin
 		return fmt.Errorf("list active sandboxes: %w", err)
 	}
 
-	var stopIDs []string
+	var stopIDs []pgtype.UUID
 	for _, sb := range sandboxes {
 		host, hostErr := s.DB.GetHost(ctx, sb.HostID)
 		if hostErr == nil {
 			agent, agentErr := s.HostPool.GetForHost(host)
 			if agentErr == nil {
 				if _, err := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
-					SandboxId: sb.ID,
+					SandboxId: id.FormatSandboxID(sb.ID),
 				})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
-					slog.Warn("team delete: failed to destroy sandbox", "sandbox_id", sb.ID, "error", err)
+					slog.Warn("team delete: failed to destroy sandbox", "sandbox_id", id.FormatSandboxID(sb.ID), "error", err)
 				}
 			}
 		}
@@ -208,7 +209,7 @@ func (s *TeamService) DeleteTeam(ctx context.Context, teamID, callerUserID strin
 }
 
 // GetMembers returns all members of the team with their emails and roles.
-func (s *TeamService) GetMembers(ctx context.Context, teamID string) ([]MemberInfo, error) {
+func (s *TeamService) GetMembers(ctx context.Context, teamID pgtype.UUID) ([]MemberInfo, error) {
 	rows, err := s.DB.GetTeamMembers(ctx, teamID)
 	if err != nil {
 		return nil, fmt.Errorf("get members: %w", err)
@@ -220,7 +221,7 @@ func (s *TeamService) GetMembers(ctx context.Context, teamID string) ([]MemberIn
 			joinedAt = r.JoinedAt.Time
 		}
 		members[i] = MemberInfo{
-			UserID:   r.ID,
+			UserID:   id.FormatUserID(r.ID),
 			Name:     r.Name,
 			Email:    r.Email,
 			Role:     r.Role,
@@ -232,7 +233,7 @@ func (s *TeamService) GetMembers(ctx context.Context, teamID string) ([]MemberIn
 
 // AddMember adds an existing user (looked up by email) to the team as a member.
 // Caller must be admin or owner (verified from DB).
-func (s *TeamService) AddMember(ctx context.Context, teamID, callerUserID, email string) (MemberInfo, error) {
+func (s *TeamService) AddMember(ctx context.Context, teamID, callerUserID pgtype.UUID, email string) (MemberInfo, error) {
 	role, err := s.callerRole(ctx, teamID, callerUserID)
 	if err != nil {
 		return MemberInfo{}, err
@@ -269,12 +270,12 @@ func (s *TeamService) AddMember(ctx context.Context, teamID, callerUserID, email
 		return MemberInfo{}, fmt.Errorf("insert member: %w", err)
 	}
 
-	return MemberInfo{UserID: target.ID, Name: target.Name, Email: target.Email, Role: "member"}, nil
+	return MemberInfo{UserID: id.FormatUserID(target.ID), Name: target.Name, Email: target.Email, Role: "member"}, nil
 }
 
 // RemoveMember removes a user from the team.
 // Caller must be admin or owner (verified from DB). Owner cannot be removed.
-func (s *TeamService) RemoveMember(ctx context.Context, teamID, callerUserID, targetUserID string) error {
+func (s *TeamService) RemoveMember(ctx context.Context, teamID, callerUserID, targetUserID pgtype.UUID) error {
 	callerRole, err := s.callerRole(ctx, teamID, callerUserID)
 	if err != nil {
 		return err
@@ -310,7 +311,7 @@ func (s *TeamService) RemoveMember(ctx context.Context, teamID, callerUserID, ta
 // UpdateMemberRole changes a member's role to admin or member.
 // Caller must be admin or owner (verified from DB). Owner's role cannot be changed.
 // Valid target roles: "admin", "member".
-func (s *TeamService) UpdateMemberRole(ctx context.Context, teamID, callerUserID, targetUserID, newRole string) error {
+func (s *TeamService) UpdateMemberRole(ctx context.Context, teamID, callerUserID, targetUserID pgtype.UUID, newRole string) error {
 	if newRole != "admin" && newRole != "member" {
 		return fmt.Errorf("invalid: role must be admin or member")
 	}
@@ -350,7 +351,7 @@ func (s *TeamService) UpdateMemberRole(ctx context.Context, teamID, callerUserID
 
 // LeaveTeam removes the calling user from the team.
 // The owner cannot leave; they must delete the team instead.
-func (s *TeamService) LeaveTeam(ctx context.Context, teamID, callerUserID string) error {
+func (s *TeamService) LeaveTeam(ctx context.Context, teamID, callerUserID pgtype.UUID) error {
 	role, err := s.callerRole(ctx, teamID, callerUserID)
 	if err != nil {
 		return err
@@ -371,7 +372,7 @@ func (s *TeamService) LeaveTeam(ctx context.Context, teamID, callerUserID string
 // SetBYOC enables the BYOC feature flag for a team. Once enabled, BYOC cannot
 // be disabled — it is a one-way transition.
 // Admin-only — the caller must verify admin status before invoking this.
-func (s *TeamService) SetBYOC(ctx context.Context, teamID string, enabled bool) error {
+func (s *TeamService) SetBYOC(ctx context.Context, teamID pgtype.UUID, enabled bool) error {
 	team, err := s.DB.GetTeam(ctx, teamID)
 	if err != nil {
 		return fmt.Errorf("team not found: %w", err)

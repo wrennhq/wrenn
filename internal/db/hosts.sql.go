@@ -16,8 +16,8 @@ INSERT INTO host_tags (host_id, tag) VALUES ($1, $2) ON CONFLICT DO NOTHING
 `
 
 type AddHostTagParams struct {
-	HostID string `json:"host_id"`
-	Tag    string `json:"tag"`
+	HostID pgtype.UUID `json:"host_id"`
+	Tag    string      `json:"tag"`
 }
 
 func (q *Queries) AddHostTag(ctx context.Context, arg AddHostTagParams) error {
@@ -29,7 +29,7 @@ const deleteHost = `-- name: DeleteHost :exec
 DELETE FROM hosts WHERE id = $1
 `
 
-func (q *Queries) DeleteHost(ctx context.Context, id string) error {
+func (q *Queries) DeleteHost(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteHost, id)
 	return err
 }
@@ -38,7 +38,7 @@ const getHost = `-- name: GetHost :one
 SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts WHERE id = $1
 `
 
-func (q *Queries) GetHost(ctx context.Context, id string) (Host, error) {
+func (q *Queries) GetHost(ctx context.Context, id pgtype.UUID) (Host, error) {
 	row := q.db.QueryRow(ctx, getHost, id)
 	var i Host
 	err := row.Scan(
@@ -69,8 +69,8 @@ SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_m
 `
 
 type GetHostByTeamParams struct {
-	ID     string      `json:"id"`
-	TeamID pgtype.Text `json:"team_id"`
+	ID     pgtype.UUID `json:"id"`
+	TeamID pgtype.UUID `json:"team_id"`
 }
 
 func (q *Queries) GetHostByTeam(ctx context.Context, arg GetHostByTeamParams) (Host, error) {
@@ -103,7 +103,7 @@ const getHostTags = `-- name: GetHostTags :many
 SELECT tag FROM host_tags WHERE host_id = $1 ORDER BY tag
 `
 
-func (q *Queries) GetHostTags(ctx context.Context, hostID string) ([]string, error) {
+func (q *Queries) GetHostTags(ctx context.Context, hostID pgtype.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, getHostTags, hostID)
 	if err != nil {
 		return nil, err
@@ -127,7 +127,7 @@ const getHostTokensByHost = `-- name: GetHostTokensByHost :many
 SELECT id, host_id, created_by, created_at, expires_at, used_at FROM host_tokens WHERE host_id = $1 ORDER BY created_at DESC
 `
 
-func (q *Queries) GetHostTokensByHost(ctx context.Context, hostID string) ([]HostToken, error) {
+func (q *Queries) GetHostTokensByHost(ctx context.Context, hostID pgtype.UUID) ([]HostToken, error) {
 	rows, err := q.db.Query(ctx, getHostTokensByHost, hostID)
 	if err != nil {
 		return nil, err
@@ -161,12 +161,12 @@ RETURNING id, type, team_id, provider, availability_zone, arch, cpu_cores, memor
 `
 
 type InsertHostParams struct {
-	ID               string      `json:"id"`
+	ID               pgtype.UUID `json:"id"`
 	Type             string      `json:"type"`
-	TeamID           pgtype.Text `json:"team_id"`
-	Provider         pgtype.Text `json:"provider"`
-	AvailabilityZone pgtype.Text `json:"availability_zone"`
-	CreatedBy        string      `json:"created_by"`
+	TeamID           pgtype.UUID `json:"team_id"`
+	Provider         string      `json:"provider"`
+	AvailabilityZone string      `json:"availability_zone"`
+	CreatedBy        pgtype.UUID `json:"created_by"`
 }
 
 func (q *Queries) InsertHost(ctx context.Context, arg InsertHostParams) (Host, error) {
@@ -209,9 +209,9 @@ RETURNING id, host_id, created_by, created_at, expires_at, used_at
 `
 
 type InsertHostTokenParams struct {
-	ID        string             `json:"id"`
-	HostID    string             `json:"host_id"`
-	CreatedBy string             `json:"created_by"`
+	ID        pgtype.UUID        `json:"id"`
+	HostID    pgtype.UUID        `json:"host_id"`
+	CreatedBy pgtype.UUID        `json:"created_by"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 }
 
@@ -414,7 +414,7 @@ const listHostsByTeam = `-- name: ListHostsByTeam :many
 SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, mtls_enabled FROM hosts WHERE team_id = $1 AND type = 'byoc' ORDER BY created_at DESC
 `
 
-func (q *Queries) ListHostsByTeam(ctx context.Context, teamID pgtype.Text) ([]Host, error) {
+func (q *Queries) ListHostsByTeam(ctx context.Context, teamID pgtype.UUID) ([]Host, error) {
 	rows, err := q.db.Query(ctx, listHostsByTeam, teamID)
 	if err != nil {
 		return nil, err
@@ -500,7 +500,7 @@ const markHostTokenUsed = `-- name: MarkHostTokenUsed :exec
 UPDATE host_tokens SET used_at = NOW() WHERE id = $1
 `
 
-func (q *Queries) MarkHostTokenUsed(ctx context.Context, id string) error {
+func (q *Queries) MarkHostTokenUsed(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, markHostTokenUsed, id)
 	return err
 }
@@ -509,7 +509,7 @@ const markHostUnreachable = `-- name: MarkHostUnreachable :exec
 UPDATE hosts SET status = 'unreachable', updated_at = NOW() WHERE id = $1
 `
 
-func (q *Queries) MarkHostUnreachable(ctx context.Context, id string) error {
+func (q *Queries) MarkHostUnreachable(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, markHostUnreachable, id)
 	return err
 }
@@ -528,12 +528,12 @@ WHERE id = $1 AND status = 'pending'
 `
 
 type RegisterHostParams struct {
-	ID       string      `json:"id"`
-	Arch     pgtype.Text `json:"arch"`
-	CpuCores pgtype.Int4 `json:"cpu_cores"`
-	MemoryMb pgtype.Int4 `json:"memory_mb"`
-	DiskGb   pgtype.Int4 `json:"disk_gb"`
-	Address  pgtype.Text `json:"address"`
+	ID       pgtype.UUID `json:"id"`
+	Arch     string      `json:"arch"`
+	CpuCores int32       `json:"cpu_cores"`
+	MemoryMb int32       `json:"memory_mb"`
+	DiskGb   int32       `json:"disk_gb"`
+	Address  string      `json:"address"`
 }
 
 func (q *Queries) RegisterHost(ctx context.Context, arg RegisterHostParams) (int64, error) {
@@ -556,8 +556,8 @@ DELETE FROM host_tags WHERE host_id = $1 AND tag = $2
 `
 
 type RemoveHostTagParams struct {
-	HostID string `json:"host_id"`
-	Tag    string `json:"tag"`
+	HostID pgtype.UUID `json:"host_id"`
+	Tag    string      `json:"tag"`
 }
 
 func (q *Queries) RemoveHostTag(ctx context.Context, arg RemoveHostTagParams) error {
@@ -569,7 +569,7 @@ const updateHostHeartbeat = `-- name: UpdateHostHeartbeat :exec
 UPDATE hosts SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1
 `
 
-func (q *Queries) UpdateHostHeartbeat(ctx context.Context, id string) error {
+func (q *Queries) UpdateHostHeartbeat(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, updateHostHeartbeat, id)
 	return err
 }
@@ -584,7 +584,7 @@ WHERE id = $1
 
 // Updates last_heartbeat_at and transitions unreachable hosts back to online.
 // Returns 0 if no host was found (deleted), which the caller treats as 404.
-func (q *Queries) UpdateHostHeartbeatAndStatus(ctx context.Context, id string) (int64, error) {
+func (q *Queries) UpdateHostHeartbeatAndStatus(ctx context.Context, id pgtype.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, updateHostHeartbeatAndStatus, id)
 	if err != nil {
 		return 0, err
@@ -597,8 +597,8 @@ UPDATE hosts SET status = $2, updated_at = NOW() WHERE id = $1
 `
 
 type UpdateHostStatusParams struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID     pgtype.UUID `json:"id"`
+	Status string      `json:"status"`
 }
 
 func (q *Queries) UpdateHostStatus(ctx context.Context, arg UpdateHostStatusParams) error {

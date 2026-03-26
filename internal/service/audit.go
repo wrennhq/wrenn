@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
 const auditMaxLimit = 200
@@ -31,13 +32,13 @@ type AuditEntry struct {
 
 // AuditListParams controls the ListAuditLogs query.
 type AuditListParams struct {
-	TeamID        string
-	AdminScoped   bool      // true → include admin-scoped events; false → team-scoped only
-	ResourceTypes []string  // empty = no filter; multiple values = OR match
-	Actions       []string  // empty = no filter; multiple values = OR match
-	Before        time.Time // zero = no cursor (start from latest)
-	BeforeID      string    // tie-breaker: id of the last item at the Before timestamp; empty = no tie-break
-	Limit         int       // clamped to auditMaxLimit by the handler
+	TeamID        pgtype.UUID
+	AdminScoped   bool        // true → include admin-scoped events; false → team-scoped only
+	ResourceTypes []string    // empty = no filter; multiple values = OR match
+	Actions       []string    // empty = no filter; multiple values = OR match
+	Before        time.Time   // zero = no cursor (start from latest)
+	BeforeID      pgtype.UUID // tie-breaker: id of the last item at the Before timestamp; zero = no tie-break
+	Limit         int         // clamped to auditMaxLimit by the handler
 }
 
 // AuditService provides the read side of the audit log.
@@ -94,11 +95,11 @@ func (s *AuditService) List(ctx context.Context, p AuditListParams) ([]AuditEntr
 			_ = json.Unmarshal(row.Metadata, &meta)
 		}
 		entries[i] = AuditEntry{
-			ID:           row.ID,
-			TeamID:       row.TeamID,
+			ID:           id.FormatAuditLogID(row.ID),
+			TeamID:       id.FormatTeamID(row.TeamID),
 			ActorType:    row.ActorType,
 			ActorID:      row.ActorID.String,
-			ActorName:    row.ActorName.String,
+			ActorName:    row.ActorName,
 			ResourceType: row.ResourceType,
 			ResourceID:   row.ResourceID.String,
 			Action:       row.Action,

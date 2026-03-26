@@ -32,10 +32,10 @@ type HostService struct {
 // HostCreateParams holds the parameters for creating a host.
 type HostCreateParams struct {
 	Type             string
-	TeamID           string // required for BYOC, empty for regular
+	TeamID           pgtype.UUID // required for BYOC, zero value for regular
 	Provider         string
 	AvailabilityZone string
-	RequestingUserID string
+	RequestingUserID pgtype.UUID
 	IsRequestorAdmin bool
 }
 
@@ -103,7 +103,7 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 		}
 	} else {
 		// BYOC: platform admin, or team owner/admin.
-		if p.TeamID == "" {
+		if !p.TeamID.Valid {
 			return HostCreateResult{}, fmt.Errorf("invalid request: team_id is required for BYOC hosts")
 		}
 		if !p.IsRequestorAdmin {
@@ -124,7 +124,7 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 	}
 
 	// Validate team exists, is not deleted, and has BYOC enabled.
-	if p.TeamID != "" {
+	if p.TeamID.Valid {
 		team, err := s.DB.GetTeam(ctx, p.TeamID)
 		if err != nil || team.DeletedAt.Valid {
 			return HostCreateResult{}, fmt.Errorf("invalid request: team not found")
@@ -136,25 +136,12 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 
 	hostID := id.NewHostID()
 
-	var teamID pgtype.Text
-	if p.TeamID != "" {
-		teamID = pgtype.Text{String: p.TeamID, Valid: true}
-	}
-	var provider pgtype.Text
-	if p.Provider != "" {
-		provider = pgtype.Text{String: p.Provider, Valid: true}
-	}
-	var az pgtype.Text
-	if p.AvailabilityZone != "" {
-		az = pgtype.Text{String: p.AvailabilityZone, Valid: true}
-	}
-
 	host, err := s.DB.InsertHost(ctx, db.InsertHostParams{
 		ID:               hostID,
 		Type:             p.Type,
-		TeamID:           teamID,
-		Provider:         provider,
-		AvailabilityZone: az,
+		TeamID:           p.TeamID,
+		Provider:         p.Provider,
+		AvailabilityZone: p.AvailabilityZone,
 		CreatedBy:        p.RequestingUserID,
 	})
 	if err != nil {
@@ -166,8 +153,8 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 	tokenID := id.NewHostTokenID()
 
 	payload, _ := json.Marshal(regTokenPayload{
-		HostID:  hostID,
-		TokenID: tokenID,
+		HostID:  id.FormatHostID(hostID),
+		TokenID: id.FormatHostTokenID(tokenID),
 	})
 	if err := s.Redis.Set(ctx, "host:reg:"+token, payload, regTokenTTL).Err(); err != nil {
 		return HostCreateResult{}, fmt.Errorf("store registration token: %w", err)
@@ -180,7 +167,7 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 		CreatedBy: p.RequestingUserID,
 		ExpiresAt: pgtype.Timestamptz{Time: now.Add(regTokenTTL), Valid: true},
 	}); err != nil {
-		slog.Warn("failed to insert host token audit record", "host_id", hostID, "error", err)
+		slog.Warn("failed to insert host token audit record", "host_id", id.FormatHostID(hostID), "error", err)
 	}
 
 	return HostCreateResult{Host: host, RegistrationToken: token}, nil
@@ -189,7 +176,7 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 // RegenerateToken issues a new registration token for a host still in "pending"
 // status. This allows retry when a previous registration attempt failed after
 // the original token was consumed.
-func (s *HostService) RegenerateToken(ctx context.Context, hostID, userID, teamID string, isAdmin bool) (HostCreateResult, error) {
+func (s *HostService) RegenerateToken(ctx context.Context, hostID, userID, teamID pgtype.UUID, isAdmin bool) (HostCreateResult, error) {
 	host, err := s.DB.GetHost(ctx, hostID)
 	if err != nil {
 		return HostCreateResult{}, fmt.Errorf("host not found: %w", err)
@@ -202,7 +189,7 @@ func (s *HostService) RegenerateToken(ctx context.Context, hostID, userID, teamI
 		if host.Type != "byoc" {
 			return HostCreateResult{}, fmt.Errorf("forbidden: only admins can manage regular hosts")
 		}
-		if !host.TeamID.Valid || host.TeamID.String != teamID {
+		if !host.TeamID.Valid || host.TeamID != teamID {
 			return HostCreateResult{}, fmt.Errorf("forbidden: host does not belong to your team")
 		}
 		membership, err := s.DB.GetTeamMembership(ctx, db.GetTeamMembershipParams{
@@ -224,8 +211,8 @@ func (s *HostService) RegenerateToken(ctx context.Context, hostID, userID, teamI
 	tokenID := id.NewHostTokenID()
 
 	payload, _ := json.Marshal(regTokenPayload{
-		HostID:  hostID,
-		TokenID: tokenID,
+		HostID:  id.FormatHostID(hostID),
+		TokenID: id.FormatHostTokenID(tokenID),
 	})
 	if err := s.Redis.Set(ctx, "host:reg:"+token, payload, regTokenTTL).Err(); err != nil {
 		return HostCreateResult{}, fmt.Errorf("store registration token: %w", err)
@@ -238,7 +225,7 @@ func (s *HostService) RegenerateToken(ctx context.Context, hostID, userID, teamI
 		CreatedBy: userID,
 		ExpiresAt: pgtype.Timestamptz{Time: now.Add(regTokenTTL), Valid: true},
 	}); err != nil {
-		slog.Warn("failed to insert host token audit record", "host_id", hostID, "error", err)
+		slog.Warn("failed to insert host token audit record", "host_id", id.FormatHostID(hostID), "error", err)
 	}
 
 	return HostCreateResult{Host: host, RegistrationToken: token}, nil
@@ -262,24 +249,33 @@ func (s *HostService) Register(ctx context.Context, p HostRegisterParams) (HostR
 		return HostRegisterResult{}, fmt.Errorf("corrupted registration token")
 	}
 
-	if _, err := s.DB.GetHost(ctx, payload.HostID); err != nil {
+	hostID, err := id.ParseHostID(payload.HostID)
+	if err != nil {
+		return HostRegisterResult{}, fmt.Errorf("corrupted registration token: %w", err)
+	}
+	tokenID, err := id.ParseHostTokenID(payload.TokenID)
+	if err != nil {
+		return HostRegisterResult{}, fmt.Errorf("corrupted registration token: %w", err)
+	}
+
+	if _, err := s.DB.GetHost(ctx, hostID); err != nil {
 		return HostRegisterResult{}, fmt.Errorf("host not found: %w", err)
 	}
 
 	// Sign JWT before mutating DB — if signing fails, the host stays pending.
-	hostJWT, err := auth.SignHostJWT(s.JWT, payload.HostID)
+	hostJWT, err := auth.SignHostJWT(s.JWT, hostID)
 	if err != nil {
 		return HostRegisterResult{}, fmt.Errorf("sign host token: %w", err)
 	}
 
 	// Atomically update only if still pending (defense-in-depth against races).
 	rowsAffected, err := s.DB.RegisterHost(ctx, db.RegisterHostParams{
-		ID:       payload.HostID,
-		Arch:     pgtype.Text{String: p.Arch, Valid: p.Arch != ""},
-		CpuCores: pgtype.Int4{Int32: p.CPUCores, Valid: p.CPUCores > 0},
-		MemoryMb: pgtype.Int4{Int32: p.MemoryMB, Valid: p.MemoryMB > 0},
-		DiskGb:   pgtype.Int4{Int32: p.DiskGB, Valid: p.DiskGB > 0},
-		Address:  pgtype.Text{String: p.Address, Valid: p.Address != ""},
+		ID:       hostID,
+		Arch:     p.Arch,
+		CpuCores: p.CPUCores,
+		MemoryMb: p.MemoryMB,
+		DiskGb:   p.DiskGB,
+		Address:  p.Address,
 	})
 	if err != nil {
 		return HostRegisterResult{}, fmt.Errorf("register host: %w", err)
@@ -289,18 +285,18 @@ func (s *HostService) Register(ctx context.Context, p HostRegisterParams) (HostR
 	}
 
 	// Mark audit trail.
-	if err := s.DB.MarkHostTokenUsed(ctx, payload.TokenID); err != nil {
+	if err := s.DB.MarkHostTokenUsed(ctx, tokenID); err != nil {
 		slog.Warn("failed to mark host token used", "token_id", payload.TokenID, "error", err)
 	}
 
 	// Issue a long-lived refresh token.
-	refreshToken, err := s.issueRefreshToken(ctx, payload.HostID)
+	refreshToken, err := s.issueRefreshToken(ctx, hostID)
 	if err != nil {
 		return HostRegisterResult{}, fmt.Errorf("issue refresh token: %w", err)
 	}
 
 	// Re-fetch the host to get the updated state.
-	host, err := s.DB.GetHost(ctx, payload.HostID)
+	host, err := s.DB.GetHost(ctx, hostID)
 	if err != nil {
 		return HostRegisterResult{}, fmt.Errorf("fetch updated host: %w", err)
 	}
@@ -349,7 +345,7 @@ func (s *HostService) Refresh(ctx context.Context, refreshToken string) (HostRef
 
 // issueRefreshToken creates a new refresh token record in the DB and returns
 // the opaque token string.
-func (s *HostService) issueRefreshToken(ctx context.Context, hostID string) (string, error) {
+func (s *HostService) issueRefreshToken(ctx context.Context, hostID pgtype.UUID) (string, error) {
 	token := id.NewRefreshToken()
 	hash := hashToken(token)
 	now := time.Now()
@@ -375,7 +371,7 @@ func hashToken(token string) string {
 // Heartbeat updates the last heartbeat timestamp for a host and transitions
 // any 'unreachable' host back to 'online'. Returns a "host not found" error
 // (which becomes 404) if the host record no longer exists (e.g., was deleted).
-func (s *HostService) Heartbeat(ctx context.Context, hostID string) error {
+func (s *HostService) Heartbeat(ctx context.Context, hostID pgtype.UUID) error {
 	n, err := s.DB.UpdateHostHeartbeatAndStatus(ctx, hostID)
 	if err != nil {
 		return err
@@ -388,21 +384,21 @@ func (s *HostService) Heartbeat(ctx context.Context, hostID string) error {
 
 // List returns hosts visible to the caller.
 // Admins see all hosts; non-admins see only BYOC hosts belonging to their team.
-func (s *HostService) List(ctx context.Context, teamID string, isAdmin bool) ([]db.Host, error) {
+func (s *HostService) List(ctx context.Context, teamID pgtype.UUID, isAdmin bool) ([]db.Host, error) {
 	if isAdmin {
 		return s.DB.ListHosts(ctx)
 	}
-	return s.DB.ListHostsByTeam(ctx, pgtype.Text{String: teamID, Valid: true})
+	return s.DB.ListHostsByTeam(ctx, teamID)
 }
 
 // Get returns a single host, enforcing access control.
-func (s *HostService) Get(ctx context.Context, hostID, teamID string, isAdmin bool) (db.Host, error) {
+func (s *HostService) Get(ctx context.Context, hostID, teamID pgtype.UUID, isAdmin bool) (db.Host, error) {
 	host, err := s.DB.GetHost(ctx, hostID)
 	if err != nil {
 		return db.Host{}, fmt.Errorf("host not found: %w", err)
 	}
 	if !isAdmin {
-		if !host.TeamID.Valid || host.TeamID.String != teamID {
+		if !host.TeamID.Valid || host.TeamID != teamID {
 			return db.Host{}, fmt.Errorf("host not found")
 		}
 	}
@@ -411,8 +407,8 @@ func (s *HostService) Get(ctx context.Context, hostID, teamID string, isAdmin bo
 
 // DeletePreview returns what would be affected by deleting the host, without
 // making any changes. Use this to show the user a confirmation prompt.
-func (s *HostService) DeletePreview(ctx context.Context, hostID, teamID string, isAdmin bool) (HostDeletePreview, error) {
-	host, err := s.checkDeletePermission(ctx, hostID, "", teamID, isAdmin)
+func (s *HostService) DeletePreview(ctx context.Context, hostID, teamID pgtype.UUID, isAdmin bool) (HostDeletePreview, error) {
+	host, err := s.checkDeletePermission(ctx, hostID, pgtype.UUID{}, teamID, isAdmin)
 	if err != nil {
 		return HostDeletePreview{}, err
 	}
@@ -427,7 +423,7 @@ func (s *HostService) DeletePreview(ctx context.Context, hostID, teamID string, 
 
 	ids := make([]string, len(sandboxes))
 	for i, sb := range sandboxes {
-		ids[i] = sb.ID
+		ids[i] = id.FormatSandboxID(sb.ID)
 	}
 
 	return HostDeletePreview{Host: host, SandboxIDs: ids}, nil
@@ -436,7 +432,7 @@ func (s *HostService) DeletePreview(ctx context.Context, hostID, teamID string, 
 // Delete removes a host. Without force it returns an error listing active
 // sandboxes so the caller can present a confirmation. With force it gracefully
 // destroys all running sandboxes before deleting the host record.
-func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID string, isAdmin, force bool) error {
+func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID pgtype.UUID, isAdmin, force bool) error {
 	host, err := s.checkDeletePermission(ctx, hostID, userID, teamID, isAdmin)
 	if err != nil {
 		return err
@@ -453,35 +449,37 @@ func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID string,
 	if len(sandboxes) > 0 && !force {
 		ids := make([]string, len(sandboxes))
 		for i, sb := range sandboxes {
-			ids[i] = sb.ID
+			ids[i] = id.FormatSandboxID(sb.ID)
 		}
 		return &HostHasSandboxesError{SandboxIDs: ids}
 	}
 
+	hostIDStr := id.FormatHostID(hostID)
+
 	// Gracefully destroy running sandboxes and terminate the agent (best-effort).
-	if host.Address.Valid && host.Address.String != "" {
+	if host.Address != "" {
 		agent, err := s.Pool.GetForHost(host)
 		if err == nil {
 			for _, sb := range sandboxes {
 				if sb.Status == "running" || sb.Status == "starting" {
 					_, rpcErr := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
-						SandboxId: sb.ID,
+						SandboxId: id.FormatSandboxID(sb.ID),
 					}))
 					if rpcErr != nil && connect.CodeOf(rpcErr) != connect.CodeNotFound {
-						slog.Warn("delete host: failed to destroy sandbox on agent", "sandbox_id", sb.ID, "error", rpcErr)
+						slog.Warn("delete host: failed to destroy sandbox on agent", "sandbox_id", id.FormatSandboxID(sb.ID), "error", rpcErr)
 					}
 				}
 			}
 			// Tell the agent to shut itself down immediately.
 			if _, rpcErr := agent.Terminate(ctx, connect.NewRequest(&pb.TerminateRequest{})); rpcErr != nil {
-				slog.Warn("delete host: failed to send Terminate to agent", "host_id", hostID, "error", rpcErr)
+				slog.Warn("delete host: failed to send Terminate to agent", "host_id", hostIDStr, "error", rpcErr)
 			}
 		}
 	}
 
 	// Mark all affected sandboxes as stopped in DB.
 	if len(sandboxes) > 0 {
-		sbIDs := make([]string, len(sandboxes))
+		sbIDs := make([]pgtype.UUID, len(sandboxes))
 		for i, sb := range sandboxes {
 			sbIDs[i] = sb.ID
 		}
@@ -489,18 +487,18 @@ func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID string,
 			Column1: sbIDs,
 			Status:  "stopped",
 		}); err != nil {
-			slog.Warn("delete host: failed to mark sandboxes stopped", "host_id", hostID, "error", err)
+			slog.Warn("delete host: failed to mark sandboxes stopped", "host_id", hostIDStr, "error", err)
 		}
 	}
 
 	// Revoke all refresh tokens for this host.
 	if err := s.DB.RevokeHostRefreshTokensByHost(ctx, hostID); err != nil {
-		slog.Warn("delete host: failed to revoke refresh tokens", "host_id", hostID, "error", err)
+		slog.Warn("delete host: failed to revoke refresh tokens", "host_id", hostIDStr, "error", err)
 	}
 
 	// Evict the client from the pool so no further RPCs are sent.
 	if s.Pool != nil {
-		s.Pool.Evict(hostID)
+		s.Pool.Evict(id.FormatHostID(hostID))
 	}
 
 	return s.DB.DeleteHost(ctx, hostID)
@@ -508,7 +506,7 @@ func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID string,
 
 // checkDeletePermission verifies the caller has permission to delete the given
 // host and returns the host record on success.
-func (s *HostService) checkDeletePermission(ctx context.Context, hostID, userID, teamID string, isAdmin bool) (db.Host, error) {
+func (s *HostService) checkDeletePermission(ctx context.Context, hostID, userID, teamID pgtype.UUID, isAdmin bool) (db.Host, error) {
 	host, err := s.DB.GetHost(ctx, hostID)
 	if err != nil {
 		return db.Host{}, fmt.Errorf("host not found: %w", err)
@@ -521,11 +519,11 @@ func (s *HostService) checkDeletePermission(ctx context.Context, hostID, userID,
 	if host.Type != "byoc" {
 		return db.Host{}, fmt.Errorf("forbidden: only admins can delete regular hosts")
 	}
-	if !host.TeamID.Valid || host.TeamID.String != teamID {
+	if !host.TeamID.Valid || host.TeamID != teamID {
 		return db.Host{}, fmt.Errorf("forbidden: host does not belong to your team")
 	}
 
-	if userID != "" {
+	if userID.Valid {
 		membership, err := s.DB.GetTeamMembership(ctx, db.GetTeamMembershipParams{
 			UserID: userID,
 			TeamID: teamID,
@@ -545,7 +543,7 @@ func (s *HostService) checkDeletePermission(ctx context.Context, hostID, userID,
 }
 
 // AddTag adds a tag to a host.
-func (s *HostService) AddTag(ctx context.Context, hostID, teamID string, isAdmin bool, tag string) error {
+func (s *HostService) AddTag(ctx context.Context, hostID, teamID pgtype.UUID, isAdmin bool, tag string) error {
 	if _, err := s.Get(ctx, hostID, teamID, isAdmin); err != nil {
 		return err
 	}
@@ -553,7 +551,7 @@ func (s *HostService) AddTag(ctx context.Context, hostID, teamID string, isAdmin
 }
 
 // RemoveTag removes a tag from a host.
-func (s *HostService) RemoveTag(ctx context.Context, hostID, teamID string, isAdmin bool, tag string) error {
+func (s *HostService) RemoveTag(ctx context.Context, hostID, teamID pgtype.UUID, isAdmin bool, tag string) error {
 	if _, err := s.Get(ctx, hostID, teamID, isAdmin); err != nil {
 		return err
 	}
@@ -561,7 +559,7 @@ func (s *HostService) RemoveTag(ctx context.Context, hostID, teamID string, isAd
 }
 
 // ListTags returns all tags for a host.
-func (s *HostService) ListTags(ctx context.Context, hostID, teamID string, isAdmin bool) ([]string, error) {
+func (s *HostService) ListTags(ctx context.Context, hostID, teamID pgtype.UUID, isAdmin bool) ([]string, error) {
 	if _, err := s.Get(ctx, hostID, teamID, isAdmin); err != nil {
 		return nil, err
 	}

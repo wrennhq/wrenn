@@ -17,11 +17,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 `
 
 type InsertAuditLogParams struct {
-	ID           string      `json:"id"`
-	TeamID       string      `json:"team_id"`
+	ID           pgtype.UUID `json:"id"`
+	TeamID       pgtype.UUID `json:"team_id"`
 	ActorType    string      `json:"actor_type"`
 	ActorID      pgtype.Text `json:"actor_id"`
-	ActorName    pgtype.Text `json:"actor_name"`
+	ActorName    string      `json:"actor_name"`
 	ResourceType string      `json:"resource_type"`
 	ResourceID   pgtype.Text `json:"resource_id"`
 	Action       string      `json:"action"`
@@ -60,12 +60,12 @@ LIMIT $7
 `
 
 type ListAuditLogsParams struct {
-	TeamID  string             `json:"team_id"`
+	TeamID  pgtype.UUID        `json:"team_id"`
 	Column2 []string           `json:"column_2"`
 	Column3 []string           `json:"column_3"`
 	Column4 []string           `json:"column_4"`
 	Column5 pgtype.Timestamptz `json:"column_5"`
-	ID      string             `json:"id"`
+	ID      pgtype.UUID        `json:"id"`
 	Limit   int32              `json:"limit"`
 }
 

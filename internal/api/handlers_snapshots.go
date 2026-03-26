@@ -10,7 +10,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
@@ -51,7 +50,7 @@ func (h *snapshotHandler) deleteSnapshotBroadcast(ctx context.Context, name stri
 		}
 		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{Name: name})); err != nil {
 			if connect.CodeOf(err) != connect.CodeNotFound {
-				slog.Warn("snapshot: failed to delete on host", "host_id", host.ID, "name", name, "error", err)
+				slog.Warn("snapshot: failed to delete on host", "host_id", id.FormatHostID(host.ID), "name", name, "error", err)
 			}
 		}
 	}
@@ -78,11 +77,11 @@ func templateToResponse(t db.Template) snapshotResponse {
 		Type:      t.Type,
 		SizeBytes: t.SizeBytes,
 	}
-	if t.Vcpus.Valid {
-		resp.VCPUs = &t.Vcpus.Int32
+	if t.Vcpus != 0 {
+		resp.VCPUs = &t.Vcpus
 	}
-	if t.MemoryMb.Valid {
-		resp.MemoryMB = &t.MemoryMb.Int32
+	if t.MemoryMb != 0 {
+		resp.MemoryMB = &t.MemoryMb
 	}
 	if t.CreatedAt.Valid {
 		resp.CreatedAt = t.CreatedAt.Time.Format(time.RFC3339)
@@ -100,6 +99,12 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if req.SandboxID == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "sandbox_id is required")
+		return
+	}
+
+	sandboxID, err := id.ParseSandboxID(req.SandboxID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox_id")
 		return
 	}
 
@@ -133,7 +138,7 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify sandbox exists, belongs to team, and is running or paused.
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: req.SandboxID, TeamID: ac.TeamID})
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
 		return
@@ -162,7 +167,7 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Mark sandbox as paused (if it was running, it got paused by the snapshot).
 	if sb.Status != "paused" {
 		if _, err := h.db.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
-			ID: req.SandboxID, Status: "paused",
+			ID: sandboxID, Status: "paused",
 		}); err != nil {
 			slog.Error("failed to update sandbox status after snapshot", "sandbox_id", req.SandboxID, "error", err)
 		}
@@ -171,8 +176,8 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := h.db.InsertTemplate(ctx, db.InsertTemplateParams{
 		Name:      req.Name,
 		Type:      "snapshot",
-		Vcpus:     pgtype.Int4{Int32: sb.Vcpus, Valid: true},
-		MemoryMb:  pgtype.Int4{Int32: sb.MemoryMb, Valid: true},
+		Vcpus:     sb.Vcpus,
+		MemoryMb:  sb.MemoryMb,
 		SizeBytes: resp.Msg.SizeBytes,
 		TeamID:    ac.TeamID,
 	})

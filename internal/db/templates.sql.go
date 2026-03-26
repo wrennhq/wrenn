@@ -25,8 +25,8 @@ DELETE FROM templates WHERE name = $1 AND team_id = $2
 `
 
 type DeleteTemplateByTeamParams struct {
-	Name   string `json:"name"`
-	TeamID string `json:"team_id"`
+	Name   string      `json:"name"`
+	TeamID pgtype.UUID `json:"team_id"`
 }
 
 func (q *Queries) DeleteTemplateByTeam(ctx context.Context, arg DeleteTemplateByTeamParams) error {
@@ -58,8 +58,8 @@ SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templa
 `
 
 type GetTemplateByTeamParams struct {
-	Name   string `json:"name"`
-	TeamID string `json:"team_id"`
+	Name   string      `json:"name"`
+	TeamID pgtype.UUID `json:"team_id"`
 }
 
 func (q *Queries) GetTemplateByTeam(ctx context.Context, arg GetTemplateByTeamParams) (Template, error) {
@@ -86,10 +86,10 @@ RETURNING name, type, vcpus, memory_mb, size_bytes, created_at, team_id
 type InsertTemplateParams struct {
 	Name      string      `json:"name"`
 	Type      string      `json:"type"`
-	Vcpus     pgtype.Int4 `json:"vcpus"`
-	MemoryMb  pgtype.Int4 `json:"memory_mb"`
+	Vcpus     int32       `json:"vcpus"`
+	MemoryMb  int32       `json:"memory_mb"`
 	SizeBytes int64       `json:"size_bytes"`
-	TeamID    string      `json:"team_id"`
+	TeamID    pgtype.UUID `json:"team_id"`
 }
 
 func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) (Template, error) {
@@ -150,7 +150,7 @@ const listTemplatesByTeam = `-- name: ListTemplatesByTeam :many
 SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE team_id = $1 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListTemplatesByTeam(ctx context.Context, teamID string) ([]Template, error) {
+func (q *Queries) ListTemplatesByTeam(ctx context.Context, teamID pgtype.UUID) ([]Template, error) {
 	rows, err := q.db.Query(ctx, listTemplatesByTeam, teamID)
 	if err != nil {
 		return nil, err
@@ -183,8 +183,8 @@ SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templa
 `
 
 type ListTemplatesByTeamAndTypeParams struct {
-	TeamID string `json:"team_id"`
-	Type   string `json:"type"`
+	TeamID pgtype.UUID `json:"team_id"`
+	Type   string      `json:"type"`
 }
 
 func (q *Queries) ListTemplatesByTeamAndType(ctx context.Context, arg ListTemplatesByTeamAndTypeParams) ([]Template, error) {

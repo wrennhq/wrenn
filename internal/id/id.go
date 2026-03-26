@@ -4,7 +4,113 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+// --- Generation ---
+
+// newUUID returns a new random (v4) UUID wrapped in pgtype.UUID for direct DB use.
+func newUUID() pgtype.UUID {
+	return pgtype.UUID{Bytes: uuid.New(), Valid: true}
+}
+
+func NewSandboxID() pgtype.UUID         { return newUUID() }
+func NewUserID() pgtype.UUID            { return newUUID() }
+func NewTeamID() pgtype.UUID            { return newUUID() }
+func NewAPIKeyID() pgtype.UUID          { return newUUID() }
+func NewHostID() pgtype.UUID            { return newUUID() }
+func NewHostTokenID() pgtype.UUID       { return newUUID() }
+func NewRefreshTokenID() pgtype.UUID    { return newUUID() }
+func NewAuditLogID() pgtype.UUID        { return newUUID() }
+func NewBuildID() pgtype.UUID           { return newUUID() }
+func NewAdminPermissionID() pgtype.UUID { return newUUID() }
+
+// NewSnapshotName generates a snapshot name: "template-" + 8 hex chars.
+// Templates use TEXT primary keys (not UUID), so this stays as a string.
+func NewSnapshotName() string {
+	return "template-" + hex8()
+}
+
+// NewTeamSlug generates a unique team slug in the format "xxxxxx-yyyyyy".
+func NewTeamSlug() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+	return hex.EncodeToString(b[:3]) + "-" + hex.EncodeToString(b[3:])
+}
+
+// NewRegistrationToken generates a 64-char hex token (32 bytes of entropy).
+func NewRegistrationToken() string {
+	return hexToken(32)
+}
+
+// NewRefreshToken generates a 64-char hex token (32 bytes of entropy).
+func NewRefreshToken() string {
+	return hexToken(32)
+}
+
+// --- Formatting (pgtype.UUID → prefixed string for API/RPC output) ---
+
+const (
+	PrefixSandbox         = "sb-"
+	PrefixUser            = "usr-"
+	PrefixTeam            = "team-"
+	PrefixAPIKey          = "key-"
+	PrefixHost            = "host-"
+	PrefixHostToken       = "htok-"
+	PrefixRefreshToken    = "hrt-"
+	PrefixAuditLog        = "log-"
+	PrefixBuild           = "bld-"
+	PrefixAdminPermission = "perm-"
+)
+
+func formatUUID(prefix string, id pgtype.UUID) string {
+	return prefix + uuid.UUID(id.Bytes).String()
+}
+
+func FormatSandboxID(id pgtype.UUID) string      { return formatUUID(PrefixSandbox, id) }
+func FormatUserID(id pgtype.UUID) string         { return formatUUID(PrefixUser, id) }
+func FormatTeamID(id pgtype.UUID) string         { return formatUUID(PrefixTeam, id) }
+func FormatAPIKeyID(id pgtype.UUID) string       { return formatUUID(PrefixAPIKey, id) }
+func FormatHostID(id pgtype.UUID) string         { return formatUUID(PrefixHost, id) }
+func FormatHostTokenID(id pgtype.UUID) string    { return formatUUID(PrefixHostToken, id) }
+func FormatRefreshTokenID(id pgtype.UUID) string { return formatUUID(PrefixRefreshToken, id) }
+func FormatAuditLogID(id pgtype.UUID) string     { return formatUUID(PrefixAuditLog, id) }
+func FormatBuildID(id pgtype.UUID) string        { return formatUUID(PrefixBuild, id) }
+
+// --- Parsing (prefixed string from API/RPC input → pgtype.UUID) ---
+
+func parseUUID(prefix, s string) (pgtype.UUID, error) {
+	if !strings.HasPrefix(s, prefix) {
+		return pgtype.UUID{}, fmt.Errorf("invalid ID: expected %q prefix, got %q", prefix, s)
+	}
+	u, err := uuid.Parse(strings.TrimPrefix(s, prefix))
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("invalid ID %q: %w", s, err)
+	}
+	return pgtype.UUID{Bytes: u, Valid: true}, nil
+}
+
+func ParseSandboxID(s string) (pgtype.UUID, error)   { return parseUUID(PrefixSandbox, s) }
+func ParseUserID(s string) (pgtype.UUID, error)      { return parseUUID(PrefixUser, s) }
+func ParseTeamID(s string) (pgtype.UUID, error)      { return parseUUID(PrefixTeam, s) }
+func ParseAPIKeyID(s string) (pgtype.UUID, error)    { return parseUUID(PrefixAPIKey, s) }
+func ParseHostID(s string) (pgtype.UUID, error)      { return parseUUID(PrefixHost, s) }
+func ParseHostTokenID(s string) (pgtype.UUID, error) { return parseUUID(PrefixHostToken, s) }
+func ParseAuditLogID(s string) (pgtype.UUID, error)  { return parseUUID(PrefixAuditLog, s) }
+func ParseBuildID(s string) (pgtype.UUID, error)     { return parseUUID(PrefixBuild, s) }
+
+// --- Well-known IDs ---
+
+// PlatformTeamID is the all-zeros UUID reserved for platform-owned resources
+// (e.g. base templates, shared infrastructure).
+var PlatformTeamID = pgtype.UUID{Bytes: [16]byte{}, Valid: true}
+
+// --- Helpers ---
 
 func hex8() string {
 	b := make([]byte, 4)
@@ -14,78 +120,8 @@ func hex8() string {
 	return hex.EncodeToString(b)
 }
 
-// NewSandboxID generates a new sandbox ID in the format "sb-" + 8 hex chars.
-func NewSandboxID() string {
-	return "sb-" + hex8()
-}
-
-// NewSnapshotName generates a snapshot name in the format "template-" + 8 hex chars.
-func NewSnapshotName() string {
-	return "template-" + hex8()
-}
-
-// NewUserID generates a new user ID in the format "usr-" + 8 hex chars.
-func NewUserID() string {
-	return "usr-" + hex8()
-}
-
-// NewTeamID generates a new team ID in the format "team-" + 8 hex chars.
-func NewTeamID() string {
-	return "team-" + hex8()
-}
-
-// NewTeamSlug generates a unique team slug in the format "xxxxxx-yyyyyy"
-// where each part is 3 random bytes encoded as hex (6 hex chars each).
-func NewTeamSlug() string {
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("crypto/rand failed: %v", err))
-	}
-	return hex.EncodeToString(b[:3]) + "-" + hex.EncodeToString(b[3:])
-}
-
-// NewAPIKeyID generates a new API key ID in the format "key-" + 8 hex chars.
-func NewAPIKeyID() string {
-	return "key-" + hex8()
-}
-
-// NewHostID generates a new host ID in the format "host-" + 8 hex chars.
-func NewHostID() string {
-	return "host-" + hex8()
-}
-
-// NewHostTokenID generates a new host token audit ID in the format "htok-" + 8 hex chars.
-func NewHostTokenID() string {
-	return "htok-" + hex8()
-}
-
-// NewRegistrationToken generates a 64-char hex token (32 bytes of entropy).
-func NewRegistrationToken() string {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("crypto/rand failed: %v", err))
-	}
-	return hex.EncodeToString(b)
-}
-
-// NewRefreshTokenID generates a new refresh token record ID in the format "hrt-" + 8 hex chars.
-func NewRefreshTokenID() string {
-	return "hrt-" + hex8()
-}
-
-// NewAuditLogID generates a new audit log ID in the format "log-" + 8 hex chars.
-func NewAuditLogID() string {
-	return "log-" + hex8()
-}
-
-// NewBuildID generates a new template build ID in the format "bld-" + 8 hex chars.
-func NewBuildID() string {
-	return "bld-" + hex8()
-}
-
-// NewRefreshToken generates a 64-char hex token (32 bytes of entropy) for use as a host refresh token.
-func NewRefreshToken() string {
-	b := make([]byte, 32)
+func hexToken(nBytes int) string {
+	b := make([]byte, nBytes)
 	if _, err := rand.Read(b); err != nil {
 		panic(fmt.Sprintf("crypto/rand failed: %v", err))
 	}

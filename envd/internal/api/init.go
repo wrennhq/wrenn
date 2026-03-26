@@ -14,12 +14,12 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/awnumar/memguard"
-	"github.com/rs/zerolog"
-	"github.com/txn2/txeh"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/host"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/logs"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/shared/keys"
+	"github.com/awnumar/memguard"
+	"github.com/rs/zerolog"
+	"github.com/txn2/txeh"
 )
 
 var (
@@ -287,4 +287,3 @@ func getIPFamily(address string) (txeh.IPFamily, error) {
 		return txeh.IPFamilyV4, fmt.Errorf("%w: %s", ErrUnknownAddressFormat, address)
 	}
 }
-

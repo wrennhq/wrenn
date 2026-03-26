@@ -96,7 +96,7 @@ func New(cfg Config) *Manager {
 // If sandboxID is empty, a new ID is generated.
 func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus, memoryMB, timeoutSec int) (*models.Sandbox, error) {
 	if sandboxID == "" {
-		sandboxID = id.NewSandboxID()
+		sandboxID = id.FormatSandboxID(id.NewSandboxID())
 	}
 
 	if vcpus <= 0 {

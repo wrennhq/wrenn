@@ -25,18 +25,15 @@ func New(queries *db.Queries) *AuditLogger {
 }
 
 // actorFields extracts actor_type, actor_id, and actor_name from an AuthContext.
-func actorFields(ac auth.AuthContext) (actorType string, actorID pgtype.Text, actorName pgtype.Text) {
-	if ac.UserID != "" {
-		return "user",
-			pgtype.Text{String: ac.UserID, Valid: true},
-			pgtype.Text{String: ac.Name, Valid: ac.Name != ""}
+// actor_id is stored as a prefixed string in the TEXT column.
+func actorFields(ac auth.AuthContext) (actorType, actorID, actorName string) {
+	if ac.UserID.Valid {
+		return "user", id.FormatUserID(ac.UserID), ac.Name
 	}
-	if ac.APIKeyID != "" {
-		return "api_key",
-			pgtype.Text{String: ac.APIKeyID, Valid: true},
-			pgtype.Text{String: ac.APIKeyName, Valid: true}
+	if ac.APIKeyID.Valid {
+		return "api_key", id.FormatAPIKeyID(ac.APIKeyID), ac.APIKeyName
 	}
-	return "system", pgtype.Text{}, pgtype.Text{}
+	return "system", "", ""
 }
 
 func (l *AuditLogger) write(ctx context.Context, p db.InsertAuditLogParams) {
@@ -44,7 +41,6 @@ func (l *AuditLogger) write(ctx context.Context, p db.InsertAuditLogParams) {
 		slog.Warn("audit: failed to write log entry",
 			"action", p.Action,
 			"resource_type", p.ResourceType,
-			"team_id", p.TeamID,
 			"error", err,
 		)
 	}
@@ -61,18 +57,26 @@ func marshalMeta(meta map[string]any) []byte {
 	return b
 }
 
+// optText returns a valid pgtype.Text if s is non-empty, otherwise an invalid (NULL) one.
+func optText(s string) pgtype.Text {
+	if s == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: s, Valid: true}
+}
+
 // --- Sandbox events (scope: team) ---
 
-func (l *AuditLogger) LogSandboxCreate(ctx context.Context, ac auth.AuthContext, sandboxID, template string) {
+func (l *AuditLogger) LogSandboxCreate(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID, template string) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "sandbox",
-		ResourceID:   pgtype.Text{String: sandboxID, Valid: true},
+		ResourceID:   optText(id.FormatSandboxID(sandboxID)),
 		Action:       "create",
 		Scope:        "team",
 		Status:       "success",
@@ -80,16 +84,16 @@ func (l *AuditLogger) LogSandboxCreate(ctx context.Context, ac auth.AuthContext,
 	})
 }
 
-func (l *AuditLogger) LogSandboxPause(ctx context.Context, ac auth.AuthContext, sandboxID string) {
+func (l *AuditLogger) LogSandboxPause(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "sandbox",
-		ResourceID:   pgtype.Text{String: sandboxID, Valid: true},
+		ResourceID:   optText(id.FormatSandboxID(sandboxID)),
 		Action:       "pause",
 		Scope:        "team",
 		Status:       "success",
@@ -98,15 +102,15 @@ func (l *AuditLogger) LogSandboxPause(ctx context.Context, ac auth.AuthContext, 
 }
 
 // LogSandboxAutoPause records a system-initiated auto-pause (TTL or host reconciler).
-func (l *AuditLogger) LogSandboxAutoPause(ctx context.Context, teamID, sandboxID string) {
+func (l *AuditLogger) LogSandboxAutoPause(ctx context.Context, teamID, sandboxID pgtype.UUID) {
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       teamID,
 		ActorType:    "system",
 		ActorID:      pgtype.Text{},
-		ActorName:    pgtype.Text{},
+		ActorName:    "",
 		ResourceType: "sandbox",
-		ResourceID:   pgtype.Text{String: sandboxID, Valid: true},
+		ResourceID:   optText(id.FormatSandboxID(sandboxID)),
 		Action:       "pause",
 		Scope:        "team",
 		Status:       "info",
@@ -114,16 +118,16 @@ func (l *AuditLogger) LogSandboxAutoPause(ctx context.Context, teamID, sandboxID
 	})
 }
 
-func (l *AuditLogger) LogSandboxResume(ctx context.Context, ac auth.AuthContext, sandboxID string) {
+func (l *AuditLogger) LogSandboxResume(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "sandbox",
-		ResourceID:   pgtype.Text{String: sandboxID, Valid: true},
+		ResourceID:   optText(id.FormatSandboxID(sandboxID)),
 		Action:       "resume",
 		Scope:        "team",
 		Status:       "success",
@@ -131,16 +135,16 @@ func (l *AuditLogger) LogSandboxResume(ctx context.Context, ac auth.AuthContext,
 	})
 }
 
-func (l *AuditLogger) LogSandboxDestroy(ctx context.Context, ac auth.AuthContext, sandboxID string) {
+func (l *AuditLogger) LogSandboxDestroy(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "sandbox",
-		ResourceID:   pgtype.Text{String: sandboxID, Valid: true},
+		ResourceID:   optText(id.FormatSandboxID(sandboxID)),
 		Action:       "destroy",
 		Scope:        "team",
 		Status:       "warning",
@@ -156,10 +160,10 @@ func (l *AuditLogger) LogSnapshotCreate(ctx context.Context, ac auth.AuthContext
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "snapshot",
-		ResourceID:   pgtype.Text{String: name, Valid: true},
+		ResourceID:   optText(name),
 		Action:       "create",
 		Scope:        "team",
 		Status:       "success",
@@ -173,10 +177,10 @@ func (l *AuditLogger) LogSnapshotDelete(ctx context.Context, ac auth.AuthContext
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "snapshot",
-		ResourceID:   pgtype.Text{String: name, Valid: true},
+		ResourceID:   optText(name),
 		Action:       "delete",
 		Scope:        "team",
 		Status:       "warning",
@@ -186,16 +190,16 @@ func (l *AuditLogger) LogSnapshotDelete(ctx context.Context, ac auth.AuthContext
 
 // --- Team events (scope: team) ---
 
-func (l *AuditLogger) LogTeamRename(ctx context.Context, ac auth.AuthContext, teamID, oldName, newName string) {
+func (l *AuditLogger) LogTeamRename(ctx context.Context, ac auth.AuthContext, teamID pgtype.UUID, oldName, newName string) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "team",
-		ResourceID:   pgtype.Text{String: teamID, Valid: true},
+		ResourceID:   optText(id.FormatTeamID(teamID)),
 		Action:       "rename",
 		Scope:        "team",
 		Status:       "info",
@@ -205,16 +209,16 @@ func (l *AuditLogger) LogTeamRename(ctx context.Context, ac auth.AuthContext, te
 
 // --- API key events (scope: team) ---
 
-func (l *AuditLogger) LogAPIKeyCreate(ctx context.Context, ac auth.AuthContext, keyID, keyName string) {
+func (l *AuditLogger) LogAPIKeyCreate(ctx context.Context, ac auth.AuthContext, keyID pgtype.UUID, keyName string) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "api_key",
-		ResourceID:   pgtype.Text{String: keyID, Valid: true},
+		ResourceID:   optText(id.FormatAPIKeyID(keyID)),
 		Action:       "create",
 		Scope:        "team",
 		Status:       "success",
@@ -222,16 +226,16 @@ func (l *AuditLogger) LogAPIKeyCreate(ctx context.Context, ac auth.AuthContext, 
 	})
 }
 
-func (l *AuditLogger) LogAPIKeyRevoke(ctx context.Context, ac auth.AuthContext, keyID string) {
+func (l *AuditLogger) LogAPIKeyRevoke(ctx context.Context, ac auth.AuthContext, keyID pgtype.UUID) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "api_key",
-		ResourceID:   pgtype.Text{String: keyID, Valid: true},
+		ResourceID:   optText(id.FormatAPIKeyID(keyID)),
 		Action:       "revoke",
 		Scope:        "team",
 		Status:       "warning",
@@ -241,16 +245,16 @@ func (l *AuditLogger) LogAPIKeyRevoke(ctx context.Context, ac auth.AuthContext, 
 
 // --- Member events (scope: admin) ---
 
-func (l *AuditLogger) LogMemberAdd(ctx context.Context, ac auth.AuthContext, targetUserID, targetEmail, role string) {
+func (l *AuditLogger) LogMemberAdd(ctx context.Context, ac auth.AuthContext, targetUserID pgtype.UUID, targetEmail, role string) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "member",
-		ResourceID:   pgtype.Text{String: targetUserID, Valid: true},
+		ResourceID:   optText(id.FormatUserID(targetUserID)),
 		Action:       "add",
 		Scope:        "admin",
 		Status:       "success",
@@ -258,16 +262,16 @@ func (l *AuditLogger) LogMemberAdd(ctx context.Context, ac auth.AuthContext, tar
 	})
 }
 
-func (l *AuditLogger) LogMemberRemove(ctx context.Context, ac auth.AuthContext, targetUserID string) {
+func (l *AuditLogger) LogMemberRemove(ctx context.Context, ac auth.AuthContext, targetUserID pgtype.UUID) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "member",
-		ResourceID:   pgtype.Text{String: targetUserID, Valid: true},
+		ResourceID:   optText(id.FormatUserID(targetUserID)),
 		Action:       "remove",
 		Scope:        "admin",
 		Status:       "warning",
@@ -277,14 +281,18 @@ func (l *AuditLogger) LogMemberRemove(ctx context.Context, ac auth.AuthContext, 
 
 func (l *AuditLogger) LogMemberLeave(ctx context.Context, ac auth.AuthContext) {
 	actorType, actorID, actorName := actorFields(ac)
+	resourceID := ""
+	if ac.UserID.Valid {
+		resourceID = id.FormatUserID(ac.UserID)
+	}
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "member",
-		ResourceID:   pgtype.Text{String: ac.UserID, Valid: ac.UserID != ""},
+		ResourceID:   optText(resourceID),
 		Action:       "leave",
 		Scope:        "admin",
 		Status:       "info",
@@ -292,16 +300,16 @@ func (l *AuditLogger) LogMemberLeave(ctx context.Context, ac auth.AuthContext) {
 	})
 }
 
-func (l *AuditLogger) LogMemberRoleUpdate(ctx context.Context, ac auth.AuthContext, targetUserID, newRole string) {
+func (l *AuditLogger) LogMemberRoleUpdate(ctx context.Context, ac auth.AuthContext, targetUserID pgtype.UUID, newRole string) {
 	actorType, actorID, actorName := actorFields(ac)
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       ac.TeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "member",
-		ResourceID:   pgtype.Text{String: targetUserID, Valid: true},
+		ResourceID:   optText(id.FormatUserID(targetUserID)),
 		Action:       "role_update",
 		Scope:        "admin",
 		Status:       "info",
@@ -311,24 +319,24 @@ func (l *AuditLogger) LogMemberRoleUpdate(ctx context.Context, ac auth.AuthConte
 
 // --- Host events (scope: admin) ---
 
-func (l *AuditLogger) LogHostCreate(ctx context.Context, ac auth.AuthContext, hostID, teamID string) {
+func (l *AuditLogger) LogHostCreate(ctx context.Context, ac auth.AuthContext, hostID, teamID pgtype.UUID) {
 	actorType, actorID, actorName := actorFields(ac)
 	// For shared hosts with no owning team, use the caller's team.
 	logTeamID := teamID
-	if logTeamID == "" {
+	if !logTeamID.Valid {
 		logTeamID = ac.TeamID
 	}
-	if logTeamID == "" {
+	if !logTeamID.Valid {
 		return
 	}
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       logTeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "host",
-		ResourceID:   pgtype.Text{String: hostID, Valid: true},
+		ResourceID:   optText(id.FormatHostID(hostID)),
 		Action:       "create",
 		Scope:        "admin",
 		Status:       "success",
@@ -336,23 +344,23 @@ func (l *AuditLogger) LogHostCreate(ctx context.Context, ac auth.AuthContext, ho
 	})
 }
 
-func (l *AuditLogger) LogHostDelete(ctx context.Context, ac auth.AuthContext, hostID, teamID string) {
+func (l *AuditLogger) LogHostDelete(ctx context.Context, ac auth.AuthContext, hostID, teamID pgtype.UUID) {
 	actorType, actorID, actorName := actorFields(ac)
 	logTeamID := teamID
-	if logTeamID == "" {
+	if !logTeamID.Valid {
 		logTeamID = ac.TeamID
 	}
-	if logTeamID == "" {
+	if !logTeamID.Valid {
 		return
 	}
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
 		TeamID:       logTeamID,
 		ActorType:    actorType,
-		ActorID:      actorID,
+		ActorID:      optText(actorID),
 		ActorName:    actorName,
 		ResourceType: "host",
-		ResourceID:   pgtype.Text{String: hostID, Valid: true},
+		ResourceID:   optText(id.FormatHostID(hostID)),
 		Action:       "delete",
 		Scope:        "admin",
 		Status:       "warning",
@@ -361,9 +369,8 @@ func (l *AuditLogger) LogHostDelete(ctx context.Context, ac auth.AuthContext, ho
 }
 
 // LogHostMarkedDown records a system-initiated host status transition to unreachable.
-// teamID must be non-empty (BYOC hosts only); shared hosts are not logged.
-func (l *AuditLogger) LogHostMarkedDown(ctx context.Context, teamID, hostID string) {
-	if teamID == "" {
+func (l *AuditLogger) LogHostMarkedDown(ctx context.Context, teamID, hostID pgtype.UUID) {
+	if !teamID.Valid {
 		return
 	}
 	l.write(ctx, db.InsertAuditLogParams{
@@ -371,9 +378,9 @@ func (l *AuditLogger) LogHostMarkedDown(ctx context.Context, teamID, hostID stri
 		TeamID:       teamID,
 		ActorType:    "system",
 		ActorID:      pgtype.Text{},
-		ActorName:    pgtype.Text{},
+		ActorName:    "",
 		ResourceType: "host",
-		ResourceID:   pgtype.Text{String: hostID, Valid: true},
+		ResourceID:   optText(id.FormatHostID(hostID)),
 		Action:       "marked_down",
 		Scope:        "admin",
 		Status:       "error",
@@ -382,9 +389,8 @@ func (l *AuditLogger) LogHostMarkedDown(ctx context.Context, teamID, hostID stri
 }
 
 // LogHostMarkedUp records a system-initiated host status transition back to online.
-// teamID must be non-empty (BYOC hosts only); shared hosts are not logged.
-func (l *AuditLogger) LogHostMarkedUp(ctx context.Context, teamID, hostID string) {
-	if teamID == "" {
+func (l *AuditLogger) LogHostMarkedUp(ctx context.Context, teamID, hostID pgtype.UUID) {
+	if !teamID.Valid {
 		return
 	}
 	l.write(ctx, db.InsertAuditLogParams{
@@ -392,9 +398,9 @@ func (l *AuditLogger) LogHostMarkedUp(ctx context.Context, teamID, hostID string
 		TeamID:       teamID,
 		ActorType:    "system",
 		ActorID:      pgtype.Text{},
-		ActorName:    pgtype.Text{},
+		ActorName:    "",
 		ResourceType: "host",
-		ResourceID:   pgtype.Text{String: hostID, Valid: true},
+		ResourceID:   optText(id.FormatHostID(hostID)),
 		Action:       "marked_up",
 		Scope:        "admin",
 		Status:       "success",

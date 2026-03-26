@@ -50,7 +50,7 @@ WHERE id = $1;
 UPDATE sandboxes
 SET status = $2,
     last_updated = NOW()
-WHERE id = ANY($1::text[]);
+WHERE id = ANY($1::uuid[]);
 
 -- name: ListActiveSandboxesByTeam :many
 SELECT * FROM sandboxes
@@ -72,4 +72,4 @@ WHERE host_id = $1 AND status IN ('running', 'starting', 'pending');
 UPDATE sandboxes
 SET status       = 'running',
     last_updated = NOW()
-WHERE id = ANY($1::text[]) AND status = 'missing';
+WHERE id = ANY($1::uuid[]) AND status = 'missing';

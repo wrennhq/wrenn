@@ -7,9 +7,11 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 )
@@ -38,9 +40,15 @@ type metricsResponse struct {
 
 // GetMetrics handles GET /v1/sandboxes/{id}/metrics?range=10m|2h|24h.
 func (h *sandboxMetricsHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	rangeTier := r.URL.Query().Get("range")
 	if rangeTier == "" {
@@ -60,15 +68,15 @@ func (h *sandboxMetricsHandler) GetMetrics(w http.ResponseWriter, r *http.Reques
 
 	switch sb.Status {
 	case "running":
-		h.getFromAgent(w, r, sandboxID, rangeTier, sb.HostID)
+		h.getFromAgent(w, r, sandboxIDStr, rangeTier, sb.HostID)
 	case "paused":
-		h.getFromDB(ctx, w, sandboxID, rangeTier)
+		h.getFromDB(ctx, w, sandboxIDStr, sandboxID, rangeTier)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "metrics not available for sandbox in state: "+sb.Status)
 	}
 }
 
-func (h *sandboxMetricsHandler) getFromAgent(w http.ResponseWriter, r *http.Request, sandboxID, rangeTier, hostID string) {
+func (h *sandboxMetricsHandler) getFromAgent(w http.ResponseWriter, r *http.Request, sandboxIDStr, rangeTier string, hostID pgtype.UUID) {
 	ctx := r.Context()
 
 	agent, err := agentForHost(ctx, h.db, h.pool, hostID)
@@ -78,7 +86,7 @@ func (h *sandboxMetricsHandler) getFromAgent(w http.ResponseWriter, r *http.Requ
 	}
 
 	resp, err := agent.GetSandboxMetrics(ctx, connect.NewRequest(&pb.GetSandboxMetricsRequest{
-		SandboxId: sandboxID,
+		SandboxId: sandboxIDStr,
 		Range:     rangeTier,
 	}))
 	if err != nil {
@@ -98,7 +106,7 @@ func (h *sandboxMetricsHandler) getFromAgent(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, metricsResponse{
-		SandboxID: sandboxID,
+		SandboxID: sandboxIDStr,
 		Range:     rangeTier,
 		Points:    points,
 	})
@@ -118,7 +126,7 @@ var rangeToDB = map[string]struct {
 	"24h": {"24h", 24 * time.Hour},
 }
 
-func (h *sandboxMetricsHandler) getFromDB(ctx context.Context, w http.ResponseWriter, sandboxID, rangeTier string) {
+func (h *sandboxMetricsHandler) getFromDB(ctx context.Context, w http.ResponseWriter, sandboxIDStr string, sandboxID pgtype.UUID, rangeTier string) {
 	mapping := rangeToDB[rangeTier]
 	rows, err := h.db.GetSandboxMetricPoints(ctx, db.GetSandboxMetricPointsParams{
 		SandboxID: sandboxID,
@@ -141,7 +149,7 @@ func (h *sandboxMetricsHandler) getFromDB(ctx context.Context, w http.ResponseWr
 	}
 
 	writeJSON(w, http.StatusOK, metricsResponse{
-		SandboxID: sandboxID,
+		SandboxID: sandboxIDStr,
 		Range:     rangeTier,
 		Points:    points,
 	})

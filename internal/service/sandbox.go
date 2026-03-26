@@ -27,7 +27,7 @@ type SandboxService struct {
 
 // SandboxCreateParams holds the parameters for creating a sandbox.
 type SandboxCreateParams struct {
-	TeamID     string
+	TeamID     pgtype.UUID
 	Template   string
 	VCPUs      int32
 	MemoryMB   int32
@@ -35,7 +35,7 @@ type SandboxCreateParams struct {
 }
 
 // agentForSandbox looks up the host for the given sandbox and returns a client.
-func (s *SandboxService) agentForSandbox(ctx context.Context, sandboxID string) (hostagentClient, db.Sandbox, error) {
+func (s *SandboxService) agentForSandbox(ctx context.Context, sandboxID pgtype.UUID) (hostagentClient, db.Sandbox, error) {
 	sb, err := s.DB.GetSandbox(ctx, sandboxID)
 	if err != nil {
 		return nil, db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
@@ -80,15 +80,11 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 
 	// If the template is a snapshot, use its baked-in vcpus/memory.
 	if tmpl, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: p.Template, TeamID: p.TeamID}); err == nil && tmpl.Type == "snapshot" {
-		if tmpl.Vcpus.Valid {
-			p.VCPUs = tmpl.Vcpus.Int32
-		}
-		if tmpl.MemoryMb.Valid {
-			p.MemoryMB = tmpl.MemoryMb.Int32
-		}
+		p.VCPUs = tmpl.Vcpus
+		p.MemoryMB = tmpl.MemoryMb
 	}
 
-	if p.TeamID == "" {
+	if !p.TeamID.Valid {
 		return db.Sandbox{}, fmt.Errorf("invalid request: team_id is required")
 	}
 
@@ -110,6 +106,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	}
 
 	sandboxID := id.NewSandboxID()
+	sandboxIDStr := id.FormatSandboxID(sandboxID)
 
 	if _, err := s.DB.InsertSandbox(ctx, db.InsertSandboxParams{
 		ID:         sandboxID,
@@ -125,7 +122,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	}
 
 	resp, err := agent.CreateSandbox(ctx, connect.NewRequest(&pb.CreateSandboxRequest{
-		SandboxId:  sandboxID,
+		SandboxId:  sandboxIDStr,
 		Template:   p.Template,
 		Vcpus:      p.VCPUs,
 		MemoryMb:   p.MemoryMB,
@@ -135,7 +132,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		if _, dbErr := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
 			ID: sandboxID, Status: "error",
 		}); dbErr != nil {
-			slog.Warn("failed to update sandbox status to error", "id", sandboxID, "error", dbErr)
+			slog.Warn("failed to update sandbox status to error", "id", sandboxIDStr, "error", dbErr)
 		}
 		return db.Sandbox{}, fmt.Errorf("agent create: %w", err)
 	}
@@ -158,17 +155,17 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 }
 
 // List returns active sandboxes (excludes stopped/error) belonging to the given team.
-func (s *SandboxService) List(ctx context.Context, teamID string) ([]db.Sandbox, error) {
+func (s *SandboxService) List(ctx context.Context, teamID pgtype.UUID) ([]db.Sandbox, error) {
 	return s.DB.ListSandboxesByTeam(ctx, teamID)
 }
 
 // Get returns a single sandbox by ID, scoped to the given team.
-func (s *SandboxService) Get(ctx context.Context, sandboxID, teamID string) (db.Sandbox, error) {
+func (s *SandboxService) Get(ctx context.Context, sandboxID, teamID pgtype.UUID) (db.Sandbox, error) {
 	return s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 }
 
 // Pause snapshots and freezes a running sandbox to disk.
-func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID string) (db.Sandbox, error) {
+func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID pgtype.UUID) (db.Sandbox, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
 		return db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
@@ -182,11 +179,13 @@ func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID string) (d
 		return db.Sandbox{}, err
 	}
 
+	sandboxIDStr := id.FormatSandboxID(sandboxID)
+
 	// Flush all metrics tiers before pausing so data survives in DB.
 	s.flushAndPersistMetrics(ctx, agent, sandboxID, true)
 
 	if _, err := agent.PauseSandbox(ctx, connect.NewRequest(&pb.PauseSandboxRequest{
-		SandboxId: sandboxID,
+		SandboxId: sandboxIDStr,
 	})); err != nil {
 		return db.Sandbox{}, fmt.Errorf("agent pause: %w", err)
 	}
@@ -201,7 +200,7 @@ func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID string) (d
 }
 
 // Resume restores a paused sandbox from snapshot.
-func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID string) (db.Sandbox, error) {
+func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID pgtype.UUID) (db.Sandbox, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
 		return db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
@@ -215,8 +214,10 @@ func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID string) (
 		return db.Sandbox{}, err
 	}
 
+	sandboxIDStr := id.FormatSandboxID(sandboxID)
+
 	resp, err := agent.ResumeSandbox(ctx, connect.NewRequest(&pb.ResumeSandboxRequest{
-		SandboxId:  sandboxID,
+		SandboxId:  sandboxIDStr,
 		TimeoutSec: sb.TimeoutSec,
 	}))
 	if err != nil {
@@ -240,7 +241,7 @@ func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID string) (
 }
 
 // Destroy stops a sandbox and marks it as stopped.
-func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID string) error {
+func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID pgtype.UUID) error {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
 		return fmt.Errorf("sandbox not found: %w", err)
@@ -251,6 +252,8 @@ func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID string) 
 		return err
 	}
 
+	sandboxIDStr := id.FormatSandboxID(sandboxID)
+
 	// If running, flush 24h tier metrics for analytics before destroying.
 	if sb.Status == "running" {
 		s.flushAndPersistMetrics(ctx, agent, sandboxID, false)
@@ -258,7 +261,7 @@ func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID string) 
 
 	// Destroy on host agent. A not-found response is fine — sandbox is already gone.
 	if _, err := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
-		SandboxId: sandboxID,
+		SandboxId: sandboxIDStr,
 	})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
 		return fmt.Errorf("agent destroy: %w", err)
 	}
@@ -284,12 +287,13 @@ func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID string) 
 // flushAndPersistMetrics calls FlushSandboxMetrics on the agent and stores
 // the returned data to DB. If allTiers is true, all three tiers are saved;
 // otherwise only the 24h tier (for post-destroy analytics).
-func (s *SandboxService) flushAndPersistMetrics(ctx context.Context, agent hostagentClient, sandboxID string, allTiers bool) {
+func (s *SandboxService) flushAndPersistMetrics(ctx context.Context, agent hostagentClient, sandboxID pgtype.UUID, allTiers bool) {
+	sandboxIDStr := id.FormatSandboxID(sandboxID)
 	resp, err := agent.FlushSandboxMetrics(ctx, connect.NewRequest(&pb.FlushSandboxMetricsRequest{
-		SandboxId: sandboxID,
+		SandboxId: sandboxIDStr,
 	}))
 	if err != nil {
-		slog.Warn("flush metrics failed (best-effort)", "sandbox_id", sandboxID, "error", err)
+		slog.Warn("flush metrics failed (best-effort)", "sandbox_id", sandboxIDStr, "error", err)
 		return
 	}
 	msg := resp.Msg
@@ -301,7 +305,8 @@ func (s *SandboxService) flushAndPersistMetrics(ctx context.Context, agent hosta
 	s.persistMetricPoints(ctx, sandboxID, "24h", msg.Points_24H)
 }
 
-func (s *SandboxService) persistMetricPoints(ctx context.Context, sandboxID, tier string, points []*pb.MetricPoint) {
+func (s *SandboxService) persistMetricPoints(ctx context.Context, sandboxID pgtype.UUID, tier string, points []*pb.MetricPoint) {
+	sandboxIDStr := id.FormatSandboxID(sandboxID)
 	for _, p := range points {
 		if err := s.DB.InsertSandboxMetricPoint(ctx, db.InsertSandboxMetricPointParams{
 			SandboxID: sandboxID,
@@ -311,13 +316,13 @@ func (s *SandboxService) persistMetricPoints(ctx context.Context, sandboxID, tie
 			MemBytes:  p.MemBytes,
 			DiskBytes: p.DiskBytes,
 		}); err != nil {
-			slog.Warn("persist metric point failed", "sandbox_id", sandboxID, "tier", tier, "error", err)
+			slog.Warn("persist metric point failed", "sandbox_id", sandboxIDStr, "tier", tier, "error", err)
 		}
 	}
 }
 
 // Ping resets the inactivity timer for a running sandbox.
-func (s *SandboxService) Ping(ctx context.Context, sandboxID, teamID string) error {
+func (s *SandboxService) Ping(ctx context.Context, sandboxID, teamID pgtype.UUID) error {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
 		return fmt.Errorf("sandbox not found: %w", err)
@@ -331,8 +336,10 @@ func (s *SandboxService) Ping(ctx context.Context, sandboxID, teamID string) err
 		return err
 	}
 
+	sandboxIDStr := id.FormatSandboxID(sandboxID)
+
 	if _, err := agent.PingSandbox(ctx, connect.NewRequest(&pb.PingSandboxRequest{
-		SandboxId: sandboxID,
+		SandboxId: sandboxIDStr,
 	})); err != nil {
 		return fmt.Errorf("agent ping: %w", err)
 	}
@@ -344,7 +351,7 @@ func (s *SandboxService) Ping(ctx context.Context, sandboxID, teamID string) err
 			Valid: true,
 		},
 	}); err != nil {
-		slog.Warn("ping: failed to update last_active_at", "sandbox_id", sandboxID, "error", err)
+		slog.Warn("ping: failed to update last_active_at", "sandbox_id", sandboxIDStr, "error", err)
 	}
 	return nil
 }

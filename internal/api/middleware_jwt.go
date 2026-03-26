@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
 // requireJWT validates the Authorization: Bearer <token> header, verifies the JWT
@@ -25,9 +26,20 @@ func requireJWT(secret []byte) func(http.Handler) http.Handler {
 				return
 			}
 
+			teamID, err := id.ParseTeamID(claims.TeamID)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "invalid team ID in token")
+				return
+			}
+			userID, err := id.ParseUserID(claims.Subject)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "invalid user ID in token")
+				return
+			}
+
 			ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{
-				TeamID:  claims.TeamID,
-				UserID:  claims.Subject,
+				TeamID:  teamID,
+				UserID:  userID,
 				Email:   claims.Email,
 				Name:    claims.Name,
 				Role:    claims.Role,

@@ -11,6 +11,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 )
@@ -29,9 +30,15 @@ func newFilesHandler(db *db.Queries, pool *lifecycle.HostClientPool) *filesHandl
 //   - "path" text field: absolute destination path inside the sandbox
 //   - "file" file field: binary content to write
 func (h *filesHandler) Upload(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -82,7 +89,7 @@ func (h *filesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := agent.WriteFile(ctx, connect.NewRequest(&pb.WriteFileRequest{
-		SandboxId: sandboxID,
+		SandboxId: sandboxIDStr,
 		Path:      filePath,
 		Content:   content,
 	})); err != nil {
@@ -101,9 +108,15 @@ type readFileRequest struct {
 // Download handles POST /v1/sandboxes/{id}/files/read.
 // Accepts JSON body with path, returns raw file content with Content-Disposition.
 func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -133,7 +146,7 @@ func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := agent.ReadFile(ctx, connect.NewRequest(&pb.ReadFileRequest{
-		SandboxId: sandboxID,
+		SandboxId: sandboxIDStr,
 		Path:      req.Path,
 	}))
 	if err != nil {

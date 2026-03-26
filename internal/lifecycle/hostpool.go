@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
@@ -53,10 +54,10 @@ func (p *HostClientPool) Get(hostID, address string) hostagentv1connect.HostAgen
 // GetForHost is a convenience wrapper that extracts the address from a db.Host
 // and returns an error if the host has no address recorded yet.
 func (p *HostClientPool) GetForHost(h db.Host) (hostagentv1connect.HostAgentServiceClient, error) {
-	if !h.Address.Valid || h.Address.String == "" {
-		return nil, fmt.Errorf("host %s has no address", h.ID)
+	if h.Address == "" {
+		return nil, fmt.Errorf("host %s has no address", id.FormatHostID(h.ID))
 	}
-	return p.Get(h.ID, h.Address.String), nil
+	return p.Get(id.FormatHostID(h.ID), h.Address), nil
 }
 
 // Evict removes the cached client for the given host, forcing a new client to be

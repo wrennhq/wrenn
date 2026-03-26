@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 	"git.omukk.dev/wrenn/sandbox/internal/validate"
 )
@@ -53,7 +54,7 @@ type buildResponse struct {
 
 func buildToResponse(b db.TemplateBuild) buildResponse {
 	resp := buildResponse{
-		ID:           b.ID,
+		ID:           id.FormatBuildID(b.ID),
 		Name:         b.Name,
 		BaseTemplate: b.BaseTemplate,
 		Recipe:       b.Recipe,
@@ -64,17 +65,19 @@ func buildToResponse(b db.TemplateBuild) buildResponse {
 		TotalSteps:   b.TotalSteps,
 		Logs:         b.Logs,
 	}
-	if b.Healthcheck.Valid {
-		resp.Healthcheck = &b.Healthcheck.String
+	if b.Healthcheck != "" {
+		resp.Healthcheck = &b.Healthcheck
 	}
-	if b.Error.Valid {
-		resp.Error = &b.Error.String
+	if b.Error != "" {
+		resp.Error = &b.Error
 	}
 	if b.SandboxID.Valid {
-		resp.SandboxID = &b.SandboxID.String
+		s := id.FormatSandboxID(b.SandboxID)
+		resp.SandboxID = &s
 	}
 	if b.HostID.Valid {
-		resp.HostID = &b.HostID.String
+		s := id.FormatHostID(b.HostID)
+		resp.HostID = &s
 	}
 	if b.CreatedAt.Valid {
 		resp.CreatedAt = b.CreatedAt.Time.Format(time.RFC3339)
@@ -146,7 +149,13 @@ func (h *buildHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /v1/admin/builds/{id}.
 func (h *buildHandler) Get(w http.ResponseWriter, r *http.Request) {
-	buildID := chi.URLParam(r, "id")
+	buildIDStr := chi.URLParam(r, "id")
+
+	buildID, err := id.ParseBuildID(buildIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid build ID")
+		return
+	}
 
 	build, err := h.svc.Get(r.Context(), buildID)
 	if err != nil {

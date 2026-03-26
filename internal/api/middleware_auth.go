@@ -7,6 +7,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
 // requireAPIKeyOrJWT accepts either X-API-Key header or Authorization: Bearer JWT.
@@ -24,7 +25,7 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 				}
 
 				if err := queries.UpdateAPIKeyLastUsed(r.Context(), row.ID); err != nil {
-					slog.Warn("failed to update api key last_used", "key_id", row.ID, "error", err)
+					slog.Warn("failed to update api key last_used", "key_id", id.FormatAPIKeyID(row.ID), "error", err)
 				}
 
 				ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{
@@ -45,9 +46,20 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 					return
 				}
 
+				teamID, err := id.ParseTeamID(claims.TeamID)
+				if err != nil {
+					writeError(w, http.StatusUnauthorized, "unauthorized", "invalid team ID in token")
+					return
+				}
+				userID, err := id.ParseUserID(claims.Subject)
+				if err != nil {
+					writeError(w, http.StatusUnauthorized, "unauthorized", "invalid user ID in token")
+					return
+				}
+
 				ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{
-					TeamID: claims.TeamID,
-					UserID: claims.Subject,
+					TeamID: teamID,
+					UserID: userID,
 					Email:  claims.Email,
 					Name:   claims.Name,
 					Role:   claims.Role,

@@ -10,14 +10,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 )
 
 // sandboxHostPattern matches hostnames like "49999-sb-abcd1234.localhost" or
 // "49999-sb-abcd1234.example.com". Captures: port, sandbox ID.
-var sandboxHostPattern = regexp.MustCompile(`^(\d+)-(sb-[0-9a-f]+)\.`)
+var sandboxHostPattern = regexp.MustCompile(`^(\d+)-(sb-[0-9a-f-]+)\.`)
 
 // SandboxProxyWrapper wraps an existing HTTP handler and intercepts requests
 // whose Host header matches the {port}-{sandbox_id}.{domain} pattern. Matching
@@ -57,7 +60,7 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 
 	port := matches[1]
-	sandboxID := matches[2]
+	sandboxIDStr := matches[2]
 
 	// Validate port.
 	portNum, err := strconv.Atoi(port)
@@ -70,6 +73,12 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	teamID, err := h.authenticateRequest(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		http.Error(w, "invalid sandbox ID", http.StatusBadRequest)
 		return
 	}
 
@@ -96,13 +105,13 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !agentHost.Address.Valid || agentHost.Address.String == "" {
+	if agentHost.Address == "" {
 		http.Error(w, "host agent has no address", http.StatusServiceUnavailable)
 		return
 	}
 
-	agentAddr := lifecycle.EnsureScheme(agentHost.Address.String)
-	upstreamPath := fmt.Sprintf("/proxy/%s/%s%s", sandboxID, port, r.URL.Path)
+	agentAddr := lifecycle.EnsureScheme(agentHost.Address)
+	upstreamPath := fmt.Sprintf("/proxy/%s/%s%s", sandboxIDStr, port, r.URL.Path)
 
 	target, err := url.Parse(agentAddr)
 	if err != nil {
@@ -121,7 +130,7 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			slog.Debug("sandbox proxy error",
-				"sandbox_id", sandboxID,
+				"sandbox_id", sandboxIDStr,
 				"port", port,
 				"error", err,
 			)
@@ -134,16 +143,16 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 // authenticateRequest validates the request's API key and returns the team ID.
 // Only API key authentication is supported for sandbox proxy requests (not JWT).
-func (h *SandboxProxyWrapper) authenticateRequest(r *http.Request) (string, error) {
+func (h *SandboxProxyWrapper) authenticateRequest(r *http.Request) (pgtype.UUID, error) {
 	key := r.Header.Get("X-API-Key")
 	if key == "" {
-		return "", fmt.Errorf("X-API-Key header required")
+		return pgtype.UUID{}, fmt.Errorf("X-API-Key header required")
 	}
 
 	hash := auth.HashAPIKey(key)
 	row, err := h.db.GetAPIKeyByHash(r.Context(), hash)
 	if err != nil {
-		return "", fmt.Errorf("invalid API key")
+		return pgtype.UUID{}, fmt.Errorf("invalid API key")
 	}
 	return row.TeamID, nil
 }

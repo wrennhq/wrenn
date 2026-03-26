@@ -6,7 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 )
 
@@ -65,13 +68,24 @@ func (h *auditHandler) List(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 
+	// Parse ?before_id cursor (UUID).
+	var beforeID pgtype.UUID
+	if s := r.URL.Query().Get("before_id"); s != "" {
+		parsed, err := id.ParseAuditLogID(s)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "before_id must be a valid audit log ID")
+			return
+		}
+		beforeID = parsed
+	}
+
 	entries, err := h.svc.List(r.Context(), service.AuditListParams{
 		TeamID:        ac.TeamID,
 		AdminScoped:   ac.Role == "owner" || ac.Role == "admin",
 		ResourceTypes: parseMultiParam(r.URL.Query()["resource_type"]),
 		Actions:       parseMultiParam(r.URL.Query()["action"]),
 		Before:        before,
-		BeforeID:      r.URL.Query().Get("before_id"),
+		BeforeID:      beforeID,
 		Limit:         limit,
 	})
 	if err != nil {

@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 )
@@ -82,15 +84,15 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		time.Since(host.LastHeartbeatAt.Time) > unreachableThreshold
 
 	if stale && host.Status != "unreachable" {
-		slog.Info("host monitor: marking host unreachable", "host_id", host.ID,
+		slog.Info("host monitor: marking host unreachable", "host_id", id.FormatHostID(host.ID),
 			"last_heartbeat", host.LastHeartbeatAt.Time)
 		if err := m.db.MarkHostUnreachable(ctx, host.ID); err != nil {
-			slog.Warn("host monitor: failed to mark host unreachable", "host_id", host.ID, "error", err)
+			slog.Warn("host monitor: failed to mark host unreachable", "host_id", id.FormatHostID(host.ID), "error", err)
 		}
 		if err := m.db.MarkSandboxesMissingByHost(ctx, host.ID); err != nil {
-			slog.Warn("host monitor: failed to mark sandboxes missing", "host_id", host.ID, "error", err)
+			slog.Warn("host monitor: failed to mark sandboxes missing", "host_id", id.FormatHostID(host.ID), "error", err)
 		}
-		m.audit.LogHostMarkedDown(ctx, host.TeamID.String, host.ID)
+		m.audit.LogHostMarkedDown(ctx, host.TeamID, host.ID)
 		return
 	}
 
@@ -110,19 +112,20 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 	if err != nil {
 		// RPC failure is a transient condition; the passive phase will catch it
 		// if heartbeats stop arriving.
-		slog.Debug("host monitor: ListSandboxes failed (transient)", "host_id", host.ID, "error", err)
+		slog.Debug("host monitor: ListSandboxes failed (transient)", "host_id", id.FormatHostID(host.ID), "error", err)
 		return
 	}
 
 	// Build set of sandbox IDs alive on the host.
+	// The host agent returns sandbox IDs as strings (formatted with prefix).
 	alive := make(map[string]struct{}, len(resp.Msg.Sandboxes))
 	for _, sb := range resp.Msg.Sandboxes {
 		alive[sb.SandboxId] = struct{}{}
 	}
 
 	autoPaused := make(map[string]struct{}, len(resp.Msg.AutoPausedSandboxIds))
-	for _, id := range resp.Msg.AutoPausedSandboxIds {
-		autoPaused[id] = struct{}{}
+	for _, apID := range resp.Msg.AutoPausedSandboxIds {
+		autoPaused[apID] = struct{}{}
 	}
 
 	// --- Restore sandboxes that are "missing" in DB but alive on host ---
@@ -134,30 +137,31 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		Column2: []string{"missing"},
 	})
 	if err != nil {
-		slog.Warn("host monitor: failed to list missing sandboxes", "host_id", host.ID, "error", err)
+		slog.Warn("host monitor: failed to list missing sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
 	} else {
-		var toRestore []string
-		var toStop []string
+		var toRestore []pgtype.UUID
+		var toStop []pgtype.UUID
 		for _, sb := range missingSandboxes {
-			if _, ok := alive[sb.ID]; ok {
+			sbIDStr := id.FormatSandboxID(sb.ID)
+			if _, ok := alive[sbIDStr]; ok {
 				toRestore = append(toRestore, sb.ID)
 			} else {
 				toStop = append(toStop, sb.ID)
 			}
 		}
 		if len(toRestore) > 0 {
-			slog.Info("host monitor: restoring missing sandboxes", "host_id", host.ID, "count", len(toRestore))
+			slog.Info("host monitor: restoring missing sandboxes", "host_id", id.FormatHostID(host.ID), "count", len(toRestore))
 			if err := m.db.BulkRestoreRunning(ctx, toRestore); err != nil {
-				slog.Warn("host monitor: failed to restore missing sandboxes", "host_id", host.ID, "error", err)
+				slog.Warn("host monitor: failed to restore missing sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
 			}
 		}
 		if len(toStop) > 0 {
-			slog.Info("host monitor: stopping confirmed-dead missing sandboxes", "host_id", host.ID, "count", len(toStop))
+			slog.Info("host monitor: stopping confirmed-dead missing sandboxes", "host_id", id.FormatHostID(host.ID), "count", len(toStop))
 			if err := m.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
 				Column1: toStop,
 				Status:  "stopped",
 			}); err != nil {
-				slog.Warn("host monitor: failed to stop missing sandboxes", "host_id", host.ID, "error", err)
+				slog.Warn("host monitor: failed to stop missing sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
 			}
 		}
 	}
@@ -169,18 +173,19 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		Column2: []string{"running"},
 	})
 	if err != nil {
-		slog.Warn("host monitor: failed to list running sandboxes", "host_id", host.ID, "error", err)
+		slog.Warn("host monitor: failed to list running sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
 		return
 	}
 
-	var toPause, toStop []string
-	sbTeamID := make(map[string]string, len(runningSandboxes))
+	var toPause, toStop []pgtype.UUID
+	sbTeamID := make(map[pgtype.UUID]pgtype.UUID, len(runningSandboxes))
 	for _, sb := range runningSandboxes {
+		sbIDStr := id.FormatSandboxID(sb.ID)
 		sbTeamID[sb.ID] = sb.TeamID
-		if _, ok := alive[sb.ID]; ok {
+		if _, ok := alive[sbIDStr]; ok {
 			continue
 		}
-		if _, ok := autoPaused[sb.ID]; ok {
+		if _, ok := autoPaused[sbIDStr]; ok {
 			toPause = append(toPause, sb.ID)
 		} else {
 			toStop = append(toStop, sb.ID)
@@ -188,24 +193,24 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 	}
 
 	if len(toPause) > 0 {
-		slog.Info("host monitor: marking auto-paused sandboxes", "host_id", host.ID, "count", len(toPause))
+		slog.Info("host monitor: marking auto-paused sandboxes", "host_id", id.FormatHostID(host.ID), "count", len(toPause))
 		if err := m.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
 			Column1: toPause,
 			Status:  "paused",
 		}); err != nil {
-			slog.Warn("host monitor: failed to mark paused", "host_id", host.ID, "error", err)
+			slog.Warn("host monitor: failed to mark paused", "host_id", id.FormatHostID(host.ID), "error", err)
 		}
 		for _, sbID := range toPause {
 			m.audit.LogSandboxAutoPause(ctx, sbTeamID[sbID], sbID)
 		}
 	}
 	if len(toStop) > 0 {
-		slog.Info("host monitor: marking orphaned sandboxes stopped", "host_id", host.ID, "count", len(toStop))
+		slog.Info("host monitor: marking orphaned sandboxes stopped", "host_id", id.FormatHostID(host.ID), "count", len(toStop))
 		if err := m.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
 			Column1: toStop,
 			Status:  "stopped",
 		}); err != nil {
-			slog.Warn("host monitor: failed to mark stopped", "host_id", host.ID, "error", err)
+			slog.Warn("host monitor: failed to mark stopped", "host_id", id.FormatHostID(host.ID), "error", err)
 		}
 	}
 }

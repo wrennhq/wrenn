@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
@@ -72,7 +73,7 @@ type StatsService struct {
 
 // GetStats returns current stats, 30-day peaks, and a time-series for the
 // given team and time range. If no snapshots exist yet, zeros are returned.
-func (s *StatsService) GetStats(ctx context.Context, teamID string, r TimeRange) (CurrentStats, PeakStats, []StatPoint, error) {
+func (s *StatsService) GetStats(ctx context.Context, teamID pgtype.UUID, r TimeRange) (CurrentStats, PeakStats, []StatPoint, error) {
 	cfg, ok := rangeConfigs[r]
 	if !ok {
 		return CurrentStats{}, PeakStats{}, nil, fmt.Errorf("unknown range: %s", r)
@@ -132,7 +133,7 @@ GROUP BY bucket
 ORDER BY bucket ASC
 `
 
-func (s *StatsService) queryTimeSeries(ctx context.Context, teamID string, cfg rangeConfig) ([]StatPoint, error) {
+func (s *StatsService) queryTimeSeries(ctx context.Context, teamID pgtype.UUID, cfg rangeConfig) ([]StatPoint, error) {
 	rows, err := s.Pool.Query(ctx, timeSeriesSQL, cfg.bucketSec, teamID, cfg.intervalLiteral)
 	if err != nil {
 		return nil, err

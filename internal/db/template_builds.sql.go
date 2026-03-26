@@ -15,7 +15,7 @@ const getTemplateBuild = `-- name: GetTemplateBuild :one
 SELECT id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at FROM template_builds WHERE id = $1
 `
 
-func (q *Queries) GetTemplateBuild(ctx context.Context, id string) (TemplateBuild, error) {
+func (q *Queries) GetTemplateBuild(ctx context.Context, id pgtype.UUID) (TemplateBuild, error) {
 	row := q.db.QueryRow(ctx, getTemplateBuild, id)
 	var i TemplateBuild
 	err := row.Scan(
@@ -47,11 +47,11 @@ RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status
 `
 
 type InsertTemplateBuildParams struct {
-	ID           string      `json:"id"`
+	ID           pgtype.UUID `json:"id"`
 	Name         string      `json:"name"`
 	BaseTemplate string      `json:"base_template"`
 	Recipe       []byte      `json:"recipe"`
-	Healthcheck  pgtype.Text `json:"healthcheck"`
+	Healthcheck  string      `json:"healthcheck"`
 	Vcpus        int32       `json:"vcpus"`
 	MemoryMb     int32       `json:"memory_mb"`
 	TotalSteps   int32       `json:"total_steps"`
@@ -140,8 +140,8 @@ WHERE id = $1
 `
 
 type UpdateBuildErrorParams struct {
-	ID    string      `json:"id"`
-	Error pgtype.Text `json:"error"`
+	ID    pgtype.UUID `json:"id"`
+	Error string      `json:"error"`
 }
 
 func (q *Queries) UpdateBuildError(ctx context.Context, arg UpdateBuildErrorParams) error {
@@ -156,9 +156,9 @@ WHERE id = $1
 `
 
 type UpdateBuildProgressParams struct {
-	ID          string `json:"id"`
-	CurrentStep int32  `json:"current_step"`
-	Logs        []byte `json:"logs"`
+	ID          pgtype.UUID `json:"id"`
+	CurrentStep int32       `json:"current_step"`
+	Logs        []byte      `json:"logs"`
 }
 
 func (q *Queries) UpdateBuildProgress(ctx context.Context, arg UpdateBuildProgressParams) error {
@@ -173,9 +173,9 @@ WHERE id = $1
 `
 
 type UpdateBuildSandboxParams struct {
-	ID        string      `json:"id"`
-	SandboxID pgtype.Text `json:"sandbox_id"`
-	HostID    pgtype.Text `json:"host_id"`
+	ID        pgtype.UUID `json:"id"`
+	SandboxID pgtype.UUID `json:"sandbox_id"`
+	HostID    pgtype.UUID `json:"host_id"`
 }
 
 func (q *Queries) UpdateBuildSandbox(ctx context.Context, arg UpdateBuildSandboxParams) error {
@@ -193,8 +193,8 @@ RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status
 `
 
 type UpdateBuildStatusParams struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID     pgtype.UUID `json:"id"`
+	Status string      `json:"status"`
 }
 
 func (q *Queries) UpdateBuildStatus(ctx context.Context, arg UpdateBuildStatusParams) (TemplateBuild, error) {
