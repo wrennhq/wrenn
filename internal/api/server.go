@@ -22,7 +22,8 @@ var openapiYAML []byte
 
 // Server is the control plane HTTP server.
 type Server struct {
-	router chi.Router
+	router   chi.Router
+	BuildSvc *service.BuildService
 }
 
 // New constructs the chi router and registers all routes.
@@ -47,6 +48,7 @@ func New(
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
 	auditSvc := &service.AuditService{DB: queries}
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
+	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
 
 	al := audit.New(queries)
 
@@ -65,6 +67,7 @@ func New(
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
+	buildH := newBuildHandler(buildSvc)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -174,9 +177,12 @@ func New(
 		r.Use(requireJWT(jwtSecret))
 		r.Use(requireAdmin(queries))
 		r.Put("/teams/{id}/byoc", teamH.SetBYOC)
+		r.Post("/builds", buildH.Create)
+		r.Get("/builds", buildH.List)
+		r.Get("/builds/{id}", buildH.Get)
 	})
 
-	return &Server{router: r}
+	return &Server{router: r, BuildSvc: buildSvc}
 }
 
 // Handler returns the HTTP handler.

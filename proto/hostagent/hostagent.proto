@@ -61,6 +61,12 @@ service HostAgentService {
   // Called by the control plane before pause/destroy to persist metrics to DB.
   rpc FlushSandboxMetrics(FlushSandboxMetricsRequest) returns (FlushSandboxMetricsResponse);
 
+  // FlattenRootfs stops the sandbox VM, flattens the device-mapper CoW
+  // snapshot into a standalone rootfs.ext4 in the images directory, then
+  // cleans up all sandbox resources. Used by the template build system to
+  // produce image-only templates (no memory/CPU state).
+  rpc FlattenRootfs(FlattenRootfsRequest) returns (FlattenRootfsResponse);
+
 }
 
 message CreateSandboxRequest {
@@ -283,4 +289,15 @@ message FlushSandboxMetricsResponse {
   repeated MetricPoint points_10m  = 1;
   repeated MetricPoint points_2h   = 2;
   repeated MetricPoint points_24h  = 3;
+}
+
+// ── FlattenRootfs ────────────────────────────────────────────────────
+
+message FlattenRootfsRequest {
+  string sandbox_id = 1;
+  string name = 2; // template name — output written to images/{name}/rootfs.ext4
+}
+
+message FlattenRootfsResponse {
+  int64 size_bytes = 1;
 }

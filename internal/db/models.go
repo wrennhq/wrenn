@@ -147,6 +147,26 @@ type Template struct {
 	TeamID    string             `json:"team_id"`
 }
 
+type TemplateBuild struct {
+	ID           string             `json:"id"`
+	Name         string             `json:"name"`
+	BaseTemplate string             `json:"base_template"`
+	Recipe       []byte             `json:"recipe"`
+	Healthcheck  pgtype.Text        `json:"healthcheck"`
+	Vcpus        int32              `json:"vcpus"`
+	MemoryMb     int32              `json:"memory_mb"`
+	Status       string             `json:"status"`
+	CurrentStep  int32              `json:"current_step"`
+	TotalSteps   int32              `json:"total_steps"`
+	Logs         []byte             `json:"logs"`
+	Error        pgtype.Text        `json:"error"`
+	SandboxID    pgtype.Text        `json:"sandbox_id"`
+	HostID       pgtype.Text        `json:"host_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	StartedAt    pgtype.Timestamptz `json:"started_at"`
+	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+}
+
 type User struct {
 	ID           string             `json:"id"`
 	Email        string             `json:"email"`

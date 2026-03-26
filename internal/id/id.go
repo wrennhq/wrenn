@@ -78,6 +78,11 @@ func NewAuditLogID() string {
 	return "log-" + hex8()
 }
 
+// NewBuildID generates a new template build ID in the format "bld-" + 8 hex chars.
+func NewBuildID() string {
+	return "bld-" + hex8()
+}
+
 // NewRefreshToken generates a 64-char hex token (32 bytes of entropy) for use as a host refresh token.
 func NewRefreshToken() string {
 	b := make([]byte, 32)

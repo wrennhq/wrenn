@@ -110,6 +110,19 @@ func (s *Server) DeleteSnapshot(
 	return connect.NewResponse(&pb.DeleteSnapshotResponse{}), nil
 }
 
+func (s *Server) FlattenRootfs(
+	ctx context.Context,
+	req *connect.Request[pb.FlattenRootfsRequest],
+) (*connect.Response[pb.FlattenRootfsResponse], error) {
+	sizeBytes, err := s.mgr.FlattenRootfs(ctx, req.Msg.SandboxId, req.Msg.Name)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("flatten rootfs: %w", err))
+	}
+	return connect.NewResponse(&pb.FlattenRootfsResponse{
+		SizeBytes: sizeBytes,
+	}), nil
+}
+
 func (s *Server) PingSandbox(
 	ctx context.Context,
 	req *connect.Request[pb.PingSandboxRequest],

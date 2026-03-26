@@ -795,6 +795,88 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID, name string) (i
 	return sizeBytes, nil
 }
 
+// FlattenRootfs stops a running sandbox, flattens its device-mapper CoW
+// rootfs into a standalone rootfs.ext4, and cleans up all resources.
+// The result is an image-only template (no VM memory/CPU state) stored in
+// ImagesDir/{name}/rootfs.ext4.
+func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID, name string) (int64, error) {
+	if err := validate.SafeName(name); err != nil {
+		return 0, fmt.Errorf("invalid template name: %w", err)
+	}
+
+	m.mu.Lock()
+	sb, ok := m.boxes[sandboxID]
+	if ok {
+		delete(m.boxes, sandboxID)
+	}
+	m.mu.Unlock()
+
+	if !ok {
+		return 0, fmt.Errorf("sandbox %s not found", sandboxID)
+	}
+
+	// Stop the VM but keep the dm device alive for flattening.
+	m.stopSampler(sb)
+	if err := m.vm.Destroy(ctx, sb.ID); err != nil {
+		slog.Warn("vm destroy error during flatten", "id", sb.ID, "error", err)
+	}
+
+	// Release network resources — not needed after VM is stopped.
+	if err := network.RemoveNetwork(sb.slot); err != nil {
+		slog.Warn("network cleanup error during flatten", "id", sb.ID, "error", err)
+	}
+	m.slots.Release(sb.SlotIndex)
+
+	if sb.uffdSocketPath != "" {
+		os.Remove(sb.uffdSocketPath)
+	}
+
+	// Create template directory and flatten the dm-snapshot.
+	if err := snapshot.EnsureDir(m.cfg.ImagesDir, name); err != nil {
+		m.cleanupDM(sb)
+		return 0, fmt.Errorf("create template dir: %w", err)
+	}
+
+	outputPath := snapshot.RootfsPath(m.cfg.ImagesDir, name)
+	if sb.dmDevice == nil {
+		return 0, fmt.Errorf("sandbox %s has no dm device", sandboxID)
+	}
+
+	if err := devicemapper.FlattenSnapshot(sb.dmDevice.DevicePath, outputPath); err != nil {
+		m.cleanupDM(sb)
+		warnErr("template dir cleanup error", name, snapshot.Remove(m.cfg.ImagesDir, name))
+		return 0, fmt.Errorf("flatten rootfs: %w", err)
+	}
+
+	// Clean up dm device and loop device now that flatten is complete.
+	m.cleanupDM(sb)
+
+	sizeBytes, err := snapshot.DirSize(m.cfg.ImagesDir, name)
+	if err != nil {
+		slog.Warn("failed to calculate template size", "error", err)
+	}
+
+	slog.Info("rootfs flattened to image-only template",
+		"sandbox", sandboxID,
+		"name", name,
+		"size_bytes", sizeBytes,
+	)
+	return sizeBytes, nil
+}
+
+// cleanupDM tears down the dm-snapshot device and releases the base image loop device.
+func (m *Manager) cleanupDM(sb *sandboxState) {
+	if sb.dmDevice != nil {
+		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
+			slog.Warn("dm-snapshot remove error", "id", sb.ID, "error", err)
+		}
+		os.Remove(sb.dmDevice.CowPath)
+	}
+	if sb.baseImagePath != "" {
+		m.loops.Release(sb.baseImagePath)
+	}
+}
+
 // DeleteSnapshot removes a snapshot template from disk.
 func (m *Manager) DeleteSnapshot(name string) error {
 	if err := validate.SafeName(name); err != nil {

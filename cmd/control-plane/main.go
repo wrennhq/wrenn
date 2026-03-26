@@ -90,6 +90,10 @@ func main() {
 	// API server.
 	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL)
 
+	// Start template build workers (2 concurrent).
+	stopBuildWorkers := srv.BuildSvc.StartWorkers(ctx, 2)
+	defer stopBuildWorkers()
+
 	// Start host monitor (passive + active reconciliation every 30s).
 	monitor := api.NewHostMonitor(queries, hostPool, audit.New(queries), 30*time.Second)
 	monitor.Start(ctx)
