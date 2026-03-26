@@ -839,6 +839,8 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID, name string) (in
 
 	outputPath := snapshot.RootfsPath(m.cfg.ImagesDir, name)
 	if sb.dmDevice == nil {
+		m.cleanupDM(sb)
+		warnErr("template dir cleanup error", name, snapshot.Remove(m.cfg.ImagesDir, name))
 		return 0, fmt.Errorf("sandbox %s has no dm device", sandboxID)
 	}
 

@@ -255,6 +255,7 @@ func (s *BuildService) executeBuild(ctx context.Context, buildID string) {
 	}
 
 	// Healthcheck or direct snapshot.
+	var sizeBytes int64
 	if build.Healthcheck.Valid && build.Healthcheck.String != "" {
 		log.Info("running healthcheck", "cmd", build.Healthcheck.String)
 		if err := s.waitForHealthcheck(ctx, agent, sandboxID, build.Healthcheck.String); err != nil {
@@ -265,25 +266,29 @@ func (s *BuildService) executeBuild(ctx context.Context, buildID string) {
 
 		// Healthcheck passed → full snapshot (with memory/CPU state).
 		log.Info("healthcheck passed, creating snapshot")
-		if _, err := agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
+		snapResp, err := agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
 			SandboxId: sandboxID,
 			Name:      build.Name,
-		})); err != nil {
+		}))
+		if err != nil {
 			s.destroySandbox(ctx, agent, sandboxID)
 			s.failBuild(ctx, buildID, fmt.Sprintf("create snapshot failed: %v", err))
 			return
 		}
+		sizeBytes = snapResp.Msg.SizeBytes
 	} else {
 		// No healthcheck → image-only template (rootfs only).
 		log.Info("no healthcheck, flattening rootfs")
-		if _, err := agent.FlattenRootfs(ctx, connect.NewRequest(&pb.FlattenRootfsRequest{
+		flatResp, err := agent.FlattenRootfs(ctx, connect.NewRequest(&pb.FlattenRootfsRequest{
 			SandboxId: sandboxID,
 			Name:      build.Name,
-		})); err != nil {
+		}))
+		if err != nil {
 			s.destroySandbox(ctx, agent, sandboxID)
 			s.failBuild(ctx, buildID, fmt.Sprintf("flatten rootfs failed: %v", err))
 			return
 		}
+		sizeBytes = flatResp.Msg.SizeBytes
 	}
 
 	// Insert into templates table as a global (platform) template.
@@ -297,7 +302,7 @@ func (s *BuildService) executeBuild(ctx context.Context, buildID string) {
 		Type:      templateType,
 		Vcpus:     pgtype.Int4{Int32: build.Vcpus, Valid: true},
 		MemoryMb:  pgtype.Int4{Int32: build.MemoryMb, Valid: true},
-		SizeBytes: 0, // Could query the host, but the template is created.
+		SizeBytes: sizeBytes,
 		TeamID:    platformTeamID,
 	}); err != nil {
 		log.Error("failed to insert template record", "error", err)
@@ -319,7 +324,8 @@ func (s *BuildService) executeBuild(ctx context.Context, buildID string) {
 }
 
 func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentClient, sandboxID, cmd string) error {
-	deadline := time.After(healthcheckTimeout)
+	deadline := time.NewTimer(healthcheckTimeout)
+	defer deadline.Stop()
 	ticker := time.NewTicker(healthcheckInterval)
 	defer ticker.Stop()
 
@@ -327,7 +333,7 @@ func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentC
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deadline:
+		case <-deadline.C:
 			return fmt.Errorf("healthcheck timed out after %s", healthcheckTimeout)
 		case <-ticker.C:
 			execCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -366,8 +372,11 @@ func (s *BuildService) updateLogs(ctx context.Context, buildID string, step int,
 	}
 }
 
-func (s *BuildService) failBuild(ctx context.Context, buildID, errMsg string) {
+func (s *BuildService) failBuild(_ context.Context, buildID, errMsg string) {
 	slog.Error("build failed", "build_id", buildID, "error", errMsg)
+	// Use a detached context so DB writes survive parent context cancellation (e.g. shutdown).
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	if err := s.DB.UpdateBuildError(ctx, db.UpdateBuildErrorParams{
 		ID:    buildID,
 		Error: pgtype.Text{String: errMsg, Valid: true},
@@ -376,7 +385,10 @@ func (s *BuildService) failBuild(ctx context.Context, buildID, errMsg string) {
 	}
 }
 
-func (s *BuildService) destroySandbox(ctx context.Context, agent buildAgentClient, sandboxID string) {
+func (s *BuildService) destroySandbox(_ context.Context, agent buildAgentClient, sandboxID string) {
+	// Use a detached context so cleanup succeeds even during shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	if _, err := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
 		SandboxId: sandboxID,
 	})); err != nil {

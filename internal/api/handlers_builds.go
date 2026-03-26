@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -119,7 +120,8 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MemoryMB:     req.MemoryMB,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "build_error", err.Error())
+		slog.Error("failed to create build", "error", err)
+		writeError(w, http.StatusInternalServerError, "build_error", "failed to create build")
 		return
 	}
 
