@@ -25,6 +25,18 @@ const (
 	healthcheckTimeout  = 60 * time.Second
 )
 
+// preBuildCmds run before the user recipe to prepare the build environment.
+var preBuildCmds = []string{
+	"apt update",
+}
+
+// postBuildCmds run after the user recipe to clean up caches and reduce image size.
+var postBuildCmds = []string{
+	"apt clean",
+	"apt autoremove -y",
+	"rm -rf /var/lib/apt/lists/*",
+}
+
 // buildAgentClient is the subset of the host agent client used by the build worker.
 type buildAgentClient interface {
 	CreateSandbox(ctx context.Context, req *connect.Request[pb.CreateSandboxRequest]) (*connect.Response[pb.CreateSandboxResponse], error)
@@ -91,7 +103,7 @@ func (s *BuildService) Create(ctx context.Context, p BuildCreateParams) (db.Temp
 		Healthcheck:  p.Healthcheck,
 		Vcpus:        p.VCPUs,
 		MemoryMb:     p.MemoryMB,
-		TotalSteps:   int32(len(p.Recipe)),
+		TotalSteps:   int32(len(p.Recipe) + len(preBuildCmds) + len(postBuildCmds)),
 	})
 	if err != nil {
 		return db.TemplateBuild{}, fmt.Errorf("insert build: %w", err)
@@ -170,12 +182,17 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		return
 	}
 
-	// Parse recipe.
-	var recipe []string
-	if err := json.Unmarshal(build.Recipe, &recipe); err != nil {
+	// Parse user recipe and wrap with pre/post build stages.
+	var userRecipe []string
+	if err := json.Unmarshal(build.Recipe, &userRecipe); err != nil {
 		s.failBuild(ctx, buildID, fmt.Sprintf("invalid recipe JSON: %v", err))
 		return
 	}
+
+	recipe := make([]string, 0, len(userRecipe)+len(preBuildCmds)+len(postBuildCmds))
+	recipe = append(recipe, preBuildCmds...)
+	recipe = append(recipe, userRecipe...)
+	recipe = append(recipe, postBuildCmds...)
 
 	// Pick a platform host and create a sandbox.
 	host, err := s.Scheduler.SelectHost(ctx, id.PlatformTeamID, false)
