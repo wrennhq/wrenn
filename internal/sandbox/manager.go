@@ -73,8 +73,12 @@ type snapshotParent struct {
 }
 
 // maxDiffGenerations caps how many incremental diff generations we chain
-// before falling back to a Full snapshot to collapse the chain.
-const maxDiffGenerations = 10
+// before falling back to a Full snapshot to collapse the chain. Firecracker
+// snapshot/restore of a Go process (envd) accumulates runtime memory state
+// drift; empirically, ~10 diff-based cycles corrupt the Go page allocator.
+// A Full snapshot resets the generation counter and produces a clean base,
+// preventing the crash.
+const maxDiffGenerations = 8
 
 // New creates a new sandbox manager.
 func New(cfg Config) *Manager {

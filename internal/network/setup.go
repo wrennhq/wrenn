@@ -5,12 +5,90 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
+
+const nsPrefix = "wrenn-ns-"
+
+// CleanupStaleNamespaces removes leftover wrenn network namespaces from a
+// previous crash. Called once at agent startup.
+func CleanupStaleNamespaces() {
+	entries, err := os.ReadDir("/run/netns")
+	if err != nil {
+		return // no /run/netns or unreadable — nothing to clean
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, nsPrefix) {
+			continue
+		}
+		// Also remove the associated veth from the host side.
+		vethName := "wrenn-veth-" + strings.TrimPrefix(name, nsPrefix)
+		if link, err := netlink.LinkByName(vethName); err == nil {
+			_ = netlink.LinkDel(link)
+		}
+		if err := netns.DeleteNamed(name); err != nil {
+			slog.Warn("failed to remove stale namespace", "ns", name, "error", err)
+		} else {
+			slog.Info("removed stale namespace", "ns", name)
+		}
+	}
+
+	// Clean up any stale wrenn iptables rules referencing old veth interfaces.
+	cleanupStaleIptablesRules()
+}
+
+// cleanupStaleIptablesRules removes host iptables rules that reference
+// wrenn-veth interfaces no longer present on the system.
+func cleanupStaleIptablesRules() {
+	for _, table := range []string{"filter", "nat"} {
+		cmd := exec.Command("iptables-save", "-t", table)
+		out, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if !strings.Contains(line, "wrenn-veth-") {
+				continue
+			}
+			// Lines look like "-A FORWARD -i wrenn-veth-1 -o wlo1 -j ACCEPT"
+			// Convert -A to -D to delete the rule.
+			if !strings.HasPrefix(line, "-A ") {
+				continue
+			}
+			delRule := "-D " + line[3:]
+			args := strings.Fields(delRule)
+			delCmd := exec.Command("iptables", append([]string{"-t", table}, args...)...)
+			if err := delCmd.Run(); err != nil {
+				slog.Debug("failed to remove stale iptables rule", "rule", line, "error", err)
+			}
+		}
+	}
+
+	// Also remove stale host routes to 10.11.0.x via wrenn-veth interfaces.
+	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
+	if err != nil {
+		return
+	}
+	for _, r := range routes {
+		if r.LinkIndex == 0 {
+			continue
+		}
+		link, err := netlink.LinkByIndex(r.LinkIndex)
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(link.Attrs().Name, "wrenn-veth-") {
+			_ = netlink.RouteDel(&r)
+		}
+	}
+}
 
 const (
 	// Fixed addresses inside each network namespace (safe because each
@@ -84,8 +162,8 @@ func NewSlot(index int) *Slot {
 		GuestIP:      guestIP,
 		GuestNetMask: guestNetMask,
 		TapName:      tapName,
-		NamespaceID:  fmt.Sprintf("ns-%d", index),
-		VethName:     fmt.Sprintf("veth-%d", index),
+		NamespaceID:  fmt.Sprintf("wrenn-ns-%d", index),
+		VethName:     fmt.Sprintf("wrenn-veth-%d", index),
 	}
 }
 

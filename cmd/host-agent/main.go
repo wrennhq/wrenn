@@ -16,6 +16,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/devicemapper"
 	"git.omukk.dev/wrenn/sandbox/internal/hostagent"
+	"git.omukk.dev/wrenn/sandbox/internal/network"
 	"git.omukk.dev/wrenn/sandbox/internal/sandbox"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
@@ -42,8 +43,9 @@ func main() {
 		slog.Warn("failed to enable ip_forward", "error", err)
 	}
 
-	// Clean up any stale dm-snapshot devices from a previous crash.
+	// Clean up stale resources from a previous crash.
 	devicemapper.CleanupStaleDevices()
+	network.CleanupStaleNamespaces()
 
 	listenAddr := envOrDefault("WRENN_HOST_LISTEN_ADDR", ":50051")
 	rootDir := envOrDefault("WRENN_DIR", "/var/lib/wrenn")
