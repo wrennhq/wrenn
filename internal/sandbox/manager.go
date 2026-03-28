@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -314,10 +315,11 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	}
 	slog.Debug("pause: VM paused", "id", sandboxID, "elapsed", time.Since(pauseStart))
 
-	// Determine snapshot type: Diff if resumed from snapshot (avoids UFFD
-	// fault-in storm), Full otherwise or if generation cap is reached.
+	// Always use Diff when we have a parent snapshot — Diff only captures
+	// changed pages and is much faster than Full (which dumps all memory).
+	// For first-time pauses (no parent) we must use Full.
 	snapshotType := "Full"
-	if sb.parent != nil && sb.parent.header.Metadata.Generation < maxDiffGenerations {
+	if sb.parent != nil {
 		snapshotType = "Diff"
 	}
 
@@ -353,7 +355,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	headerPath := filepath.Join(pauseDir, snapshot.MemHeaderName)
 
 	processStart := time.Now()
-	if sb.parent != nil && snapshotType == "Diff" {
+	if sb.parent != nil {
 		// Diff: process against parent header, producing only changed blocks.
 		diffPath := snapshot.MemDiffPathForBuild(pauseDir, "", buildID)
 		if _, err := snapshot.ProcessMemfileWithParent(rawMemPath, diffPath, headerPath, sb.parent.header, buildID); err != nil {
@@ -373,8 +375,50 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 				}
 			}
 		}
+
+		// If the generation cap is reached, merge all diff files into a
+		// single file to collapse the chain. This is a file-level operation
+		// (no Firecracker involvement) so it's fast and reliable.
+		generation := sb.parent.header.Metadata.Generation + 1
+		if generation >= maxDiffGenerations {
+			slog.Debug("pause: merging diff generations", "id", sandboxID, "generation", generation)
+
+			// Load the header we just wrote (it references all generations).
+			headerData, err := os.ReadFile(headerPath)
+			if err != nil {
+				warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
+				resumeOnError()
+				return fmt.Errorf("read header for merge: %w", err)
+			}
+			currentHeader, err := snapshot.Deserialize(headerData)
+			if err != nil {
+				warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
+				resumeOnError()
+				return fmt.Errorf("deserialize header for merge: %w", err)
+			}
+
+			// Locate all diff files referenced by the header.
+			diffFiles, err := snapshot.ListDiffFiles(pauseDir, "", currentHeader)
+			if err != nil {
+				warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
+				resumeOnError()
+				return fmt.Errorf("list diff files for merge: %w", err)
+			}
+
+			// Merge into a single new diff file.
+			mergedPath := snapshot.MemDiffPath(pauseDir, "")
+			if _, err := snapshot.MergeDiffs(currentHeader, diffFiles, mergedPath, headerPath); err != nil {
+				warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
+				resumeOnError()
+				return fmt.Errorf("merge diff files: %w", err)
+			}
+
+			// Remove the old per-generation diff files.
+			removeStaleMemDiffs(pauseDir)
+			slog.Debug("pause: diff merge complete", "id", sandboxID)
+		}
 	} else {
-		// Full: first generation or generation cap reached — single diff file.
+		// Full: first pause — no parent to diff against.
 		diffPath := snapshot.MemDiffPath(pauseDir, "")
 		if _, err := snapshot.ProcessMemfile(rawMemPath, diffPath, headerPath, buildID); err != nil {
 			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
@@ -1279,6 +1323,23 @@ func (m *Manager) PauseAll(ctx context.Context) {
 	for _, sbID := range ids {
 		if err := m.Pause(ctx, sbID); err != nil {
 			slog.Warn("PauseAll: failed to pause sandbox", "id", sbID, "error", err)
+		}
+	}
+}
+
+// removeStaleMemDiffs removes memfile.{uuid} diff files from a snapshot
+// directory. Called before writing a Full snapshot to prevent orphaned diffs
+// from accumulating across generation resets.
+func removeStaleMemDiffs(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		// Match "memfile.{uuid}" but not "memfile", "memfile.header", or "memfile.raw".
+		if strings.HasPrefix(name, "memfile.") && name != snapshot.MemHeaderName && name != "memfile.raw" {
+			os.Remove(filepath.Join(dir, name))
 		}
 	}
 }
