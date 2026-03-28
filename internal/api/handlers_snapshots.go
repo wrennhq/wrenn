@@ -17,6 +17,7 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/layout"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 	"git.omukk.dev/wrenn/sandbox/internal/validate"
@@ -269,6 +270,10 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Platform templates can only be deleted by admins via /v1/admin/templates.
 	if tmpl.TeamID == id.PlatformTeamID {
 		writeError(w, http.StatusForbidden, "forbidden", "platform templates cannot be deleted here")
+		return
+	}
+	if layout.IsMinimal(tmpl.TeamID, tmpl.ID) {
+		writeError(w, http.StatusForbidden, "forbidden", "the minimal template cannot be deleted")
 		return
 	}
 

@@ -12,6 +12,7 @@ ALTER TABLE templates ADD CONSTRAINT uq_templates_team_name UNIQUE (team_id, nam
 
 -- 3. Prevent team templates from using names that belong to global (platform) templates.
 --    A team template insert/update with a name matching any platform template is rejected.
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION check_global_template_name_collision()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -28,13 +29,27 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER trg_check_global_template_name
     BEFORE INSERT OR UPDATE ON templates
     FOR EACH ROW
     EXECUTE FUNCTION check_global_template_name_collision();
 
--- 4. Add template UUID references to template_builds.
+-- 4. Seed the built-in "minimal" template so it appears in all listings.
+--    Both id and team_id are the all-zeros UUID (platform sentinel).
+INSERT INTO templates (id, name, type, vcpus, memory_mb, size_bytes, team_id)
+VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    'minimal',
+    'base',
+    1,
+    512,
+    0,
+    '00000000-0000-0000-0000-000000000000'
+) ON CONFLICT DO NOTHING;
+
+-- 5. Add template UUID references to template_builds.
 ALTER TABLE template_builds
     ADD COLUMN template_id UUID,
     ADD COLUMN team_id UUID;
@@ -53,6 +68,9 @@ ALTER TABLE sandboxes
 ALTER TABLE template_builds
     DROP COLUMN IF EXISTS team_id,
     DROP COLUMN IF EXISTS template_id;
+
+-- Remove the seeded minimal template.
+DELETE FROM templates WHERE id = '00000000-0000-0000-0000-000000000000';
 
 DROP TRIGGER IF EXISTS trg_check_global_template_name ON templates;
 DROP FUNCTION IF EXISTS check_global_template_name_collision();

@@ -12,6 +12,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/layout"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 	"git.omukk.dev/wrenn/sandbox/internal/validate"
@@ -219,6 +220,10 @@ func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := h.db.GetPlatformTemplateByName(ctx, name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "template not found")
+		return
+	}
+	if layout.IsMinimal(tmpl.TeamID, tmpl.ID) {
+		writeError(w, http.StatusForbidden, "forbidden", "the minimal template cannot be deleted")
 		return
 	}
 
