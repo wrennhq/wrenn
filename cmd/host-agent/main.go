@@ -45,13 +45,13 @@ func main() {
 	// Clean up any stale dm-snapshot devices from a previous crash.
 	devicemapper.CleanupStaleDevices()
 
-	listenAddr := envOrDefault("AGENT_LISTEN_ADDR", ":50051")
-	rootDir := envOrDefault("AGENT_FILES_ROOTDIR", "/var/lib/wrenn")
-	cpURL := os.Getenv("AGENT_CP_URL")
+	listenAddr := envOrDefault("WRENN_HOST_LISTEN_ADDR", ":50051")
+	rootDir := envOrDefault("WRENN_DIR", "/var/lib/wrenn")
+	cpURL := os.Getenv("WRENN_CP_URL")
 	tokenFile := filepath.Join(rootDir, "host.jwt")
 
 	if cpURL == "" {
-		slog.Error("AGENT_CP_URL environment variable is required")
+		slog.Error("WRENN_CP_URL environment variable is required")
 		os.Exit(1)
 	}
 	if *advertiseAddr == "" {
@@ -61,17 +61,13 @@ func main() {
 
 	// Expand base images to the standard disk size (sparse, no extra physical
 	// disk). This ensures dm-snapshot sandboxes see the full size from boot.
-	imagesDir := filepath.Join(rootDir, "images")
-	if err := sandbox.EnsureImageSizes(imagesDir, sandbox.DefaultDiskSizeMB); err != nil {
+	if err := sandbox.EnsureImageSizes(rootDir, sandbox.DefaultDiskSizeMB); err != nil {
 		slog.Error("failed to expand base images", "error", err)
 		os.Exit(1)
 	}
 
 	cfg := sandbox.Config{
-		KernelPath:   filepath.Join(rootDir, "kernels", "vmlinux"),
-		ImagesDir:    filepath.Join(rootDir, "images"),
-		SandboxesDir: filepath.Join(rootDir, "sandboxes"),
-		SnapshotsDir: filepath.Join(rootDir, "snapshots"),
+		WrennDir: rootDir,
 	}
 
 	mgr := sandbox.New(cfg)

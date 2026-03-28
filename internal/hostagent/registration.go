@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// tokenFile is the JSON format persisted to AGENT_FILES_ROOTDIR/host.jwt.
+// tokenFile is the JSON format persisted to WRENN_DIR/host.jwt.
 type tokenFile struct {
 	HostID       string `json:"host_id"`
 	JWT          string `json:"jwt"`
