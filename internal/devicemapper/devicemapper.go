@@ -224,6 +224,7 @@ func FlattenSnapshot(dmDevPath, outputPath string) error {
 		"if="+dmDevPath,
 		"of="+outputPath,
 		"bs=4M",
+		"conv=sparse",
 		"status=none",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {

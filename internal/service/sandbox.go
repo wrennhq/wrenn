@@ -79,7 +79,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		p.MemoryMB = 512
 	}
 	if p.DiskSizeMB <= 0 {
-		p.DiskSizeMB = 20480 // 20 GB default
+		p.DiskSizeMB = 5120 // 5 GB default
 	}
 
 	// If the template is a snapshot, use its baked-in vcpus/memory.
@@ -187,20 +187,32 @@ func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID pgtype.UUI
 
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 
+	// Pre-mark as "paused" in DB before the RPC so the reconciler does not
+	// mark the sandbox "stopped" while the host agent processes the pause.
+	if _, err := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
+		ID: sandboxID, Status: "paused",
+	}); err != nil {
+		return db.Sandbox{}, fmt.Errorf("pre-mark paused: %w", err)
+	}
+
 	// Flush all metrics tiers before pausing so data survives in DB.
 	s.flushAndPersistMetrics(ctx, agent, sandboxID, true)
 
 	if _, err := agent.PauseSandbox(ctx, connect.NewRequest(&pb.PauseSandboxRequest{
 		SandboxId: sandboxIDStr,
 	})); err != nil {
+		// Revert status on failure.
+		if _, dbErr := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
+			ID: sandboxID, Status: "running",
+		}); dbErr != nil {
+			slog.Warn("failed to revert sandbox status after pause error", "sandbox_id", sandboxIDStr, "error", dbErr)
+		}
 		return db.Sandbox{}, fmt.Errorf("agent pause: %w", err)
 	}
 
-	sb, err = s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
-		ID: sandboxID, Status: "paused",
-	})
+	sb, err = s.DB.GetSandbox(ctx, sandboxID)
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("update status: %w", err)
+		return db.Sandbox{}, fmt.Errorf("get sandbox after pause: %w", err)
 	}
 	return sb, nil
 }

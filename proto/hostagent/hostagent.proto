@@ -86,8 +86,8 @@ message CreateSandboxRequest {
   // inactivity. 0 means no auto-pause.
   int32 timeout_sec = 4;
 
-  // Disk size in MB for the sparse CoW file. Limits how much data the
-  // sandbox can write beyond the base image. Default: 20480 (20 GB).
+  // Disk size in MB for the rootfs. Base images are expanded to this size
+  // at host agent startup. Default: 5120 (5 GB).
   int32 disk_size_mb = 6;
 }
 

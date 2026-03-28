@@ -12,7 +12,7 @@ import (
 // than this are expanded at startup so that dm-snapshot sandboxes see the full
 // size without per-sandbox copies. The expansion is sparse — only metadata
 // changes; no physical disk is consumed beyond the original content.
-const DefaultDiskSizeMB = 20480 // 20 GB
+const DefaultDiskSizeMB = 5120 // 5 GB
 
 // EnsureImageSizes walks the images directory and expands any rootfs.ext4 that
 // is smaller than the target size. This is idempotent: images already at or

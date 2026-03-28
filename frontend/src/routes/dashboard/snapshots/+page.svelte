@@ -423,6 +423,7 @@
 												<div class="w-px shrink-0 bg-[var(--color-border-mid)]"></div>
 												<!-- Chevron / dropdown trigger -->
 												<button
+													disabled={snapshot.platform}
 													onclick={(e) => {
 														e.stopPropagation();
 														if (openDropdownName === snapshot.name) {
@@ -433,7 +434,7 @@
 															openDropdownName = snapshot.name;
 														}
 													}}
-													class="flex items-center px-2 py-1.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-bright)]"
+													class="flex items-center px-2 py-1.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-bright)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-secondary)]"
 												>
 													<svg
 														class="transition-transform duration-150 {openDropdownName === snapshot.name ? 'rotate-180' : ''}"
@@ -484,21 +485,23 @@
 			class="fixed z-50 w-32 overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] py-1"
 			style="top: {dropdownPos.top}px; left: {dropdownPos.left}px; animation: fadeUp 0.15s ease both"
 		>
-			<button
-				onclick={(e) => {
-					e.stopPropagation();
-					const target = snapshots.find((s) => s.name === openDropdownName);
-					openDropdownName = null;
-					if (target) { deleteTarget = target; deleteError = null; }
-				}}
-				class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
-			>
-				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-					<polyline points="3 6 5 6 21 6" />
-					<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-				</svg>
-				Delete
-			</button>
+			{#if !dropdownSnapshot.platform}
+				<button
+					onclick={(e) => {
+						e.stopPropagation();
+						const target = snapshots.find((s) => s.name === openDropdownName);
+						openDropdownName = null;
+						if (target) { deleteTarget = target; deleteError = null; }
+					}}
+					class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
+				>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+						<polyline points="3 6 5 6 21 6" />
+						<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+					</svg>
+					Delete
+				</button>
+			{/if}
 		</div>
 	{/if}
 {/if}

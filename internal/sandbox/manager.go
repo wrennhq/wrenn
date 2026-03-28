@@ -107,7 +107,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID, template string, vcpus,
 		memoryMB = 512
 	}
 	if diskSizeMB <= 0 {
-		diskSizeMB = 20480 // 20 GB default
+		diskSizeMB = 5120 // 5 GB default
 	}
 
 	if template == "" {

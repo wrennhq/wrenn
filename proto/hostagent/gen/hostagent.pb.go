@@ -34,8 +34,8 @@ type CreateSandboxRequest struct {
 	// TTL in seconds. Sandbox is auto-paused after this duration of
 	// inactivity. 0 means no auto-pause.
 	TimeoutSec int32 `protobuf:"varint,4,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
-	// Disk size in MB for the sparse CoW file. Limits how much data the
-	// sandbox can write beyond the base image. Default: 20480 (20 GB).
+	// Disk size in MB for the rootfs. Base images are expanded to this size
+	// at host agent startup. Default: 5120 (5 GB).
 	DiskSizeMb    int32 `protobuf:"varint,6,opt,name=disk_size_mb,json=diskSizeMb,proto3" json:"disk_size_mb,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
