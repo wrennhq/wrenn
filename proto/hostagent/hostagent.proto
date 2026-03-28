@@ -73,7 +73,7 @@ message CreateSandboxRequest {
   // Sandbox ID assigned by the control plane. If empty, the host agent generates one.
   string sandbox_id = 5;
 
-  // Template name (e.g., "minimal", "python311"). Determines base rootfs.
+  // Deprecated: use team_id + template_id instead.
   string template = 1;
 
   // Number of virtual CPUs (default: 1).
@@ -89,6 +89,12 @@ message CreateSandboxRequest {
   // Disk size in MB for the rootfs. Base images are expanded to this size
   // at host agent startup. Default: 5120 (5 GB).
   int32 disk_size_mb = 6;
+
+  // Team UUID that owns the template (hex string). All-zeros = platform.
+  string team_id = 7;
+
+  // Template UUID (hex string). Both zeros + team zeros = "minimal" sentinel.
+  string template_id = 8;
 }
 
 message CreateSandboxResponse {
@@ -125,7 +131,12 @@ message ResumeSandboxResponse {
 
 message CreateSnapshotRequest {
   string sandbox_id = 1;
+  // Deprecated: use team_id + template_id instead.
   string name = 2;
+  // Team UUID that will own the new template.
+  string team_id = 3;
+  // Template UUID for the new snapshot template.
+  string template_id = 4;
 }
 
 message CreateSnapshotResponse {
@@ -134,7 +145,12 @@ message CreateSnapshotResponse {
 }
 
 message DeleteSnapshotRequest {
+  // Deprecated: use team_id + template_id instead.
   string name = 1;
+  // Team UUID that owns the template.
+  string team_id = 2;
+  // Template UUID to delete.
+  string template_id = 3;
 }
 
 message DeleteSnapshotResponse {}
@@ -166,6 +182,7 @@ message ListSandboxesResponse {
 message SandboxInfo {
   string sandbox_id = 1;
   string status = 2;
+  // Deprecated: use team_id + template_id instead.
   string template = 3;
   int32 vcpus = 4;
   int32 memory_mb = 5;
@@ -173,6 +190,8 @@ message SandboxInfo {
   int64 created_at_unix = 7;
   int64 last_active_at_unix = 8;
   int32 timeout_sec = 9;
+  string team_id = 10;
+  string template_id = 11;
 }
 
 message WriteFileRequest {
@@ -299,7 +318,12 @@ message FlushSandboxMetricsResponse {
 
 message FlattenRootfsRequest {
   string sandbox_id = 1;
-  string name = 2; // template name — output written to images/{name}/rootfs.ext4
+  // Deprecated: use team_id + template_id instead.
+  string name = 2;
+  // Team UUID that will own the resulting template.
+  string team_id = 3;
+  // Template UUID for the output.
+  string template_id = 4;
 }
 
 message FlattenRootfsResponse {

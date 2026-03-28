@@ -11,6 +11,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
@@ -34,8 +36,8 @@ func newSnapshotHandler(svc *service.TemplateService, db *db.Queries, pool *life
 
 // deleteSnapshotBroadcast attempts to delete snapshot files on all online hosts.
 // Snapshots aren't currently host-tracked in the DB, so we broadcast to all hosts
-// and ignore NotFound errors. TODO: add host_id to templates table.
-func (h *snapshotHandler) deleteSnapshotBroadcast(ctx context.Context, name string) error {
+// and ignore NotFound errors.
+func (h *snapshotHandler) deleteSnapshotBroadcast(ctx context.Context, teamID, templateID pgtype.UUID) error {
 	hosts, err := h.db.ListActiveHosts(ctx)
 	if err != nil {
 		return fmt.Errorf("list hosts: %w", err)
@@ -48,9 +50,12 @@ func (h *snapshotHandler) deleteSnapshotBroadcast(ctx context.Context, name stri
 		if err != nil {
 			continue
 		}
-		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{Name: name})); err != nil {
+		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{
+			TeamId:     formatUUIDForRPC(teamID),
+			TemplateId: formatUUIDForRPC(templateID),
+		})); err != nil {
 			if connect.CodeOf(err) != connect.CodeNotFound {
-				slog.Warn("snapshot: failed to delete on host", "host_id", id.FormatHostID(host.ID), "name", name, "error", err)
+				slog.Warn("snapshot: failed to delete on host", "host_id", id.FormatHostID(host.ID), "error", err)
 			}
 		}
 	}
@@ -122,14 +127,20 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(ctx)
 	overwrite := r.URL.Query().Get("overwrite") == "true"
 
+	// Check for global name collision.
+	if _, err := h.db.GetPlatformTemplateByName(ctx, req.Name); err == nil {
+		writeError(w, http.StatusConflict, "name_reserved", "template name is reserved by a global template")
+		return
+	}
+
 	// Check if name already exists for this team.
-	if _, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err == nil {
+	if existing, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err == nil {
 		if !overwrite {
 			writeError(w, http.StatusConflict, "already_exists", "snapshot name already exists; use ?overwrite=true to replace")
 			return
 		}
 		// Delete old snapshot files from all hosts before removing the DB record.
-		if err := h.deleteSnapshotBroadcast(ctx, req.Name); err != nil {
+		if err := h.deleteSnapshotBroadcast(ctx, existing.TeamID, existing.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete existing snapshot files")
 			return
 		}
@@ -174,9 +185,14 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	snapCtx, snapCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer snapCancel()
 
+	// Generate the new template ID upfront so the host agent knows where to store files.
+	newTemplateID := id.NewTemplateID()
+
 	resp, err := agent.CreateSnapshot(snapCtx, connect.NewRequest(&pb.CreateSnapshotRequest{
-		SandboxId: req.SandboxID,
-		Name:      req.Name,
+		SandboxId:  req.SandboxID,
+		Name:       req.Name,
+		TeamId:     formatUUIDForRPC(ac.TeamID),
+		TemplateId: formatUUIDForRPC(newTemplateID),
 	}))
 	if err != nil {
 		// Snapshot failed — revert status back to what it was.
@@ -193,6 +209,7 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tmpl, err := h.db.InsertTemplate(snapCtx, db.InsertTemplateParams{
+		ID:        newTemplateID,
 		Name:      req.Name,
 		Type:      "snapshot",
 		Vcpus:     sb.Vcpus,
@@ -255,7 +272,7 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.deleteSnapshotBroadcast(ctx, name); err != nil {
+	if err := h.deleteSnapshotBroadcast(ctx, tmpl.TeamID, tmpl.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete snapshot files")
 		return
 	}

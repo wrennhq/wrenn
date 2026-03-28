@@ -6,6 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/layout"
 )
 
 // DefaultDiskSizeMB is the standard disk size for base images. Images smaller
@@ -14,61 +17,90 @@ import (
 // changes; no physical disk is consumed beyond the original content.
 const DefaultDiskSizeMB = 5120 // 5 GB
 
-// EnsureImageSizes walks the images directory and expands any rootfs.ext4 that
+// EnsureImageSizes walks template directories and expands any rootfs.ext4 that
 // is smaller than the target size. This is idempotent: images already at or
 // above the target size are left untouched. Should be called once at host agent
 // startup before any sandboxes are created.
-func EnsureImageSizes(imagesDir string, targetMB int) error {
+func EnsureImageSizes(wrennDir string, targetMB int) error {
 	if targetMB <= 0 {
 		targetMB = DefaultDiskSizeMB
 	}
 	targetBytes := int64(targetMB) * 1024 * 1024
 
-	entries, err := os.ReadDir(imagesDir)
-	if err != nil {
-		return fmt.Errorf("read images dir: %w", err)
+	// Expand the built-in minimal image.
+	minimalRootfs := layout.TemplateRootfs(wrennDir, id.PlatformTeamID, id.MinimalTemplateID)
+	if err := expandImage(minimalRootfs, targetBytes, targetMB); err != nil {
+		return err
 	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	// Walk teams/{teamDir}/{templateDir}/rootfs.ext4 two levels deep.
+	teamsDir := layout.TeamsDir(wrennDir)
+	teamEntries, err := os.ReadDir(teamsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // teams dir doesn't exist yet — nothing to expand
+		}
+		return fmt.Errorf("read teams dir: %w", err)
+	}
+
+	for _, teamEntry := range teamEntries {
+		if !teamEntry.IsDir() {
 			continue
 		}
-		rootfs := filepath.Join(imagesDir, entry.Name(), "rootfs.ext4")
-		info, err := os.Stat(rootfs)
+		teamPath := filepath.Join(teamsDir, teamEntry.Name())
+		templateEntries, err := os.ReadDir(teamPath)
 		if err != nil {
-			continue // not every template dir has a rootfs.ext4
+			continue
 		}
-
-		if info.Size() >= targetBytes {
-			continue // already large enough
-		}
-
-		slog.Info("expanding base image",
-			"template", entry.Name(),
-			"from_mb", info.Size()/(1024*1024),
-			"to_mb", targetMB,
-		)
-
-		// Expand the file (sparse — instant, no physical disk used).
-		if err := os.Truncate(rootfs, targetBytes); err != nil {
-			return fmt.Errorf("truncate %s: %w", rootfs, err)
-		}
-
-		// Check filesystem before resize.
-		if out, err := exec.Command("e2fsck", "-fy", rootfs).CombinedOutput(); err != nil {
-			// e2fsck returns 1 if it fixed errors, which is fine.
-			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() > 1 {
-				return fmt.Errorf("e2fsck %s: %s: %w", rootfs, string(out), err)
+		for _, tmplEntry := range templateEntries {
+			if !tmplEntry.IsDir() {
+				continue
+			}
+			rootfs := filepath.Join(teamPath, tmplEntry.Name(), "rootfs.ext4")
+			if err := expandImage(rootfs, targetBytes, targetMB); err != nil {
+				return err
 			}
 		}
-
-		// Grow the ext4 filesystem to fill the new file size.
-		if out, err := exec.Command("resize2fs", rootfs).CombinedOutput(); err != nil {
-			return fmt.Errorf("resize2fs %s: %s: %w", rootfs, string(out), err)
-		}
-
-		slog.Info("base image expanded", "template", entry.Name(), "size_mb", targetMB)
 	}
 
+	return nil
+}
+
+// expandImage expands a single rootfs image if it is smaller than targetBytes.
+func expandImage(rootfs string, targetBytes int64, targetMB int) error {
+	info, err := os.Stat(rootfs)
+	if err != nil {
+		return nil // not every template dir has a rootfs.ext4
+	}
+
+	if info.Size() >= targetBytes {
+		return nil // already large enough
+	}
+
+	slog.Info("expanding base image",
+		"path", rootfs,
+		"from_mb", info.Size()/(1024*1024),
+		"to_mb", targetMB,
+	)
+
+	// Expand the file (sparse — instant, no physical disk used).
+	if err := os.Truncate(rootfs, targetBytes); err != nil {
+		return fmt.Errorf("truncate %s: %w", rootfs, err)
+	}
+
+	// Check filesystem before resize.
+	if out, err := exec.Command("e2fsck", "-fy", rootfs).CombinedOutput(); err != nil {
+		// e2fsck returns 1 if it fixed errors, which is fine.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() > 1 {
+			return fmt.Errorf("e2fsck %s: %s: %w", rootfs, string(out), err)
+		}
+	}
+
+	// Grow the ext4 filesystem to fill the new file size.
+	if out, err := exec.Command("resize2fs", rootfs).CombinedOutput(); err != nil {
+		return fmt.Errorf("resize2fs %s: %s: %w", rootfs, string(out), err)
+	}
+
+	slog.Info("base image expanded", "path", rootfs, "size_mb", targetMB)
 	return nil
 }

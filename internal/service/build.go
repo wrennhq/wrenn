@@ -95,6 +95,7 @@ func (s *BuildService) Create(ctx context.Context, p BuildCreateParams) (db.Temp
 
 	buildID := id.NewBuildID()
 	buildIDStr := id.FormatBuildID(buildID)
+	newTemplateID := id.NewTemplateID()
 
 	build, err := s.DB.InsertTemplateBuild(ctx, db.InsertTemplateBuildParams{
 		ID:           buildID,
@@ -105,6 +106,8 @@ func (s *BuildService) Create(ctx context.Context, p BuildCreateParams) (db.Temp
 		Vcpus:        p.VCPUs,
 		MemoryMb:     p.MemoryMB,
 		TotalSteps:   int32(len(p.Recipe) + len(preBuildCmds) + len(postBuildCmds)),
+		TemplateID:   newTemplateID,
+		TeamID:       id.PlatformTeamID,
 	})
 	if err != nil {
 		return db.TemplateBuild{}, fmt.Errorf("insert build: %w", err)
@@ -207,12 +210,27 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 	log = log.With("sandbox_id", sandboxIDStr, "host_id", id.FormatHostID(host.ID))
 
+	// Resolve the base template to UUIDs. "minimal" is the zero sentinel.
+	baseTeamID := id.PlatformTeamID
+	baseTemplateID := id.MinimalTemplateID
+	if build.BaseTemplate != "minimal" {
+		baseTmpl, err := s.DB.GetPlatformTemplateByName(ctx, build.BaseTemplate)
+		if err != nil {
+			s.failBuild(ctx, buildID, fmt.Sprintf("base template %q not found: %v", build.BaseTemplate, err))
+			return
+		}
+		baseTeamID = baseTmpl.TeamID
+		baseTemplateID = baseTmpl.ID
+	}
+
 	resp, err := agent.CreateSandbox(ctx, connect.NewRequest(&pb.CreateSandboxRequest{
 		SandboxId:  sandboxIDStr,
 		Template:   build.BaseTemplate,
+		TeamId:     id.UUIDString(baseTeamID),
+		TemplateId: id.UUIDString(baseTemplateID),
 		Vcpus:      build.Vcpus,
 		MemoryMb:   build.MemoryMb,
-		TimeoutSec: 0,     // no auto-pause for builds
+		TimeoutSec: 0,    // no auto-pause for builds
 		DiskSizeMb: 5120, // 5 GB for template builds
 	}))
 	if err != nil {
@@ -316,8 +334,10 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		// Healthcheck passed → full snapshot (with memory/CPU state).
 		log.Info("healthcheck passed, creating snapshot")
 		snapResp, err := agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
-			SandboxId: sandboxIDStr,
-			Name:      build.Name,
+			SandboxId:  sandboxIDStr,
+			Name:       build.Name,
+			TeamId:     id.UUIDString(build.TeamID),
+			TemplateId: id.UUIDString(build.TemplateID),
 		}))
 		if err != nil {
 			s.destroySandbox(ctx, agent, sandboxIDStr)
@@ -329,8 +349,10 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		// No healthcheck → image-only template (rootfs only).
 		log.Info("no healthcheck, flattening rootfs")
 		flatResp, err := agent.FlattenRootfs(ctx, connect.NewRequest(&pb.FlattenRootfsRequest{
-			SandboxId: sandboxIDStr,
-			Name:      build.Name,
+			SandboxId:  sandboxIDStr,
+			Name:       build.Name,
+			TeamId:     id.UUIDString(build.TeamID),
+			TemplateId: id.UUIDString(build.TemplateID),
 		}))
 		if err != nil {
 			s.destroySandbox(ctx, agent, sandboxIDStr)
@@ -347,6 +369,7 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 	}
 
 	if _, err := s.DB.InsertTemplate(ctx, db.InsertTemplateParams{
+		ID:        build.TemplateID,
 		Name:      build.Name,
 		Type:      templateType,
 		Vcpus:     build.Vcpus,

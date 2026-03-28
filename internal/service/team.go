@@ -202,10 +202,59 @@ func (s *TeamService) DeleteTeam(ctx context.Context, teamID, callerUserID pgtyp
 		}
 	}
 
+	// Clean up team-owned templates from all hosts in the background.
+	go s.cleanupTeamTemplates(context.Background(), teamID)
+
 	if err := s.DB.SoftDeleteTeam(ctx, teamID); err != nil {
 		return fmt.Errorf("soft delete team: %w", err)
 	}
 	return nil
+}
+
+// cleanupTeamTemplates deletes all template files for a team from all online hosts,
+// then removes the DB records. Called asynchronously during team deletion.
+func (s *TeamService) cleanupTeamTemplates(ctx context.Context, teamID pgtype.UUID) {
+	templates, err := s.DB.ListTemplatesByTeamOnly(ctx, teamID)
+	if err != nil {
+		slog.Warn("team delete: failed to list templates for cleanup", "team_id", id.FormatTeamID(teamID), "error", err)
+		return
+	}
+	if len(templates) == 0 {
+		return
+	}
+
+	hosts, err := s.DB.ListActiveHosts(ctx)
+	if err != nil {
+		slog.Warn("team delete: failed to list hosts for template cleanup", "error", err)
+		return
+	}
+
+	for _, tmpl := range templates {
+		for _, host := range hosts {
+			if host.Status != "online" {
+				continue
+			}
+			agent, err := s.HostPool.GetForHost(host)
+			if err != nil {
+				continue
+			}
+			if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{
+				TeamId:     id.UUIDString(tmpl.TeamID),
+				TemplateId: id.UUIDString(tmpl.ID),
+			})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
+				slog.Warn("team delete: failed to delete template on host",
+					"host_id", id.FormatHostID(host.ID),
+					"template", tmpl.Name,
+					"error", err,
+				)
+			}
+		}
+	}
+
+	// Remove DB records.
+	if err := s.DB.DeleteTemplatesByTeam(ctx, teamID); err != nil {
+		slog.Warn("team delete: failed to delete template records", "team_id", id.FormatTeamID(teamID), "error", err)
+	}
 }
 
 // GetMembers returns all members of the team with their emails and roles.

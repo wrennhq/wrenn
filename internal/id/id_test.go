@@ -10,7 +10,7 @@ import (
 func TestBase36RoundTrip(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		orig := uuid.New()
-		encoded := uuidToBase36(orig)
+		encoded := UUIDToBase36(orig)
 
 		if len(encoded) != base36IDLen {
 			t.Fatalf("expected %d chars, got %d: %s", base36IDLen, len(encoded), encoded)
@@ -29,7 +29,7 @@ func TestBase36RoundTrip(t *testing.T) {
 
 func TestBase36ZeroUUID(t *testing.T) {
 	var zero [16]byte
-	encoded := uuidToBase36(zero)
+	encoded := UUIDToBase36(zero)
 	if encoded != "0000000000000000000000000" {
 		t.Fatalf("zero UUID should encode to all zeros, got %s", encoded)
 	}
@@ -87,7 +87,7 @@ func TestPlatformTeamIDFormats(t *testing.T) {
 func TestMaxUUID(t *testing.T) {
 	max := [16]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
-	encoded := uuidToBase36(max)
+	encoded := UUIDToBase36(max)
 	if len(encoded) != base36IDLen {
 		t.Fatalf("max UUID encoding wrong length: %d", len(encoded))
 	}

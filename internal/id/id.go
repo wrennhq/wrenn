@@ -36,8 +36,9 @@ func NewAuditLogID() pgtype.UUID        { return newUUID() }
 func NewBuildID() pgtype.UUID           { return newUUID() }
 func NewAdminPermissionID() pgtype.UUID { return newUUID() }
 
+func NewTemplateID() pgtype.UUID { return newUUID() }
+
 // NewSnapshotName generates a snapshot name: "template-" + 8 hex chars.
-// Templates use TEXT primary keys (not UUID), so this stays as a string.
 func NewSnapshotName() string {
 	return "template-" + hex8()
 }
@@ -76,8 +77,8 @@ const (
 	PrefixAdminPermission = "perm-"
 )
 
-// uuidToBase36 encodes 16 UUID bytes as a 25-char base36 string (0-9a-z).
-func uuidToBase36(b [16]byte) string {
+// UUIDToBase36 encodes 16 UUID bytes as a 25-char base36 string (0-9a-z).
+func UUIDToBase36(b [16]byte) string {
 	n := new(big.Int).SetBytes(b[:])
 	buf := make([]byte, base36IDLen)
 	mod := new(big.Int)
@@ -110,7 +111,7 @@ func base36ToUUID(s string) ([16]byte, error) {
 }
 
 func formatUUID(prefix string, id pgtype.UUID) string {
-	return prefix + uuidToBase36(id.Bytes)
+	return prefix + UUIDToBase36(id.Bytes)
 }
 
 func FormatSandboxID(id pgtype.UUID) string      { return formatUUID(PrefixSandbox, id) }
@@ -150,6 +151,17 @@ func ParseBuildID(s string) (pgtype.UUID, error)     { return parseUUID(PrefixBu
 // PlatformTeamID is the all-zeros UUID reserved for platform-owned resources
 // (e.g. base templates, shared infrastructure).
 var PlatformTeamID = pgtype.UUID{Bytes: [16]byte{}, Valid: true}
+
+// MinimalTemplateID is the all-zeros UUID sentinel for the built-in "minimal"
+// template. When both team_id and template_id are zero, the host agent uses
+// the minimal rootfs at WRENN_DIR/images/minimal/.
+var MinimalTemplateID = pgtype.UUID{Bytes: [16]byte{}, Valid: true}
+
+// UUIDString converts a pgtype.UUID to a standard hyphenated UUID string
+// (e.g., "6ba7b810-9dad-11d1-80b4-00c04fd430c8"). Used for RPC wire format.
+func UUIDString(id pgtype.UUID) string {
+	return uuid.UUID(id.Bytes).String()
+}
 
 // --- Helpers ---
 

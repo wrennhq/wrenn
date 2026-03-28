@@ -12,11 +12,11 @@ import (
 )
 
 const deleteTemplate = `-- name: DeleteTemplate :exec
-DELETE FROM templates WHERE name = $1
+DELETE FROM templates WHERE id = $1
 `
 
-func (q *Queries) DeleteTemplate(ctx context.Context, name string) error {
-	_, err := q.db.Exec(ctx, deleteTemplate, name)
+func (q *Queries) DeleteTemplate(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteTemplate, id)
 	return err
 }
 
@@ -34,12 +34,23 @@ func (q *Queries) DeleteTemplateByTeam(ctx context.Context, arg DeleteTemplateBy
 	return err
 }
 
-const getTemplate = `-- name: GetTemplate :one
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE name = $1
+const deleteTemplatesByTeam = `-- name: DeleteTemplatesByTeam :exec
+DELETE FROM templates WHERE team_id = $1
 `
 
-func (q *Queries) GetTemplate(ctx context.Context, name string) (Template, error) {
-	row := q.db.QueryRow(ctx, getTemplate, name)
+// Bulk delete all templates owned by a team (for team soft-delete cleanup).
+func (q *Queries) DeleteTemplatesByTeam(ctx context.Context, teamID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteTemplatesByTeam, teamID)
+	return err
+}
+
+const getPlatformTemplateByName = `-- name: GetPlatformTemplateByName :one
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id FROM templates WHERE team_id = '00000000-0000-0000-0000-000000000000' AND name = $1
+`
+
+// Check if a global (platform) template exists with the given name.
+func (q *Queries) GetPlatformTemplateByName(ctx context.Context, name string) (Template, error) {
+	row := q.db.QueryRow(ctx, getPlatformTemplateByName, name)
 	var i Template
 	err := row.Scan(
 		&i.Name,
@@ -49,12 +60,59 @@ func (q *Queries) GetTemplate(ctx context.Context, name string) (Template, error
 		&i.SizeBytes,
 		&i.CreatedAt,
 		&i.TeamID,
+		&i.ID,
+	)
+	return i, err
+}
+
+const getTemplate = `-- name: GetTemplate :one
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id FROM templates WHERE id = $1
+`
+
+func (q *Queries) GetTemplate(ctx context.Context, id pgtype.UUID) (Template, error) {
+	row := q.db.QueryRow(ctx, getTemplate, id)
+	var i Template
+	err := row.Scan(
+		&i.Name,
+		&i.Type,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.TeamID,
+		&i.ID,
+	)
+	return i, err
+}
+
+const getTemplateByName = `-- name: GetTemplateByName :one
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id FROM templates WHERE team_id = $1 AND name = $2
+`
+
+type GetTemplateByNameParams struct {
+	TeamID pgtype.UUID `json:"team_id"`
+	Name   string      `json:"name"`
+}
+
+// Look up a template by team_id and name (exact team match, no global fallback).
+func (q *Queries) GetTemplateByName(ctx context.Context, arg GetTemplateByNameParams) (Template, error) {
+	row := q.db.QueryRow(ctx, getTemplateByName, arg.TeamID, arg.Name)
+	var i Template
+	err := row.Scan(
+		&i.Name,
+		&i.Type,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.TeamID,
+		&i.ID,
 	)
 	return i, err
 }
 
 const getTemplateByTeam = `-- name: GetTemplateByTeam :one
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000')
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id FROM templates WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000')
 `
 
 type GetTemplateByTeamParams struct {
@@ -74,17 +132,19 @@ func (q *Queries) GetTemplateByTeam(ctx context.Context, arg GetTemplateByTeamPa
 		&i.SizeBytes,
 		&i.CreatedAt,
 		&i.TeamID,
+		&i.ID,
 	)
 	return i, err
 }
 
 const insertTemplate = `-- name: InsertTemplate :one
-INSERT INTO templates (name, type, vcpus, memory_mb, size_bytes, team_id)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING name, type, vcpus, memory_mb, size_bytes, created_at, team_id
+INSERT INTO templates (id, name, type, vcpus, memory_mb, size_bytes, team_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id
 `
 
 type InsertTemplateParams struct {
+	ID        pgtype.UUID `json:"id"`
 	Name      string      `json:"name"`
 	Type      string      `json:"type"`
 	Vcpus     int32       `json:"vcpus"`
@@ -95,6 +155,7 @@ type InsertTemplateParams struct {
 
 func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) (Template, error) {
 	row := q.db.QueryRow(ctx, insertTemplate,
+		arg.ID,
 		arg.Name,
 		arg.Type,
 		arg.Vcpus,
@@ -111,12 +172,13 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 		&i.SizeBytes,
 		&i.CreatedAt,
 		&i.TeamID,
+		&i.ID,
 	)
 	return i, err
 }
 
 const listTemplates = `-- name: ListTemplates :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id FROM templates ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
@@ -136,6 +198,7 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
 			&i.SizeBytes,
 			&i.CreatedAt,
 			&i.TeamID,
+			&i.ID,
 		); err != nil {
 			return nil, err
 		}
@@ -148,7 +211,7 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
 }
 
 const listTemplatesByTeam = `-- name: ListTemplatesByTeam :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') ORDER BY created_at DESC
 `
 
 // Platform templates are visible to all teams.
@@ -169,6 +232,7 @@ func (q *Queries) ListTemplatesByTeam(ctx context.Context, teamID pgtype.UUID) (
 			&i.SizeBytes,
 			&i.CreatedAt,
 			&i.TeamID,
+			&i.ID,
 		); err != nil {
 			return nil, err
 		}
@@ -181,7 +245,7 @@ func (q *Queries) ListTemplatesByTeam(ctx context.Context, teamID pgtype.UUID) (
 }
 
 const listTemplatesByTeamAndType = `-- name: ListTemplatesByTeamAndType :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') AND type = $2 ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') AND type = $2 ORDER BY created_at DESC
 `
 
 type ListTemplatesByTeamAndTypeParams struct {
@@ -207,6 +271,41 @@ func (q *Queries) ListTemplatesByTeamAndType(ctx context.Context, arg ListTempla
 			&i.SizeBytes,
 			&i.CreatedAt,
 			&i.TeamID,
+			&i.ID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTemplatesByTeamOnly = `-- name: ListTemplatesByTeamOnly :many
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id FROM templates WHERE team_id = $1 ORDER BY created_at DESC
+`
+
+// List templates owned by a specific team (NOT including platform templates).
+func (q *Queries) ListTemplatesByTeamOnly(ctx context.Context, teamID pgtype.UUID) ([]Template, error) {
+	rows, err := q.db.Query(ctx, listTemplatesByTeamOnly, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Template
+	for rows.Next() {
+		var i Template
+		if err := rows.Scan(
+			&i.Name,
+			&i.Type,
+			&i.Vcpus,
+			&i.MemoryMb,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.TeamID,
+			&i.ID,
 		); err != nil {
 			return nil, err
 		}
@@ -219,7 +318,7 @@ func (q *Queries) ListTemplatesByTeamAndType(ctx context.Context, arg ListTempla
 }
 
 const listTemplatesByType = `-- name: ListTemplatesByType :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id FROM templates WHERE type = $1 ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id FROM templates WHERE type = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTemplatesByType(ctx context.Context, type_ string) ([]Template, error) {
@@ -239,6 +338,7 @@ func (q *Queries) ListTemplatesByType(ctx context.Context, type_ string) ([]Temp
 			&i.SizeBytes,
 			&i.CreatedAt,
 			&i.TeamID,
+			&i.ID,
 		); err != nil {
 			return nil, err
 		}

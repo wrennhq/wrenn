@@ -180,13 +180,13 @@ func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type templateResponse struct {
-		Name      string  `json:"name"`
-		Type      string  `json:"type"`
-		VCPUs     int32   `json:"vcpus"`
-		MemoryMB  int32   `json:"memory_mb"`
-		SizeBytes int64   `json:"size_bytes"`
-		TeamID    string  `json:"team_id"`
-		CreatedAt string  `json:"created_at"`
+		Name      string `json:"name"`
+		Type      string `json:"type"`
+		VCPUs     int32  `json:"vcpus"`
+		MemoryMB  int32  `json:"memory_mb"`
+		SizeBytes int64  `json:"size_bytes"`
+		TeamID    string `json:"team_id"`
+		CreatedAt string `json:"created_at"`
 	}
 
 	resp := make([]templateResponse, len(templates))
@@ -216,7 +216,8 @@ func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	if _, err := h.db.GetTemplate(ctx, name); err != nil {
+	tmpl, err := h.db.GetPlatformTemplateByName(ctx, name)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "template not found")
 		return
 	}
@@ -231,14 +232,17 @@ func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{Name: name})); err != nil {
+		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{
+			TeamId:     formatUUIDForRPC(tmpl.TeamID),
+			TemplateId: formatUUIDForRPC(tmpl.ID),
+		})); err != nil {
 			if connect.CodeOf(err) != connect.CodeNotFound {
 				slog.Warn("admin: failed to delete template on host", "host_id", id.FormatHostID(host.ID), "name", name, "error", err)
 			}
 		}
 	}
 
-	if err := h.db.DeleteTemplate(ctx, name); err != nil {
+	if err := h.db.DeleteTemplate(ctx, tmpl.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete template record")
 		return
 	}

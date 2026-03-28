@@ -82,10 +82,21 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		p.DiskSizeMB = 5120 // 5 GB default
 	}
 
-	// If the template is a snapshot, use its baked-in vcpus/memory.
-	if tmpl, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: p.Template, TeamID: p.TeamID}); err == nil && tmpl.Type == "snapshot" {
-		p.VCPUs = tmpl.Vcpus
-		p.MemoryMB = tmpl.MemoryMb
+	// Resolve template name → (teamID, templateID).
+	templateTeamID := id.PlatformTeamID
+	templateID := id.MinimalTemplateID
+	if p.Template != "minimal" {
+		tmpl, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: p.Template, TeamID: p.TeamID})
+		if err != nil {
+			return db.Sandbox{}, fmt.Errorf("template %q not found: %w", p.Template, err)
+		}
+		templateTeamID = tmpl.TeamID
+		templateID = tmpl.ID
+		// If the template is a snapshot, use its baked-in vcpus/memory.
+		if tmpl.Type == "snapshot" {
+			p.VCPUs = tmpl.Vcpus
+			p.MemoryMB = tmpl.MemoryMb
+		}
 	}
 
 	if !p.TeamID.Valid {
@@ -113,15 +124,17 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 
 	if _, err := s.DB.InsertSandbox(ctx, db.InsertSandboxParams{
-		ID:         sandboxID,
-		TeamID:     p.TeamID,
-		HostID:     host.ID,
-		Template:   p.Template,
-		Status:     "pending",
-		Vcpus:      p.VCPUs,
-		MemoryMb:   p.MemoryMB,
-		TimeoutSec: p.TimeoutSec,
-		DiskSizeMb: p.DiskSizeMB,
+		ID:             sandboxID,
+		TeamID:         p.TeamID,
+		HostID:         host.ID,
+		Template:       p.Template,
+		Status:         "pending",
+		Vcpus:          p.VCPUs,
+		MemoryMb:       p.MemoryMB,
+		TimeoutSec:     p.TimeoutSec,
+		DiskSizeMb:     p.DiskSizeMB,
+		TemplateID:     templateID,
+		TemplateTeamID: templateTeamID,
 	}); err != nil {
 		return db.Sandbox{}, fmt.Errorf("insert sandbox: %w", err)
 	}
@@ -129,6 +142,8 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	resp, err := agent.CreateSandbox(ctx, connect.NewRequest(&pb.CreateSandboxRequest{
 		SandboxId:  sandboxIDStr,
 		Template:   p.Template,
+		TeamId:     id.UUIDString(templateTeamID),
+		TemplateId: id.UUIDString(templateID),
 		Vcpus:      p.VCPUs,
 		MemoryMb:   p.MemoryMB,
 		TimeoutSec: p.TimeoutSec,

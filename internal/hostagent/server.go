@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
@@ -33,13 +35,35 @@ func NewServer(mgr *sandbox.Manager, terminate func()) *Server {
 	return &Server{mgr: mgr, terminate: terminate}
 }
 
+// parseUUIDString parses a UUID hex string into a pgtype.UUID.
+// An empty string yields an all-zeros UUID (valid).
+func parseUUIDString(s string) (pgtype.UUID, error) {
+	if s == "" {
+		return pgtype.UUID{Bytes: [16]byte{}, Valid: true}, nil
+	}
+	parsed, err := uuid.Parse(s)
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("invalid UUID %q: %w", s, err)
+	}
+	return pgtype.UUID{Bytes: parsed, Valid: true}, nil
+}
+
 func (s *Server) CreateSandbox(
 	ctx context.Context,
 	req *connect.Request[pb.CreateSandboxRequest],
 ) (*connect.Response[pb.CreateSandboxResponse], error) {
 	msg := req.Msg
 
-	sb, err := s.mgr.Create(ctx, msg.SandboxId, msg.Template, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb))
+	teamID, err := parseUUIDString(msg.TeamId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err := parseUUIDString(msg.TemplateId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	sb, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create sandbox: %w", err))
 	}
@@ -90,12 +114,22 @@ func (s *Server) CreateSnapshot(
 	ctx context.Context,
 	req *connect.Request[pb.CreateSnapshotRequest],
 ) (*connect.Response[pb.CreateSnapshotResponse], error) {
-	sizeBytes, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, req.Msg.Name)
+	msg := req.Msg
+	teamID, err := parseUUIDString(msg.TeamId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err := parseUUIDString(msg.TemplateId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	sizeBytes, err := s.mgr.CreateSnapshot(ctx, msg.SandboxId, teamID, templateID)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create snapshot: %w", err))
 	}
 	return connect.NewResponse(&pb.CreateSnapshotResponse{
-		Name:      req.Msg.Name,
+		Name:      msg.Name,
 		SizeBytes: sizeBytes,
 	}), nil
 }
@@ -104,7 +138,17 @@ func (s *Server) DeleteSnapshot(
 	ctx context.Context,
 	req *connect.Request[pb.DeleteSnapshotRequest],
 ) (*connect.Response[pb.DeleteSnapshotResponse], error) {
-	if err := s.mgr.DeleteSnapshot(req.Msg.Name); err != nil {
+	msg := req.Msg
+	teamID, err := parseUUIDString(msg.TeamId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err := parseUUIDString(msg.TemplateId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	if err := s.mgr.DeleteSnapshot(teamID, templateID); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("delete snapshot: %w", err))
 	}
 	return connect.NewResponse(&pb.DeleteSnapshotResponse{}), nil
@@ -114,7 +158,17 @@ func (s *Server) FlattenRootfs(
 	ctx context.Context,
 	req *connect.Request[pb.FlattenRootfsRequest],
 ) (*connect.Response[pb.FlattenRootfsResponse], error) {
-	sizeBytes, err := s.mgr.FlattenRootfs(ctx, req.Msg.SandboxId, req.Msg.Name)
+	msg := req.Msg
+	teamID, err := parseUUIDString(msg.TeamId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err := parseUUIDString(msg.TemplateId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	sizeBytes, err := s.mgr.FlattenRootfs(ctx, msg.SandboxId, teamID, templateID)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("flatten rootfs: %w", err))
 	}
@@ -413,7 +467,8 @@ func (s *Server) ListSandboxes(
 		infos[i] = &pb.SandboxInfo{
 			SandboxId:        sb.ID,
 			Status:           string(sb.Status),
-			Template:         sb.Template,
+			TeamId:           uuid.UUID(sb.TemplateTeamID).String(),
+			TemplateId:       uuid.UUID(sb.TemplateID).String(),
 			Vcpus:            int32(sb.VCPUs),
 			MemoryMb:         int32(sb.MemoryMB),
 			HostIp:           sb.HostIP.String(),

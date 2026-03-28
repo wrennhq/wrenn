@@ -83,21 +83,23 @@ type OauthProvider struct {
 }
 
 type Sandbox struct {
-	ID           pgtype.UUID        `json:"id"`
-	TeamID       pgtype.UUID        `json:"team_id"`
-	HostID       pgtype.UUID        `json:"host_id"`
-	Template     string             `json:"template"`
-	Status       string             `json:"status"`
-	Vcpus        int32              `json:"vcpus"`
-	MemoryMb     int32              `json:"memory_mb"`
-	TimeoutSec   int32              `json:"timeout_sec"`
-	DiskSizeMb   int32              `json:"disk_size_mb"`
-	GuestIp      string             `json:"guest_ip"`
-	HostIp       string             `json:"host_ip"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	StartedAt    pgtype.Timestamptz `json:"started_at"`
-	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
-	LastUpdated  pgtype.Timestamptz `json:"last_updated"`
+	ID             pgtype.UUID        `json:"id"`
+	TeamID         pgtype.UUID        `json:"team_id"`
+	HostID         pgtype.UUID        `json:"host_id"`
+	Template       string             `json:"template"`
+	Status         string             `json:"status"`
+	Vcpus          int32              `json:"vcpus"`
+	MemoryMb       int32              `json:"memory_mb"`
+	TimeoutSec     int32              `json:"timeout_sec"`
+	DiskSizeMb     int32              `json:"disk_size_mb"`
+	GuestIp        string             `json:"guest_ip"`
+	HostIp         string             `json:"host_ip"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	LastActiveAt   pgtype.Timestamptz `json:"last_active_at"`
+	LastUpdated    pgtype.Timestamptz `json:"last_updated"`
+	TemplateID     pgtype.UUID        `json:"template_id"`
+	TemplateTeamID pgtype.UUID        `json:"template_team_id"`
 }
 
 type SandboxMetricPoint struct {
@@ -146,6 +148,7 @@ type Template struct {
 	SizeBytes int64              `json:"size_bytes"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	TeamID    pgtype.UUID        `json:"team_id"`
+	ID        pgtype.UUID        `json:"id"`
 }
 
 type TemplateBuild struct {
@@ -166,6 +169,8 @@ type TemplateBuild struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	StartedAt    pgtype.Timestamptz `json:"started_at"`
 	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+	TemplateID   pgtype.UUID        `json:"template_id"`
+	TeamID       pgtype.UUID        `json:"team_id"`
 }
 
 type User struct {

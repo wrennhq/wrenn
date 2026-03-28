@@ -12,7 +12,7 @@ import (
 )
 
 const getTemplateBuild = `-- name: GetTemplateBuild :one
-SELECT id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at FROM template_builds WHERE id = $1
+SELECT id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id FROM template_builds WHERE id = $1
 `
 
 func (q *Queries) GetTemplateBuild(ctx context.Context, id pgtype.UUID) (TemplateBuild, error) {
@@ -36,14 +36,16 @@ func (q *Queries) GetTemplateBuild(ctx context.Context, id pgtype.UUID) (Templat
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.TemplateID,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const insertTemplateBuild = `-- name: InsertTemplateBuild :one
-INSERT INTO template_builds (id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, total_steps)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)
-RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at
+INSERT INTO template_builds (id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, total_steps, template_id, team_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10)
+RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id
 `
 
 type InsertTemplateBuildParams struct {
@@ -55,6 +57,8 @@ type InsertTemplateBuildParams struct {
 	Vcpus        int32       `json:"vcpus"`
 	MemoryMb     int32       `json:"memory_mb"`
 	TotalSteps   int32       `json:"total_steps"`
+	TemplateID   pgtype.UUID `json:"template_id"`
+	TeamID       pgtype.UUID `json:"team_id"`
 }
 
 func (q *Queries) InsertTemplateBuild(ctx context.Context, arg InsertTemplateBuildParams) (TemplateBuild, error) {
@@ -67,6 +71,8 @@ func (q *Queries) InsertTemplateBuild(ctx context.Context, arg InsertTemplateBui
 		arg.Vcpus,
 		arg.MemoryMb,
 		arg.TotalSteps,
+		arg.TemplateID,
+		arg.TeamID,
 	)
 	var i TemplateBuild
 	err := row.Scan(
@@ -87,12 +93,14 @@ func (q *Queries) InsertTemplateBuild(ctx context.Context, arg InsertTemplateBui
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.TemplateID,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const listTemplateBuilds = `-- name: ListTemplateBuilds :many
-SELECT id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at FROM template_builds ORDER BY created_at DESC
+SELECT id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id FROM template_builds ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTemplateBuilds(ctx context.Context) ([]TemplateBuild, error) {
@@ -122,6 +130,8 @@ func (q *Queries) ListTemplateBuilds(ctx context.Context) ([]TemplateBuild, erro
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.TemplateID,
+			&i.TeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -189,7 +199,7 @@ SET status = $2,
     started_at = CASE WHEN $2 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
     completed_at = CASE WHEN $2 IN ('success', 'failed') THEN NOW() ELSE completed_at END
 WHERE id = $1
-RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at
+RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id
 `
 
 type UpdateBuildStatusParams struct {
@@ -218,6 +228,8 @@ func (q *Queries) UpdateBuildStatus(ctx context.Context, arg UpdateBuildStatusPa
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.TemplateID,
+		&i.TeamID,
 	)
 	return i, err
 }

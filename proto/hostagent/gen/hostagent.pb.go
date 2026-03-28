@@ -25,7 +25,7 @@ type CreateSandboxRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Sandbox ID assigned by the control plane. If empty, the host agent generates one.
 	SandboxId string `protobuf:"bytes,5,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	// Template name (e.g., "minimal", "python311"). Determines base rootfs.
+	// Deprecated: use team_id + template_id instead.
 	Template string `protobuf:"bytes,1,opt,name=template,proto3" json:"template,omitempty"`
 	// Number of virtual CPUs (default: 1).
 	Vcpus int32 `protobuf:"varint,2,opt,name=vcpus,proto3" json:"vcpus,omitempty"`
@@ -36,7 +36,11 @@ type CreateSandboxRequest struct {
 	TimeoutSec int32 `protobuf:"varint,4,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
 	// Disk size in MB for the rootfs. Base images are expanded to this size
 	// at host agent startup. Default: 5120 (5 GB).
-	DiskSizeMb    int32 `protobuf:"varint,6,opt,name=disk_size_mb,json=diskSizeMb,proto3" json:"disk_size_mb,omitempty"`
+	DiskSizeMb int32 `protobuf:"varint,6,opt,name=disk_size_mb,json=diskSizeMb,proto3" json:"disk_size_mb,omitempty"`
+	// Team UUID that owns the template (hex string). All-zeros = platform.
+	TeamId string `protobuf:"bytes,7,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	// Template UUID (hex string). Both zeros + team zeros = "minimal" sentinel.
+	TemplateId    string `protobuf:"bytes,8,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -111,6 +115,20 @@ func (x *CreateSandboxRequest) GetDiskSizeMb() int32 {
 		return x.DiskSizeMb
 	}
 	return 0
+}
+
+func (x *CreateSandboxRequest) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *CreateSandboxRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
 }
 
 type CreateSandboxResponse struct {
@@ -448,9 +466,14 @@ func (x *ResumeSandboxResponse) GetHostIp() string {
 }
 
 type CreateSnapshotRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	// Deprecated: use team_id + template_id instead.
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// Team UUID that will own the new template.
+	TeamId string `protobuf:"bytes,3,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	// Template UUID for the new snapshot template.
+	TemplateId    string `protobuf:"bytes,4,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -495,6 +518,20 @@ func (x *CreateSnapshotRequest) GetSandboxId() string {
 func (x *CreateSnapshotRequest) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateSnapshotRequest) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *CreateSnapshotRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
 	}
 	return ""
 }
@@ -552,8 +589,13 @@ func (x *CreateSnapshotResponse) GetSizeBytes() int64 {
 }
 
 type DeleteSnapshotRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Deprecated: use team_id + template_id instead.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// Team UUID that owns the template.
+	TeamId string `protobuf:"bytes,2,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	// Template UUID to delete.
+	TemplateId    string `protobuf:"bytes,3,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -591,6 +633,20 @@ func (*DeleteSnapshotRequest) Descriptor() ([]byte, []int) {
 func (x *DeleteSnapshotRequest) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *DeleteSnapshotRequest) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *DeleteSnapshotRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
 	}
 	return ""
 }
@@ -851,16 +907,19 @@ func (x *ListSandboxesResponse) GetAutoPausedSandboxIds() []string {
 }
 
 type SandboxInfo struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId        string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	Status           string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	Template         string                 `protobuf:"bytes,3,opt,name=template,proto3" json:"template,omitempty"`
-	Vcpus            int32                  `protobuf:"varint,4,opt,name=vcpus,proto3" json:"vcpus,omitempty"`
-	MemoryMb         int32                  `protobuf:"varint,5,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
-	HostIp           string                 `protobuf:"bytes,6,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
-	CreatedAtUnix    int64                  `protobuf:"varint,7,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
-	LastActiveAtUnix int64                  `protobuf:"varint,8,opt,name=last_active_at_unix,json=lastActiveAtUnix,proto3" json:"last_active_at_unix,omitempty"`
-	TimeoutSec       int32                  `protobuf:"varint,9,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	Status    string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	// Deprecated: use team_id + template_id instead.
+	Template         string `protobuf:"bytes,3,opt,name=template,proto3" json:"template,omitempty"`
+	Vcpus            int32  `protobuf:"varint,4,opt,name=vcpus,proto3" json:"vcpus,omitempty"`
+	MemoryMb         int32  `protobuf:"varint,5,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
+	HostIp           string `protobuf:"bytes,6,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
+	CreatedAtUnix    int64  `protobuf:"varint,7,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
+	LastActiveAtUnix int64  `protobuf:"varint,8,opt,name=last_active_at_unix,json=lastActiveAtUnix,proto3" json:"last_active_at_unix,omitempty"`
+	TimeoutSec       int32  `protobuf:"varint,9,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	TeamId           string `protobuf:"bytes,10,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	TemplateId       string `protobuf:"bytes,11,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -956,6 +1015,20 @@ func (x *SandboxInfo) GetTimeoutSec() int32 {
 		return x.TimeoutSec
 	}
 	return 0
+}
+
+func (x *SandboxInfo) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *SandboxInfo) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
 }
 
 type WriteFileRequest struct {
@@ -2182,9 +2255,14 @@ func (x *FlushSandboxMetricsResponse) GetPoints_24H() []*MetricPoint {
 }
 
 type FlattenRootfsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"` // template name — output written to images/{name}/rootfs.ext4
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	// Deprecated: use team_id + template_id instead.
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// Team UUID that will own the resulting template.
+	TeamId string `protobuf:"bytes,3,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	// Template UUID for the output.
+	TemplateId    string `protobuf:"bytes,4,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2229,6 +2307,20 @@ func (x *FlattenRootfsRequest) GetSandboxId() string {
 func (x *FlattenRootfsRequest) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *FlattenRootfsRequest) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *FlattenRootfsRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
 	}
 	return ""
 }
@@ -2281,7 +2373,7 @@ var File_hostagent_proto protoreflect.FileDescriptor
 
 const file_hostagent_proto_rawDesc = "" +
 	"\n" +
-	"\x0fhostagent.proto\x12\fhostagent.v1\"\xc7\x01\n" +
+	"\x0fhostagent.proto\x12\fhostagent.v1\"\x81\x02\n" +
 	"\x14CreateSandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x05 \x01(\tR\tsandboxId\x12\x1a\n" +
@@ -2291,7 +2383,10 @@ const file_hostagent_proto_rawDesc = "" +
 	"\vtimeout_sec\x18\x04 \x01(\x05R\n" +
 	"timeoutSec\x12 \n" +
 	"\fdisk_size_mb\x18\x06 \x01(\x05R\n" +
-	"diskSizeMb\"g\n" +
+	"diskSizeMb\x12\x17\n" +
+	"\ateam_id\x18\a \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\b \x01(\tR\n" +
+	"templateId\"g\n" +
 	"\x15CreateSandboxResponse\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
@@ -2314,17 +2409,23 @@ const file_hostagent_proto_rawDesc = "" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x17\n" +
-	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\"J\n" +
+	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\"\x84\x01\n" +
 	"\x15CreateSnapshotRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"K\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x17\n" +
+	"\ateam_id\x18\x03 \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\x04 \x01(\tR\n" +
+	"templateId\"K\n" +
 	"\x16CreateSnapshotResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"+\n" +
+	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"e\n" +
 	"\x15DeleteSnapshotRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\x18\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x17\n" +
+	"\ateam_id\x18\x02 \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\x03 \x01(\tR\n" +
+	"templateId\"\x18\n" +
 	"\x16DeleteSnapshotResponse\"s\n" +
 	"\vExecRequest\x12\x1d\n" +
 	"\n" +
@@ -2340,7 +2441,7 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x14ListSandboxesRequest\"\x87\x01\n" +
 	"\x15ListSandboxesResponse\x127\n" +
 	"\tsandboxes\x18\x01 \x03(\v2\x19.hostagent.v1.SandboxInfoR\tsandboxes\x125\n" +
-	"\x17auto_paused_sandbox_ids\x18\x02 \x03(\tR\x14autoPausedSandboxIds\"\xa4\x02\n" +
+	"\x17auto_paused_sandbox_ids\x18\x02 \x03(\tR\x14autoPausedSandboxIds\"\xde\x02\n" +
 	"\vSandboxInfo\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
@@ -2352,7 +2453,11 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x0fcreated_at_unix\x18\a \x01(\x03R\rcreatedAtUnix\x12-\n" +
 	"\x13last_active_at_unix\x18\b \x01(\x03R\x10lastActiveAtUnix\x12\x1f\n" +
 	"\vtimeout_sec\x18\t \x01(\x05R\n" +
-	"timeoutSec\"_\n" +
+	"timeoutSec\x12\x17\n" +
+	"\ateam_id\x18\n" +
+	" \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\v \x01(\tR\n" +
+	"templateId\"_\n" +
 	"\x10WriteFileRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
@@ -2427,11 +2532,14 @@ const file_hostagent_proto_rawDesc = "" +
 	"points_10m\x18\x01 \x03(\v2\x19.hostagent.v1.MetricPointR\tpoints10m\x126\n" +
 	"\tpoints_2h\x18\x02 \x03(\v2\x19.hostagent.v1.MetricPointR\bpoints2h\x128\n" +
 	"\n" +
-	"points_24h\x18\x03 \x03(\v2\x19.hostagent.v1.MetricPointR\tpoints24h\"I\n" +
+	"points_24h\x18\x03 \x03(\v2\x19.hostagent.v1.MetricPointR\tpoints24h\"\x83\x01\n" +
 	"\x14FlattenRootfsRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"6\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x17\n" +
+	"\ateam_id\x18\x03 \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\x04 \x01(\tR\n" +
+	"templateId\"6\n" +
 	"\x15FlattenRootfsResponse\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x01 \x01(\x03R\tsizeBytes2\xc8\f\n" +

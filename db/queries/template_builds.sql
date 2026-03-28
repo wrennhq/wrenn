@@ -1,6 +1,6 @@
 -- name: InsertTemplateBuild :one
-INSERT INTO template_builds (id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, total_steps)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)
+INSERT INTO template_builds (id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, total_steps, template_id, team_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10)
 RETURNING *;
 
 -- name: GetTemplateBuild :one
