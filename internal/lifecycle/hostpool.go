@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,14 +20,33 @@ type HostClientPool struct {
 	mu         sync.RWMutex
 	clients    map[string]hostagentv1connect.HostAgentServiceClient
 	httpClient *http.Client
+	scheme     string // "http://" or "https://"
 }
 
-// NewHostClientPool creates a new pool. The underlying HTTP client uses a
-// 10-minute timeout to support long-running streaming operations.
+// NewHostClientPool creates a pool that connects to agents over plain HTTP.
+// Use NewHostClientPoolTLS when mTLS is required.
 func NewHostClientPool() *HostClientPool {
 	return &HostClientPool{
 		clients:    make(map[string]hostagentv1connect.HostAgentServiceClient),
 		httpClient: &http.Client{Timeout: 10 * time.Minute},
+		scheme:     "http://",
+	}
+}
+
+// NewHostClientPoolTLS creates a pool that connects to agents over mTLS.
+// tlsCfg should already carry the CP client cert and CA trust anchor
+// (use auth.CPClientTLSConfig to construct it).
+func NewHostClientPoolTLS(tlsCfg *tls.Config) *HostClientPool {
+	transport := &http.Transport{
+		TLSClientConfig: tlsCfg,
+	}
+	return &HostClientPool{
+		clients: make(map[string]hostagentv1connect.HostAgentServiceClient),
+		httpClient: &http.Client{
+			Timeout:   10 * time.Minute,
+			Transport: transport,
+		},
+		scheme: "https://",
 	}
 }
 
@@ -46,7 +66,7 @@ func (p *HostClientPool) Get(hostID, address string) hostagentv1connect.HostAgen
 	if c, ok = p.clients[hostID]; ok {
 		return c
 	}
-	c = hostagentv1connect.NewHostAgentServiceClient(p.httpClient, EnsureScheme(address))
+	c = hostagentv1connect.NewHostAgentServiceClient(p.httpClient, p.ensureScheme(address))
 	p.clients[hostID] = c
 	return c
 }
@@ -69,7 +89,34 @@ func (p *HostClientPool) Evict(hostID string) {
 	p.mu.Unlock()
 }
 
+// ensureScheme prepends the pool's configured scheme if the address has none.
+func (p *HostClientPool) ensureScheme(addr string) string {
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+	return p.scheme + addr
+}
+
+// Transport returns the http.RoundTripper used by this pool. Use this when you
+// need to make raw HTTP requests to agent addresses with the same TLS settings
+// as the pool's Connect RPC clients (e.g., the sandbox reverse proxy).
+func (p *HostClientPool) Transport() http.RoundTripper {
+	if p.httpClient.Transport != nil {
+		return p.httpClient.Transport
+	}
+	return http.DefaultTransport
+}
+
+// ResolveAddr prepends the pool's configured scheme to addr if it has none.
+// Use this when constructing URLs that must use the same transport as the pool
+// (e.g., the sandbox proxy handler). Calling Get/GetForHost internally does
+// the same thing, but ResolveAddr exposes it for callers that only need the URL.
+func (p *HostClientPool) ResolveAddr(addr string) string {
+	return p.ensureScheme(addr)
+}
+
 // EnsureScheme adds "http://" if the address has no scheme.
+// Deprecated: use pool.ResolveAddr which respects the pool's TLS setting.
 func EnsureScheme(addr string) string {
 	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
 		return addr

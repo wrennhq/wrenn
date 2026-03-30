@@ -48,7 +48,7 @@ type Host struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 	CertFingerprint  string             `json:"cert_fingerprint"`
-	MtlsEnabled      bool               `json:"mtls_enabled"`
+	CertExpiresAt    pgtype.Timestamptz `json:"cert_expires_at"`
 }
 
 type HostRefreshToken struct {
@@ -171,6 +171,7 @@ type TemplateBuild struct {
 	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
 	TemplateID   pgtype.UUID        `json:"template_id"`
 	TeamID       pgtype.UUID        `json:"team_id"`
+	SkipPrePost  bool               `json:"skip_pre_post"`
 }
 
 type User struct {

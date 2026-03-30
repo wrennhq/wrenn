@@ -27,6 +27,7 @@ type HostService struct {
 	Redis *redis.Client
 	JWT   []byte
 	Pool  *lifecycle.HostClientPool
+	CA    *auth.CA // nil disables mTLS cert issuance (dev/test environments)
 }
 
 // HostCreateParams holds the parameters for creating a host.
@@ -55,18 +56,28 @@ type HostRegisterParams struct {
 	Address  string
 }
 
-// HostRegisterResult holds the registered host, its short-lived JWT, and a long-lived refresh token.
+// HostRegisterResult holds the registered host, its short-lived JWT, a long-lived
+// refresh token, and optionally the host's mTLS certificate material.
 type HostRegisterResult struct {
 	Host         db.Host
 	JWT          string
 	RefreshToken string
+	// mTLS cert material — empty when CA is not configured.
+	CertPEM   string
+	KeyPEM    string
+	CACertPEM string
 }
 
-// HostRefreshResult holds a new JWT and rotated refresh token after a successful refresh.
+// HostRefreshResult holds a new JWT and rotated refresh token after a successful
+// refresh, plus refreshed mTLS certificate material when CA is configured.
 type HostRefreshResult struct {
 	Host         db.Host
 	JWT          string
 	RefreshToken string
+	// mTLS cert material — empty when CA is not configured.
+	CertPEM   string
+	KeyPEM    string
+	CACertPEM string
 }
 
 // HostDeletePreview describes what will be affected by deleting a host.
@@ -268,14 +279,25 @@ func (s *HostService) Register(ctx context.Context, p HostRegisterParams) (HostR
 		return HostRegisterResult{}, fmt.Errorf("sign host token: %w", err)
 	}
 
+	// Issue mTLS certificate if CA is configured.
+	var hc auth.HostCert
+	if s.CA != nil {
+		hc, err = auth.IssueHostCert(s.CA, id.FormatHostID(hostID), p.Address)
+		if err != nil {
+			return HostRegisterResult{}, fmt.Errorf("issue host cert: %w", err)
+		}
+	}
+
 	// Atomically update only if still pending (defense-in-depth against races).
 	rowsAffected, err := s.DB.RegisterHost(ctx, db.RegisterHostParams{
-		ID:       hostID,
-		Arch:     p.Arch,
-		CpuCores: p.CPUCores,
-		MemoryMb: p.MemoryMB,
-		DiskGb:   p.DiskGB,
-		Address:  p.Address,
+		ID:              hostID,
+		Arch:            p.Arch,
+		CpuCores:        p.CPUCores,
+		MemoryMb:        p.MemoryMB,
+		DiskGb:          p.DiskGB,
+		Address:         p.Address,
+		CertFingerprint: hc.Fingerprint,
+		CertExpiresAt:   pgtype.Timestamptz{Time: hc.ExpiresAt, Valid: s.CA != nil},
 	})
 	if err != nil {
 		return HostRegisterResult{}, fmt.Errorf("register host: %w", err)
@@ -301,7 +323,13 @@ func (s *HostService) Register(ctx context.Context, p HostRegisterParams) (HostR
 		return HostRegisterResult{}, fmt.Errorf("fetch updated host: %w", err)
 	}
 
-	return HostRegisterResult{Host: host, JWT: hostJWT, RefreshToken: refreshToken}, nil
+	result := HostRegisterResult{Host: host, JWT: hostJWT, RefreshToken: refreshToken}
+	if s.CA != nil {
+		result.CertPEM = hc.CertPEM
+		result.KeyPEM = hc.KeyPEM
+		result.CACertPEM = s.CA.PEM
+	}
+	return result, nil
 }
 
 // Refresh validates a refresh token, rotates it (revokes old, issues new),
@@ -328,6 +356,22 @@ func (s *HostService) Refresh(ctx context.Context, refreshToken string) (HostRef
 		return HostRefreshResult{}, fmt.Errorf("sign host JWT: %w", err)
 	}
 
+	// Renew mTLS certificate if CA is configured.
+	var hc auth.HostCert
+	if s.CA != nil {
+		hc, err = auth.IssueHostCert(s.CA, id.FormatHostID(host.ID), host.Address)
+		if err != nil {
+			return HostRefreshResult{}, fmt.Errorf("renew host cert: %w", err)
+		}
+		if err := s.DB.UpdateHostCert(ctx, db.UpdateHostCertParams{
+			ID:              host.ID,
+			CertFingerprint: hc.Fingerprint,
+			CertExpiresAt:   pgtype.Timestamptz{Time: hc.ExpiresAt, Valid: true},
+		}); err != nil {
+			return HostRefreshResult{}, fmt.Errorf("update host cert: %w", err)
+		}
+	}
+
 	// Issue-then-revoke rotation: insert new token first so a crash between
 	// the two DB calls leaves the host with two valid tokens rather than zero.
 	newRefreshToken, err := s.issueRefreshToken(ctx, host.ID)
@@ -340,7 +384,13 @@ func (s *HostService) Refresh(ctx context.Context, refreshToken string) (HostRef
 		return HostRefreshResult{}, fmt.Errorf("revoke old refresh token: %w", err)
 	}
 
-	return HostRefreshResult{Host: host, JWT: hostJWT, RefreshToken: newRefreshToken}, nil
+	result := HostRefreshResult{Host: host, JWT: hostJWT, RefreshToken: newRefreshToken}
+	if s.CA != nil {
+		result.CertPEM = hc.CertPEM
+		result.KeyPEM = hc.KeyPEM
+		result.CACertPEM = s.CA.PEM
+	}
+	return result, nil
 }
 
 // issueRefreshToken creates a new refresh token record in the DB and returns

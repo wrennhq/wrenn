@@ -13,6 +13,11 @@ type Config struct {
 	ListenAddr  string
 	JWTSecret   string
 
+	// mTLS — CP→Agent channel. Both must be set to enable mTLS; omitting either
+	// disables cert issuance and leaves agent connections on plain HTTP (dev mode).
+	CACert string // WRENN_CA_CERT — PEM-encoded internal CA certificate
+	CAKey  string // WRENN_CA_KEY  — PEM-encoded internal CA private key
+
 	OAuthGitHubClientID     string
 	OAuthGitHubClientSecret string
 	OAuthRedirectURL        string
@@ -30,6 +35,9 @@ func Load() Config {
 		RedisURL:    envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
 		ListenAddr:  envOrDefault("WRENN_CP_LISTEN_ADDR", ":8080"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
+
+		CACert: os.Getenv("WRENN_CA_CERT"),
+		CAKey:  os.Getenv("WRENN_CA_KEY"),
 
 		OAuthGitHubClientID:     os.Getenv("OAUTH_GITHUB_CLIENT_ID"),
 		OAuthGitHubClientSecret: os.Getenv("OAUTH_GITHUB_CLIENT_SECRET"),

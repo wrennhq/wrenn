@@ -49,6 +49,9 @@ type refreshTokenResponse struct {
 	Host         hostResponse `json:"host"`
 	Token        string       `json:"token"`
 	RefreshToken string       `json:"refresh_token"`
+	CertPEM      string       `json:"cert_pem,omitempty"`
+	KeyPEM       string       `json:"key_pem,omitempty"`
+	CACertPEM    string       `json:"ca_cert_pem,omitempty"`
 }
 
 type deletePreviewResponse struct {
@@ -69,6 +72,9 @@ type registerHostResponse struct {
 	Host         hostResponse `json:"host"`
 	Token        string       `json:"token"`
 	RefreshToken string       `json:"refresh_token"`
+	CertPEM      string       `json:"cert_pem,omitempty"`
+	KeyPEM       string       `json:"key_pem,omitempty"`
+	CACertPEM    string       `json:"ca_cert_pem,omitempty"`
 }
 
 type addTagRequest struct {
@@ -388,6 +394,9 @@ func (h *hostHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Host:         hostToResponse(result.Host),
 		Token:        result.JWT,
 		RefreshToken: result.RefreshToken,
+		CertPEM:      result.CertPEM,
+		KeyPEM:       result.KeyPEM,
+		CACertPEM:    result.CACertPEM,
 	})
 }
 
@@ -501,6 +510,9 @@ func (h *hostHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		Host:         hostToResponse(result.Host),
 		Token:        result.JWT,
 		RefreshToken: result.RefreshToken,
+		CertPEM:      result.CertPEM,
+		KeyPEM:       result.KeyPEM,
+		CACertPEM:    result.CACertPEM,
 	})
 }
 

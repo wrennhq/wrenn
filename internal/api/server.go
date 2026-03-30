@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
@@ -36,6 +37,7 @@ func New(
 	jwtSecret []byte,
 	oauthRegistry *oauth.Registry,
 	oauthRedirectURL string,
+	ca *auth.CA,
 ) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
@@ -44,7 +46,7 @@ func New(
 	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
 	apiKeySvc := &service.APIKeyService{DB: queries}
 	templateSvc := &service.TemplateService{DB: queries}
-	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool}
+	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
 	auditSvc := &service.AuditService{DB: queries}
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
@@ -182,6 +184,7 @@ func New(
 		r.Post("/builds", buildH.Create)
 		r.Get("/builds", buildH.List)
 		r.Get("/builds/{id}", buildH.Get)
+		r.Post("/builds/{id}/cancel", buildH.Cancel)
 	})
 
 	return &Server{router: r, BuildSvc: buildSvc}

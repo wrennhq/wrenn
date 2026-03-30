@@ -42,7 +42,7 @@ func NewSandboxProxyWrapper(inner http.Handler, queries *db.Queries, pool *lifec
 		inner:     inner,
 		db:        queries,
 		pool:      pool,
-		transport: http.DefaultTransport,
+		transport: pool.Transport(),
 	}
 }
 
@@ -110,7 +110,7 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	agentAddr := lifecycle.EnsureScheme(agentHost.Address)
+	agentAddr := h.pool.ResolveAddr(agentHost.Address)
 	upstreamPath := fmt.Sprintf("/proxy/%s/%s%s", sandboxIDStr, port, r.URL.Path)
 
 	target, err := url.Parse(agentAddr)

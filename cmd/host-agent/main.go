@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/devicemapper"
 	"git.omukk.dev/wrenn/sandbox/internal/hostagent"
 	"git.omukk.dev/wrenn/sandbox/internal/network"
@@ -50,7 +53,7 @@ func main() {
 	listenAddr := envOrDefault("WRENN_HOST_LISTEN_ADDR", ":50051")
 	rootDir := envOrDefault("WRENN_DIR", "/var/lib/wrenn")
 	cpURL := os.Getenv("WRENN_CP_URL")
-	tokenFile := filepath.Join(rootDir, "host.jwt")
+	credsFile := filepath.Join(rootDir, "host-credentials.json")
 
 	if cpURL == "" {
 		slog.Error("WRENN_CP_URL environment variable is required")
@@ -80,10 +83,10 @@ func main() {
 	mgr.StartTTLReaper(ctx)
 
 	// Register with the control plane and start heartbeating.
-	hostToken, err := hostagent.Register(ctx, hostagent.RegistrationConfig{
+	creds, err := hostagent.Register(ctx, hostagent.RegistrationConfig{
 		CPURL:             cpURL,
 		RegistrationToken: *registrationToken,
-		TokenFile:         tokenFile,
+		TokenFile:         credsFile,
 		Address:           *advertiseAddr,
 	})
 	if err != nil {
@@ -91,16 +94,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	hostID, err := hostagent.HostIDFromToken(hostToken)
-	if err != nil {
-		slog.Error("failed to extract host ID from token", "error", err)
-		os.Exit(1)
-	}
-
-	slog.Info("host registered", "host_id", hostID)
+	slog.Info("host registered", "host_id", creds.HostID)
 
 	// httpServer is declared here so the shutdown func can reference it.
 	httpServer := &http.Server{Addr: listenAddr}
+
+	// Set up mTLS if the CP issued a certificate during registration.
+	var certStore hostagent.CertStore
+	if creds.CertPEM != "" && creds.KeyPEM != "" && creds.CACertPEM != "" {
+		if err := certStore.ParseAndStore(creds.CertPEM, creds.KeyPEM); err != nil {
+			slog.Error("failed to load host TLS certificate", "error", err)
+			os.Exit(1)
+		}
+		tlsCfg := auth.AgentTLSConfigFromPEM(creds.CACertPEM, certStore.GetCert)
+		if tlsCfg == nil {
+			slog.Error("failed to build agent TLS config: invalid CA certificate PEM")
+			os.Exit(1)
+		}
+		httpServer.TLSConfig = tlsCfg
+		slog.Info("mTLS enabled on agent server")
+	} else {
+		slog.Warn("mTLS disabled: no certificate received from CP — agent serving plain HTTP")
+	}
 
 	// doShutdown is the single shutdown path. sync.Once ensures mgr.Shutdown
 	// and httpServer.Shutdown are each called exactly once regardless of
@@ -134,7 +149,7 @@ func main() {
 
 	// Start heartbeat loop. Handler must be set before this because the
 	// immediate beat can trigger doShutdown → httpServer.Shutdown synchronously.
-	hostagent.StartHeartbeat(ctx, cpURL, tokenFile, hostID, 30*time.Second,
+	hostagent.StartHeartbeat(ctx, cpURL, credsFile, creds.HostID, 30*time.Second,
 		// pauseAll: called on 3 consecutive network failures.
 		func() {
 			pauseCtx, pauseCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -144,6 +159,17 @@ func main() {
 		// onDeleted: called when CP returns 404 (host was deleted).
 		func() {
 			doShutdown("host deleted from CP")
+		},
+		// onCredsRefreshed: hot-swap the TLS certificate after a JWT refresh.
+		func(tf *hostagent.TokenFile) {
+			if tf.CertPEM == "" || tf.KeyPEM == "" {
+				return
+			}
+			if err := certStore.ParseAndStore(tf.CertPEM, tf.KeyPEM); err != nil {
+				slog.Error("failed to hot-swap TLS cert after credentials refresh", "error", err)
+			} else {
+				slog.Info("TLS cert hot-swapped after credentials refresh")
+			}
 		},
 	)
 
@@ -155,10 +181,30 @@ func main() {
 		doShutdown("signal: " + sig.String())
 	}()
 
-	slog.Info("host agent starting", "addr", listenAddr, "host_id", hostID)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("http server error", "error", err)
-		os.Exit(1)
+	slog.Info("host agent starting", "addr", listenAddr, "host_id", creds.HostID)
+	if httpServer.TLSConfig != nil {
+		// When TLSConfig is pre-populated (cert via GetCertificate callback),
+		// ListenAndServeTLS does not work because it requires on-disk cert/key paths.
+		// Instead, create the TLS listener manually and call Serve.
+		ln, err := tls.Listen("tcp", listenAddr, httpServer.TLSConfig)
+		if err != nil {
+			slog.Error("failed to start TLS listener", "error", err)
+			os.Exit(1)
+		}
+		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+			slog.Error("https server error", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		ln, err := net.Listen("tcp", listenAddr)
+		if err != nil {
+			slog.Error("failed to start listener", "error", err)
+			os.Exit(1)
+		}
+		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+			slog.Error("http server error", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	slog.Info("host agent stopped")
