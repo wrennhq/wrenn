@@ -129,7 +129,6 @@ func (s *Server) CreateSnapshot(
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create snapshot: %w", err))
 	}
 	return connect.NewResponse(&pb.CreateSnapshotResponse{
-		Name:      msg.Name,
 		SizeBytes: sizeBytes,
 	}), nil
 }

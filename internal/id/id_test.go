@@ -113,6 +113,6 @@ func BenchmarkParseSandboxID(b *testing.B) {
 	s := FormatSandboxID(id)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ParseSandboxID(s)
+		_, _ = ParseSandboxID(s)
 	}
 }
