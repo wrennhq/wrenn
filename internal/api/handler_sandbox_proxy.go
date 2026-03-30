@@ -18,9 +18,9 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 )
 
-// sandboxHostPattern matches hostnames like "49999-sb-abcd1234.localhost" or
-// "49999-sb-abcd1234.example.com". Captures: port, sandbox ID.
-var sandboxHostPattern = regexp.MustCompile(`^(\d+)-(sb-[0-9a-f-]+)\.`)
+// sandboxHostPattern matches hostnames like "49999-cl-abcd1234.localhost" or
+// "49999-cl-abcd1234.example.com". Captures: port, sandbox ID.
+var sandboxHostPattern = regexp.MustCompile(`^(\d+)-(cl-[0-9a-z]+)\.`)
 
 // SandboxProxyWrapper wraps an existing HTTP handler and intercepts requests
 // whose Host header matches the {port}-{sandbox_id}.{domain} pattern. Matching
@@ -48,7 +48,7 @@ func NewSandboxProxyWrapper(inner http.Handler, queries *db.Queries, pool *lifec
 
 func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
-	// Strip port from Host header (e.g. "49999-sb-abcd1234.localhost:8000" → "49999-sb-abcd1234.localhost")
+	// Strip port from Host header (e.g. "49999-cl-abcd1234.localhost:8000" → "49999-cl-abcd1234.localhost")
 	if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
 		host = host[:colonIdx]
 	}

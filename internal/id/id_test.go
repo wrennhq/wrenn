@@ -46,8 +46,8 @@ func TestFormatParseRoundTrip(t *testing.T) {
 	id := NewSandboxID()
 	formatted := FormatSandboxID(id)
 
-	if formatted[:3] != "sb-" {
-		t.Fatalf("expected sb- prefix, got %s", formatted)
+	if formatted[:3] != "cl-" {
+		t.Fatalf("expected cl- prefix, got %s", formatted)
 	}
 	if len(formatted) != 3+base36IDLen {
 		t.Fatalf("expected %d chars total, got %d: %s", 3+base36IDLen, len(formatted), formatted)

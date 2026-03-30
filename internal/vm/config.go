@@ -4,8 +4,12 @@ import "fmt"
 
 // VMConfig holds the configuration for creating a Firecracker microVM.
 type VMConfig struct {
-	// SandboxID is the unique identifier for this sandbox (e.g., "sb-a1b2c3d4").
+	// SandboxID is the unique identifier for this sandbox (e.g., "cl-a1b2c3d4").
 	SandboxID string
+
+	// TemplateID is the template UUID string used to populate MMDS metadata
+	// so that envd can read WRENN_TEMPLATE_ID from inside the guest.
+	TemplateID string
 
 	// KernelPath is the path to the uncompressed Linux kernel (vmlinux).
 	KernelPath string

@@ -169,6 +169,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	// Boot VM — Firecracker gets the dm device path.
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
+		TemplateID:       id.UUIDString(templateID),
 		KernelPath:       layout.KernelPath(m.cfg.WrennDir),
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            vcpus,
@@ -1033,6 +1034,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 	// Restore VM.
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
+		TemplateID:       id.UUIDString(templateID),
 		KernelPath:       layout.KernelPath(m.cfg.WrennDir),
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            vcpus,

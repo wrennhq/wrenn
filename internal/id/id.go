@@ -65,7 +65,7 @@ func NewRefreshToken() string {
 // --- Formatting (pgtype.UUID → prefixed string for API/RPC output) ---
 
 const (
-	PrefixSandbox         = "sb-"
+	PrefixSandbox         = "cl-"
 	PrefixUser            = "usr-"
 	PrefixTeam            = "team-"
 	PrefixAPIKey          = "key-"

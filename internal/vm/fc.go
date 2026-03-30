@@ -101,6 +101,31 @@ func (c *fcClient) setMachineConfig(ctx context.Context, vcpus, memMB int) error
 	})
 }
 
+// setMMDSConfig enables MMDS V2 token-based access on the given network interface.
+// Must be called before startVM.
+func (c *fcClient) setMMDSConfig(ctx context.Context, ifaceID string) error {
+	return c.do(ctx, http.MethodPut, "/mmds/config", map[string]any{
+		"version":            "V2",
+		"network_interfaces": []string{ifaceID},
+	})
+}
+
+// mmdsMetadata is the metadata payload written to the Firecracker MMDS store.
+// envd reads this via PollForMMDSOpts to populate WRENN_SANDBOX_ID and WRENN_TEMPLATE_ID.
+type mmdsMetadata struct {
+	SandboxID  string `json:"instanceID"`
+	TemplateID string `json:"envID"`
+}
+
+// setMMDS writes sandbox metadata to the Firecracker MMDS store.
+// Can be called after the VM has started.
+func (c *fcClient) setMMDS(ctx context.Context, sandboxID, templateID string) error {
+	return c.do(ctx, http.MethodPut, "/mmds", mmdsMetadata{
+		SandboxID:  sandboxID,
+		TemplateID: templateID,
+	})
+}
+
 // startVM issues the InstanceStart action.
 func (c *fcClient) startVM(ctx context.Context) error {
 	return c.do(ctx, http.MethodPut, "/actions", map[string]string{

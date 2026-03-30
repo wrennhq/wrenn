@@ -96,8 +96,8 @@ func TestTemplateRootfs(t *testing.T) {
 }
 
 func TestPauseSnapshotDir(t *testing.T) {
-	got := PauseSnapshotDir("/var/lib/wrenn", "sb-abc123")
-	want := "/var/lib/wrenn/snapshots/sb-abc123"
+	got := PauseSnapshotDir("/var/lib/wrenn", "cl-abc123")
+	want := "/var/lib/wrenn/snapshots/cl-abc123"
 	if got != want {
 		t.Errorf("PauseSnapshotDir() = %q, want %q", got, want)
 	}
