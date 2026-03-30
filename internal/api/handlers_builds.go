@@ -36,6 +36,7 @@ type createBuildRequest struct {
 	Healthcheck  string   `json:"healthcheck"`
 	VCPUs        int32    `json:"vcpus"`
 	MemoryMB     int32    `json:"memory_mb"`
+	SkipPrePost  bool     `json:"skip_pre_post"`
 }
 
 type buildResponse struct {
@@ -127,6 +128,7 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Healthcheck:  req.Healthcheck,
 		VCPUs:        req.VCPUs,
 		MemoryMB:     req.MemoryMB,
+		SkipPrePost:  req.SkipPrePost,
 	})
 	if err != nil {
 		slog.Error("failed to create build", "error", err)
@@ -249,6 +251,24 @@ func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.DeleteTemplate(ctx, tmpl.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete template record")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Cancel handles POST /v1/admin/builds/{id}/cancel.
+func (h *buildHandler) Cancel(w http.ResponseWriter, r *http.Request) {
+	buildIDStr := chi.URLParam(r, "id")
+
+	buildID, err := id.ParseBuildID(buildIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid build ID")
+		return
+	}
+
+	if err := h.svc.Cancel(r.Context(), buildID); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 

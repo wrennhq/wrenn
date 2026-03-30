@@ -38,6 +38,7 @@ export type CreateBuildParams = {
 	healthcheck?: string;
 	vcpus?: number;
 	memory_mb?: number;
+	skip_pre_post?: boolean;
 };
 
 export async function createBuild(params: CreateBuildParams): Promise<ApiResult<Build>> {
@@ -68,4 +69,8 @@ export async function listAdminTemplates(): Promise<ApiResult<AdminTemplate[]>> 
 
 export async function deleteAdminTemplate(name: string): Promise<ApiResult<void>> {
 	return apiFetch('DELETE', `/api/v1/admin/templates/${name}`);
+}
+
+export async function cancelBuild(id: string): Promise<ApiResult<void>> {
+	return apiFetch('POST', `/api/v1/admin/builds/${id}/cancel`);
 }

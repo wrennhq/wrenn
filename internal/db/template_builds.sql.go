@@ -12,7 +12,7 @@ import (
 )
 
 const getTemplateBuild = `-- name: GetTemplateBuild :one
-SELECT id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id FROM template_builds WHERE id = $1
+SELECT id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id, skip_pre_post FROM template_builds WHERE id = $1
 `
 
 func (q *Queries) GetTemplateBuild(ctx context.Context, id pgtype.UUID) (TemplateBuild, error) {
@@ -38,14 +38,15 @@ func (q *Queries) GetTemplateBuild(ctx context.Context, id pgtype.UUID) (Templat
 		&i.CompletedAt,
 		&i.TemplateID,
 		&i.TeamID,
+		&i.SkipPrePost,
 	)
 	return i, err
 }
 
 const insertTemplateBuild = `-- name: InsertTemplateBuild :one
-INSERT INTO template_builds (id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, total_steps, template_id, team_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10)
-RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id
+INSERT INTO template_builds (id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, total_steps, template_id, team_id, skip_pre_post)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11)
+RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id, skip_pre_post
 `
 
 type InsertTemplateBuildParams struct {
@@ -59,6 +60,7 @@ type InsertTemplateBuildParams struct {
 	TotalSteps   int32       `json:"total_steps"`
 	TemplateID   pgtype.UUID `json:"template_id"`
 	TeamID       pgtype.UUID `json:"team_id"`
+	SkipPrePost  bool        `json:"skip_pre_post"`
 }
 
 func (q *Queries) InsertTemplateBuild(ctx context.Context, arg InsertTemplateBuildParams) (TemplateBuild, error) {
@@ -73,6 +75,7 @@ func (q *Queries) InsertTemplateBuild(ctx context.Context, arg InsertTemplateBui
 		arg.TotalSteps,
 		arg.TemplateID,
 		arg.TeamID,
+		arg.SkipPrePost,
 	)
 	var i TemplateBuild
 	err := row.Scan(
@@ -95,12 +98,13 @@ func (q *Queries) InsertTemplateBuild(ctx context.Context, arg InsertTemplateBui
 		&i.CompletedAt,
 		&i.TemplateID,
 		&i.TeamID,
+		&i.SkipPrePost,
 	)
 	return i, err
 }
 
 const listTemplateBuilds = `-- name: ListTemplateBuilds :many
-SELECT id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id FROM template_builds ORDER BY created_at DESC
+SELECT id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id, skip_pre_post FROM template_builds ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTemplateBuilds(ctx context.Context) ([]TemplateBuild, error) {
@@ -132,6 +136,7 @@ func (q *Queries) ListTemplateBuilds(ctx context.Context) ([]TemplateBuild, erro
 			&i.CompletedAt,
 			&i.TemplateID,
 			&i.TeamID,
+			&i.SkipPrePost,
 		); err != nil {
 			return nil, err
 		}
@@ -196,10 +201,10 @@ func (q *Queries) UpdateBuildSandbox(ctx context.Context, arg UpdateBuildSandbox
 const updateBuildStatus = `-- name: UpdateBuildStatus :one
 UPDATE template_builds
 SET status = $2,
-    started_at = CASE WHEN $2 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
-    completed_at = CASE WHEN $2 IN ('success', 'failed') THEN NOW() ELSE completed_at END
+    started_at   = CASE WHEN $2 = 'running'   AND started_at   IS NULL THEN NOW() ELSE started_at   END,
+    completed_at = CASE WHEN $2 IN ('success', 'failed', 'cancelled') THEN NOW() ELSE completed_at END
 WHERE id = $1
-RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id
+RETURNING id, name, base_template, recipe, healthcheck, vcpus, memory_mb, status, current_step, total_steps, logs, error, sandbox_id, host_id, created_at, started_at, completed_at, template_id, team_id, skip_pre_post
 `
 
 type UpdateBuildStatusParams struct {
@@ -230,6 +235,7 @@ func (q *Queries) UpdateBuildStatus(ctx context.Context, arg UpdateBuildStatusPa
 		&i.CompletedAt,
 		&i.TemplateID,
 		&i.TeamID,
+		&i.SkipPrePost,
 	)
 	return i, err
 }

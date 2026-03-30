@@ -6,6 +6,7 @@
 	import {
 		listBuilds,
 		createBuild,
+		cancelBuild,
 		listAdminTemplates,
 		deleteAdminTemplate,
 		type Build,
@@ -52,10 +53,14 @@
 		vcpus: 1,
 		memory_mb: 512,
 		recipe: '',
-		healthcheck: ''
+		healthcheck: '',
+		skip_pre_post: false
 	});
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
+
+	// Cancel build state
+	let cancelingBuildId = $state<string | null>(null);
 
 	// Stats
 	let templateCount = $derived(templates.length);
@@ -123,12 +128,13 @@
 			recipe: lines,
 			healthcheck: createForm.healthcheck.trim() || undefined,
 			vcpus: createForm.vcpus,
-			memory_mb: createForm.memory_mb
+			memory_mb: createForm.memory_mb,
+			skip_pre_post: createForm.skip_pre_post
 		});
 
 		if (result.ok) {
 			showCreate = false;
-			createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '' };
+			createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false };
 			builds = [result.data, ...builds];
 			activeTab = 'builds';
 			expandedBuildId = result.data.id;
@@ -154,6 +160,18 @@
 			deleteError = result.error;
 		}
 		deleting = false;
+	}
+
+	async function handleCancelBuild(buildId: string) {
+		cancelingBuildId = buildId;
+		const result = await cancelBuild(buildId);
+		if (result.ok) {
+			builds = builds.map((b) => b.id === buildId ? { ...b, status: 'cancelled' } : b);
+			toast.success('Build cancelled');
+		} else {
+			toast.error(result.error ?? 'Failed to cancel build');
+		}
+		cancelingBuildId = null;
 	}
 
 	function toggleBuildExpand(buildId: string) {
@@ -198,7 +216,25 @@
 			case 'success': return 'var(--color-accent-bright)';
 			case 'failed': return 'var(--color-red)';
 			case 'running': return 'var(--color-blue)';
+			case 'cancelled': return 'var(--color-amber)';
 			default: return 'var(--color-text-muted)';
+		}
+	}
+
+	// Returns [keyword, rest] from a recipe instruction string.
+	function splitInstruction(cmd: string): [string, string] {
+		const idx = cmd.indexOf(' ');
+		if (idx === -1) return [cmd.toUpperCase(), ''];
+		return [cmd.slice(0, idx).toUpperCase(), cmd.slice(idx + 1)];
+	}
+
+	function keywordColor(keyword: string): string {
+		switch (keyword) {
+			case 'RUN':     return 'var(--color-blue)';
+			case 'START':   return 'var(--color-accent-bright)';
+			case 'ENV':     return 'var(--color-amber)';
+			case 'WORKDIR': return 'var(--color-text-tertiary)';
+			default:        return 'var(--color-text-muted)';
 		}
 	}
 
@@ -512,6 +548,22 @@
 						<tr>
 							<td colspan="7" class="border-b border-[var(--color-border)] last:border-0">
 								<div class="bg-[var(--color-bg-0)] px-6 py-4" style="animation: fadeUp 0.15s ease both">
+									{#if build.status === 'pending' || build.status === 'running'}
+										<div class="mb-4 flex justify-end">
+											<button
+												onclick={(e) => { e.stopPropagation(); handleCancelBuild(build.id); }}
+												disabled={cancelingBuildId === build.id}
+												class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/8 px-3 py-1.5 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/15 disabled:opacity-50"
+											>
+												{#if cancelingBuildId === build.id}
+													<svg class="animate-spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+												{:else}
+													<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+												{/if}
+												Cancel build
+											</button>
+										</div>
+									{/if}
 									{#if build.error}
 										<div class="mb-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
 											{build.error}
@@ -524,6 +576,7 @@
 												{@const isInternal = log.phase === 'pre-build' || log.phase === 'post-build'}
 												{@const recipeIdx = log.phase === 'recipe' ? build.logs.filter(l => l.phase === 'recipe' && l.step <= log.step).length : 0}
 												{@const phaseLabel = isInternal ? (log.phase === 'pre-build' ? 'Pre-build' : 'Post-build') : `Step ${recipeIdx}`}
+												{@const [kw, kwRest] = splitInstruction(log.cmd)}
 												<div class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden">
 													<!-- Step header -->
 													<button
@@ -536,16 +589,8 @@
 														{:else}
 															<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 														{/if}
-														{#if isInternal}
-															<span class="flex-1 text-label font-semibold text-[var(--color-text-tertiary)]">
-																{phaseLabel}
-															</span>
-														{:else}
-															<span class="text-label font-semibold text-[var(--color-text-tertiary)]">
-																{phaseLabel}
-															</span>
-															<code class="flex-1 truncate font-mono text-meta text-[var(--color-text-primary)]">{log.cmd}</code>
-														{/if}
+														<span class="shrink-0 text-label font-semibold text-[var(--color-text-tertiary)]">{phaseLabel}</span>
+														<code class="flex-1 truncate font-mono text-meta"><span style="color: {keywordColor(kw)}">{kw}</span>{#if kwRest}<span class="text-[var(--color-text-secondary)]"> {kwRest}</span>{/if}</code>
 														<span class="shrink-0 font-mono text-label text-[var(--color-text-muted)]">{log.elapsed_ms}ms</span>
 														{#if log.exit !== 0}
 															<span class="shrink-0 rounded-full bg-[var(--color-red)]/10 px-1.5 py-0.5 font-mono text-label text-[var(--color-red)]">
@@ -601,9 +646,10 @@
 											<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Recipe</span>
 											<div class="mt-2 rounded-[var(--radius-input)] bg-[var(--color-bg-1)] border border-[var(--color-border)] px-3 py-2">
 												{#each build.recipe as cmd, i}
+													{@const [kw, kwRest] = splitInstruction(cmd)}
 													<div class="flex gap-2 py-0.5">
 														<span class="shrink-0 font-mono text-label text-[var(--color-text-muted)] tabular-nums">{i + 1}.</span>
-														<code class="font-mono text-meta text-[var(--color-text-secondary)]">{cmd}</code>
+														<code class="font-mono text-meta"><span style="color: {keywordColor(kw)}">{kw}</span>{#if kwRest}<span class="text-[var(--color-text-secondary)]"> {kwRest}</span>{/if}</code>
 													</div>
 												{/each}
 											</div>
@@ -712,18 +758,18 @@
 
 				<div>
 					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="tmpl-recipe">
-						Recipe <span class="normal-case font-normal text-[var(--color-text-muted)]">(one command per line)</span>
+						Recipe <span class="normal-case font-normal text-[var(--color-text-muted)]">(one instruction per line)</span>
 					</label>
 					<textarea
 						id="tmpl-recipe"
-						rows="6"
-						placeholder={"apt-get update\napt-get install -y python3 python3-pip\npip3 install numpy pandas"}
+						rows="7"
+						placeholder={"RUN apt-get install -y python3 python3-pip\nWORKDIR /app\nENV PORT=8080\nRUN pip3 install numpy pandas\nSTART python3 server.py"}
 						bind:value={createForm.recipe}
 						disabled={creating}
 						class="w-full resize-y rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-meta leading-relaxed text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)] disabled:opacity-60"
 					></textarea>
 					<p class="mt-1 text-label text-[var(--color-text-muted)]">
-						Each command runs with a 30s timeout. Non-zero exit codes abort the build.
+						Supports <code class="font-mono">RUN</code>, <code class="font-mono">START</code>, <code class="font-mono">WORKDIR</code>, <code class="font-mono">ENV key=value</code>. RUN steps have a 30s timeout; override with <code class="font-mono">RUN --timeout=5m</code>.
 					</p>
 				</div>
 
@@ -743,6 +789,16 @@
 						If set, the build will poll this command every 1s (up to 60s) after the recipe completes. On success, a full snapshot (with memory state) is created. Without a healthcheck, only the rootfs is saved.
 					</p>
 				</div>
+
+				<label class="flex cursor-pointer items-center gap-2.5">
+					<input
+						type="checkbox"
+						bind:checked={createForm.skip_pre_post}
+						disabled={creating}
+						class="h-4 w-4 cursor-pointer rounded border border-[var(--color-border)] bg-[var(--color-bg-4)] accent-[var(--color-accent)]"
+					/>
+					<span class="text-ui text-[var(--color-text-secondary)]">Skip pre-build and post-build steps</span>
+				</label>
 			</div>
 
 			<div class="mt-6 flex justify-end gap-3">
