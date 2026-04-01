@@ -3,19 +3,21 @@
 package port
 
 import (
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/shirou/gopsutil/v4/net"
-
-	"git.omukk.dev/wrenn/sandbox/envd/internal/shared/smap"
 )
 
 type Scanner struct {
-	Processes chan net.ConnectionStat
-	scanExit  chan struct{}
-	subs      *smap.Map[*ScannerSubscriber]
-	period    time.Duration
+	scanExit chan struct{}
+	period   time.Duration
+
+	// Plain mutex-protected map instead of concurrent-map. The concurrent-map
+	// library's Items() spawns goroutines and uses a WaitGroup internally,
+	// which corrupts Go runtime semaphore state across Firecracker snapshot/restore.
+	mu   sync.RWMutex
+	subs map[string]*ScannerSubscriber
 }
 
 func (s *Scanner) Destroy() {
@@ -24,33 +26,44 @@ func (s *Scanner) Destroy() {
 
 func NewScanner(period time.Duration) *Scanner {
 	return &Scanner{
-		period:    period,
-		subs:      smap.New[*ScannerSubscriber](),
-		scanExit:  make(chan struct{}),
-		Processes: make(chan net.ConnectionStat),
+		period:   period,
+		subs:     make(map[string]*ScannerSubscriber),
+		scanExit: make(chan struct{}),
 	}
 }
 
 func (s *Scanner) AddSubscriber(logger *zerolog.Logger, id string, filter *ScannerFilter) *ScannerSubscriber {
 	subscriber := NewScannerSubscriber(logger, id, filter)
-	s.subs.Insert(id, subscriber)
+
+	s.mu.Lock()
+	s.subs[id] = subscriber
+	s.mu.Unlock()
 
 	return subscriber
 }
 
 func (s *Scanner) Unsubscribe(sub *ScannerSubscriber) {
-	s.subs.Remove(sub.ID())
+	s.mu.Lock()
+	delete(s.subs, sub.ID())
+	s.mu.Unlock()
+
 	sub.Destroy()
 }
 
 // ScanAndBroadcast starts scanning open TCP ports and broadcasts every open port to all subscribers.
 func (s *Scanner) ScanAndBroadcast() {
 	for {
-		// tcp monitors both ipv4 and ipv6 connections.
-		processes, _ := net.Connections("tcp")
-		for _, sub := range s.subs.Items() {
-			sub.Signal(processes)
+		// Read directly from /proc/net/tcp and /proc/net/tcp6 instead of
+		// using gopsutil's net.Connections(), which walks /proc/{pid}/fd
+		// and causes Go runtime corruption after Firecracker snapshot/restore.
+		conns, _ := ReadTCPConnections()
+
+		s.mu.RLock()
+		for _, sub := range s.subs {
+			sub.Signal(conns)
 		}
+		s.mu.RUnlock()
+
 		select {
 		case <-s.scanExit:
 			return
