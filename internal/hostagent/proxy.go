@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"git.omukk.dev/wrenn/sandbox/internal/models"
 	"git.omukk.dev/wrenn/sandbox/internal/sandbox"
 )
 
@@ -62,18 +61,14 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sb, err := h.mgr.Get(sandboxID)
-	if err != nil {
-		http.Error(w, "sandbox not found", http.StatusNotFound)
+	hostIP, tracker, ok := h.mgr.AcquireProxyConn(sandboxID)
+	if !ok {
+		http.Error(w, "sandbox is not available", http.StatusServiceUnavailable)
 		return
 	}
+	defer tracker.Release()
 
-	if sb.Status != models.StatusRunning {
-		http.Error(w, fmt.Sprintf("sandbox is not running (status: %s)", sb.Status), http.StatusConflict)
-		return
-	}
-
-	targetHost := fmt.Sprintf("%s:%d", sb.HostIP.String(), portNum)
+	targetHost := fmt.Sprintf("%s:%d", hostIP, portNum)
 
 	proxy := &httputil.ReverseProxy{
 		Transport: h.transport,

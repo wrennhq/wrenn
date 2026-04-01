@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,7 +51,8 @@ type sandboxState struct {
 	models.Sandbox
 	slot           *network.Slot
 	client         *envdclient.Client
-	uffdSocketPath string // non-empty for sandboxes restored from snapshot
+	connTracker    *ConnTracker // tracks in-flight proxy connections for pre-pause drain
+	uffdSocketPath string       // non-empty for sandboxes restored from snapshot
 	dmDevice       *devicemapper.SnapshotDevice
 	baseImagePath  string // path to the base template rootfs (for loop registry release)
 
@@ -224,6 +226,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 		},
 		slot:          slot,
 		client:        client,
+		connTracker:   &ConnTracker{},
 		dmDevice:      dmDev,
 		baseImagePath: baseRootfs,
 	}
@@ -308,10 +311,17 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
 	}
 
+	// Step 0: Drain in-flight proxy connections before freezing vCPUs.
+	// This prevents Go runtime corruption inside the guest caused by stale
+	// TCP state from connections that were alive when the VM was snapshotted.
+	sb.connTracker.Drain(2 * time.Second)
+	slog.Debug("pause: proxy connections drained", "id", sandboxID)
+
 	pauseStart := time.Now()
 
 	// Step 1: Pause the VM (freeze vCPUs).
 	if err := m.vm.Pause(ctx, sandboxID); err != nil {
+		sb.connTracker.Reset()
 		return fmt.Errorf("pause VM: %w", err)
 	}
 	slog.Debug("pause: VM paused", "id", sandboxID, "elapsed", time.Since(pauseStart))
@@ -326,8 +336,10 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 	// resumeOnError unpauses the VM so the sandbox stays usable when a
 	// post-freeze step fails. If the resume itself fails, the sandbox is
-	// left frozen — the caller should destroy it.
+	// left frozen — the caller should destroy it. It also resets the
+	// connection tracker so the sandbox can accept proxy connections again.
 	resumeOnError := func() {
+		sb.connTracker.Reset()
 		if err := m.vm.Resume(ctx, sandboxID); err != nil {
 			slog.Error("failed to resume VM after pause error — sandbox is frozen", "id", sandboxID, "error", err)
 		}
@@ -692,6 +704,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 		},
 		slot:           slot,
 		client:         client,
+		connTracker:    &ConnTracker{},
 		uffdSocketPath: uffdSocketPath,
 		dmDevice:       dmDev,
 		baseImagePath:  baseImagePath,
@@ -1094,6 +1107,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		},
 		slot:           slot,
 		client:         client,
+		connTracker:    &ConnTracker{},
 		uffdSocketPath: uffdSocketPath,
 		dmDevice:       dmDev,
 		baseImagePath:  baseRootfs,
@@ -1188,6 +1202,25 @@ func (m *Manager) GetClient(sandboxID string) (*envdclient.Client, error) {
 		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
 	}
 	return sb.client, nil
+}
+
+// AcquireProxyConn atomically looks up a sandbox by ID and registers an
+// in-flight proxy connection. Returns the sandbox's host-reachable IP, the
+// connection tracker, and true on success. The caller must call
+// tracker.Release() when the request completes. Returns zero values and
+// false if the sandbox is not found, not running, or is draining for a pause.
+func (m *Manager) AcquireProxyConn(sandboxID string) (net.IP, *ConnTracker, bool) {
+	m.mu.RLock()
+	sb, ok := m.boxes[sandboxID]
+	m.mu.RUnlock()
+
+	if !ok || sb.Status != models.StatusRunning {
+		return nil, nil, false
+	}
+	if !sb.connTracker.Acquire() {
+		return nil, nil, false
+	}
+	return sb.HostIP, sb.connTracker, true
 }
 
 // Ping resets the inactivity timer for a running sandbox.

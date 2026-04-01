@@ -235,9 +235,9 @@ func CPClientTLSConfig(ca *CA, certStore *CPCertStore) *tls.Config {
 	pool := x509.NewCertPool()
 	pool.AddCert(ca.Cert)
 	return &tls.Config{
-		RootCAs:               pool,
-		GetClientCertificate:  certStore.GetClientCertificate,
-		MinVersion:            tls.VersionTLS13,
+		RootCAs:              pool,
+		GetClientCertificate: certStore.GetClientCertificate,
+		MinVersion:           tls.VersionTLS13,
 	}
 }
 

@@ -105,6 +105,32 @@ func (q *Queries) GetSandboxByTeam(ctx context.Context, arg GetSandboxByTeamPara
 	return i, err
 }
 
+const getSandboxProxyTarget = `-- name: GetSandboxProxyTarget :one
+SELECT s.status, h.address AS host_address
+FROM sandboxes s
+JOIN hosts h ON h.id = s.host_id
+WHERE s.id = $1 AND s.team_id = $2
+`
+
+type GetSandboxProxyTargetParams struct {
+	ID     pgtype.UUID `json:"id"`
+	TeamID pgtype.UUID `json:"team_id"`
+}
+
+type GetSandboxProxyTargetRow struct {
+	Status      string `json:"status"`
+	HostAddress string `json:"host_address"`
+}
+
+// Returns the sandbox status and its host's address in one query.
+// Used by SandboxProxyWrapper to avoid two round-trips.
+func (q *Queries) GetSandboxProxyTarget(ctx context.Context, arg GetSandboxProxyTargetParams) (GetSandboxProxyTargetRow, error) {
+	row := q.db.QueryRow(ctx, getSandboxProxyTarget, arg.ID, arg.TeamID)
+	var i GetSandboxProxyTargetRow
+	err := row.Scan(&i.Status, &i.HostAddress)
+	return i, err
+}
+
 const insertSandbox = `-- name: InsertSandbox :one
 INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, template_id, template_team_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
