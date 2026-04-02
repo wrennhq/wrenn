@@ -11,7 +11,7 @@ func TestSafeName(t *testing.T) {
 		{"simple", "minimal", false},
 		{"with-dash", "template-abc123", false},
 		{"with-dot", "my-snapshot.v2", false},
-		{"sandbox-id", "sb-12345678", false},
+		{"sandbox-id", "cl-12345678", false},
 		{"single-char", "a", false},
 		{"numbers", "123", false},
 		{"max-length", "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz01", false},

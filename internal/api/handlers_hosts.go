@@ -8,9 +8,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 )
 
@@ -46,6 +49,9 @@ type refreshTokenResponse struct {
 	Host         hostResponse `json:"host"`
 	Token        string       `json:"token"`
 	RefreshToken string       `json:"refresh_token"`
+	CertPEM      string       `json:"cert_pem,omitempty"`
+	KeyPEM       string       `json:"key_pem,omitempty"`
+	CACertPEM    string       `json:"ca_cert_pem,omitempty"`
 }
 
 type deletePreviewResponse struct {
@@ -66,6 +72,9 @@ type registerHostResponse struct {
 	Host         hostResponse `json:"host"`
 	Token        string       `json:"token"`
 	RefreshToken string       `json:"refresh_token"`
+	CertPEM      string       `json:"cert_pem,omitempty"`
+	KeyPEM       string       `json:"key_pem,omitempty"`
+	CACertPEM    string       `json:"ca_cert_pem,omitempty"`
 }
 
 type addTagRequest struct {
@@ -93,34 +102,35 @@ type hostResponse struct {
 
 func hostToResponse(h db.Host) hostResponse {
 	resp := hostResponse{
-		ID:        h.ID,
+		ID:        id.FormatHostID(h.ID),
 		Type:      h.Type,
 		Status:    h.Status,
-		CreatedBy: h.CreatedBy,
+		CreatedBy: id.FormatUserID(h.CreatedBy),
 	}
 	if h.TeamID.Valid {
-		resp.TeamID = &h.TeamID.String
+		s := id.FormatTeamID(h.TeamID)
+		resp.TeamID = &s
 	}
-	if h.Provider.Valid {
-		resp.Provider = &h.Provider.String
+	if h.Provider != "" {
+		resp.Provider = &h.Provider
 	}
-	if h.AvailabilityZone.Valid {
-		resp.AvailabilityZone = &h.AvailabilityZone.String
+	if h.AvailabilityZone != "" {
+		resp.AvailabilityZone = &h.AvailabilityZone
 	}
-	if h.Arch.Valid {
-		resp.Arch = &h.Arch.String
+	if h.Arch != "" {
+		resp.Arch = &h.Arch
 	}
-	if h.CpuCores.Valid {
-		resp.CPUCores = &h.CpuCores.Int32
+	if h.CpuCores != 0 {
+		resp.CPUCores = &h.CpuCores
 	}
-	if h.MemoryMb.Valid {
-		resp.MemoryMB = &h.MemoryMb.Int32
+	if h.MemoryMb != 0 {
+		resp.MemoryMB = &h.MemoryMb
 	}
-	if h.DiskGb.Valid {
-		resp.DiskGB = &h.DiskGb.Int32
+	if h.DiskGb != 0 {
+		resp.DiskGB = &h.DiskGb
 	}
-	if h.Address.Valid {
-		resp.Address = &h.Address.String
+	if h.Address != "" {
+		resp.Address = &h.Address
 	}
 	if h.LastHeartbeatAt.Valid {
 		s := h.LastHeartbeatAt.Time.Format(time.RFC3339)
@@ -133,7 +143,7 @@ func hostToResponse(h db.Host) hostResponse {
 }
 
 // isAdmin fetches the user record and returns whether they are an admin.
-func (h *hostHandler) isAdmin(r *http.Request, userID string) bool {
+func (h *hostHandler) isAdmin(r *http.Request, userID pgtype.UUID) bool {
 	user, err := h.queries.GetUserByID(r.Context(), userID)
 	if err != nil {
 		return false
@@ -151,14 +161,23 @@ func (h *hostHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	ac := auth.MustFromContext(r.Context())
 
-	result, err := h.svc.Create(r.Context(), service.HostCreateParams{
-		Type:             req.Type,
-		TeamID:           req.TeamID,
-		Provider:         req.Provider,
-		AvailabilityZone: req.AvailabilityZone,
-		RequestingUserID: ac.UserID,
-		IsRequestorAdmin: h.isAdmin(r, ac.UserID),
-	})
+	// Parse optional team ID from request body.
+	var params service.HostCreateParams
+	params.Type = req.Type
+	params.Provider = req.Provider
+	params.AvailabilityZone = req.AvailabilityZone
+	params.RequestingUserID = ac.UserID
+	params.IsRequestorAdmin = h.isAdmin(r, ac.UserID)
+	if req.TeamID != "" {
+		teamID, err := id.ParseTeamID(req.TeamID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid team_id")
+			return
+		}
+		params.TeamID = teamID
+	}
+
+	result, err := h.svc.Create(r.Context(), params)
 	if err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
@@ -166,8 +185,7 @@ func (h *hostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log audit for the owning team (BYOC hosts have a team; shared hosts use caller's team).
-	hostTeamID := result.Host.TeamID.String
-	h.audit.LogHostCreate(r.Context(), ac, result.Host.ID, hostTeamID)
+	h.audit.LogHostCreate(r.Context(), ac, result.Host.ID, result.Host.TeamID)
 
 	writeJSON(w, http.StatusCreated, createHostResponse{
 		Host:              hostToResponse(result.Host),
@@ -192,14 +210,22 @@ func (h *hostHandler) List(w http.ResponseWriter, r *http.Request) {
 		seen := make(map[string]struct{})
 		for _, host := range hosts {
 			if host.TeamID.Valid {
-				seen[host.TeamID.String] = struct{}{}
+				key := id.FormatTeamID(host.TeamID)
+				seen[key] = struct{}{}
 			}
 		}
 		if len(seen) > 0 {
 			teamNames = make(map[string]string, len(seen))
-			for id := range seen {
-				if team, err := h.queries.GetTeam(r.Context(), id); err == nil {
-					teamNames[id] = team.Name
+			for _, host := range hosts {
+				if !host.TeamID.Valid {
+					continue
+				}
+				key := id.FormatTeamID(host.TeamID)
+				if _, ok := teamNames[key]; ok {
+					continue
+				}
+				if team, err := h.queries.GetTeam(r.Context(), host.TeamID); err == nil {
+					teamNames[key] = team.Name
 				}
 			}
 		}
@@ -209,7 +235,8 @@ func (h *hostHandler) List(w http.ResponseWriter, r *http.Request) {
 	for i, host := range hosts {
 		resp[i] = hostToResponse(host)
 		if host.TeamID.Valid {
-			if name, ok := teamNames[host.TeamID.String]; ok {
+			key := id.FormatTeamID(host.TeamID)
+			if name, ok := teamNames[key]; ok {
 				resp[i].TeamName = &name
 			}
 		}
@@ -220,8 +247,14 @@ func (h *hostHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /v1/hosts/{id}.
 func (h *hostHandler) Get(w http.ResponseWriter, r *http.Request) {
-	hostID := chi.URLParam(r, "id")
+	hostIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
+
+	hostID, err := id.ParseHostID(hostIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		return
+	}
 
 	host, err := h.svc.Get(r.Context(), hostID, ac.TeamID, h.isAdmin(r, ac.UserID))
 	if err != nil {
@@ -236,8 +269,14 @@ func (h *hostHandler) Get(w http.ResponseWriter, r *http.Request) {
 // DeletePreview handles GET /v1/hosts/{id}/delete-preview.
 // Returns what would be affected without making changes, for confirmation UI.
 func (h *hostHandler) DeletePreview(w http.ResponseWriter, r *http.Request) {
-	hostID := chi.URLParam(r, "id")
+	hostIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
+
+	hostID, err := id.ParseHostID(hostIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		return
+	}
 
 	preview, err := h.svc.DeletePreview(r.Context(), hostID, ac.TeamID, h.isAdmin(r, ac.UserID))
 	if err != nil {
@@ -256,19 +295,25 @@ func (h *hostHandler) DeletePreview(w http.ResponseWriter, r *http.Request) {
 // Without ?force=true: returns 409 with affected sandbox IDs if any are active.
 // With ?force=true: gracefully stops all sandboxes then deletes the host.
 func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	hostID := chi.URLParam(r, "id")
+	hostIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
 	force := r.URL.Query().Get("force") == "true"
+
+	hostID, err := id.ParseHostID(hostIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		return
+	}
 
 	// Fetch host before deletion to capture team_id for audit.
 	deletedHost, hostErr := h.queries.GetHost(r.Context(), hostID)
 	if hostErr != nil {
-		slog.Warn("audit: could not fetch host before delete", "host_id", hostID, "error", hostErr)
+		slog.Warn("audit: could not fetch host before delete", "host_id", hostIDStr, "error", hostErr)
 	}
 
-	err := h.svc.Delete(r.Context(), hostID, ac.UserID, ac.TeamID, h.isAdmin(r, ac.UserID), force)
+	err = h.svc.Delete(r.Context(), hostID, ac.UserID, ac.TeamID, h.isAdmin(r, ac.UserID), force)
 	if err == nil {
-		h.audit.LogHostDelete(r.Context(), ac, hostID, deletedHost.TeamID.String)
+		h.audit.LogHostDelete(r.Context(), ac, hostID, deletedHost.TeamID)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -292,8 +337,14 @@ func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // RegenerateToken handles POST /v1/hosts/{id}/token.
 func (h *hostHandler) RegenerateToken(w http.ResponseWriter, r *http.Request) {
-	hostID := chi.URLParam(r, "id")
+	hostIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
+
+	hostID, err := id.ParseHostID(hostIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		return
+	}
 
 	result, err := h.svc.RegenerateToken(r.Context(), hostID, ac.UserID, ac.TeamID, h.isAdmin(r, ac.UserID))
 	if err != nil {
@@ -343,13 +394,22 @@ func (h *hostHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Host:         hostToResponse(result.Host),
 		Token:        result.JWT,
 		RefreshToken: result.RefreshToken,
+		CertPEM:      result.CertPEM,
+		KeyPEM:       result.KeyPEM,
+		CACertPEM:    result.CACertPEM,
 	})
 }
 
 // Heartbeat handles POST /v1/hosts/{id}/heartbeat (host-token-authenticated).
 func (h *hostHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
-	hostID := chi.URLParam(r, "id")
+	hostIDStr := chi.URLParam(r, "id")
 	hc := auth.MustHostFromContext(r.Context())
+
+	hostID, err := id.ParseHostID(hostIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		return
+	}
 
 	// Prevent a host from heartbeating for a different host.
 	if hostID != hc.HostID {
@@ -368,7 +428,7 @@ func (h *hostHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 
 	// Log marked_up if the host just recovered from unreachable.
 	if prevHost.Status == "unreachable" {
-		h.audit.LogHostMarkedUp(r.Context(), prevHost.TeamID.String, hc.HostID)
+		h.audit.LogHostMarkedUp(r.Context(), prevHost.TeamID, hc.HostID)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -376,9 +436,15 @@ func (h *hostHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 
 // AddTag handles POST /v1/hosts/{id}/tags.
 func (h *hostHandler) AddTag(w http.ResponseWriter, r *http.Request) {
-	hostID := chi.URLParam(r, "id")
+	hostIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
 	admin := h.isAdmin(r, ac.UserID)
+
+	hostID, err := id.ParseHostID(hostIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		return
+	}
 
 	var req addTagRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -401,9 +467,15 @@ func (h *hostHandler) AddTag(w http.ResponseWriter, r *http.Request) {
 
 // RemoveTag handles DELETE /v1/hosts/{id}/tags/{tag}.
 func (h *hostHandler) RemoveTag(w http.ResponseWriter, r *http.Request) {
-	hostID := chi.URLParam(r, "id")
+	hostIDStr := chi.URLParam(r, "id")
 	tag := chi.URLParam(r, "tag")
 	ac := auth.MustFromContext(r.Context())
+
+	hostID, err := id.ParseHostID(hostIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		return
+	}
 
 	if err := h.svc.RemoveTag(r.Context(), hostID, ac.TeamID, h.isAdmin(r, ac.UserID), tag); err != nil {
 		status, code, msg := serviceErrToHTTP(err)
@@ -438,13 +510,22 @@ func (h *hostHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		Host:         hostToResponse(result.Host),
 		Token:        result.JWT,
 		RefreshToken: result.RefreshToken,
+		CertPEM:      result.CertPEM,
+		KeyPEM:       result.KeyPEM,
+		CACertPEM:    result.CACertPEM,
 	})
 }
 
 // ListTags handles GET /v1/hosts/{id}/tags.
 func (h *hostHandler) ListTags(w http.ResponseWriter, r *http.Request) {
-	hostID := chi.URLParam(r, "id")
+	hostIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
+
+	hostID, err := id.ParseHostID(hostIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		return
+	}
 
 	tags, err := h.svc.ListTags(r.Context(), hostID, ac.TeamID, h.isAdmin(r, ac.UserID))
 	if err != nil {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
@@ -22,7 +24,7 @@ type APIKeyCreateResult struct {
 }
 
 // Create generates a new API key for the given team.
-func (s *APIKeyService) Create(ctx context.Context, teamID, userID, name string) (APIKeyCreateResult, error) {
+func (s *APIKeyService) Create(ctx context.Context, teamID, userID pgtype.UUID, name string) (APIKeyCreateResult, error) {
 	if name == "" {
 		name = "Unnamed API Key"
 	}
@@ -48,16 +50,16 @@ func (s *APIKeyService) Create(ctx context.Context, teamID, userID, name string)
 }
 
 // List returns all API keys belonging to the given team.
-func (s *APIKeyService) List(ctx context.Context, teamID string) ([]db.TeamApiKey, error) {
+func (s *APIKeyService) List(ctx context.Context, teamID pgtype.UUID) ([]db.TeamApiKey, error) {
 	return s.DB.ListAPIKeysByTeam(ctx, teamID)
 }
 
 // ListWithCreator returns all API keys for the team, joined with the creator's email.
-func (s *APIKeyService) ListWithCreator(ctx context.Context, teamID string) ([]db.ListAPIKeysByTeamWithCreatorRow, error) {
+func (s *APIKeyService) ListWithCreator(ctx context.Context, teamID pgtype.UUID) ([]db.ListAPIKeysByTeamWithCreatorRow, error) {
 	return s.DB.ListAPIKeysByTeamWithCreator(ctx, teamID)
 }
 
 // Delete removes an API key by ID, scoped to the given team.
-func (s *APIKeyService) Delete(ctx context.Context, keyID, teamID string) error {
+func (s *APIKeyService) Delete(ctx context.Context, keyID, teamID pgtype.UUID) error {
 	return s.DB.DeleteAPIKey(ctx, db.DeleteAPIKeyParams{ID: keyID, TeamID: teamID})
 }

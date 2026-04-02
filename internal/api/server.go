@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
@@ -22,7 +23,8 @@ var openapiYAML []byte
 
 // Server is the control plane HTTP server.
 type Server struct {
-	router chi.Router
+	router   chi.Router
+	BuildSvc *service.BuildService
 }
 
 // New constructs the chi router and registers all routes.
@@ -35,6 +37,7 @@ func New(
 	jwtSecret []byte,
 	oauthRegistry *oauth.Registry,
 	oauthRedirectURL string,
+	ca *auth.CA,
 ) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
@@ -43,10 +46,11 @@ func New(
 	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
 	apiKeySvc := &service.APIKeyService{DB: queries}
 	templateSvc := &service.TemplateService{DB: queries}
-	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool}
+	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
 	auditSvc := &service.AuditService{DB: queries}
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
+	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
 
 	al := audit.New(queries)
 
@@ -65,6 +69,7 @@ func New(
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
+	buildH := newBuildHandler(buildSvc, queries, pool)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -174,9 +179,15 @@ func New(
 		r.Use(requireJWT(jwtSecret))
 		r.Use(requireAdmin(queries))
 		r.Put("/teams/{id}/byoc", teamH.SetBYOC)
+		r.Get("/templates", buildH.ListTemplates)
+		r.Delete("/templates/{name}", buildH.DeleteTemplate)
+		r.Post("/builds", buildH.Create)
+		r.Get("/builds", buildH.List)
+		r.Get("/builds/{id}", buildH.Get)
+		r.Post("/builds/{id}/cancel", buildH.Cancel)
 	})
 
-	return &Server{router: r}
+	return &Server{router: r, BuildSvc: buildSvc}
 }
 
 // Handler returns the HTTP handler.

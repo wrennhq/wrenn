@@ -31,8 +31,8 @@ var defaultGatewayIP = net.IPv4(169, 254, 0, 21)
 
 type PortToForward struct {
 	socat *exec.Cmd
-	// Process ID of the process that's listening on port.
-	pid int32
+	// Socket inode of the listening socket (unique per connection).
+	inode uint64
 	// family version of the ip.
 	family uint32
 	state  PortState
@@ -94,7 +94,7 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 			// Let's refresh our map of currently forwarded ports and mark the currently opened ones with the "FORWARD" state.
 			// This will make sure we won't delete them later.
 			for _, p := range procs {
-				key := fmt.Sprintf("%d-%d", p.Pid, p.Laddr.Port)
+				key := fmt.Sprintf("%d-%d", p.Inode, p.LocalPort)
 
 				// We check if the opened port is in our map of forwarded ports.
 				val, portOk := f.ports[key]
@@ -104,16 +104,16 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 					val.state = PortStateForward
 				} else {
 					f.logger.Debug().
-						Str("ip", p.Laddr.IP).
-						Uint32("port", p.Laddr.Port).
+						Str("ip", p.LocalIP).
+						Uint32("port", p.LocalPort).
 						Uint32("family", familyToIPVersion(p.Family)).
 						Str("state", p.Status).
 						Msg("Detected new opened port on localhost that is not forwarded")
 
 					// The opened port wasn't in the map so we create a new PortToForward and start forwarding.
 					ptf := &PortToForward{
-						pid:    p.Pid,
-						port:   p.Laddr.Port,
+						inode:  p.Inode,
+						port:   p.LocalPort,
 						state:  PortStateForward,
 						family: familyToIPVersion(p.Family),
 					}
@@ -153,7 +153,7 @@ func (f *Forwarder) startPortForwarding(ctx context.Context, p *PortToForward) {
 
 	f.logger.Debug().
 		Str("socatCmd", cmd.String()).
-		Int32("pid", p.pid).
+		Uint64("inode", p.inode).
 		Uint32("family", p.family).
 		IPAddr("sourceIP", f.sourceIP.To4()).
 		Uint32("port", p.port).
@@ -191,7 +191,7 @@ func (f *Forwarder) stopPortForwarding(p *PortToForward) {
 
 	logger := f.logger.With().
 		Str("socatCmd", p.socat.String()).
-		Int32("pid", p.pid).
+		Uint64("inode", p.inode).
 		Uint32("family", p.family).
 		IPAddr("sourceIP", f.sourceIP.To4()).
 		Uint32("port", p.port).

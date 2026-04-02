@@ -4,6 +4,7 @@
 package snapshot
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -170,6 +171,99 @@ func ProcessMemfileWithParent(memfilePath, diffPath, headerPath string, parentHe
 	}
 
 	return header, nil
+}
+
+// MergeDiffs consolidates multiple generation diff files into a single diff
+// file and resets the generation counter to 0. This is a pure file-level
+// operation — no Firecracker involvement.
+//
+// It reads each non-nil block from the appropriate diff file (as mapped by
+// the header), writes them all sequentially into a single new diff file,
+// and produces a fresh header pointing only at that file.
+//
+// diffFiles maps build ID (string) → open file path for each generation's diff.
+func MergeDiffs(header *Header, diffFiles map[string]string, mergedDiffPath, headerPath string) (*Header, error) {
+	blockSize := int64(header.Metadata.BlockSize)
+	mergedBuildID := uuid.New()
+
+	// Open all source diff files.
+	sources := make(map[string]*os.File, len(diffFiles))
+	for id, path := range diffFiles {
+		f, err := os.Open(path)
+		if err != nil {
+			// Close already opened files.
+			for _, sf := range sources {
+				sf.Close()
+			}
+			return nil, fmt.Errorf("open diff file for build %s: %w", id, err)
+		}
+		sources[id] = f
+	}
+	defer func() {
+		for _, f := range sources {
+			f.Close()
+		}
+	}()
+
+	dst, err := os.Create(mergedDiffPath)
+	if err != nil {
+		return nil, fmt.Errorf("create merged diff file: %w", err)
+	}
+	defer dst.Close()
+
+	totalBlocks := TotalBlocks(int64(header.Metadata.Size), blockSize)
+	dirty := make([]bool, totalBlocks)
+	empty := make([]bool, totalBlocks)
+	buf := make([]byte, blockSize)
+
+	for i := int64(0); i < totalBlocks; i++ {
+		offset := i * blockSize
+		mappedOffset, _, buildID, err := header.GetShiftedMapping(context.Background(), offset)
+		if err != nil {
+			return nil, fmt.Errorf("lookup block %d: %w", i, err)
+		}
+
+		if *buildID == uuid.Nil {
+			empty[i] = true
+			continue
+		}
+
+		src, ok := sources[buildID.String()]
+		if !ok {
+			return nil, fmt.Errorf("no diff file for build %s (block %d)", buildID, i)
+		}
+
+		if _, err := src.ReadAt(buf, mappedOffset); err != nil {
+			return nil, fmt.Errorf("read block %d from build %s: %w", i, buildID, err)
+		}
+
+		dirty[i] = true
+		if _, err := dst.Write(buf); err != nil {
+			return nil, fmt.Errorf("write merged block %d: %w", i, err)
+		}
+	}
+
+	// Build fresh header with generation 0.
+	dirtyMappings := CreateMapping(mergedBuildID, dirty, blockSize)
+	emptyMappings := CreateMapping(uuid.Nil, empty, blockSize)
+	merged := MergeMappings(dirtyMappings, emptyMappings)
+	normalized := NormalizeMappings(merged)
+
+	metadata := NewMetadata(mergedBuildID, uint64(blockSize), header.Metadata.Size)
+	newHeader, err := NewHeader(metadata, normalized)
+	if err != nil {
+		return nil, fmt.Errorf("create merged header: %w", err)
+	}
+
+	headerData, err := Serialize(metadata, normalized)
+	if err != nil {
+		return nil, fmt.Errorf("serialize merged header: %w", err)
+	}
+	if err := os.WriteFile(headerPath, headerData, 0644); err != nil {
+		return nil, fmt.Errorf("write merged header: %w", err)
+	}
+
+	return newHeader, nil
 }
 
 // isZeroBlock checks if a block is entirely zero bytes.

@@ -14,6 +14,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 )
@@ -48,9 +49,15 @@ type wsOutMsg struct {
 
 // ExecStream handles WS /v1/sandboxes/{id}/exec/stream.
 func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -91,7 +98,7 @@ func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	stream, err := agent.ExecStream(streamCtx, connect.NewRequest(&pb.ExecStreamRequest{
-		SandboxId: sandboxID,
+		SandboxId: sandboxIDStr,
 		Cmd:       startMsg.Cmd,
 		Args:      startMsg.Args,
 	}))
@@ -157,7 +164,7 @@ func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
 			Valid: true,
 		},
 	}); err != nil {
-		slog.Warn("failed to update last active after stream exec", "sandbox_id", sandboxID, "error", err)
+		slog.Warn("failed to update last active after stream exec", "sandbox_id", sandboxIDStr, "error", err)
 	}
 }
 

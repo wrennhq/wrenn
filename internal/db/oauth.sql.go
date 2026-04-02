@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getOAuthProvider = `-- name: GetOAuthProvider :one
@@ -38,10 +40,10 @@ VALUES ($1, $2, $3, $4)
 `
 
 type InsertOAuthProviderParams struct {
-	Provider   string `json:"provider"`
-	ProviderID string `json:"provider_id"`
-	UserID     string `json:"user_id"`
-	Email      string `json:"email"`
+	Provider   string      `json:"provider"`
+	ProviderID string      `json:"provider_id"`
+	UserID     pgtype.UUID `json:"user_id"`
+	Email      string      `json:"email"`
 }
 
 func (q *Queries) InsertOAuthProvider(ctx context.Context, arg InsertOAuthProviderParams) error {

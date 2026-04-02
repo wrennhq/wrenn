@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# update-debug-rootfs.sh — Build envd and inject it (plus wrenn-init) into the debug rootfs.
+# update-debug-rootfs.sh — Build envd and inject it (plus wrenn-init + tini) into the debug rootfs.
 #
 # This script:
 #   1. Builds a fresh envd static binary via make
 #   2. Mounts the rootfs image
-#   3. Copies envd and wrenn-init into the image
+#   3. Copies envd, wrenn-init, and tini into the image
 #   4. Unmounts cleanly
 #
 # Usage:

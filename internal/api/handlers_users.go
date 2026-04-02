@@ -8,6 +8,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
 type usersHandler struct {
@@ -45,7 +46,7 @@ func (h *usersHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]userResult, len(results))
 	for i, u := range results {
-		resp[i] = userResult{UserID: u.ID, Email: u.Email}
+		resp[i] = userResult{UserID: id.FormatUserID(u.ID), Email: u.Email}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

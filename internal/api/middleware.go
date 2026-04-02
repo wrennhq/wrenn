@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
 type errorResponse struct {
@@ -33,6 +36,11 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, errorResponse{
 		Error: errorDetail{Code: code, Message: message},
 	})
+}
+
+// formatUUIDForRPC converts a pgtype.UUID to a hex string for RPC messages.
+func formatUUIDForRPC(u pgtype.UUID) string {
+	return id.UUIDString(u)
 }
 
 // agentErrToHTTP maps a Connect RPC error to an HTTP status, error code, and message.

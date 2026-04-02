@@ -47,7 +47,7 @@
 								Capsules
 							</h1>
 							<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-								Isolated VMs. Start cold in under a second — pause, snapshot, or destroy at will.
+								All active and recent capsules across your team.
 							</p>
 						</div>
 

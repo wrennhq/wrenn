@@ -12,6 +12,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 )
@@ -29,9 +30,15 @@ func newFilesStreamHandler(db *db.Queries, pool *lifecycle.HostClientPool) *file
 // Expects multipart/form-data with "path" text field and "file" file field.
 // Streams file content directly from the request body to the host agent without buffering.
 func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -101,7 +108,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	if err := stream.Send(&pb.WriteFileStreamRequest{
 		Content: &pb.WriteFileStreamRequest_Meta{
 			Meta: &pb.WriteFileStreamMeta{
-				SandboxId: sandboxID,
+				SandboxId: sandboxIDStr,
 				Path:      filePath,
 			},
 		},
@@ -146,9 +153,15 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 // StreamDownload handles POST /v1/sandboxes/{id}/files/stream/read.
 // Accepts JSON body with path, streams file content back without buffering.
 func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -178,7 +191,7 @@ func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Reque
 
 	// Open server-streaming RPC to host agent.
 	stream, err := agent.ReadFileStream(ctx, connect.NewRequest(&pb.ReadFileStreamRequest{
-		SandboxId: sandboxID,
+		SandboxId: sandboxIDStr,
 		Path:      req.Path,
 	}))
 	if err != nil {

@@ -20,7 +20,7 @@ import (
 // It prefers the user's default team; if none is flagged as default it falls
 // back to the earliest-joined team. Returns pgx.ErrNoRows when the user has
 // no team memberships at all.
-func loginTeam(ctx context.Context, q *db.Queries, userID string) (db.Team, string, error) {
+func loginTeam(ctx context.Context, q *db.Queries, userID pgtype.UUID) (db.Team, string, error) {
 	team, err := q.GetDefaultTeamForUser(ctx, userID)
 	if err == nil {
 		membership, err := q.GetTeamMembership(ctx, db.GetTeamMembershipParams{UserID: userID, TeamID: team.ID})
@@ -176,8 +176,8 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, authResponse{
 		Token:  token,
-		UserID: userID,
-		TeamID: teamID,
+		UserID: id.FormatUserID(userID),
+		TeamID: id.FormatTeamID(teamID),
 		Email:  req.Email,
 		Name:   req.Name,
 	})
@@ -236,8 +236,8 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, authResponse{
 		Token:  token,
-		UserID: user.ID,
-		TeamID: team.ID,
+		UserID: id.FormatUserID(user.ID),
+		TeamID: id.FormatTeamID(team.ID),
 		Email:  user.Email,
 		Name:   user.Name,
 	})
@@ -260,10 +260,16 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	teamID, err := id.ParseTeamID(req.TeamID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid team_id")
+		return
+	}
+
 	ctx := r.Context()
 
 	// Verify team exists and is not deleted.
-	team, err := h.db.GetTeam(ctx, req.TeamID)
+	team, err := h.db.GetTeam(ctx, teamID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "not_found", "team not found")
@@ -280,7 +286,7 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 	// Verify membership from DB — JWT role is not trusted here.
 	membership, err := h.db.GetTeamMembership(ctx, db.GetTeamMembershipParams{
 		UserID: ac.UserID,
-		TeamID: req.TeamID,
+		TeamID: teamID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -298,7 +304,7 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, ac.UserID, req.TeamID, ac.Email, user.Name, membership.Role, user.IsAdmin)
+	token, err := auth.SignJWT(h.jwtSecret, ac.UserID, teamID, ac.Email, user.Name, membership.Role, user.IsAdmin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
@@ -306,8 +312,8 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, authResponse{
 		Token:  token,
-		UserID: ac.UserID,
-		TeamID: req.TeamID,
+		UserID: id.FormatUserID(ac.UserID),
+		TeamID: id.FormatTeamID(teamID),
 		Email:  ac.Email,
 		Name:   user.Name,
 	})

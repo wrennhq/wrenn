@@ -16,8 +16,8 @@ DELETE FROM team_api_keys WHERE id = $1 AND team_id = $2
 `
 
 type DeleteAPIKeyParams struct {
-	ID     string `json:"id"`
-	TeamID string `json:"team_id"`
+	ID     pgtype.UUID `json:"id"`
+	TeamID pgtype.UUID `json:"team_id"`
 }
 
 func (q *Queries) DeleteAPIKey(ctx context.Context, arg DeleteAPIKeyParams) error {
@@ -52,12 +52,12 @@ RETURNING id, team_id, name, key_hash, key_prefix, created_by, created_at, last_
 `
 
 type InsertAPIKeyParams struct {
-	ID        string `json:"id"`
-	TeamID    string `json:"team_id"`
-	Name      string `json:"name"`
-	KeyHash   string `json:"key_hash"`
-	KeyPrefix string `json:"key_prefix"`
-	CreatedBy string `json:"created_by"`
+	ID        pgtype.UUID `json:"id"`
+	TeamID    pgtype.UUID `json:"team_id"`
+	Name      string      `json:"name"`
+	KeyHash   string      `json:"key_hash"`
+	KeyPrefix string      `json:"key_prefix"`
+	CreatedBy pgtype.UUID `json:"created_by"`
 }
 
 func (q *Queries) InsertAPIKey(ctx context.Context, arg InsertAPIKeyParams) (TeamApiKey, error) {
@@ -87,7 +87,7 @@ const listAPIKeysByTeam = `-- name: ListAPIKeysByTeam :many
 SELECT id, team_id, name, key_hash, key_prefix, created_by, created_at, last_used FROM team_api_keys WHERE team_id = $1 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListAPIKeysByTeam(ctx context.Context, teamID string) ([]TeamApiKey, error) {
+func (q *Queries) ListAPIKeysByTeam(ctx context.Context, teamID pgtype.UUID) ([]TeamApiKey, error) {
 	rows, err := q.db.Query(ctx, listAPIKeysByTeam, teamID)
 	if err != nil {
 		return nil, err
@@ -126,18 +126,18 @@ ORDER BY k.created_at DESC
 `
 
 type ListAPIKeysByTeamWithCreatorRow struct {
-	ID           string             `json:"id"`
-	TeamID       string             `json:"team_id"`
+	ID           pgtype.UUID        `json:"id"`
+	TeamID       pgtype.UUID        `json:"team_id"`
 	Name         string             `json:"name"`
 	KeyHash      string             `json:"key_hash"`
 	KeyPrefix    string             `json:"key_prefix"`
-	CreatedBy    string             `json:"created_by"`
+	CreatedBy    pgtype.UUID        `json:"created_by"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	LastUsed     pgtype.Timestamptz `json:"last_used"`
 	CreatorEmail string             `json:"creator_email"`
 }
 
-func (q *Queries) ListAPIKeysByTeamWithCreator(ctx context.Context, teamID string) ([]ListAPIKeysByTeamWithCreatorRow, error) {
+func (q *Queries) ListAPIKeysByTeamWithCreator(ctx context.Context, teamID pgtype.UUID) ([]ListAPIKeysByTeamWithCreatorRow, error) {
 	rows, err := q.db.Query(ctx, listAPIKeysByTeamWithCreator, teamID)
 	if err != nil {
 		return nil, err
@@ -171,7 +171,7 @@ const updateAPIKeyLastUsed = `-- name: UpdateAPIKeyLastUsed :exec
 UPDATE team_api_keys SET last_used = NOW() WHERE id = $1
 `
 
-func (q *Queries) UpdateAPIKeyLastUsed(ctx context.Context, id string) error {
+func (q *Queries) UpdateAPIKeyLastUsed(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, updateAPIKeyLastUsed, id)
 	return err
 }

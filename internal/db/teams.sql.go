@@ -16,8 +16,8 @@ DELETE FROM users_teams WHERE team_id = $1 AND user_id = $2
 `
 
 type DeleteTeamMemberParams struct {
-	TeamID string `json:"team_id"`
-	UserID string `json:"user_id"`
+	TeamID pgtype.UUID `json:"team_id"`
+	UserID pgtype.UUID `json:"user_id"`
 }
 
 func (q *Queries) DeleteTeamMember(ctx context.Context, arg DeleteTeamMemberParams) error {
@@ -26,7 +26,7 @@ func (q *Queries) DeleteTeamMember(ctx context.Context, arg DeleteTeamMemberPara
 }
 
 const getBYOCTeams = `-- name: GetBYOCTeams :many
-SELECT id, name, created_at, is_byoc, slug, deleted_at FROM teams WHERE is_byoc = TRUE AND deleted_at IS NULL ORDER BY created_at
+SELECT id, name, slug, is_byoc, created_at, deleted_at FROM teams WHERE is_byoc = TRUE AND deleted_at IS NULL ORDER BY created_at
 `
 
 func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
@@ -41,9 +41,9 @@ func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
-			&i.CreatedAt,
-			&i.IsByoc,
 			&i.Slug,
+			&i.IsByoc,
+			&i.CreatedAt,
 			&i.DeletedAt,
 		); err != nil {
 			return nil, err
@@ -57,46 +57,46 @@ func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
 }
 
 const getDefaultTeamForUser = `-- name: GetDefaultTeamForUser :one
-SELECT t.id, t.name, t.created_at, t.is_byoc, t.slug, t.deleted_at FROM teams t
+SELECT t.id, t.name, t.slug, t.is_byoc, t.created_at, t.deleted_at FROM teams t
 JOIN users_teams ut ON ut.team_id = t.id
 WHERE ut.user_id = $1 AND ut.is_default = TRUE AND t.deleted_at IS NULL
 LIMIT 1
 `
 
-func (q *Queries) GetDefaultTeamForUser(ctx context.Context, userID string) (Team, error) {
+func (q *Queries) GetDefaultTeamForUser(ctx context.Context, userID pgtype.UUID) (Team, error) {
 	row := q.db.QueryRow(ctx, getDefaultTeamForUser, userID)
 	var i Team
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.CreatedAt,
-		&i.IsByoc,
 		&i.Slug,
+		&i.IsByoc,
+		&i.CreatedAt,
 		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getTeam = `-- name: GetTeam :one
-SELECT id, name, created_at, is_byoc, slug, deleted_at FROM teams WHERE id = $1
+SELECT id, name, slug, is_byoc, created_at, deleted_at FROM teams WHERE id = $1
 `
 
-func (q *Queries) GetTeam(ctx context.Context, id string) (Team, error) {
+func (q *Queries) GetTeam(ctx context.Context, id pgtype.UUID) (Team, error) {
 	row := q.db.QueryRow(ctx, getTeam, id)
 	var i Team
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.CreatedAt,
-		&i.IsByoc,
 		&i.Slug,
+		&i.IsByoc,
+		&i.CreatedAt,
 		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getTeamBySlug = `-- name: GetTeamBySlug :one
-SELECT id, name, created_at, is_byoc, slug, deleted_at FROM teams WHERE slug = $1 AND deleted_at IS NULL
+SELECT id, name, slug, is_byoc, created_at, deleted_at FROM teams WHERE slug = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetTeamBySlug(ctx context.Context, slug string) (Team, error) {
@@ -105,9 +105,9 @@ func (q *Queries) GetTeamBySlug(ctx context.Context, slug string) (Team, error) 
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.CreatedAt,
-		&i.IsByoc,
 		&i.Slug,
+		&i.IsByoc,
+		&i.CreatedAt,
 		&i.DeletedAt,
 	)
 	return i, err
@@ -122,14 +122,14 @@ ORDER BY ut.created_at
 `
 
 type GetTeamMembersRow struct {
-	ID       string             `json:"id"`
+	ID       pgtype.UUID        `json:"id"`
 	Name     string             `json:"name"`
 	Email    string             `json:"email"`
 	Role     string             `json:"role"`
 	JoinedAt pgtype.Timestamptz `json:"joined_at"`
 }
 
-func (q *Queries) GetTeamMembers(ctx context.Context, teamID string) ([]GetTeamMembersRow, error) {
+func (q *Queries) GetTeamMembers(ctx context.Context, teamID pgtype.UUID) ([]GetTeamMembersRow, error) {
 	rows, err := q.db.Query(ctx, getTeamMembers, teamID)
 	if err != nil {
 		return nil, err
@@ -160,8 +160,8 @@ SELECT user_id, team_id, is_default, role, created_at FROM users_teams WHERE use
 `
 
 type GetTeamMembershipParams struct {
-	UserID string `json:"user_id"`
-	TeamID string `json:"team_id"`
+	UserID pgtype.UUID `json:"user_id"`
+	TeamID pgtype.UUID `json:"team_id"`
 }
 
 func (q *Queries) GetTeamMembership(ctx context.Context, arg GetTeamMembershipParams) (UsersTeam, error) {
@@ -186,7 +186,7 @@ ORDER BY ut.created_at
 `
 
 type GetTeamsForUserRow struct {
-	ID        string             `json:"id"`
+	ID        pgtype.UUID        `json:"id"`
 	Name      string             `json:"name"`
 	Slug      string             `json:"slug"`
 	IsByoc    bool               `json:"is_byoc"`
@@ -195,7 +195,7 @@ type GetTeamsForUserRow struct {
 	Role      string             `json:"role"`
 }
 
-func (q *Queries) GetTeamsForUser(ctx context.Context, userID string) ([]GetTeamsForUserRow, error) {
+func (q *Queries) GetTeamsForUser(ctx context.Context, userID pgtype.UUID) ([]GetTeamsForUserRow, error) {
 	rows, err := q.db.Query(ctx, getTeamsForUser, userID)
 	if err != nil {
 		return nil, err
@@ -226,13 +226,13 @@ func (q *Queries) GetTeamsForUser(ctx context.Context, userID string) ([]GetTeam
 const insertTeam = `-- name: InsertTeam :one
 INSERT INTO teams (id, name, slug)
 VALUES ($1, $2, $3)
-RETURNING id, name, created_at, is_byoc, slug, deleted_at
+RETURNING id, name, slug, is_byoc, created_at, deleted_at
 `
 
 type InsertTeamParams struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Slug string `json:"slug"`
+	ID   pgtype.UUID `json:"id"`
+	Name string      `json:"name"`
+	Slug string      `json:"slug"`
 }
 
 func (q *Queries) InsertTeam(ctx context.Context, arg InsertTeamParams) (Team, error) {
@@ -241,9 +241,9 @@ func (q *Queries) InsertTeam(ctx context.Context, arg InsertTeamParams) (Team, e
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.CreatedAt,
-		&i.IsByoc,
 		&i.Slug,
+		&i.IsByoc,
+		&i.CreatedAt,
 		&i.DeletedAt,
 	)
 	return i, err
@@ -255,10 +255,10 @@ VALUES ($1, $2, $3, $4)
 `
 
 type InsertTeamMemberParams struct {
-	UserID    string `json:"user_id"`
-	TeamID    string `json:"team_id"`
-	IsDefault bool   `json:"is_default"`
-	Role      string `json:"role"`
+	UserID    pgtype.UUID `json:"user_id"`
+	TeamID    pgtype.UUID `json:"team_id"`
+	IsDefault bool        `json:"is_default"`
+	Role      string      `json:"role"`
 }
 
 func (q *Queries) InsertTeamMember(ctx context.Context, arg InsertTeamMemberParams) error {
@@ -276,8 +276,8 @@ UPDATE teams SET is_byoc = $2 WHERE id = $1
 `
 
 type SetTeamBYOCParams struct {
-	ID     string `json:"id"`
-	IsByoc bool   `json:"is_byoc"`
+	ID     pgtype.UUID `json:"id"`
+	IsByoc bool        `json:"is_byoc"`
 }
 
 func (q *Queries) SetTeamBYOC(ctx context.Context, arg SetTeamBYOCParams) error {
@@ -289,7 +289,7 @@ const softDeleteTeam = `-- name: SoftDeleteTeam :exec
 UPDATE teams SET deleted_at = NOW() WHERE id = $1
 `
 
-func (q *Queries) SoftDeleteTeam(ctx context.Context, id string) error {
+func (q *Queries) SoftDeleteTeam(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteTeam, id)
 	return err
 }
@@ -299,9 +299,9 @@ UPDATE users_teams SET role = $3 WHERE team_id = $1 AND user_id = $2
 `
 
 type UpdateMemberRoleParams struct {
-	TeamID string `json:"team_id"`
-	UserID string `json:"user_id"`
-	Role   string `json:"role"`
+	TeamID pgtype.UUID `json:"team_id"`
+	UserID pgtype.UUID `json:"user_id"`
+	Role   string      `json:"role"`
 }
 
 func (q *Queries) UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error {
@@ -314,8 +314,8 @@ UPDATE teams SET name = $2 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type UpdateTeamNameParams struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID   pgtype.UUID `json:"id"`
+	Name string      `json:"name"`
 }
 
 func (q *Queries) UpdateTeamName(ctx context.Context, arg UpdateTeamNameParams) error {

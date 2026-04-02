@@ -3,7 +3,10 @@
 # rootfs-from-container.sh — Create a bootable Wrenn rootfs from a Docker container.
 #
 # Exports a container's filesystem, writes it into an ext4 image, injects
-# envd + wrenn-init, and shrinks the image to minimum size.
+# envd + wrenn-init + tini, and shrinks the image to minimum size.
+#
+# The container image must already include: socat, chrony, curl, ca-certificates, git.
+# These are installed via apt in the container before export, not injected here.
 #
 # Usage:
 #   bash scripts/rootfs-from-container.sh <container> <image_name>
@@ -13,7 +16,7 @@
 #   image_name  — Directory name under images dir (e.g. "waitlist")
 #
 # Output:
-#   ${AGENT_FILES_ROOTDIR}/images/<image_name>/rootfs.ext4
+#   ${WRENN_DIR}/images/<image_name>/rootfs.ext4
 #
 # Requires: docker, mkfs.ext4, resize2fs, e2fsck, make (for building envd), curl (for tini download)
 # Sudo is used only for mount/umount/copy-into-image operations.
@@ -22,8 +25,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-AGENT_FILES_ROOTDIR="${AGENT_FILES_ROOTDIR:-/var/lib/wrenn}"
-AGENT_IMAGES_PATH="${AGENT_FILES_ROOTDIR}/images"
+WRENN_DIR="${WRENN_DIR:-/var/lib/wrenn}"
+WRENN_IMAGES_PATH="${WRENN_DIR}/images"
 
 if [ $# -lt 2 ]; then
     echo "Usage: $0 <container> <image_name>"
@@ -32,7 +35,7 @@ fi
 
 CONTAINER="$1"
 IMAGE_NAME="$2"
-OUTPUT_DIR="${AGENT_IMAGES_PATH}/${IMAGE_NAME}"
+OUTPUT_DIR="${WRENN_IMAGES_PATH}/${IMAGE_NAME}"
 OUTPUT_FILE="${OUTPUT_DIR}/rootfs.ext4"
 MOUNT_DIR="/tmp/wrenn-rootfs-build"
 TAR_FILE="/tmp/wrenn-rootfs-export-${IMAGE_NAME}.tar"
@@ -130,16 +133,29 @@ sudo mkdir -p "${MOUNT_DIR}/sbin"
 sudo cp "${TINI_BIN}" "${MOUNT_DIR}/sbin/tini"
 sudo chmod 755 "${MOUNT_DIR}/sbin/tini"
 
-# Step 6: Verify.
+# Step 6: Verify injected binaries and required container packages.
 echo ""
 echo "==> Installed guest binaries:"
 ls -la "${MOUNT_DIR}/usr/local/bin/envd" "${MOUNT_DIR}/usr/local/bin/wrenn-init" "${MOUNT_DIR}/sbin/tini"
+
+echo ""
+echo "==> Checking required container packages..."
+MISSING_PKGS=""
+for bin in socat chronyd curl git; do
+    if ! find "${MOUNT_DIR}" -name "${bin}" -type f 2>/dev/null | head -1 | grep -q .; then
+        MISSING_PKGS="${MISSING_PKGS} ${bin}"
+    fi
+done
+if [ -n "${MISSING_PKGS}" ]; then
+    echo "WARNING: The following binaries were not found in the container image:${MISSING_PKGS}"
+    echo "         Install them in the container (via apt) before exporting."
+fi
 
 # Unmount before shrinking.
 sudo umount "${MOUNT_DIR}"
 rmdir "${MOUNT_DIR}" 2>/dev/null || true
 
-# Step 7: Shrink the image to minimum size.
+# Step 8: Shrink the image to minimum size.
 echo ""
 echo "==> Shrinking image..."
 sudo e2fsck -fy "${OUTPUT_FILE}"

@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
 const jwtExpiry = 6 * time.Hour
@@ -23,16 +26,16 @@ type Claims struct {
 }
 
 // SignJWT signs a new 6-hour JWT for the given user.
-func SignJWT(secret []byte, userID, teamID, email, name, role string, isAdmin bool) (string, error) {
+func SignJWT(secret []byte, userID, teamID pgtype.UUID, email, name, role string, isAdmin bool) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		TeamID:  teamID,
+		TeamID:  id.FormatTeamID(teamID),
 		Role:    role,
 		Email:   email,
 		Name:    name,
 		IsAdmin: isAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   userID,
+			Subject:   id.FormatUserID(userID),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(jwtExpiry)),
 		},
@@ -70,14 +73,15 @@ type HostClaims struct {
 	jwt.RegisteredClaims
 }
 
-// SignHostJWT signs a long-lived (1 year) JWT for a registered host agent.
-func SignHostJWT(secret []byte, hostID string) (string, error) {
+// SignHostJWT signs a long-lived (7-day) JWT for a registered host agent.
+func SignHostJWT(secret []byte, hostID pgtype.UUID) (string, error) {
+	formatted := id.FormatHostID(hostID)
 	now := time.Now()
 	claims := HostClaims{
 		Type:   "host",
-		HostID: hostID,
+		HostID: formatted,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   hostID,
+			Subject:   formatted,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(hostJWTExpiry)),
 		},

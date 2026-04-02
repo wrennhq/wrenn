@@ -56,6 +56,7 @@
 						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)]"
 						placeholder="minimal"
 					/>
+					<p class="mt-1.5 text-meta text-[var(--color-text-muted)]">Name of a snapshot or base image to boot from.</p>
 				</div>
 
 				<div class="grid grid-cols-2 gap-3">
@@ -85,14 +86,16 @@
 				</div>
 
 				<div>
-					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-timeout">Idle timeout (seconds — 0 = never pause)</label>
+					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-timeout">Idle timeout</label>
 					<input
 						id="create-timeout"
 						type="number"
 						min="0"
 						bind:value={createForm.timeout_sec}
 						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
+						placeholder="0"
 					/>
+					<p class="mt-1.5 text-meta text-[var(--color-text-muted)]">Seconds of inactivity before the capsule pauses. Set to 0 to keep it running indefinitely.</p>
 				</div>
 			</div>
 

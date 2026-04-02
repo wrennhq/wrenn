@@ -10,6 +10,7 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 )
 
@@ -46,7 +47,7 @@ type sandboxResponse struct {
 
 func sandboxToResponse(sb db.Sandbox) sandboxResponse {
 	resp := sandboxResponse{
-		ID:         sb.ID,
+		ID:         id.FormatSandboxID(sb.ID),
 		Status:     sb.Status,
 		Template:   sb.Template,
 		VCPUs:      sb.Vcpus,
@@ -81,7 +82,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ac := auth.MustFromContext(r.Context())
-	if ac.TeamID == "" {
+	if !ac.TeamID.Valid {
 		writeError(w, http.StatusForbidden, "no_team", "no active team context; re-authenticate")
 		return
 	}
@@ -122,8 +123,14 @@ func (h *sandboxHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /v1/sandboxes/{id}.
 func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.svc.Get(r.Context(), sandboxID, ac.TeamID)
 	if err != nil {
@@ -136,8 +143,14 @@ func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Pause handles POST /v1/sandboxes/{id}/pause.
 func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.svc.Pause(r.Context(), sandboxID, ac.TeamID)
 	if err != nil {
@@ -152,8 +165,14 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 
 // Resume handles POST /v1/sandboxes/{id}/resume.
 func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.svc.Resume(r.Context(), sandboxID, ac.TeamID)
 	if err != nil {
@@ -168,8 +187,14 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 
 // Ping handles POST /v1/sandboxes/{id}/ping.
 func (h *sandboxHandler) Ping(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	if err := h.svc.Ping(r.Context(), sandboxID, ac.TeamID); err != nil {
 		status, code, msg := serviceErrToHTTP(err)
@@ -182,8 +207,14 @@ func (h *sandboxHandler) Ping(w http.ResponseWriter, r *http.Request) {
 
 // Destroy handles DELETE /v1/sandboxes/{id}.
 func (h *sandboxHandler) Destroy(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	if err := h.svc.Destroy(r.Context(), sandboxID, ac.TeamID); err != nil {
 		status, code, msg := serviceErrToHTTP(err)

@@ -51,12 +51,12 @@ Copy `.env.example` to `.env` and edit:
 DATABASE_URL=postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable
 
 # Control plane
-CP_LISTEN_ADDR=:8000
+WRENN_CP_LISTEN_ADDR=:8000
 CP_HOST_AGENT_ADDR=http://localhost:50051
 
 # Host agent
-AGENT_LISTEN_ADDR=:50051
-AGENT_FILES_ROOTDIR=/var/lib/wrenn
+WRENN_HOST_LISTEN_ADDR=:50051
+WRENN_DIR=/var/lib/wrenn
 ```
 
 ### Run
@@ -69,7 +69,7 @@ make migrate-up
 ./builds/wrenn-cp
 ```
 
-Control plane listens on `CP_LISTEN_ADDR` (default `:8000`).
+Control plane listens on `WRENN_CP_LISTEN_ADDR` (default `:8000`).
 
 ### Host registration
 
@@ -87,16 +87,16 @@ Hosts must be registered with the control plane before they can serve sandboxes.
 
 2. **Start the host agent** with the registration token and its externally-reachable address:
    ```bash
-   sudo AGENT_CP_URL=http://cp-host:8000 \
+   sudo WRENN_CP_URL=http://cp-host:8000 \
         ./builds/wrenn-agent \
         --register <token-from-step-1> \
         --address 10.0.1.5:50051
    ```
-   On first startup the agent sends its specs (arch, CPU, memory, disk) to the control plane, receives a long-lived host JWT, and saves it to `$AGENT_FILES_ROOTDIR/host-token`.
+   On first startup the agent sends its specs (arch, CPU, memory, disk) to the control plane, receives a long-lived host JWT, and saves it to `$WRENN_DIR/host-token`.
 
 3. **Subsequent startups** don't need `--register` — the agent loads the saved JWT automatically:
    ```bash
-   sudo AGENT_CP_URL=http://cp-host:8000 \
+   sudo WRENN_CP_URL=http://cp-host:8000 \
         ./builds/wrenn-agent --address 10.0.1.5:50051
    ```
 
@@ -107,7 +107,7 @@ Hosts must be registered with the control plane before they can serve sandboxes.
    ```
    Then restart the agent with the new token.
 
-The agent sends heartbeats to the control plane every 30 seconds. Host agent listens on `AGENT_LISTEN_ADDR` (default `:50051`).
+The agent sends heartbeats to the control plane every 30 seconds. Host agent listens on `WRENN_HOST_LISTEN_ADDR` (default `:50051`).
 
 ### Rootfs images
 

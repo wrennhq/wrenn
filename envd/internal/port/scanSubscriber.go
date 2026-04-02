@@ -4,7 +4,6 @@ package port
 
 import (
 	"github.com/rs/zerolog"
-	"github.com/shirou/gopsutil/v4/net"
 )
 
 // If we want to create a listener/subscriber pattern somewhere else we should move
@@ -13,7 +12,7 @@ import (
 type ScannerSubscriber struct {
 	logger   *zerolog.Logger
 	filter   *ScannerFilter
-	Messages chan ([]net.ConnectionStat)
+	Messages chan ([]ConnStat)
 	id       string
 }
 
@@ -22,7 +21,7 @@ func NewScannerSubscriber(logger *zerolog.Logger, id string, filter *ScannerFilt
 		logger:   logger,
 		id:       id,
 		filter:   filter,
-		Messages: make(chan []net.ConnectionStat),
+		Messages: make(chan []ConnStat),
 	}
 }
 
@@ -34,17 +33,17 @@ func (ss *ScannerSubscriber) Destroy() {
 	close(ss.Messages)
 }
 
-func (ss *ScannerSubscriber) Signal(proc []net.ConnectionStat) {
+func (ss *ScannerSubscriber) Signal(conns []ConnStat) {
 	// Filter isn't specified. Accept everything.
 	if ss.filter == nil {
-		ss.Messages <- proc
+		ss.Messages <- conns
 	} else {
-		filtered := []net.ConnectionStat{}
-		for i := range proc {
+		filtered := []ConnStat{}
+		for i := range conns {
 			// We need to access the list directly otherwise there will be implicit memory aliasing
-			// If the filter matched a process, we will send it to a channel.
-			if ss.filter.Match(&proc[i]) {
-				filtered = append(filtered, proc[i])
+			// If the filter matched a connection, we will send it to a channel.
+			if ss.filter.Match(&conns[i]) {
+				filtered = append(filtered, conns[i])
 			}
 		}
 		ss.Messages <- filtered

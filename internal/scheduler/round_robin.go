@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 )
 
@@ -15,7 +17,7 @@ type HostScheduler interface {
 	// For BYOC teams (isByoc=true), only online BYOC hosts belonging to teamID
 	// are considered. For non-BYOC teams, only online regular (platform) hosts
 	// are considered. Returns an error if no suitable host is available.
-	SelectHost(ctx context.Context, teamID string, isByoc bool) (db.Host, error)
+	SelectHost(ctx context.Context, teamID pgtype.UUID, isByoc bool) (db.Host, error)
 }
 
 // RoundRobinScheduler cycles through eligible online hosts in round-robin order.
@@ -32,7 +34,7 @@ func NewRoundRobinScheduler(queries *db.Queries) *RoundRobinScheduler {
 }
 
 // SelectHost returns the next eligible online host in round-robin order.
-func (s *RoundRobinScheduler) SelectHost(ctx context.Context, teamID string, isByoc bool) (db.Host, error) {
+func (s *RoundRobinScheduler) SelectHost(ctx context.Context, teamID pgtype.UUID, isByoc bool) (db.Host, error) {
 	hosts, err := s.db.ListActiveHosts(ctx)
 	if err != nil {
 		return db.Host{}, fmt.Errorf("list hosts: %w", err)
@@ -40,12 +42,12 @@ func (s *RoundRobinScheduler) SelectHost(ctx context.Context, teamID string, isB
 
 	var eligible []db.Host
 	for _, h := range hosts {
-		if h.Status != "online" || !h.Address.Valid || h.Address.String == "" {
+		if h.Status != "online" || h.Address == "" {
 			continue
 		}
 		if isByoc {
 			// BYOC team: only use hosts belonging to this team.
-			if h.Type != "byoc" || !h.TeamID.Valid || h.TeamID.String != teamID {
+			if h.Type != "byoc" || !h.TeamID.Valid || h.TeamID != teamID {
 				continue
 			}
 		} else {

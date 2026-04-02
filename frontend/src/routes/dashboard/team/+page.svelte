@@ -50,7 +50,6 @@
 	let nameInputEl = $state<HTMLInputElement | null>(null);
 
 	// Copy state
-	let copiedSlug = $state(false);
 	let copiedId = $state(false);
 
 	// Add member dialog
@@ -139,16 +138,11 @@
 		savingName = false;
 	}
 
-	async function copyToClipboard(text: string, which: 'slug' | 'id') {
+	async function copyToClipboard(text: string) {
 		try {
 			await navigator.clipboard.writeText(text);
-			if (which === 'slug') {
-				copiedSlug = true;
-				setTimeout(() => (copiedSlug = false), 2000);
-			} else {
-				copiedId = true;
-				setTimeout(() => (copiedId = false), 2000);
-			}
+			copiedId = true;
+			setTimeout(() => (copiedId = false), 2000);
 		} catch {
 			toast.error('Copy failed — select the text and copy manually.');
 		}
@@ -514,115 +508,58 @@
 								</div>
 							</div>
 
-							<!-- Slug + ID row (2-col grid) -->
-							<div class="grid grid-cols-2 divide-x divide-[var(--color-border)]">
-								<!-- Slug -->
-								<div class="flex items-center gap-3 px-5 py-4">
-									<div class="min-w-0 flex-1">
-										<div
-											class="mb-1 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
-										>
-											Slug
-										</div>
-										<span class="block truncate font-mono text-ui text-[var(--color-text-secondary)]"
-											>{team.slug}</span
-										>
-									</div>
-									<button
-										onclick={() => copyToClipboard(team!.slug, 'slug')}
-										title="Copy slug"
-										class="flex shrink-0 items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
-											{copiedSlug
-											? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
-											: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
+							<!-- Team ID -->
+							<div class="flex items-center gap-3 px-5 py-4">
+								<div class="min-w-0 flex-1">
+									<div
+										class="mb-1 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
 									>
-										{#if copiedSlug}
-											<svg
-												width="12"
-												height="12"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2.5"
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												class="checkmark-draw"
-											>
-												<polyline points="20 6 9 17 4 12" />
-											</svg>
-											Copied
-										{:else}
-											<svg
-												width="12"
-												height="12"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2"
-												stroke-linecap="round"
-												stroke-linejoin="round"
-											>
-												<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-												<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-											</svg>
-											Copy
-										{/if}
-									</button>
-								</div>
-
-								<!-- Team ID -->
-								<div class="flex items-center gap-3 px-5 py-4">
-									<div class="min-w-0 flex-1">
-										<div
-											class="mb-1 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
-										>
-											Team ID
-										</div>
-										<span class="block truncate font-mono text-ui text-[var(--color-text-secondary)]"
-											>{team.id}</span
-										>
+										Team ID
 									</div>
-									<button
-										onclick={() => copyToClipboard(team!.id, 'id')}
-										title="Copy team ID"
-										class="flex shrink-0 items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
-											{copiedId
-											? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
-											: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
+									<span class="block truncate font-mono text-ui text-[var(--color-text-secondary)]"
+										>{team.id}</span
 									>
-										{#if copiedId}
-											<svg
-												width="12"
-												height="12"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2.5"
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												class="checkmark-draw"
-											>
-												<polyline points="20 6 9 17 4 12" />
-											</svg>
-											Copied
-										{:else}
-											<svg
-												width="12"
-												height="12"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2"
-												stroke-linecap="round"
-												stroke-linejoin="round"
-											>
-												<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-												<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-											</svg>
-											Copy
-										{/if}
-									</button>
 								</div>
+								<button
+									onclick={() => copyToClipboard(team!.id)}
+									title="Copy team ID"
+									class="flex shrink-0 items-center gap-1.5 rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-semibold transition-all duration-150
+										{copiedId
+										? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-mid)]'
+										: 'border-[var(--color-border-mid)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
+								>
+									{#if copiedId}
+										<svg
+											width="12"
+											height="12"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="2.5"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											class="checkmark-draw"
+										>
+											<polyline points="20 6 9 17 4 12" />
+										</svg>
+										Copied
+									{:else}
+										<svg
+											width="12"
+											height="12"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="2"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+										>
+											<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+											<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+										</svg>
+										Copy
+									{/if}
+								</button>
 							</div>
 						</div>
 					</section>

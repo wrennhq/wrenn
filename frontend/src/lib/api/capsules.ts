@@ -54,6 +54,7 @@ export type Snapshot = {
 	memory_mb?: number;
 	size_bytes: number;
 	created_at: string;
+	platform: boolean;
 };
 
 export async function createSnapshot(sandboxId: string, name?: string): Promise<ApiResult<Snapshot>> {

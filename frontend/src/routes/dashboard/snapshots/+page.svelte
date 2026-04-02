@@ -114,15 +114,15 @@
 	}
 
 	function emptyHeading(f: TypeFilter): string {
-		if (f === 'snapshot') return 'No snapshots';
-		if (f === 'base') return 'No images';
-		return 'No templates yet';
+		if (f === 'snapshot') return 'No snapshots yet';
+		if (f === 'base') return 'No base images';
+		return 'No snapshots yet';
 	}
 
 	function emptyDescription(f: TypeFilter): string {
-		if (f === 'snapshot') return 'Pause a capsule from the Capsules page, then snapshot it to capture its state.';
-		if (f === 'base') return 'Base images are added by the Wrenn team. Contact support to request a custom image.';
-		return 'To create a snapshot, go to Capsules, pause a running capsule, then choose Snapshot.';
+		if (f === 'snapshot') return 'Pause a running capsule, then choose Snapshot to save its state.';
+		if (f === 'base') return 'Base images are provided by the Wrenn team. Contact support to request a custom one.';
+		return 'Pause a running capsule, then choose Snapshot to save its state. You can launch new capsules from any snapshot.';
 	}
 
 	onMount(fetchSnapshots);
@@ -162,7 +162,7 @@
 							Templates
 						</h1>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-							Snapshots capture a live capsule state. Base images are the rootfs every capsule starts from. Launch a full VM from any template.
+							Snapshots capture a running capsule's state. Base images are the starting point for every new capsule. Launch from either.
 						</p>
 					</div>
 				</div>
@@ -206,8 +206,11 @@
 			{#if pageTab === 'snapshots'}
 				<div class="p-8" style="animation: fadeUp 0.35s ease both">
 					{#if error}
-						<div class="mb-4 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-ui text-[var(--color-red)]">
-							{error}
+						<div class="mb-4 flex items-start gap-3 rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3">
+							<svg class="mt-0.5 shrink-0 text-[var(--color-red)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+							</svg>
+							<span class="text-ui text-[var(--color-red)]">{error}. Try refreshing the page.</span>
 						</div>
 					{/if}
 
@@ -274,11 +277,11 @@
 							</div>
 							<span class="text-meta text-[var(--color-text-muted)]">
 								{filteredSnapshots.length}
-								{typeFilter === 'all'
-									? filteredSnapshots.length === 1 ? 'template' : 'templates'
-									: typeFilter === 'snapshot'
-										? filteredSnapshots.length === 1 ? 'snapshot' : 'snapshots'
-										: filteredSnapshots.length === 1 ? 'image' : 'images'}
+								{typeFilter === 'snapshot'
+									? filteredSnapshots.length === 1 ? 'snapshot' : 'snapshots'
+									: typeFilter === 'base'
+										? filteredSnapshots.length === 1 ? 'image' : 'images'
+										: filteredSnapshots.length === 1 ? 'item' : 'total'}
 							</span>
 						</div>
 
@@ -420,6 +423,7 @@
 												<div class="w-px shrink-0 bg-[var(--color-border-mid)]"></div>
 												<!-- Chevron / dropdown trigger -->
 												<button
+													disabled={snapshot.platform}
 													onclick={(e) => {
 														e.stopPropagation();
 														if (openDropdownName === snapshot.name) {
@@ -430,7 +434,7 @@
 															openDropdownName = snapshot.name;
 														}
 													}}
-													class="flex items-center px-2 py-1.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-bright)]"
+													class="flex items-center px-2 py-1.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-bright)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-secondary)]"
 												>
 													<svg
 														class="transition-transform duration-150 {openDropdownName === snapshot.name ? 'rotate-180' : ''}"
@@ -447,11 +451,11 @@
 
 							<p class="mt-3 text-meta text-[var(--color-text-muted)]">
 								{filteredSnapshots.length}
-								{typeFilter === 'all'
-									? filteredSnapshots.length === 1 ? 'template' : 'templates'
-									: typeFilter === 'snapshot'
-										? filteredSnapshots.length === 1 ? 'snapshot' : 'snapshots'
-										: filteredSnapshots.length === 1 ? 'image' : 'images'}
+								{typeFilter === 'snapshot'
+									? filteredSnapshots.length === 1 ? 'snapshot' : 'snapshots'
+									: typeFilter === 'base'
+										? filteredSnapshots.length === 1 ? 'image' : 'images'
+										: filteredSnapshots.length === 1 ? 'item' : 'total'}
 								{typeFilter !== 'all' ? '· filtered' : '· total'}
 							</p>
 						{/if}
@@ -481,21 +485,23 @@
 			class="fixed z-50 w-32 overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] py-1"
 			style="top: {dropdownPos.top}px; left: {dropdownPos.left}px; animation: fadeUp 0.15s ease both"
 		>
-			<button
-				onclick={(e) => {
-					e.stopPropagation();
-					const target = snapshots.find((s) => s.name === openDropdownName);
-					openDropdownName = null;
-					if (target) { deleteTarget = target; deleteError = null; }
-				}}
-				class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
-			>
-				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-					<polyline points="3 6 5 6 21 6" />
-					<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-				</svg>
-				Delete
-			</button>
+			{#if !dropdownSnapshot.platform}
+				<button
+					onclick={(e) => {
+						e.stopPropagation();
+						const target = snapshots.find((s) => s.name === openDropdownName);
+						openDropdownName = null;
+						if (target) { deleteTarget = target; deleteError = null; }
+					}}
+					class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
+				>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+						<polyline points="3 6 5 6 21 6" />
+						<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+					</svg>
+					Delete
+				</button>
+			{/if}
 		</div>
 	{/if}
 {/if}
@@ -513,10 +519,10 @@
 			class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
 			style="animation: fadeUp 0.2s ease both"
 		>
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Delete Snapshot</h2>
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Delete snapshot</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Permanently delete <span class="font-mono font-medium text-[var(--color-text-secondary)]">{deleteTarget.name}</span>.
-				Any capsule using this template will not be affected, but you won't be able to launch from it again.
+				Running capsules won't be affected, but you won't be able to launch new ones from it.
 			</p>
 
 			{#if deleteTarget.type === 'snapshot'}
@@ -526,7 +532,7 @@
 						<line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
 					</svg>
 					<p class="text-meta leading-relaxed text-[var(--color-amber)]">
-						This live capture includes saved memory state. Any capsule relying on it will be unable to resume.
+						This snapshot includes memory state. Paused capsules that depend on it won't be able to resume.
 					</p>
 				</div>
 			{/if}
@@ -580,7 +586,7 @@
 		>
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
-				Configure resources and launch. The VM will clone from this template and be ready in seconds.
+				Configure resources and launch a new capsule from this snapshot.
 			</p>
 
 			{#if launchError}
@@ -655,14 +661,16 @@
 
 			<!-- Timeout -->
 			<div class="mt-4">
-				<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="launch-timeout">Auto-pause timeout (seconds, 0 = never)</label>
+				<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="launch-timeout">Idle timeout</label>
 				<input
 					id="launch-timeout"
 					type="number"
 					min="0"
 					bind:value={launchTimeoutSec}
+					placeholder="0"
 					class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none transition-colors duration-150 focus:border-[var(--color-accent)]"
 				/>
+				<p class="mt-1.5 text-meta text-[var(--color-text-muted)]">Seconds of inactivity before the capsule pauses. Set to 0 to keep it running indefinitely.</p>
 			</div>
 
 			<div class="mt-6 flex justify-end gap-3">

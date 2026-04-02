@@ -61,13 +61,19 @@ service HostAgentService {
   // Called by the control plane before pause/destroy to persist metrics to DB.
   rpc FlushSandboxMetrics(FlushSandboxMetricsRequest) returns (FlushSandboxMetricsResponse);
 
+  // FlattenRootfs stops the sandbox VM, flattens the device-mapper CoW
+  // snapshot into a standalone rootfs.ext4 in the images directory, then
+  // cleans up all sandbox resources. Used by the template build system to
+  // produce image-only templates (no memory/CPU state).
+  rpc FlattenRootfs(FlattenRootfsRequest) returns (FlattenRootfsResponse);
+
 }
 
 message CreateSandboxRequest {
   // Sandbox ID assigned by the control plane. If empty, the host agent generates one.
   string sandbox_id = 5;
 
-  // Template name (e.g., "minimal", "python311"). Determines base rootfs.
+  // Deprecated: use team_id + template_id instead.
   string template = 1;
 
   // Number of virtual CPUs (default: 1).
@@ -79,6 +85,16 @@ message CreateSandboxRequest {
   // TTL in seconds. Sandbox is auto-paused after this duration of
   // inactivity. 0 means no auto-pause.
   int32 timeout_sec = 4;
+
+  // Disk size in MB for the rootfs. Base images are expanded to this size
+  // at host agent startup. Default: 5120 (5 GB).
+  int32 disk_size_mb = 6;
+
+  // Team UUID that owns the template (hex string). All-zeros = platform.
+  string team_id = 7;
+
+  // Template UUID (hex string). Both zeros + team zeros = "minimal" sentinel.
+  string template_id = 8;
 }
 
 message CreateSandboxResponse {
@@ -115,7 +131,12 @@ message ResumeSandboxResponse {
 
 message CreateSnapshotRequest {
   string sandbox_id = 1;
+  // Deprecated: use team_id + template_id instead.
   string name = 2;
+  // Team UUID that will own the new template.
+  string team_id = 3;
+  // Template UUID for the new snapshot template.
+  string template_id = 4;
 }
 
 message CreateSnapshotResponse {
@@ -124,7 +145,12 @@ message CreateSnapshotResponse {
 }
 
 message DeleteSnapshotRequest {
+  // Deprecated: use team_id + template_id instead.
   string name = 1;
+  // Team UUID that owns the template.
+  string team_id = 2;
+  // Template UUID to delete.
+  string template_id = 3;
 }
 
 message DeleteSnapshotResponse {}
@@ -156,6 +182,7 @@ message ListSandboxesResponse {
 message SandboxInfo {
   string sandbox_id = 1;
   string status = 2;
+  // Deprecated: use team_id + template_id instead.
   string template = 3;
   int32 vcpus = 4;
   int32 memory_mb = 5;
@@ -163,6 +190,8 @@ message SandboxInfo {
   int64 created_at_unix = 7;
   int64 last_active_at_unix = 8;
   int32 timeout_sec = 9;
+  string team_id = 10;
+  string template_id = 11;
 }
 
 message WriteFileRequest {
@@ -283,4 +312,20 @@ message FlushSandboxMetricsResponse {
   repeated MetricPoint points_10m  = 1;
   repeated MetricPoint points_2h   = 2;
   repeated MetricPoint points_24h  = 3;
+}
+
+// ── FlattenRootfs ────────────────────────────────────────────────────
+
+message FlattenRootfsRequest {
+  string sandbox_id = 1;
+  // Deprecated: use team_id + template_id instead.
+  string name = 2;
+  // Team UUID that will own the resulting template.
+  string team_id = 3;
+  // Template UUID for the output.
+  string template_id = 4;
+}
+
+message FlattenRootfsResponse {
+  int64 size_bytes = 1;
 }

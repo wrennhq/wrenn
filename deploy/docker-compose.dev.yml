@@ -15,19 +15,14 @@ services:
     ports:
       - "6379:6379"
 
-  prometheus:
-    image: prom/prometheus:latest
+  caddy:
+    image: caddy:2-alpine
     ports:
-      - "9090:9090"
+      - "8000:80"
     volumes:
-      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3001:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   pgdata:

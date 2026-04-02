@@ -162,7 +162,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, redirectBase, "internal_error")
 			return
 		}
-		redirectWithToken(w, r, redirectBase, token, user.ID, team.ID, user.Email, user.Name)
+		redirectWithToken(w, r, redirectBase, token, id.FormatUserID(user.ID), id.FormatTeamID(team.ID), user.Email, user.Name)
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -262,7 +262,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectWithToken(w, r, redirectBase, token, userID, teamID, email, profile.Name)
+	redirectWithToken(w, r, redirectBase, token, id.FormatUserID(userID), id.FormatTeamID(teamID), email, profile.Name)
 }
 
 // retryAsLogin handles the race where a concurrent request already created the user.
@@ -296,7 +296,7 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 		redirectWithError(w, r, redirectBase, "internal_error")
 		return
 	}
-	redirectWithToken(w, r, redirectBase, token, user.ID, team.ID, user.Email, user.Name)
+	redirectWithToken(w, r, redirectBase, token, id.FormatUserID(user.ID), id.FormatTeamID(team.ID), user.Email, user.Name)
 }
 
 func redirectWithToken(w http.ResponseWriter, r *http.Request, base, token, userID, teamID, email, name string) {

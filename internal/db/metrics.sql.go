@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteSandboxMetricPoints = `-- name: DeleteSandboxMetricPoints :exec
@@ -14,7 +16,7 @@ DELETE FROM sandbox_metric_points
 WHERE sandbox_id = $1
 `
 
-func (q *Queries) DeleteSandboxMetricPoints(ctx context.Context, sandboxID string) error {
+func (q *Queries) DeleteSandboxMetricPoints(ctx context.Context, sandboxID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteSandboxMetricPoints, sandboxID)
 	return err
 }
@@ -25,8 +27,8 @@ WHERE sandbox_id = $1 AND tier = $2
 `
 
 type DeleteSandboxMetricPointsByTierParams struct {
-	SandboxID string `json:"sandbox_id"`
-	Tier      string `json:"tier"`
+	SandboxID pgtype.UUID `json:"sandbox_id"`
+	Tier      string      `json:"tier"`
 }
 
 func (q *Queries) DeleteSandboxMetricPointsByTier(ctx context.Context, arg DeleteSandboxMetricPointsByTierParams) error {
@@ -53,7 +55,7 @@ type GetLiveMetricsRow struct {
 // Reads directly from sandboxes for accurate real-time current values.
 // CPU reserved = running + starting only (paused VMs release CPU).
 // RAM reserved = running + starting + sum(ceil(each_paused/2)) (per-VM ceiling).
-func (q *Queries) GetLiveMetrics(ctx context.Context, teamID string) (GetLiveMetricsRow, error) {
+func (q *Queries) GetLiveMetrics(ctx context.Context, teamID pgtype.UUID) (GetLiveMetricsRow, error) {
 	row := q.db.QueryRow(ctx, getLiveMetrics, teamID)
 	var i GetLiveMetricsRow
 	err := row.Scan(&i.RunningCount, &i.VcpusReserved, &i.MemoryMbReserved)
@@ -76,7 +78,7 @@ type GetPeakMetricsRow struct {
 	PeakMemoryMb     int32 `json:"peak_memory_mb"`
 }
 
-func (q *Queries) GetPeakMetrics(ctx context.Context, teamID string) (GetPeakMetricsRow, error) {
+func (q *Queries) GetPeakMetrics(ctx context.Context, teamID pgtype.UUID) (GetPeakMetricsRow, error) {
 	row := q.db.QueryRow(ctx, getPeakMetrics, teamID)
 	var i GetPeakMetricsRow
 	err := row.Scan(&i.PeakRunningCount, &i.PeakVcpus, &i.PeakMemoryMb)
@@ -91,9 +93,9 @@ ORDER BY ts ASC
 `
 
 type GetSandboxMetricPointsParams struct {
-	SandboxID string `json:"sandbox_id"`
-	Tier      string `json:"tier"`
-	Ts        int64  `json:"ts"`
+	SandboxID pgtype.UUID `json:"sandbox_id"`
+	Tier      string      `json:"tier"`
+	Ts        int64       `json:"ts"`
 }
 
 type GetSandboxMetricPointsRow struct {
@@ -134,10 +136,10 @@ VALUES ($1, $2, $3, $4)
 `
 
 type InsertMetricsSnapshotParams struct {
-	TeamID           string `json:"team_id"`
-	RunningCount     int32  `json:"running_count"`
-	VcpusReserved    int32  `json:"vcpus_reserved"`
-	MemoryMbReserved int32  `json:"memory_mb_reserved"`
+	TeamID           pgtype.UUID `json:"team_id"`
+	RunningCount     int32       `json:"running_count"`
+	VcpusReserved    int32       `json:"vcpus_reserved"`
+	MemoryMbReserved int32       `json:"memory_mb_reserved"`
 }
 
 func (q *Queries) InsertMetricsSnapshot(ctx context.Context, arg InsertMetricsSnapshotParams) error {
@@ -157,12 +159,12 @@ ON CONFLICT (sandbox_id, tier, ts) DO NOTHING
 `
 
 type InsertSandboxMetricPointParams struct {
-	SandboxID string  `json:"sandbox_id"`
-	Tier      string  `json:"tier"`
-	Ts        int64   `json:"ts"`
-	CpuPct    float64 `json:"cpu_pct"`
-	MemBytes  int64   `json:"mem_bytes"`
-	DiskBytes int64   `json:"disk_bytes"`
+	SandboxID pgtype.UUID `json:"sandbox_id"`
+	Tier      string      `json:"tier"`
+	Ts        int64       `json:"ts"`
+	CpuPct    float64     `json:"cpu_pct"`
+	MemBytes  int64       `json:"mem_bytes"`
+	DiskBytes int64       `json:"disk_bytes"`
 }
 
 func (q *Queries) InsertSandboxMetricPoint(ctx context.Context, arg InsertSandboxMetricPointParams) error {
@@ -210,10 +212,10 @@ GROUP BY team_id
 `
 
 type SampleSandboxMetricsRow struct {
-	TeamID           string `json:"team_id"`
-	RunningCount     int32  `json:"running_count"`
-	VcpusReserved    int32  `json:"vcpus_reserved"`
-	MemoryMbReserved int32  `json:"memory_mb_reserved"`
+	TeamID           pgtype.UUID `json:"team_id"`
+	RunningCount     int32       `json:"running_count"`
+	VcpusReserved    int32       `json:"vcpus_reserved"`
+	MemoryMbReserved int32       `json:"memory_mb_reserved"`
 }
 
 // Aggregates per-team resource usage from the live sandboxes table.

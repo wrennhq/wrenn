@@ -47,8 +47,8 @@ RETURNING id, host_id, token_hash, expires_at, created_at, revoked_at
 `
 
 type InsertHostRefreshTokenParams struct {
-	ID        string             `json:"id"`
-	HostID    string             `json:"host_id"`
+	ID        pgtype.UUID        `json:"id"`
+	HostID    pgtype.UUID        `json:"host_id"`
 	TokenHash string             `json:"token_hash"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 }
@@ -76,7 +76,7 @@ const revokeHostRefreshToken = `-- name: RevokeHostRefreshToken :exec
 UPDATE host_refresh_tokens SET revoked_at = NOW() WHERE id = $1
 `
 
-func (q *Queries) RevokeHostRefreshToken(ctx context.Context, id string) error {
+func (q *Queries) RevokeHostRefreshToken(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, revokeHostRefreshToken, id)
 	return err
 }
@@ -86,7 +86,7 @@ UPDATE host_refresh_tokens SET revoked_at = NOW()
 WHERE host_id = $1 AND revoked_at IS NULL
 `
 
-func (q *Queries) RevokeHostRefreshTokensByHost(ctx context.Context, hostID string) error {
+func (q *Queries) RevokeHostRefreshTokensByHost(ctx context.Context, hostID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, revokeHostRefreshTokensByHost, hostID)
 	return err
 }

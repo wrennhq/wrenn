@@ -83,6 +83,9 @@ const (
 	// HostAgentServiceFlushSandboxMetricsProcedure is the fully-qualified name of the
 	// HostAgentService's FlushSandboxMetrics RPC.
 	HostAgentServiceFlushSandboxMetricsProcedure = "/hostagent.v1.HostAgentService/FlushSandboxMetrics"
+	// HostAgentServiceFlattenRootfsProcedure is the fully-qualified name of the HostAgentService's
+	// FlattenRootfs RPC.
+	HostAgentServiceFlattenRootfsProcedure = "/hostagent.v1.HostAgentService/FlattenRootfs"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -126,6 +129,11 @@ type HostAgentServiceClient interface {
 	// FlushSandboxMetrics returns all ring buffer tiers and clears them.
 	// Called by the control plane before pause/destroy to persist metrics to DB.
 	FlushSandboxMetrics(context.Context, *connect.Request[gen.FlushSandboxMetricsRequest]) (*connect.Response[gen.FlushSandboxMetricsResponse], error)
+	// FlattenRootfs stops the sandbox VM, flattens the device-mapper CoW
+	// snapshot into a standalone rootfs.ext4 in the images directory, then
+	// cleans up all sandbox resources. Used by the template build system to
+	// produce image-only templates (no memory/CPU state).
+	FlattenRootfs(context.Context, *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -241,6 +249,12 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("FlushSandboxMetrics")),
 			connect.WithClientOptions(opts...),
 		),
+		flattenRootfs: connect.NewClient[gen.FlattenRootfsRequest, gen.FlattenRootfsResponse](
+			httpClient,
+			baseURL+HostAgentServiceFlattenRootfsProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("FlattenRootfs")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -263,6 +277,7 @@ type hostAgentServiceClient struct {
 	terminate           *connect.Client[gen.TerminateRequest, gen.TerminateResponse]
 	getSandboxMetrics   *connect.Client[gen.GetSandboxMetricsRequest, gen.GetSandboxMetricsResponse]
 	flushSandboxMetrics *connect.Client[gen.FlushSandboxMetricsRequest, gen.FlushSandboxMetricsResponse]
+	flattenRootfs       *connect.Client[gen.FlattenRootfsRequest, gen.FlattenRootfsResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -350,6 +365,11 @@ func (c *hostAgentServiceClient) FlushSandboxMetrics(ctx context.Context, req *c
 	return c.flushSandboxMetrics.CallUnary(ctx, req)
 }
 
+// FlattenRootfs calls hostagent.v1.HostAgentService.FlattenRootfs.
+func (c *hostAgentServiceClient) FlattenRootfs(ctx context.Context, req *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error) {
+	return c.flattenRootfs.CallUnary(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -391,6 +411,11 @@ type HostAgentServiceHandler interface {
 	// FlushSandboxMetrics returns all ring buffer tiers and clears them.
 	// Called by the control plane before pause/destroy to persist metrics to DB.
 	FlushSandboxMetrics(context.Context, *connect.Request[gen.FlushSandboxMetricsRequest]) (*connect.Response[gen.FlushSandboxMetricsResponse], error)
+	// FlattenRootfs stops the sandbox VM, flattens the device-mapper CoW
+	// snapshot into a standalone rootfs.ext4 in the images directory, then
+	// cleans up all sandbox resources. Used by the template build system to
+	// produce image-only templates (no memory/CPU state).
+	FlattenRootfs(context.Context, *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error)
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -502,6 +527,12 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("FlushSandboxMetrics")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServiceFlattenRootfsHandler := connect.NewUnaryHandler(
+		HostAgentServiceFlattenRootfsProcedure,
+		svc.FlattenRootfs,
+		connect.WithSchema(hostAgentServiceMethods.ByName("FlattenRootfs")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -538,6 +569,8 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceGetSandboxMetricsHandler.ServeHTTP(w, r)
 		case HostAgentServiceFlushSandboxMetricsProcedure:
 			hostAgentServiceFlushSandboxMetricsHandler.ServeHTTP(w, r)
+		case HostAgentServiceFlattenRootfsProcedure:
+			hostAgentServiceFlattenRootfsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -613,4 +646,8 @@ func (UnimplementedHostAgentServiceHandler) GetSandboxMetrics(context.Context, *
 
 func (UnimplementedHostAgentServiceHandler) FlushSandboxMetrics(context.Context, *connect.Request[gen.FlushSandboxMetricsRequest]) (*connect.Response[gen.FlushSandboxMetricsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.FlushSandboxMetrics is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) FlattenRootfs(context.Context, *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.FlattenRootfs is not implemented"))
 }

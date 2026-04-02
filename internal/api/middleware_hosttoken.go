@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
 // requireHostToken validates the X-Host-Token header containing a host JWT,
@@ -23,7 +24,13 @@ func requireHostToken(secret []byte) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := auth.WithHostContext(r.Context(), auth.HostContext{HostID: claims.HostID})
+			hostID, err := id.ParseHostID(claims.HostID)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "invalid host ID in token")
+				return
+			}
+
+			ctx := auth.WithHostContext(r.Context(), auth.HostContext{HostID: hostID})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

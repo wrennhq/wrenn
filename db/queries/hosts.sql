@@ -20,15 +20,24 @@ SELECT * FROM hosts WHERE status = $1 ORDER BY created_at DESC;
 
 -- name: RegisterHost :execrows
 UPDATE hosts
-SET arch = $2,
-    cpu_cores = $3,
-    memory_mb = $4,
-    disk_gb = $5,
-    address = $6,
-    status = 'online',
+SET arch             = $2,
+    cpu_cores        = $3,
+    memory_mb        = $4,
+    disk_gb          = $5,
+    address          = $6,
+    cert_fingerprint = $7,
+    cert_expires_at  = $8,
+    status           = 'online',
     last_heartbeat_at = NOW(),
-    updated_at = NOW()
+    updated_at        = NOW()
 WHERE id = $1 AND status = 'pending';
+
+-- name: UpdateHostCert :exec
+UPDATE hosts
+SET cert_fingerprint = $2,
+    cert_expires_at  = $3,
+    updated_at       = NOW()
+WHERE id = $1;
 
 -- name: UpdateHostStatus :exec
 UPDATE hosts SET status = $2, updated_at = NOW() WHERE id = $1;

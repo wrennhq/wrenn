@@ -4,8 +4,6 @@ package port
 
 import (
 	"slices"
-
-	"github.com/shirou/gopsutil/v4/net"
 )
 
 type ScannerFilter struct {
@@ -13,15 +11,15 @@ type ScannerFilter struct {
 	IPs   []string
 }
 
-func (sf *ScannerFilter) Match(proc *net.ConnectionStat) bool {
+func (sf *ScannerFilter) Match(conn *ConnStat) bool {
 	// Filter is an empty struct.
 	if sf.State == "" && len(sf.IPs) == 0 {
 		return false
 	}
 
-	ipMatch := slices.Contains(sf.IPs, proc.Laddr.IP)
+	ipMatch := slices.Contains(sf.IPs, conn.LocalIP)
 
-	if ipMatch && sf.State == proc.Status {
+	if ipMatch && sf.State == conn.Status {
 		return true
 	}
 
