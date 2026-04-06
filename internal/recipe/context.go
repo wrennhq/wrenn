@@ -1,6 +1,8 @@
 package recipe
 
-import "strings"
+import (
+	"strings"
+)
 
 // ExecContext holds mutable state that persists across recipe steps.
 // It is initialized empty and updated by ENV and WORKDIR steps.
@@ -54,6 +56,74 @@ func (c *ExecContext) shellPrefix() string {
 		sb.WriteByte(' ')
 	}
 	return sb.String()
+}
+
+// expandEnv replaces $var and ${var} placeholders in the string s with their
+// corresponding values from the vars map.
+// It supports escaping with $$, which is replaced by a single $.
+// If a variable is not found in the vars map, it is replaced with an empty
+// string.
+func expandEnv(s string, vars map[string]string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) * 2)
+
+	for {
+		idx := strings.IndexByte(s, '$')
+		if idx < 0 {
+			sb.WriteString(s)
+			break
+		}
+
+		sb.WriteString(s[:idx])
+		s = s[idx:]
+
+		if len(s) == 1 {
+			sb.WriteByte('$')
+			break
+		}
+
+		if s[1] == '$' {
+			sb.WriteByte('$')
+			s = s[2:]
+			continue
+		}
+
+		var name string
+		var advance int
+
+		if s[1] == '{' {
+			end := strings.IndexByte(s[2:], '}')
+			if end < 0 {
+				sb.WriteByte('$')
+				s = s[1:]
+				continue
+			}
+			name = s[2 : 2+end]
+			advance = 2 + end + 1
+		} else {
+			j := 1
+			for j < len(s) && isNameChar(s[j]) {
+				j++
+			}
+			name = s[1:j]
+			advance = j
+		}
+
+		if v, ok := vars[name]; ok {
+			sb.WriteString(v)
+		}
+
+		s = s[advance:]
+	}
+
+	return sb.String()
+}
+
+// isNameChar reports whether the byte c is a valid character for an
+// environment variable name (alphanumeric or underscore)
+func isNameChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		(c >= '0' && c <= '9') || c == '_'
 }
 
 // shellescape wraps s in single quotes, escaping any embedded single quotes.

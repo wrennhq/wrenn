@@ -20,6 +20,34 @@ echo "+cpu +memory +io" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || t
 # Set hostname
 hostname sandbox
 
+# Configure networking from kernel cmdline (ip=client::gw:mask:host:iface:autoconf).
+# if command -v ip >/dev/null 2>&1; then
+#     iparg=$(cat /proc/cmdline | tr ' ' '\n' | sed -n 's/^ip=//p')
+#     if [ -n "$iparg" ]; then
+#         client=$(echo "$iparg" | cut -d: -f1)
+#         gw=$(echo "$iparg" | cut -d: -f2)
+#         mask=$(echo "$iparg" | cut -d: -f3)
+#         iface=$(echo "$iparg" | cut -d: -f5)
+#         [ -z "$iface" ] && iface=eth0
+#         if [ -n "$client" ]; then
+#             ip addr add "$client/${mask:-30}" dev "$iface" 2>/dev/null || true
+#             ip link set "$iface" up 2>/dev/null || true
+#             if [ -n "$gw" ]; then
+#                 ip route add default via "$gw" 2>/dev/null || true
+#             fi
+#         fi
+#     fi
+# fi
+#
+#
+if ! ip addr show eth0 2>/dev/null | grep -q "169.254.0.21"; then
+    ip link set lo up
+    ip link set eth0 up
+    ip addr add 169.254.0.21/30 dev eth0
+    ip route add default via 169.254.0.22
+fi
+
+
 # Configure DNS resolver.
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
 echo "nameserver 8.8.4.4" >> /etc/resolv.conf

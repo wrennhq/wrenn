@@ -45,6 +45,14 @@ func TestExecContext_WrappedCommand(t *testing.T) {
 			cmd:  "echo $MSG",
 			want: "MSG='it'\\''s fine' /bin/sh -c 'echo $MSG'",
 		},
+		{
+			name: "env expansion with dollar sign PATH",
+			ctx: ExecContext{
+				EnvVars: map[string]string{"PATH": "/usr/bin", "FOO": "/opt/venv/bin:$PATH"},
+			},
+			cmd:  "make build",
+			want: "FOO='/opt/venv/bin:/usr/bin' PATH='/usr/bin' /bin/sh -c 'make build'",
+		},
 	}
 
 	for _, tc := range tests {
@@ -89,6 +97,109 @@ func TestExecContext_StartCommand(t *testing.T) {
 			got := tc.ctx.StartCommand(tc.cmd)
 			if got != tc.want {
 				t.Errorf("StartCommand(%q)\n  got  %q\n  want %q", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExpandEnv(t *testing.T) {
+	tests := []struct {
+		s    string
+		vars map[string]string
+		want string
+	}{
+		{
+			s:    "hello",
+			vars: nil,
+			want: "hello",
+		},
+		{
+			s:    "$PATH",
+			vars: map[string]string{"PATH": "/usr/bin"},
+			want: "/usr/bin",
+		},
+		{
+			s:    "${PATH}",
+			vars: map[string]string{"PATH": "/usr/bin"},
+			want: "/usr/bin",
+		},
+		{
+			s:    "/opt/venv/bin:$PATH",
+			vars: map[string]string{"PATH": "/usr/bin"},
+			want: "/opt/venv/bin:/usr/bin",
+		},
+		{
+			s:    "${HOME}/code",
+			vars: map[string]string{"HOME": "/root"},
+			want: "/root/code",
+		},
+		{
+			s:    "hello $USER",
+			vars: map[string]string{"USER": "admin"},
+			want: "hello admin",
+		},
+		{
+			s:    "$UNSET",
+			vars: map[string]string{"PATH": "/usr/bin"},
+			want: "",
+		},
+		{
+			s:    "${UNSET}",
+			vars: map[string]string{"PATH": "/usr/bin"},
+			want: "",
+		},
+		{
+			s:    "$$",
+			vars: map[string]string{"PATH": "/usr/bin"},
+			want: "$",
+		},
+		{
+			s:    "price is $$100",
+			vars: nil,
+			want: "price is $100",
+		},
+		{
+			s:    "$FOO:$BAR",
+			vars: map[string]string{"FOO": "a", "BAR": "b"},
+			want: "a:b",
+		},
+		{
+			s:    "${FOO}_${BAR}",
+			vars: map[string]string{"FOO": "hello", "BAR": "world"},
+			want: "hello_world",
+		},
+		{
+			s:    "no vars here",
+			vars: nil,
+			want: "no vars here",
+		},
+		{
+			s:    "$",
+			vars: nil,
+			want: "$",
+		},
+		{
+			s:    "${",
+			vars: nil,
+			want: "${",
+		},
+		{
+			s:    "${}",
+			vars: nil,
+			want: "",
+		},
+		{
+			s:    "$VAR1$VAR2",
+			vars: map[string]string{"VAR1": "a", "VAR2": "b"},
+			want: "ab",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.s, func(t *testing.T) {
+			got := expandEnv(tc.s, tc.vars)
+			if got != tc.want {
+				t.Errorf("expandEnv(%q, %v)\n  got  %q\n  want %q", tc.s, tc.vars, got, tc.want)
 			}
 		})
 	}
