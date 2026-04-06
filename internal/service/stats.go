@@ -117,15 +117,21 @@ func (s *StatsService) GetStats(ctx context.Context, teamID pgtype.UUID, r TimeR
 // timeSeriesSQL uses an epoch-floor trick to bucket rows by an arbitrary
 // integer number of seconds without requiring TimescaleDB.
 //
+// MAX is used instead of AVG so that short-lived running states are not
+// averaged down to zero within a bucket. For capacity metrics the peak
+// value in each bucket is what matters — AVG with ::INTEGER rounding
+// caused running_count, vcpus, and memory to become inconsistent with
+// each other (e.g. running=0 but vcpus=1).
+//
 // $1 = bucket width in seconds (integer)
 // $2 = team_id
 // $3 = lookback interval literal (e.g. '1 hour')
 const timeSeriesSQL = `
 SELECT
     to_timestamp(floor(extract(epoch FROM sampled_at) / $1) * $1) AS bucket,
-    AVG(running_count)::INTEGER        AS running_count,
-    AVG(vcpus_reserved)::INTEGER       AS vcpus_reserved,
-    AVG(memory_mb_reserved)::INTEGER   AS memory_mb_reserved
+    MAX(running_count)                 AS running_count,
+    MAX(vcpus_reserved)                AS vcpus_reserved,
+    MAX(memory_mb_reserved)            AS memory_mb_reserved
 FROM sandbox_metrics_snapshots
 WHERE team_id = $2
   AND sampled_at >= NOW() - $3::INTERVAL
