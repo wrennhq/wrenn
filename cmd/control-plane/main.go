@@ -69,52 +69,44 @@ func main() {
 	}
 	slog.Info("connected to redis")
 
-	// mTLS: parse internal CA and build a TLS-capable host client pool.
-	// When CA env vars are absent the pool falls back to plain HTTP (dev mode).
-	var ca *auth.CA
-	if cfg.CACert != "" && cfg.CAKey != "" {
-		var err error
-		ca, err = auth.ParseCA(cfg.CACert, cfg.CAKey)
-		if err != nil {
-			slog.Error("failed to parse mTLS CA from environment", "error", err)
-			os.Exit(1)
-		}
-		slog.Info("mTLS enabled: CA loaded")
-	} else {
-		slog.Warn("mTLS disabled: WRENN_CA_CERT/WRENN_CA_KEY not set — host agent connections are unencrypted")
+	// mTLS is mandatory — parse internal CA for CP↔agent communication.
+	if cfg.CACert == "" || cfg.CAKey == "" {
+		slog.Error("WRENN_CA_CERT and WRENN_CA_KEY are required — mTLS is mandatory for CP↔agent communication")
+		os.Exit(1)
 	}
+	ca, err := auth.ParseCA(cfg.CACert, cfg.CAKey)
+	if err != nil {
+		slog.Error("failed to parse mTLS CA from environment", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("mTLS enabled: CA loaded")
 
 	// Host client pool — manages Connect RPC clients to host agents.
-	var hostPool *lifecycle.HostClientPool
-	if ca != nil {
-		cpCertStore, err := auth.NewCPCertStore(ca)
-		if err != nil {
-			slog.Error("failed to issue CP client certificate", "error", err)
-			os.Exit(1)
-		}
-		// Renew the CP client certificate periodically so it never expires
-		// while the control plane is running (TTL = 24h, renewal = every 12h).
-		go func() {
-			ticker := time.NewTicker(auth.CPCertRenewInterval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if err := cpCertStore.Refresh(); err != nil {
-						slog.Error("failed to renew CP client certificate", "error", err)
-					} else {
-						slog.Info("CP client certificate renewed")
-					}
+	cpCertStore, err := auth.NewCPCertStore(ca)
+	if err != nil {
+		slog.Error("failed to issue CP client certificate", "error", err)
+		os.Exit(1)
+	}
+	// Renew the CP client certificate periodically so it never expires
+	// while the control plane is running (TTL = 24h, renewal = every 12h).
+	go func() {
+		ticker := time.NewTicker(auth.CPCertRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := cpCertStore.Refresh(); err != nil {
+					slog.Error("failed to renew CP client certificate", "error", err)
+				} else {
+					slog.Info("CP client certificate renewed")
 				}
 			}
-		}()
-		hostPool = lifecycle.NewHostClientPoolTLS(auth.CPClientTLSConfig(ca, cpCertStore))
-		slog.Info("host client pool: mTLS enabled")
-	} else {
-		hostPool = lifecycle.NewHostClientPool()
-	}
+		}
+	}()
+	hostPool := lifecycle.NewHostClientPoolTLS(auth.CPClientTLSConfig(ca, cpCertStore))
+	slog.Info("host client pool: mTLS enabled")
 
 	// Scheduler — picks a host for each new sandbox (round-robin for now).
 	hostScheduler := scheduler.NewRoundRobinScheduler(queries)
