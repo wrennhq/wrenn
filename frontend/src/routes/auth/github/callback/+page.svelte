@@ -4,17 +4,37 @@
 	import { auth } from '$lib/auth.svelte';
 	import { teams } from '$lib/teams.svelte';
 
+	// Check for error in URL params (errors are still passed via query params).
 	const params = $page.url.searchParams;
 	const error = params.get('error');
+
+	function getCookie(name: string): string | null {
+		const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+		return match ? decodeURIComponent(match[1]) : null;
+	}
+
+	function clearOAuthCookies() {
+		for (const name of [
+			'wrenn_oauth_token',
+			'wrenn_oauth_user_id',
+			'wrenn_oauth_team_id',
+			'wrenn_oauth_email',
+			'wrenn_oauth_name'
+		]) {
+			document.cookie = `${name}=; path=/auth/; max-age=0`;
+		}
+	}
 
 	if (error) {
 		goto(`/login?error=${encodeURIComponent(error)}`);
 	} else {
-		const token = params.get('token');
-		const userId = params.get('user_id');
-		const teamId = params.get('team_id');
-		const email = params.get('email');
-		const name = params.get('name') ?? '';
+		const token = getCookie('wrenn_oauth_token');
+		const userId = getCookie('wrenn_oauth_user_id');
+		const teamId = getCookie('wrenn_oauth_team_id');
+		const email = getCookie('wrenn_oauth_email');
+		const name = getCookie('wrenn_oauth_name') ?? '';
+
+		clearOAuthCookies();
 
 		if (token && userId && teamId && email) {
 			teams.reset();

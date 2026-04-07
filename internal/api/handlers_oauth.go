@@ -300,14 +300,23 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 }
 
 func redirectWithToken(w http.ResponseWriter, r *http.Request, base, token, userID, teamID, email, name string) {
-	u := base + "?" + url.Values{
-		"token":   {token},
-		"user_id": {userID},
-		"team_id": {teamID},
-		"email":   {email},
-		"name":    {name},
-	}.Encode()
-	http.Redirect(w, r, u, http.StatusFound)
+	// Set auth data as short-lived cookies instead of URL query parameters.
+	// This prevents token leakage via server access logs, Referer headers, and browser history.
+	for _, c := range []http.Cookie{
+		{Name: "wrenn_oauth_token", Value: token},
+		{Name: "wrenn_oauth_user_id", Value: userID},
+		{Name: "wrenn_oauth_team_id", Value: teamID},
+		{Name: "wrenn_oauth_email", Value: email},
+		{Name: "wrenn_oauth_name", Value: name},
+	} {
+		c.Path = "/auth/"
+		c.MaxAge = 60
+		c.HttpOnly = false // frontend JS must read these
+		c.SameSite = http.SameSiteLaxMode
+		c.Secure = isSecure(r)
+		http.SetCookie(w, &c)
+	}
+	http.Redirect(w, r, base, http.StatusFound)
 }
 
 func redirectWithError(w http.ResponseWriter, r *http.Request, base, code string) {

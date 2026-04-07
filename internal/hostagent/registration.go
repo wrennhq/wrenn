@@ -214,7 +214,10 @@ func RefreshCredentials(ctx context.Context, cpURL, credentialsFilePath string) 
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read refresh response body: %w", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp errorResponse

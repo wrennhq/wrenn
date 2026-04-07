@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -202,6 +203,7 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 	user, err := h.db.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("login failed: unknown email", "email", req.Email, "ip", r.RemoteAddr)
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
 			return
 		}
@@ -210,10 +212,12 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !user.PasswordHash.Valid {
+		slog.Warn("login failed: no password set", "email", req.Email, "ip", r.RemoteAddr)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
 		return
 	}
 	if err := auth.CheckPassword(user.PasswordHash.String, req.Password); err != nil {
+		slog.Warn("login failed: wrong password", "email", req.Email, "ip", r.RemoteAddr)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
 		return
 	}

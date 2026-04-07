@@ -20,6 +20,7 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 				hash := auth.HashAPIKey(key)
 				row, err := queries.GetAPIKeyByHash(r.Context(), hash)
 				if err != nil {
+					slog.Warn("api key auth failed", "prefix", auth.APIKeyPrefix(key), "ip", r.RemoteAddr)
 					writeError(w, http.StatusUnauthorized, "unauthorized", "invalid API key")
 					return
 				}
@@ -42,6 +43,7 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 				tokenStr := strings.TrimPrefix(header, "Bearer ")
 				claims, err := auth.VerifyJWT(jwtSecret, tokenStr)
 				if err != nil {
+					slog.Warn("jwt auth failed", "error", err, "ip", r.RemoteAddr)
 					writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
 					return
 				}
