@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"regexp"
 	"strings"
 )
 
@@ -10,6 +11,12 @@ type ExecContext struct {
 	WorkDir string
 	EnvVars map[string]string
 }
+
+// This regex matches:
+// 1. $$
+// 2. ${ANY_WORD}
+// 3. $ANY_WORD
+var envRegex = regexp.MustCompile(`\$\$(\$)?|\$\{([a-zA-Z0-9_]+)\}|\$([a-zA-Z0-9_]+)`)
 
 // WrappedCommand returns the full shell command for a RUN step with context
 // applied. The result is passed as the argument to /bin/sh -c.
@@ -64,66 +71,24 @@ func (c *ExecContext) shellPrefix() string {
 // If a variable is not found in the vars map, it is replaced with an empty
 // string.
 func expandEnv(s string, vars map[string]string) string {
-	var sb strings.Builder
-	sb.Grow(len(s) * 2)
-
-	for {
-		idx := strings.IndexByte(s, '$')
-		if idx < 0 {
-			sb.WriteString(s)
-			break
-		}
-
-		sb.WriteString(s[:idx])
-		s = s[idx:]
-
-		if len(s) == 1 {
-			sb.WriteByte('$')
-			break
-		}
-
-		if s[1] == '$' {
-			sb.WriteByte('$')
-			s = s[2:]
-			continue
+	return envRegex.ReplaceAllStringFunc(s, func(match string) string {
+		if match == "$$" {
+			return "$"
 		}
 
 		var name string
-		var advance int
-
-		if s[1] == '{' {
-			end := strings.IndexByte(s[2:], '}')
-			if end < 0 {
-				sb.WriteByte('$')
-				s = s[1:]
-				continue
-			}
-			name = s[2 : 2+end]
-			advance = 2 + end + 1
+		if match[1] == '{' {
+			name = match[2 : len(match)-1]
 		} else {
-			j := 1
-			for j < len(s) && isNameChar(s[j]) {
-				j++
-			}
-			name = s[1:j]
-			advance = j
+			name = match[1:]
 		}
 
 		if v, ok := vars[name]; ok {
-			sb.WriteString(v)
+			return v
 		}
 
-		s = s[advance:]
-	}
-
-	return sb.String()
-}
-
-// isNameChar reports whether the byte c is a valid character for an
-// environment variable name (alphanumeric or underscore)
-func isNameChar(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-		(c >= '0' && c <= '9') || c == '_'
+		return ""
+	})
 }
 
 // shellescape wraps s in single quotes, escaping any embedded single quotes.
