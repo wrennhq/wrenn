@@ -13,10 +13,10 @@ type ExecContext struct {
 }
 
 // This regex matches:
-// 1. $$
-// 2. ${ANY_WORD}
-// 3. $ANY_WORD
-var envRegex = regexp.MustCompile(`\$\$(\$)?|\$\{([a-zA-Z0-9_]+)\}|\$([a-zA-Z0-9_]+)`)
+// 1. $$ (escaped dollar)
+// 2. ${VAR} or ${} (braced variable, possibly empty)
+// 3. $VAR (bare variable)
+var envRegex = regexp.MustCompile(`\$\$|\$\{([a-zA-Z0-9_]*)\}|\$([a-zA-Z0-9_]+)`)
 
 // WrappedCommand returns the full shell command for a RUN step with context
 // applied. The result is passed as the argument to /bin/sh -c.
@@ -77,7 +77,7 @@ func expandEnv(s string, vars map[string]string) string {
 		}
 
 		var name string
-		if match[1] == '{' {
+		if len(match) > 1 && match[1] == '{' {
 			name = match[2 : len(match)-1]
 		} else {
 			name = match[1:]

@@ -2,6 +2,7 @@
 import argparse
 import json
 import sys
+import urllib.request
 import uuid
 
 try:
@@ -12,8 +13,6 @@ except ImportError:
 
 
 def create_kernel(base_url: str, token: str) -> str:
-    import urllib.request
-
     url = f"{base_url}/api/kernels"
     headers = {}
     if token:
@@ -57,7 +56,7 @@ def execute_code(ws: websocket.WebSocket, code: str) -> dict:
     while True:
         resp = json.loads(ws.recv())
 
-        # CRITICAL FIX: Ignore messages left over from previous executions
+        # Filter out messages from other executions by matching msg_id
         parent_id = resp.get("parent_header", {}).get("msg_id")
         if parent_id != msg_id:
             continue

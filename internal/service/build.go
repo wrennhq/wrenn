@@ -464,14 +464,17 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 // Returns nil on the first successful check, or an error if retries are
 // exhausted, the deadline passes, or the context is cancelled.
 func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentClient, sandboxIDStr string, hc recipe.HealthcheckConfig) error {
-	maxAttempts := 100
-	if hc.Retries > 0 {
-		maxAttempts = hc.Retries
-	}
-	deadline := time.NewTimer(hc.StartPeriod + time.Duration(maxAttempts+1)*hc.Interval)
-	defer deadline.Stop()
 	ticker := time.NewTicker(hc.Interval)
 	defer ticker.Stop()
+
+	// When retries > 0, set a deadline based on the retry budget.
+	// When retries == 0 (unlimited), rely solely on the parent context deadline.
+	var deadlineCh <-chan time.Time
+	if hc.Retries > 0 {
+		deadline := time.NewTimer(hc.StartPeriod + time.Duration(hc.Retries+1)*hc.Interval)
+		defer deadline.Stop()
+		deadlineCh = deadline.C
+	}
 
 	startedAt := time.Now()
 	failCount := 0
@@ -480,7 +483,7 @@ func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentC
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deadline.C:
+		case <-deadlineCh:
 			return fmt.Errorf("healthcheck timed out: exceeded %d attempts over %s", failCount, time.Since(startedAt))
 		case <-ticker.C:
 			execCtx, cancel := context.WithTimeout(ctx, hc.Timeout)
@@ -497,7 +500,7 @@ func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentC
 				if time.Since(startedAt) >= hc.StartPeriod {
 					failCount++
 					if hc.Retries > 0 && failCount >= hc.Retries {
-						return fmt.Errorf("healthcheck failed after %d retries: exec error: %v", failCount, err)
+						return fmt.Errorf("healthcheck failed after %d retries: exec error: %w", failCount, err)
 					}
 				}
 				continue
@@ -574,14 +577,14 @@ func (s *BuildService) fetchSandboxEnv(ctx context.Context,
 			resp.Msg.ExitCode)
 	}
 
-	return s.parseSandboxEnv(string(resp.Msg.Stdout)), nil
+	return parseSandboxEnv(string(resp.Msg.Stdout)), nil
 }
 
 // parseSandboxEnv converts the raw newline-separated output of an 'env'
 // command into a map.
-// It skips empty lines and malformed entries, and correctly handles value
+// It skips empty lines and malformed entries, and correctly handles values
 // containing '='.
-func (s *BuildService) parseSandboxEnv(raw string) map[string]string {
+func parseSandboxEnv(raw string) map[string]string {
 	envVars := make(map[string]string)
 
 	for line := range strings.SplitSeq(raw, "\n") {

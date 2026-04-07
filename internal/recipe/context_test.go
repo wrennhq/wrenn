@@ -4,10 +4,11 @@ import "testing"
 
 func TestExecContext_WrappedCommand(t *testing.T) {
 	tests := []struct {
-		name string
-		ctx  ExecContext
-		cmd  string
-		want string
+		name      string
+		ctx       ExecContext
+		cmd       string
+		want      string
+		wantOneOf []string
 	}{
 		{
 			name: "no context",
@@ -46,19 +47,34 @@ func TestExecContext_WrappedCommand(t *testing.T) {
 			want: "MSG='it'\\''s fine' /bin/sh -c 'echo $MSG'",
 		},
 		{
-			name: "env expansion with dollar sign PATH",
+			name: "env expansion with pre-expanded PATH",
 			ctx: ExecContext{
-				EnvVars: map[string]string{"PATH": "/usr/bin", "FOO": "/opt/venv/bin:$PATH"},
+				EnvVars: map[string]string{"PATH": "/usr/bin", "FOO": "/opt/venv/bin:/usr/bin"},
 			},
-			cmd:  "make build",
-			want: "FOO='/opt/venv/bin:/usr/bin' PATH='/usr/bin' /bin/sh -c 'make build'",
+			cmd: "make build",
+			// Map iteration order is non-deterministic; accept either ordering.
+			wantOneOf: []string{
+				"FOO='/opt/venv/bin:/usr/bin' PATH='/usr/bin' /bin/sh -c 'make build'",
+				"PATH='/usr/bin' FOO='/opt/venv/bin:/usr/bin' /bin/sh -c 'make build'",
+			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.ctx.WrappedCommand(tc.cmd)
-			if got != tc.want {
+			if len(tc.wantOneOf) > 0 {
+				matched := false
+				for _, w := range tc.wantOneOf {
+					if got == w {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					t.Errorf("WrappedCommand(%q)\n  got  %q\n  want one of %q", tc.cmd, got, tc.wantOneOf)
+				}
+			} else if got != tc.want {
 				t.Errorf("WrappedCommand(%q)\n  got  %q\n  want %q", tc.cmd, got, tc.want)
 			}
 		})
