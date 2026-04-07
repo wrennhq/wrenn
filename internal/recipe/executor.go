@@ -68,7 +68,7 @@ func Execute(
 			if bctx.EnvVars == nil {
 				bctx.EnvVars = make(map[string]string)
 			}
-			bctx.EnvVars[st.Key] = st.Value
+			bctx.EnvVars[st.Key] = expandEnv(st.Value, bctx.EnvVars)
 			entries = append(entries, BuildLogEntry{Step: step, Phase: phase, Cmd: st.Raw, Ok: true})
 
 		case KindWORKDIR:

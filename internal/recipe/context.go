@@ -1,6 +1,9 @@
 package recipe
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // ExecContext holds mutable state that persists across recipe steps.
 // It is initialized empty and updated by ENV and WORKDIR steps.
@@ -8,6 +11,12 @@ type ExecContext struct {
 	WorkDir string
 	EnvVars map[string]string
 }
+
+// This regex matches:
+// 1. $$ (escaped dollar)
+// 2. ${VAR} or ${} (braced variable, possibly empty)
+// 3. $VAR (bare variable)
+var envRegex = regexp.MustCompile(`\$\$|\$\{([a-zA-Z0-9_]*)\}|\$([a-zA-Z0-9_]+)`)
 
 // WrappedCommand returns the full shell command for a RUN step with context
 // applied. The result is passed as the argument to /bin/sh -c.
@@ -54,6 +63,32 @@ func (c *ExecContext) shellPrefix() string {
 		sb.WriteByte(' ')
 	}
 	return sb.String()
+}
+
+// expandEnv replaces $var and ${var} placeholders in the string s with their
+// corresponding values from the vars map.
+// It supports escaping with $$, which is replaced by a single $.
+// If a variable is not found in the vars map, it is replaced with an empty
+// string.
+func expandEnv(s string, vars map[string]string) string {
+	return envRegex.ReplaceAllStringFunc(s, func(match string) string {
+		if match == "$$" {
+			return "$"
+		}
+
+		var name string
+		if len(match) > 1 && match[1] == '{' {
+			name = match[2 : len(match)-1]
+		} else {
+			name = match[1:]
+		}
+
+		if v, ok := vars[name]; ok {
+			return v
+		}
+
+		return ""
+	})
 }
 
 // shellescape wraps s in single quotes, escaping any embedded single quotes.

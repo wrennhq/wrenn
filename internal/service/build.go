@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,8 +24,6 @@ import (
 const (
 	buildQueueKey       = "wrenn:build_queue"
 	buildCommandTimeout = 30 * time.Second
-	healthcheckInterval = 1 * time.Second
-	healthcheckTimeout  = 60 * time.Second
 )
 
 // preBuildCmds run before the user recipe to prepare the build environment.
@@ -321,11 +320,18 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		panic(fmt.Sprintf("invalid post-build recipe: %v", err))
 	}
 
-	// Execute build phases: pre-build → user recipe → post-build.
-	// bctx carries working directory and env vars across all phases.
 	var logs []recipe.BuildLogEntry
 	step := 0
-	bctx := &recipe.ExecContext{}
+
+	envVars, err := s.fetchSandboxEnv(buildCtx, agent, sandboxIDStr)
+	if err != nil {
+		log.Warn("failed to fetch sandbox env, using defaults", "error", err)
+		envVars = map[string]string{
+			"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+			"HOME": "/root",
+		}
+	}
+	bctx := &recipe.ExecContext{EnvVars: envVars}
 
 	runPhase := func(phase string, steps []recipe.Step, defaultTimeout time.Duration) bool {
 		newEntries, nextStep, ok := recipe.Execute(buildCtx, phase, steps, sandboxIDStr, step, defaultTimeout, bctx, agent.Exec)
@@ -365,8 +371,14 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 	// Healthcheck or direct snapshot.
 	var sizeBytes int64
 	if build.Healthcheck != "" {
-		log.Info("running healthcheck", "cmd", build.Healthcheck)
-		if err := s.waitForHealthcheck(buildCtx, agent, sandboxIDStr, build.Healthcheck); err != nil {
+		hc, err := recipe.ParseHealthcheck(build.Healthcheck)
+		if err != nil {
+			s.destroySandbox(buildCtx, agent, sandboxIDStr)
+			s.failBuild(buildCtx, buildID, fmt.Sprintf("invalid healthcheck: %v", err))
+			return
+		}
+		log.Info("running healthcheck", "cmd", hc.Cmd, "interval", hc.Interval, "timeout", hc.Timeout, "start_period", hc.StartPeriod, "retries", hc.Retries)
+		if err := s.waitForHealthcheck(buildCtx, agent, sandboxIDStr, hc); err != nil {
 			s.destroySandbox(buildCtx, agent, sandboxIDStr)
 			if buildCtx.Err() != nil {
 				return
@@ -445,36 +457,64 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 	log.Info("template build completed successfully", "name", build.Name)
 }
 
-func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentClient, sandboxIDStr, cmd string) error {
-	deadline := time.NewTimer(healthcheckTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(healthcheckInterval)
+// waitForHealthcheck repeatedly executes the healthcheck command inside the
+// sandbox according to the config's interval, timeout, start-period, and
+// retries.
+// During the start period, failures are not counted toward the retry budget.
+// Returns nil on the first successful check, or an error if retries are
+// exhausted, the deadline passes, or the context is cancelled.
+func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentClient, sandboxIDStr string, hc recipe.HealthcheckConfig) error {
+	ticker := time.NewTicker(hc.Interval)
 	defer ticker.Stop()
+
+	// When retries > 0, set a deadline based on the retry budget.
+	// When retries == 0 (unlimited), rely solely on the parent context deadline.
+	var deadlineCh <-chan time.Time
+	if hc.Retries > 0 {
+		deadline := time.NewTimer(hc.StartPeriod + time.Duration(hc.Retries+1)*hc.Interval)
+		defer deadline.Stop()
+		deadlineCh = deadline.C
+	}
+
+	startedAt := time.Now()
+	failCount := 0
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("healthcheck timed out after %s", healthcheckTimeout)
+		case <-deadlineCh:
+			return fmt.Errorf("healthcheck timed out: exceeded %d attempts over %s", failCount, time.Since(startedAt))
 		case <-ticker.C:
-			execCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			execCtx, cancel := context.WithTimeout(ctx, hc.Timeout)
 			resp, err := agent.Exec(execCtx, connect.NewRequest(&pb.ExecRequest{
 				SandboxId:  sandboxIDStr,
 				Cmd:        "/bin/sh",
-				Args:       []string{"-c", cmd},
-				TimeoutSec: 10,
+				Args:       []string{"-c", hc.Cmd},
+				TimeoutSec: int32(hc.Timeout.Seconds()),
 			}))
 			cancel()
 
 			if err != nil {
 				slog.Debug("healthcheck exec error (retrying)", "error", err)
+				if time.Since(startedAt) >= hc.StartPeriod {
+					failCount++
+					if hc.Retries > 0 && failCount >= hc.Retries {
+						return fmt.Errorf("healthcheck failed after %d retries: exec error: %w", failCount, err)
+					}
+				}
 				continue
 			}
 			if resp.Msg.ExitCode == 0 {
 				return nil
 			}
 			slog.Debug("healthcheck failed (retrying)", "exit_code", resp.Msg.ExitCode)
+			if time.Since(startedAt) >= hc.StartPeriod {
+				failCount++
+				if hc.Retries > 0 && failCount >= hc.Retries {
+					return fmt.Errorf("healthcheck failed after %d retries: exit code %d", failCount, resp.Msg.ExitCode)
+				}
+			}
 		}
 	}
 }
@@ -516,4 +556,50 @@ func (s *BuildService) destroySandbox(_ context.Context, agent buildAgentClient,
 	})); err != nil {
 		slog.Warn("failed to destroy build sandbox", "sandbox_id", sandboxIDStr, "error", err)
 	}
+}
+
+// fetchSandboxEnv executes the 'env' command inside the specified sandbox via
+// the build agent and returns environment variables
+func (s *BuildService) fetchSandboxEnv(ctx context.Context,
+	agent buildAgentClient, sandboxIDStr string) (map[string]string, error) {
+	resp, err := agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
+		SandboxId:  sandboxIDStr,
+		Cmd:        "/bin/sh",
+		Args:       []string{"-c", "env"},
+		TimeoutSec: 10,
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("fetch env: %w", err)
+	}
+
+	if resp.Msg.ExitCode != 0 {
+		return nil, fmt.Errorf("fetch env: command exited with code %d",
+			resp.Msg.ExitCode)
+	}
+
+	return parseSandboxEnv(string(resp.Msg.Stdout)), nil
+}
+
+// parseSandboxEnv converts the raw newline-separated output of an 'env'
+// command into a map.
+// It skips empty lines and malformed entries, and correctly handles values
+// containing '='.
+func parseSandboxEnv(raw string) map[string]string {
+	envVars := make(map[string]string)
+
+	for line := range strings.SplitSeq(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		envVars[parts[0]] = parts[1]
+	}
+
+	return envVars
 }

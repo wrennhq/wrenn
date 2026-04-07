@@ -137,7 +137,7 @@ image-minimal:
 	sudo bash images/templates/minimal/build.sh
 
 image-python:
-	sudo bash images/templates/python311/build.sh
+	sudo bash images/templates/python312/build.sh
 
 image-node:
 	sudo bash images/templates/node20/build.sh
