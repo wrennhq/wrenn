@@ -12,6 +12,11 @@ import (
 type ConnTracker struct {
 	draining atomic.Bool
 	wg       sync.WaitGroup
+
+	// cancelMu protects cancelDrain so Reset can signal a timed-out Drain
+	// goroutine to exit, preventing goroutine leaks on repeated pause failures.
+	cancelMu    sync.Mutex
+	cancelDrain chan struct{}
 }
 
 // Acquire registers one in-flight connection. Returns false if the tracker
@@ -38,13 +43,13 @@ func (t *ConnTracker) Release() {
 
 // Drain marks the tracker as draining (all future Acquire calls return
 // false) and waits up to timeout for in-flight connections to finish.
-//
-// Note: if the timeout expires with connections still in-flight, the
-// internal goroutine waiting on wg.Wait() will remain until those
-// connections complete. This is bounded by the number of hung connections
-// at drain time and self-heals once they close.
 func (t *ConnTracker) Drain(timeout time.Duration) {
 	t.draining.Store(true)
+
+	cancel := make(chan struct{})
+	t.cancelMu.Lock()
+	t.cancelDrain = cancel
+	t.cancelMu.Unlock()
 
 	done := make(chan struct{})
 	go func() {
@@ -54,13 +59,27 @@ func (t *ConnTracker) Drain(timeout time.Duration) {
 
 	select {
 	case <-done:
+	case <-cancel:
+		// Reset was called; stop waiting.
 	case <-time.After(timeout):
 	}
 }
 
 // Reset re-enables the tracker after a failed drain. This allows the
 // sandbox to accept proxy connections again if the pause operation fails
-// and the VM is resumed.
+// and the VM is resumed. It also cancels any lingering Drain goroutine.
 func (t *ConnTracker) Reset() {
+	t.cancelMu.Lock()
+	if t.cancelDrain != nil {
+		select {
+		case <-t.cancelDrain:
+			// Already closed.
+		default:
+			close(t.cancelDrain)
+		}
+		t.cancelDrain = nil
+	}
+	t.cancelMu.Unlock()
+
 	t.draining.Store(false)
 }

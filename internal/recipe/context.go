@@ -2,6 +2,7 @@ package recipe
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -56,10 +57,15 @@ func (c *ExecContext) shellPrefix() string {
 		sb.WriteString(shellescape(c.WorkDir))
 		sb.WriteString(" && ")
 	}
-	for k, v := range c.EnvVars {
+	keys := make([]string, 0, len(c.EnvVars))
+	for k := range c.EnvVars {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
 		sb.WriteString(k)
 		sb.WriteByte('=')
-		sb.WriteString(shellescape(v))
+		sb.WriteString(shellescape(c.EnvVars[k]))
 		sb.WriteByte(' ')
 	}
 	return sb.String()

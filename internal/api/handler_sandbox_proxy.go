@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -196,7 +197,7 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		Director: func(req *http.Request) {
 			req.URL.Scheme = agentURL.Scheme
 			req.URL.Host = agentURL.Host
-			req.URL.Path = "/proxy/" + sandboxIDStr + "/" + port + req.URL.Path
+			req.URL.Path = path.Join("/proxy", sandboxIDStr, port, path.Clean("/"+req.URL.Path))
 			req.Host = agentURL.Host
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {

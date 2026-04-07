@@ -51,12 +51,8 @@ func TestExecContext_WrappedCommand(t *testing.T) {
 			ctx: ExecContext{
 				EnvVars: map[string]string{"PATH": "/usr/bin", "FOO": "/opt/venv/bin:/usr/bin"},
 			},
-			cmd: "make build",
-			// Map iteration order is non-deterministic; accept either ordering.
-			wantOneOf: []string{
-				"FOO='/opt/venv/bin:/usr/bin' PATH='/usr/bin' /bin/sh -c 'make build'",
-				"PATH='/usr/bin' FOO='/opt/venv/bin:/usr/bin' /bin/sh -c 'make build'",
-			},
+			cmd:  "make build",
+			want: "FOO='/opt/venv/bin:/usr/bin' PATH='/usr/bin' /bin/sh -c 'make build'",
 		},
 	}
 

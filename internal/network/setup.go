@@ -137,19 +137,20 @@ func NewSlot(index int) *Slot {
 
 	hostIP := make(net.IP, 4)
 	copy(hostIP, hostBaseIP)
-	hostIP[2] += byte(index / 256)
-	hostIP[3] += byte(index % 256)
+	hostIP[2] += byte(index >> 8)
+	hostIP[3] += byte(index & 0xFF)
 
 	vethOffset := index * vrtAddressesPerSlot
 	vethIP := make(net.IP, 4)
 	copy(vethIP, vrtBaseIP)
-	vethIP[2] += byte(vethOffset / 256)
-	vethIP[3] += byte(vethOffset % 256)
+	vethIP[2] += byte(vethOffset >> 8)
+	vethIP[3] += byte(vethOffset & 0xFF)
 
+	vpeerOffset := vethOffset + 1
 	vpeerIP := make(net.IP, 4)
 	copy(vpeerIP, vrtBaseIP)
-	vpeerIP[2] += byte((vethOffset + 1) / 256)
-	vpeerIP[3] += byte((vethOffset + 1) % 256)
+	vpeerIP[2] += byte(vpeerOffset >> 8)
+	vpeerIP[3] += byte(vpeerOffset & 0xFF)
 
 	return &Slot{
 		Index:        index,

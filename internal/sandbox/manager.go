@@ -49,6 +49,7 @@ type Manager struct {
 // sandboxState holds the runtime state for a single sandbox.
 type sandboxState struct {
 	models.Sandbox
+	lifecycleMu    sync.Mutex // serializes Pause/Destroy/Resume on this sandbox
 	slot           *network.Slot
 	client         *envdclient.Client
 	connTracker    *ConnTracker // tracks in-flight proxy connections for pre-pause drain
@@ -259,6 +260,9 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 	m.mu.Unlock()
 
 	if ok {
+		// Wait for any in-progress Pause to finish before tearing down resources.
+		sb.lifecycleMu.Lock()
+		defer sb.lifecycleMu.Unlock()
 		m.cleanup(ctx, sb)
 	}
 
@@ -306,6 +310,11 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	if err != nil {
 		return err
 	}
+
+	// Serialize lifecycle operations on this sandbox to prevent concurrent
+	// Pause/Destroy calls from corrupting Firecracker state.
+	sb.lifecycleMu.Lock()
+	defer sb.lifecycleMu.Unlock()
 
 	if sb.Status != models.StatusRunning {
 		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
