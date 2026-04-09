@@ -62,9 +62,9 @@
 		{ label: 'Audit Logs', icon: IconAudit, href: '/dashboard/audit' },
 		...(currentTeamIsByoc
 			? [{
-					label: 'BYOC',
+					label: 'Hosts',
 					icon: IconServer,
-					href: '/dashboard/byoc',
+					href: '/dashboard/hosts',
 					disabled: auth.role === 'member',
 					disabledHint: 'Available to team owners and admins only'
 				}]
@@ -262,29 +262,29 @@
 			</a>
 		{/if}
 		<a
-			href="/docs"
+			href="https://docs.wrenn.dev"
+			target="_blank"
+			rel="noopener noreferrer"
 			class="group flex items-center rounded-[var(--radius-input)] px-2.5 py-2.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)] {collapsed ? 'justify-center px-2' : 'gap-3'}"
 			title={collapsed ? 'Docs' : undefined}
 		>
 			<IconDocs size={16} class="shrink-0 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
 			{#if !collapsed}<span class="text-ui">Docs</span>{/if}
 		</a>
-		<a
-			href="/dashboard/notifications"
-			class="group flex items-center rounded-[var(--radius-input)] px-2.5 py-2.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)] {collapsed ? 'justify-center px-2' : 'gap-3'}"
-			title={collapsed ? 'Notifications' : undefined}
+		<div
+			class="flex cursor-not-allowed items-center rounded-[var(--radius-input)] px-2.5 py-2.5 opacity-35 {collapsed ? 'justify-center px-2' : 'gap-3'}"
+			title={collapsed ? 'Notifications (coming soon)' : 'Coming soon'}
 		>
-			<IconBell size={16} class="shrink-0 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
+			<IconBell size={16} class="shrink-0" />
 			{#if !collapsed}<span class="text-ui">Notifications</span>{/if}
-		</a>
-		<a
-			href="/dashboard/settings"
-			class="group flex items-center rounded-[var(--radius-input)] px-2.5 py-2.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)] {collapsed ? 'justify-center px-2' : 'gap-3'}"
-			title={collapsed ? 'Settings' : undefined}
+		</div>
+		<div
+			class="flex cursor-not-allowed items-center rounded-[var(--radius-input)] px-2.5 py-2.5 opacity-35 {collapsed ? 'justify-center px-2' : 'gap-3'}"
+			title={collapsed ? 'Settings (coming soon)' : 'Coming soon'}
 		>
-			<IconSettings size={16} class="shrink-0 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
+			<IconSettings size={16} class="shrink-0" />
 			{#if !collapsed}<span class="text-ui">Settings</span>{/if}
-		</a>
+		</div>
 	</div>
 
 	<!-- User footer -->

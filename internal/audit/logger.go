@@ -369,6 +369,7 @@ func (l *AuditLogger) LogHostDelete(ctx context.Context, ac auth.AuthContext, ho
 }
 
 // LogHostMarkedDown records a system-initiated host status transition to unreachable.
+// Scoped to "team" so BYOC team members can see when their hosts go down.
 func (l *AuditLogger) LogHostMarkedDown(ctx context.Context, teamID, hostID pgtype.UUID) {
 	if !teamID.Valid {
 		return
@@ -382,13 +383,14 @@ func (l *AuditLogger) LogHostMarkedDown(ctx context.Context, teamID, hostID pgty
 		ResourceType: "host",
 		ResourceID:   optText(id.FormatHostID(hostID)),
 		Action:       "marked_down",
-		Scope:        "admin",
+		Scope:        "team",
 		Status:       "error",
 		Metadata:     []byte("{}"),
 	})
 }
 
 // LogHostMarkedUp records a system-initiated host status transition back to online.
+// Scoped to "team" so BYOC team members can see when their hosts recover.
 func (l *AuditLogger) LogHostMarkedUp(ctx context.Context, teamID, hostID pgtype.UUID) {
 	if !teamID.Valid {
 		return
@@ -402,7 +404,7 @@ func (l *AuditLogger) LogHostMarkedUp(ctx context.Context, teamID, hostID pgtype
 		ResourceType: "host",
 		ResourceID:   optText(id.FormatHostID(hostID)),
 		Action:       "marked_up",
-		Scope:        "admin",
+		Scope:        "team",
 		Status:       "success",
 		Metadata:     []byte("{}"),
 	})
