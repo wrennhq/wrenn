@@ -22,7 +22,8 @@
 		IconAudit,
 		IconServer,
 		IconShield,
-		IconMetrics
+		IconMetrics,
+		IconBroadcast
 	} from './icons';
 
 	let { collapsed = $bindable(false) }: { collapsed: boolean } = $props();
@@ -58,6 +59,7 @@
 
 	let managementItems = $derived<NavItem[]>([
 		{ label: 'Keys', icon: IconKey, href: '/dashboard/keys' },
+		{ label: 'Channels', icon: IconBroadcast, href: '/dashboard/channels' },
 		{ label: 'Team', icon: IconMembers, href: '/dashboard/team' },
 		{ label: 'Audit Logs', icon: IconAudit, href: '/dashboard/audit' },
 		...(currentTeamIsByoc

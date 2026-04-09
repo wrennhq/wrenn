@@ -17,6 +17,7 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
+	"git.omukk.dev/wrenn/sandbox/internal/channels"
 	"git.omukk.dev/wrenn/sandbox/internal/config"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
@@ -124,15 +125,30 @@ func main() {
 		slog.Info("registered OAuth provider", "provider", "github")
 	}
 
+	// Channels: publisher, service, dispatcher.
+	if len(cfg.EncryptionKeyHex) != 64 {
+		slog.Error("WRENN_ENCRYPTION_KEY must be a hex-encoded 32-byte key (64 hex chars)")
+		os.Exit(1)
+	}
+	channelPub := channels.NewPublisher(rdb)
+	channelSvc := &channels.Service{DB: queries, EncKey: cfg.EncryptionKey}
+	channelDispatcher := channels.NewDispatcher(rdb, queries, cfg.EncryptionKey)
+
+	// Shared audit logger with event publishing.
+	al := audit.NewWithPublisher(queries, channelPub)
+
 	// API server.
-	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca)
+	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelSvc)
 
 	// Start template build workers (2 concurrent).
 	stopBuildWorkers := srv.BuildSvc.StartWorkers(ctx, 2)
 	defer stopBuildWorkers()
 
+	// Start channel event dispatcher.
+	channelDispatcher.Start(ctx)
+
 	// Start host monitor (passive + active reconciliation every 30s).
-	monitor := api.NewHostMonitor(queries, hostPool, audit.New(queries), 30*time.Second)
+	monitor := api.NewHostMonitor(queries, hostPool, al, 30*time.Second)
 	monitor.Start(ctx)
 
 	// Start metrics sampler (records per-team sandbox stats every 10s).
