@@ -30,6 +30,17 @@ type AuditLog struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
+type Channel struct {
+	ID         pgtype.UUID        `json:"id"`
+	TeamID     pgtype.UUID        `json:"team_id"`
+	Name       string             `json:"name"`
+	Provider   string             `json:"provider"`
+	Config     []byte             `json:"config"`
+	EventTypes []string           `json:"event_types"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Host struct {
 	ID               pgtype.UUID        `json:"id"`
 	Type             string             `json:"type"`

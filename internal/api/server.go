@@ -12,6 +12,7 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
+	"git.omukk.dev/wrenn/sandbox/internal/channels"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	"git.omukk.dev/wrenn/sandbox/internal/scheduler"
@@ -38,6 +39,8 @@ func New(
 	oauthRegistry *oauth.Registry,
 	oauthRedirectURL string,
 	ca *auth.CA,
+	al *audit.AuditLogger,
+	channelSvc *channels.Service,
 ) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
@@ -51,8 +54,6 @@ func New(
 	auditSvc := &service.AuditService{DB: queries}
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
-
-	al := audit.New(queries)
 
 	sandbox := newSandboxHandler(sandboxSvc, al)
 	exec := newExecHandler(queries, pool)
@@ -70,6 +71,7 @@ func New(
 	statsH := newStatsHandler(statsSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
 	buildH := newBuildHandler(buildSvc, queries, pool)
+	channelH := newChannelHandler(channelSvc)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -168,6 +170,20 @@ func New(
 				r.Post("/tags", hostH.AddTag)
 				r.Delete("/tags/{tag}", hostH.RemoveTag)
 			})
+		})
+	})
+
+	// JWT-authenticated: notification channels.
+	r.Route("/v1/channels", func(r chi.Router) {
+		r.Use(requireJWT(jwtSecret))
+		r.Post("/", channelH.Create)
+		r.Get("/", channelH.List)
+		r.Post("/test", channelH.Test)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", channelH.Get)
+			r.Patch("/", channelH.Update)
+			r.Delete("/", channelH.Delete)
+			r.Put("/config", channelH.RotateConfig)
 		})
 	})
 

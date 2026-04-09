@@ -9,6 +9,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/events"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
@@ -16,12 +17,36 @@ import (
 // All methods are fire-and-forget: failures are logged via slog and never
 // propagated to the caller.
 type AuditLogger struct {
-	db *db.Queries
+	db  *db.Queries
+	pub events.EventPublisher // optional — nil disables event publishing
 }
 
-// New constructs an AuditLogger.
+// New constructs an AuditLogger without event publishing.
 func New(queries *db.Queries) *AuditLogger {
 	return &AuditLogger{db: queries}
+}
+
+// NewWithPublisher constructs an AuditLogger that also publishes channel events.
+func NewWithPublisher(queries *db.Queries, pub events.EventPublisher) *AuditLogger {
+	return &AuditLogger{db: queries, pub: pub}
+}
+
+// publish sends an event to the notification stream if a publisher is configured.
+func (l *AuditLogger) publish(ctx context.Context, e events.Event) {
+	if l.pub != nil {
+		l.pub.Publish(ctx, e)
+	}
+}
+
+// actorToEvent converts auth context fields to an events.Actor.
+func actorToEvent(ac auth.AuthContext) events.Actor {
+	at, aid, aname := actorFields(ac)
+	return events.Actor{Type: events.ActorKind(at), ID: aid, Name: aname}
+}
+
+// systemActor returns an events.Actor for system-initiated events.
+func systemActor() events.Actor {
+	return events.Actor{Type: events.ActorSystem}
 }
 
 // actorFields extracts actor_type, actor_id, and actor_name from an AuthContext.
@@ -82,6 +107,13 @@ func (l *AuditLogger) LogSandboxCreate(ctx context.Context, ac auth.AuthContext,
 		Status:       "success",
 		Metadata:     marshalMeta(map[string]any{"template": template}),
 	})
+	l.publish(ctx, events.Event{
+		Event:     events.CapsuleCreated,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(ac.TeamID),
+		Actor:     actorToEvent(ac),
+		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+	})
 }
 
 func (l *AuditLogger) LogSandboxPause(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
@@ -98,6 +130,13 @@ func (l *AuditLogger) LogSandboxPause(ctx context.Context, ac auth.AuthContext, 
 		Scope:        "team",
 		Status:       "success",
 		Metadata:     []byte("{}"),
+	})
+	l.publish(ctx, events.Event{
+		Event:     events.CapsulePaused,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(ac.TeamID),
+		Actor:     actorToEvent(ac),
+		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
 	})
 }
 
@@ -116,6 +155,13 @@ func (l *AuditLogger) LogSandboxAutoPause(ctx context.Context, teamID, sandboxID
 		Status:       "info",
 		Metadata:     []byte("{}"),
 	})
+	l.publish(ctx, events.Event{
+		Event:     events.CapsulePaused,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(teamID),
+		Actor:     systemActor(),
+		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+	})
 }
 
 func (l *AuditLogger) LogSandboxResume(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
@@ -133,6 +179,13 @@ func (l *AuditLogger) LogSandboxResume(ctx context.Context, ac auth.AuthContext,
 		Status:       "success",
 		Metadata:     []byte("{}"),
 	})
+	l.publish(ctx, events.Event{
+		Event:     events.CapsuleRunning,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(ac.TeamID),
+		Actor:     actorToEvent(ac),
+		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+	})
 }
 
 func (l *AuditLogger) LogSandboxDestroy(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
@@ -149,6 +202,13 @@ func (l *AuditLogger) LogSandboxDestroy(ctx context.Context, ac auth.AuthContext
 		Scope:        "team",
 		Status:       "warning",
 		Metadata:     []byte("{}"),
+	})
+	l.publish(ctx, events.Event{
+		Event:     events.CapsuleDestroyed,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(ac.TeamID),
+		Actor:     actorToEvent(ac),
+		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
 	})
 }
 
@@ -169,6 +229,13 @@ func (l *AuditLogger) LogSnapshotCreate(ctx context.Context, ac auth.AuthContext
 		Status:       "success",
 		Metadata:     []byte("{}"),
 	})
+	l.publish(ctx, events.Event{
+		Event:     events.SnapshotCreated,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(ac.TeamID),
+		Actor:     actorToEvent(ac),
+		Resource:  events.Resource{ID: name, Type: "snapshot"},
+	})
 }
 
 func (l *AuditLogger) LogSnapshotDelete(ctx context.Context, ac auth.AuthContext, name string) {
@@ -185,6 +252,13 @@ func (l *AuditLogger) LogSnapshotDelete(ctx context.Context, ac auth.AuthContext
 		Scope:        "team",
 		Status:       "warning",
 		Metadata:     []byte("{}"),
+	})
+	l.publish(ctx, events.Event{
+		Event:     events.SnapshotDeleted,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(ac.TeamID),
+		Actor:     actorToEvent(ac),
+		Resource:  events.Resource{ID: name, Type: "snapshot"},
 	})
 }
 
@@ -387,6 +461,13 @@ func (l *AuditLogger) LogHostMarkedDown(ctx context.Context, teamID, hostID pgty
 		Status:       "error",
 		Metadata:     []byte("{}"),
 	})
+	l.publish(ctx, events.Event{
+		Event:     events.HostDown,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(teamID),
+		Actor:     systemActor(),
+		Resource:  events.Resource{ID: id.FormatHostID(hostID), Type: "host"},
+	})
 }
 
 // LogHostMarkedUp records a system-initiated host status transition back to online.
@@ -407,5 +488,12 @@ func (l *AuditLogger) LogHostMarkedUp(ctx context.Context, teamID, hostID pgtype
 		Scope:        "team",
 		Status:       "success",
 		Metadata:     []byte("{}"),
+	})
+	l.publish(ctx, events.Event{
+		Event:     events.HostUp,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(teamID),
+		Actor:     systemActor(),
+		Resource:  events.Resource{ID: id.FormatHostID(hostID), Type: "host"},
 	})
 }

@@ -1547,6 +1547,176 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/channels:
+    post:
+      summary: Create a notification channel
+      operationId: createChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChannelRequest"
+      responses:
+        "201":
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      summary: List notification channels
+      operationId: listChannels
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Channels list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChannelResponse"
+
+  /v1/channels/test:
+    post:
+      summary: Test a channel configuration
+      description: >
+        Sends a test notification using the provided provider and config without
+        saving anything. Use this to verify credentials before creating a channel.
+      operationId: testChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestChannelRequest"
+      responses:
+        "200":
+          description: Test notification sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/channels/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get a notification channel
+      operationId: getChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Channel details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      summary: Update a notification channel
+      operationId: updateChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateChannelRequest"
+      responses:
+        "200":
+          description: Channel updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: Delete a notification channel
+      operationId: deleteChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Channel deleted
+
+  /v1/channels/{id}/config:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      summary: Rotate channel secrets
+      description: >
+        Replaces the channel's provider configuration entirely with new secrets.
+        The previous config is discarded. Config fields must match the provider's
+        required fields.
+      operationId: rotateChannelConfig
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateConfigRequest"
+      responses:
+        "200":
+          description: Config rotated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     apiKeyAuth:
@@ -2066,6 +2236,112 @@ components:
           type: integer
           format: int64
           description: "Allocated disk bytes for the CoW sparse file"
+
+    CreateChannelRequest:
+      type: object
+      required: [name, provider, config, events]
+      properties:
+        name:
+          type: string
+          description: Unique channel name within the team.
+        provider:
+          type: string
+          enum: [discord, slack, teams, googlechat, telegram, matrix, webhook]
+        config:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Provider-specific configuration fields.
+            Discord/Slack/Teams/Google Chat: {"webhook_url": "..."}.
+            Telegram: {"bot_token": "...", "chat_id": "..."}.
+            Matrix: {"homeserver_url": "...", "access_token": "...", "room_id": "..."}.
+            Webhook: {"url": "...", "secret": "..."} (secret is auto-generated if omitted).
+        events:
+          type: array
+          items:
+            type: string
+            enum:
+              - capsule.created
+              - capsule.running
+              - capsule.paused
+              - capsule.destroyed
+              - template.snapshot.created
+              - template.snapshot.deleted
+              - host.up
+              - host.down
+
+    TestChannelRequest:
+      type: object
+      required: [provider, config]
+      properties:
+        provider:
+          type: string
+          enum: [discord, slack, teams, googlechat, telegram, matrix, webhook]
+        config:
+          type: object
+          additionalProperties:
+            type: string
+          description: Provider-specific configuration fields (same as CreateChannelRequest.config).
+
+    RotateConfigRequest:
+      type: object
+      required: [config]
+      properties:
+        config:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            New provider configuration fields. Must include all required fields
+            for the channel's provider. Replaces the existing config entirely.
+
+    UpdateChannelRequest:
+      type: object
+      required: [name, events]
+      properties:
+        name:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+            enum:
+              - capsule.created
+              - capsule.running
+              - capsule.paused
+              - capsule.destroyed
+              - template.snapshot.created
+              - template.snapshot.deleted
+              - host.up
+              - host.down
+
+    ChannelResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+          enum: [discord, slack, teams, googlechat, telegram, matrix, webhook]
+        events:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        secret:
+          type: string
+          nullable: true
+          description: Webhook secret. Only returned on creation, never again.
 
     Error:
       type: object

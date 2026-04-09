@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -22,6 +23,10 @@ type Config struct {
 	OAuthGitHubClientSecret string
 	OAuthRedirectURL        string
 	CPPublicURL             string
+
+	// Channels — encryption for channel secrets (AES-256-GCM).
+	EncryptionKeyHex string   // WRENN_ENCRYPTION_KEY raw hex string (for validation)
+	EncryptionKey    [32]byte // parsed 32-byte key
 }
 
 // Load reads configuration from a .env file (if present) and environment variables.
@@ -30,7 +35,7 @@ func Load() Config {
 	// Best-effort load — missing .env file is fine.
 	_ = godotenv.Load()
 
-	return Config{
+	cfg := Config{
 		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable"),
 		RedisURL:    envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
 		ListenAddr:  envOrDefault("WRENN_CP_LISTEN_ADDR", ":8080"),
@@ -43,7 +48,18 @@ func Load() Config {
 		OAuthGitHubClientSecret: os.Getenv("OAUTH_GITHUB_CLIENT_SECRET"),
 		OAuthRedirectURL:        envOrDefault("OAUTH_REDIRECT_URL", "https://app.wrenn.dev"),
 		CPPublicURL:             os.Getenv("CP_PUBLIC_URL"),
+
+		EncryptionKeyHex: os.Getenv("WRENN_ENCRYPTION_KEY"),
 	}
+
+	if cfg.EncryptionKeyHex != "" {
+		b, err := hex.DecodeString(cfg.EncryptionKeyHex)
+		if err == nil && len(b) == 32 {
+			copy(cfg.EncryptionKey[:], b)
+		}
+	}
+
+	return cfg
 }
 
 func envOrDefault(key, def string) string {

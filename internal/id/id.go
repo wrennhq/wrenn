@@ -35,6 +35,7 @@ func NewRefreshTokenID() pgtype.UUID    { return newUUID() }
 func NewAuditLogID() pgtype.UUID        { return newUUID() }
 func NewBuildID() pgtype.UUID           { return newUUID() }
 func NewAdminPermissionID() pgtype.UUID { return newUUID() }
+func NewChannelID() pgtype.UUID         { return newUUID() }
 
 func NewTemplateID() pgtype.UUID { return newUUID() }
 
@@ -75,6 +76,7 @@ const (
 	PrefixAuditLog        = "log-"
 	PrefixBuild           = "bld-"
 	PrefixAdminPermission = "perm-"
+	PrefixChannel         = "ch-"
 )
 
 // UUIDToBase36 encodes 16 UUID bytes as a 25-char base36 string (0-9a-z).
@@ -123,6 +125,7 @@ func FormatHostTokenID(id pgtype.UUID) string    { return formatUUID(PrefixHostT
 func FormatRefreshTokenID(id pgtype.UUID) string { return formatUUID(PrefixRefreshToken, id) }
 func FormatAuditLogID(id pgtype.UUID) string     { return formatUUID(PrefixAuditLog, id) }
 func FormatBuildID(id pgtype.UUID) string        { return formatUUID(PrefixBuild, id) }
+func FormatChannelID(id pgtype.UUID) string      { return formatUUID(PrefixChannel, id) }
 
 // --- Parsing (prefixed string from API/RPC input → pgtype.UUID) ---
 
@@ -145,6 +148,7 @@ func ParseHostID(s string) (pgtype.UUID, error)      { return parseUUID(PrefixHo
 func ParseHostTokenID(s string) (pgtype.UUID, error) { return parseUUID(PrefixHostToken, s) }
 func ParseAuditLogID(s string) (pgtype.UUID, error)  { return parseUUID(PrefixAuditLog, s) }
 func ParseBuildID(s string) (pgtype.UUID, error)     { return parseUUID(PrefixBuild, s) }
+func ParseChannelID(s string) (pgtype.UUID, error)   { return parseUUID(PrefixChannel, s) }
 
 // --- Well-known IDs ---
 
