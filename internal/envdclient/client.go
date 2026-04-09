@@ -12,8 +12,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	envdpb "git.omukk.dev/wrenn/sandbox/proto/envd/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/envd/gen/genconnect"
+	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
+	"git.omukk.dev/wrenn/wrenn/proto/envd/gen/genconnect"
 )
 
 // Client wraps the Connect RPC client for envd's Process and Filesystem services.

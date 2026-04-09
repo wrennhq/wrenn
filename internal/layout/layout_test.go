@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
 )
 
 func TestIsMinimal(t *testing.T) {

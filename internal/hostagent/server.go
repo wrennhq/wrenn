@@ -15,10 +15,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
+	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
+	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 
-	"git.omukk.dev/wrenn/sandbox/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
 )
 
 // Server implements the HostAgentService Connect RPC handler.

@@ -15,15 +15,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/sandbox/internal/devicemapper"
-	"git.omukk.dev/wrenn/sandbox/internal/envdclient"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
-	"git.omukk.dev/wrenn/sandbox/internal/layout"
-	"git.omukk.dev/wrenn/sandbox/internal/models"
-	"git.omukk.dev/wrenn/sandbox/internal/network"
-	"git.omukk.dev/wrenn/sandbox/internal/snapshot"
-	"git.omukk.dev/wrenn/sandbox/internal/uffd"
-	"git.omukk.dev/wrenn/sandbox/internal/vm"
+	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
+	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/layout"
+	"git.omukk.dev/wrenn/wrenn/internal/models"
+	"git.omukk.dev/wrenn/wrenn/internal/network"
+	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
+	"git.omukk.dev/wrenn/wrenn/internal/uffd"
+	"git.omukk.dev/wrenn/wrenn/internal/vm"
 )
 
 // Config holds the paths and defaults for the sandbox manager.

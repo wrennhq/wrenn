@@ -8,7 +8,7 @@ import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	gen "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
+	gen "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 	http "net/http"
 	strings "strings"
 )

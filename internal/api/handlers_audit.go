@@ -8,9 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
-	"git.omukk.dev/wrenn/sandbox/internal/service"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/service"
 )
 
 type auditHandler struct {

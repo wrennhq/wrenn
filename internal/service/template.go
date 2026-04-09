@@ -5,7 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
 )
 
 // TemplateService provides template/snapshot operations shared between the

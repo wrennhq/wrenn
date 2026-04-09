@@ -10,4 +10,4 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: git.omukk.dev/wrenn/sandbox/proto/envd/gen
+      value: git.omukk.dev/wrenn/wrenn/proto/envd/gen

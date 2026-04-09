@@ -27,7 +27,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"git.omukk.dev/wrenn/sandbox/internal/snapshot"
+	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
 )
 
 const (

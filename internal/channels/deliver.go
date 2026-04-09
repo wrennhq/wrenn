@@ -7,7 +7,7 @@ import (
 
 	"github.com/containrrr/shoutrrr"
 
-	"git.omukk.dev/wrenn/sandbox/internal/events"
+	"git.omukk.dev/wrenn/wrenn/internal/events"
 )
 
 // Deliver sends a notification to a single provider with the given config.

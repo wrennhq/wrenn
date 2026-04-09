@@ -2562,8 +2562,8 @@ const file_hostagent_proto_rawDesc = "" +
 	"\tTerminate\x12\x1e.hostagent.v1.TerminateRequest\x1a\x1f.hostagent.v1.TerminateResponse\x12d\n" +
 	"\x11GetSandboxMetrics\x12&.hostagent.v1.GetSandboxMetricsRequest\x1a'.hostagent.v1.GetSandboxMetricsResponse\x12j\n" +
 	"\x13FlushSandboxMetrics\x12(.hostagent.v1.FlushSandboxMetricsRequest\x1a).hostagent.v1.FlushSandboxMetricsResponse\x12X\n" +
-	"\rFlattenRootfs\x12\".hostagent.v1.FlattenRootfsRequest\x1a#.hostagent.v1.FlattenRootfsResponseB\xb0\x01\n" +
-	"\x10com.hostagent.v1B\x0eHostagentProtoP\x01Z;git.omukk.dev/wrenn/sandbox/proto/hostagent/gen;hostagentv1\xa2\x02\x03HXX\xaa\x02\fHostagent.V1\xca\x02\fHostagent\\V1\xe2\x02\x18Hostagent\\V1\\GPBMetadata\xea\x02\rHostagent::V1b\x06proto3"
+	"\rFlattenRootfs\x12\".hostagent.v1.FlattenRootfsRequest\x1a#.hostagent.v1.FlattenRootfsResponseB\xae\x01\n" +
+	"\x10com.hostagent.v1B\x0eHostagentProtoP\x01Z9git.omukk.dev/wrenn/wrenn/proto/hostagent/gen;hostagentv1\xa2\x02\x03HXX\xaa\x02\fHostagent.V1\xca\x02\fHostagent\\V1\xe2\x02\x18Hostagent\\V1\\GPBMetadata\xea\x02\rHostagent::V1b\x06proto3"
 
 var (
 	file_hostagent_proto_rawDescOnce sync.Once

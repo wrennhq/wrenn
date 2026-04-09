@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
 )
 
 // MetricsSampler records per-team sandbox resource usage to

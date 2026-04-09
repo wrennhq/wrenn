@@ -10,11 +10,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/sandbox/internal/audit"
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
-	"git.omukk.dev/wrenn/sandbox/internal/service"
+	"git.omukk.dev/wrenn/wrenn/internal/audit"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/service"
 )
 
 type hostHandler struct {

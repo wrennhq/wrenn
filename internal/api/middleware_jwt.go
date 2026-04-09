@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
 )
 
 // requireJWT validates the Authorization: Bearer <token> header, verifies the JWT

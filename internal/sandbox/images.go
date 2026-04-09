@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"git.omukk.dev/wrenn/sandbox/internal/id"
-	"git.omukk.dev/wrenn/sandbox/internal/layout"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/layout"
 )
 
 // DefaultDiskSizeMB is the standard disk size for base images. Images smaller

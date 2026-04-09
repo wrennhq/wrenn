@@ -1817,8 +1817,8 @@ const file_process_proto_rawDesc = "" +
 	"\n" +
 	"SendSignal\x12\x1a.process.SendSignalRequest\x1a\x1b.process.SendSignalResponse\x12E\n" +
 	"\n" +
-	"CloseStdin\x12\x1a.process.CloseStdinRequest\x1a\x1b.process.CloseStdinResponseB\x83\x01\n" +
-	"\vcom.processB\fProcessProtoP\x01Z*git.omukk.dev/wrenn/sandbox/proto/envd/gen\xa2\x02\x03PXX\xaa\x02\aProcess\xca\x02\aProcess\xe2\x02\x13Process\\GPBMetadata\xea\x02\aProcessb\x06proto3"
+	"CloseStdin\x12\x1a.process.CloseStdinRequest\x1a\x1b.process.CloseStdinResponseB\x81\x01\n" +
+	"\vcom.processB\fProcessProtoP\x01Z(git.omukk.dev/wrenn/wrenn/proto/envd/gen\xa2\x02\x03PXX\xaa\x02\aProcess\xca\x02\aProcess\xe2\x02\x13Process\\GPBMetadata\xea\x02\aProcessb\x06proto3"
 
 var (
 	file_process_proto_rawDescOnce sync.Once

@@ -7,7 +7,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"git.omukk.dev/wrenn/sandbox/internal/events"
+	"git.omukk.dev/wrenn/wrenn/internal/events"
 )
 
 const streamKey = "wrenn:events"

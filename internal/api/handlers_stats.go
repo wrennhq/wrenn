@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/service"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/service"
 )
 
 type statsHandler struct {

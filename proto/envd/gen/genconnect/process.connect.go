@@ -10,7 +10,7 @@ import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	gen "git.omukk.dev/wrenn/sandbox/proto/envd/gen"
+	gen "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 	http "net/http"
 	strings "strings"
 )
