@@ -6,17 +6,20 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
 )
 
 type apiKeyHandler struct {
-	svc *service.APIKeyService
+	svc   *service.APIKeyService
+	audit *audit.AuditLogger
 }
 
-func newAPIKeyHandler(svc *service.APIKeyService) *apiKeyHandler {
-	return &apiKeyHandler{svc: svc}
+func newAPIKeyHandler(svc *service.APIKeyService, al *audit.AuditLogger) *apiKeyHandler {
+	return &apiKeyHandler{svc: svc, audit: al}
 }
 
 type createAPIKeyRequest struct {
@@ -37,11 +40,11 @@ type apiKeyResponse struct {
 
 func apiKeyToResponse(k db.TeamApiKey) apiKeyResponse {
 	resp := apiKeyResponse{
-		ID:        k.ID,
-		TeamID:    k.TeamID,
+		ID:        id.FormatAPIKeyID(k.ID),
+		TeamID:    id.FormatTeamID(k.TeamID),
 		Name:      k.Name,
 		KeyPrefix: k.KeyPrefix,
-		CreatedBy: k.CreatedBy,
+		CreatedBy: id.FormatUserID(k.CreatedBy),
 	}
 	if k.CreatedAt.Valid {
 		resp.CreatedAt = k.CreatedAt.Time.Format(time.RFC3339)
@@ -55,11 +58,11 @@ func apiKeyToResponse(k db.TeamApiKey) apiKeyResponse {
 
 func apiKeyWithCreatorToResponse(k db.ListAPIKeysByTeamWithCreatorRow) apiKeyResponse {
 	resp := apiKeyResponse{
-		ID:           k.ID,
-		TeamID:       k.TeamID,
+		ID:           id.FormatAPIKeyID(k.ID),
+		TeamID:       id.FormatTeamID(k.TeamID),
 		Name:         k.Name,
 		KeyPrefix:    k.KeyPrefix,
-		CreatedBy:    k.CreatedBy,
+		CreatedBy:    id.FormatUserID(k.CreatedBy),
 		CreatorEmail: k.CreatorEmail,
 	}
 	if k.CreatedAt.Valid {
@@ -91,6 +94,7 @@ func (h *apiKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	resp := apiKeyToResponse(result.Row)
 	resp.Key = &result.Plaintext
 
+	h.audit.LogAPIKeyCreate(r.Context(), ac, result.Row.ID, result.Row.Name)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -115,12 +119,19 @@ func (h *apiKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 // Delete handles DELETE /v1/api-keys/{id}.
 func (h *apiKeyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
-	keyID := chi.URLParam(r, "id")
+	keyIDStr := chi.URLParam(r, "id")
+
+	keyID, err := id.ParseAPIKeyID(keyIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid API key ID")
+		return
+	}
 
 	if err := h.svc.Delete(r.Context(), keyID, ac.TeamID); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete API key")
 		return
 	}
 
+	h.audit.LogAPIKeyRevoke(r.Context(), ac, keyID)
 	w.WriteHeader(http.StatusNoContent)
 }

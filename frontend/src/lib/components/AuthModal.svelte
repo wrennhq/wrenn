@@ -61,12 +61,12 @@
 				<!-- Header -->
 				<div class="mb-7">
 					<Dialog.Title
-						class="font-serif text-[24px] tracking-[-0.02em] text-[var(--color-text-bright)]"
+						class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]"
 					>
 						{title}
 					</Dialog.Title>
 					<Dialog.Description
-						class="mt-1 text-[13px] text-[var(--color-text-secondary)]"
+						class="mt-1 text-ui text-[var(--color-text-secondary)]"
 					>
 						{subtitle}
 					</Dialog.Description>
@@ -75,7 +75,7 @@
 				<!-- GitHub OAuth -->
 				<button
 					type="button"
-					class="flex w-full items-center justify-center gap-2.5 rounded-[var(--radius-button)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] px-4 py-2.5 text-[13px] font-medium text-[var(--color-text-bright)] transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-text-bright)]"
+					class="flex w-full items-center justify-center gap-2.5 rounded-[var(--radius-button)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] px-4 py-2.5 text-ui font-medium text-[var(--color-text-bright)] transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-text-bright)]"
 				>
 					<IconGithub size={16} />
 					Continue with GitHub
@@ -85,7 +85,7 @@
 				<div class="my-5 flex items-center gap-3">
 					<div class="h-px flex-1 bg-[var(--color-border)]"></div>
 					<span
-						class="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-text-muted)]"
+						class="font-mono text-badge uppercase tracking-[0.1em] text-[var(--color-text-muted)]"
 						>or</span
 					>
 					<div class="h-px flex-1 bg-[var(--color-border)]"></div>
@@ -105,7 +105,7 @@
 								bind:value={name}
 								placeholder="Full name"
 								autocomplete="name"
-								class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-2.5 pl-9 pr-3 text-[13px] text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
+								class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-2.5 pl-9 pr-3 text-ui text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
 							/>
 						</div>
 					{/if}
@@ -121,7 +121,7 @@
 							bind:value={email}
 							placeholder="Email address"
 							autocomplete="email"
-							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-2.5 pl-9 pr-3 text-[13px] text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
+							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-2.5 pl-9 pr-3 text-ui text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
 						/>
 					</div>
 
@@ -136,7 +136,7 @@
 							bind:value={password}
 							placeholder="Password"
 							autocomplete={mode === 'signin' ? 'current-password' : 'new-password'}
-							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-2.5 pl-9 pr-10 text-[13px] text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
+							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-2.5 pl-9 pr-10 text-ui text-[var(--color-text-bright)] outline-none transition-all duration-150 placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)]"
 						/>
 						<button
 							type="button"
@@ -156,7 +156,7 @@
 						<div class="flex justify-end">
 							<button
 								type="button"
-								class="text-[12px] text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-accent-mid)]"
+								class="text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-accent-mid)]"
 							>
 								Forgot password?
 							</button>
@@ -165,14 +165,14 @@
 
 					<button
 						type="submit"
-						class="!mt-5 w-full rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
+						class="!mt-5 w-full rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-2.5 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 					>
 						{submitLabel}
 					</button>
 				</form>
 
 				<!-- Switch mode -->
-				<p class="mt-5 text-center text-[12px] text-[var(--color-text-secondary)]">
+				<p class="mt-5 text-center text-meta text-[var(--color-text-secondary)]">
 					{switchText}
 					<button
 						type="button"

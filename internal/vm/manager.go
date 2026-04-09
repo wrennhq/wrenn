@@ -71,6 +71,13 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 		return nil, fmt.Errorf("start VM: %w", err)
 	}
 
+	// Step 5: Push sandbox metadata into MMDS so envd can read
+	// WRENN_SANDBOX_ID and WRENN_TEMPLATE_ID from inside the guest.
+	if err := client.setMMDS(ctx, cfg.SandboxID, cfg.TemplateID); err != nil {
+		_ = proc.stop()
+		return nil, fmt.Errorf("set MMDS metadata: %w", err)
+	}
+
 	vm := &VM{
 		Config:  cfg,
 		process: proc,
@@ -106,6 +113,12 @@ func configureVM(ctx context.Context, client *fcClient, cfg *VMConfig) error {
 	// Machine config (vCPUs + memory)
 	if err := client.setMachineConfig(ctx, cfg.VCPUs, cfg.MemoryMB); err != nil {
 		return fmt.Errorf("set machine config: %w", err)
+	}
+
+	// MMDS config — enable V2 token access on eth0 so that envd can read
+	// WRENN_SANDBOX_ID and WRENN_TEMPLATE_ID from inside the guest.
+	if err := client.setMMDSConfig(ctx, "eth0"); err != nil {
+		return fmt.Errorf("set MMDS config: %w", err)
 	}
 
 	return nil
@@ -238,6 +251,12 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapPath
 		return nil, fmt.Errorf("resume VM: %w", err)
 	}
 
+	// Step 5: Push sandbox metadata into MMDS.
+	if err := client.setMMDS(ctx, cfg.SandboxID, cfg.TemplateID); err != nil {
+		_ = proc.stop()
+		return nil, fmt.Errorf("set MMDS metadata: %w", err)
+	}
+
 	vm := &VM{
 		Config:  cfg,
 		process: proc,
@@ -248,6 +267,12 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapPath
 
 	slog.Info("VM restored from snapshot", "sandbox", cfg.SandboxID)
 	return vm, nil
+}
+
+// PID returns the process ID of the unshare wrapper process.
+// The actual Firecracker process is a direct child of this PID.
+func (v *VM) PID() int {
+	return v.process.cmd.Process.Pid
 }
 
 // Get returns a running VM by sandbox ID.

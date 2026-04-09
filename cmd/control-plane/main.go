@@ -14,10 +14,14 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/sandbox/internal/api"
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
+	"git.omukk.dev/wrenn/sandbox/internal/channels"
 	"git.omukk.dev/wrenn/sandbox/internal/config"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
+	"git.omukk.dev/wrenn/sandbox/internal/scheduler"
 )
 
 func main() {
@@ -66,12 +70,47 @@ func main() {
 	}
 	slog.Info("connected to redis")
 
-	// Connect RPC client for the host agent.
-	agentHTTP := &http.Client{Timeout: 10 * time.Minute}
-	agentClient := hostagentv1connect.NewHostAgentServiceClient(
-		agentHTTP,
-		cfg.HostAgentAddr,
-	)
+	// mTLS is mandatory — parse internal CA for CP↔agent communication.
+	if cfg.CACert == "" || cfg.CAKey == "" {
+		slog.Error("WRENN_CA_CERT and WRENN_CA_KEY are required — mTLS is mandatory for CP↔agent communication")
+		os.Exit(1)
+	}
+	ca, err := auth.ParseCA(cfg.CACert, cfg.CAKey)
+	if err != nil {
+		slog.Error("failed to parse mTLS CA from environment", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("mTLS enabled: CA loaded")
+
+	// Host client pool — manages Connect RPC clients to host agents.
+	cpCertStore, err := auth.NewCPCertStore(ca)
+	if err != nil {
+		slog.Error("failed to issue CP client certificate", "error", err)
+		os.Exit(1)
+	}
+	// Renew the CP client certificate periodically so it never expires
+	// while the control plane is running (TTL = 24h, renewal = every 12h).
+	go func() {
+		ticker := time.NewTicker(auth.CPCertRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := cpCertStore.Refresh(); err != nil {
+					slog.Error("failed to renew CP client certificate", "error", err)
+				} else {
+					slog.Info("CP client certificate renewed")
+				}
+			}
+		}
+	}()
+	hostPool := lifecycle.NewHostClientPoolTLS(auth.CPClientTLSConfig(ca, cpCertStore))
+	slog.Info("host client pool: mTLS enabled")
+
+	// Scheduler — picks a host for each new sandbox (round-robin for now).
+	hostScheduler := scheduler.NewRoundRobinScheduler(queries)
 
 	// OAuth provider registry.
 	oauthRegistry := oauth.NewRegistry()
@@ -86,16 +125,44 @@ func main() {
 		slog.Info("registered OAuth provider", "provider", "github")
 	}
 
-	// API server.
-	srv := api.New(queries, agentClient, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL)
+	// Channels: publisher, service, dispatcher.
+	if len(cfg.EncryptionKeyHex) != 64 {
+		slog.Error("WRENN_ENCRYPTION_KEY must be a hex-encoded 32-byte key (64 hex chars)")
+		os.Exit(1)
+	}
+	channelPub := channels.NewPublisher(rdb)
+	channelSvc := &channels.Service{DB: queries, EncKey: cfg.EncryptionKey}
+	channelDispatcher := channels.NewDispatcher(rdb, queries, cfg.EncryptionKey)
 
-	// Start reconciler.
-	reconciler := api.NewReconciler(queries, agentClient, "default", 5*time.Second)
-	reconciler.Start(ctx)
+	// Shared audit logger with event publishing.
+	al := audit.NewWithPublisher(queries, channelPub)
+
+	// API server.
+	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelSvc)
+
+	// Start template build workers (2 concurrent).
+	stopBuildWorkers := srv.BuildSvc.StartWorkers(ctx, 2)
+	defer stopBuildWorkers()
+
+	// Start channel event dispatcher.
+	channelDispatcher.Start(ctx)
+
+	// Start host monitor (passive + active reconciliation every 30s).
+	monitor := api.NewHostMonitor(queries, hostPool, al, 30*time.Second)
+	monitor.Start(ctx)
+
+	// Start metrics sampler (records per-team sandbox stats every 10s).
+	sampler := api.NewMetricsSampler(queries, 10*time.Second)
+	sampler.Start(ctx)
+
+	// Wrap the API handler with the sandbox proxy so that requests with
+	// {port}-{sandbox_id}.{domain} Host headers are routed to the sandbox's
+	// host agent. All other requests pass through to the normal API router.
+	proxyWrapper := api.NewSandboxProxyWrapper(srv.Handler(), queries, hostPool)
 
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: srv.Handler(),
+		Handler: proxyWrapper,
 	}
 
 	// Graceful shutdown on signal.
@@ -114,7 +181,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("control plane starting", "addr", cfg.ListenAddr, "agent", cfg.HostAgentAddr)
+	slog.Info("control plane starting", "addr", cfg.ListenAddr)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("http server error", "error", err)
 		os.Exit(1)

@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
 type errorResponse struct {
@@ -33,6 +36,11 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, errorResponse{
 		Error: errorDetail{Code: code, Message: message},
 	})
+}
+
+// formatUUIDForRPC converts a pgtype.UUID to a hex string for RPC messages.
+func formatUUIDForRPC(u pgtype.UUID) string {
+	return id.UUIDString(u)
 }
 
 // agentErrToHTTP maps a Connect RPC error to an HTTP status, error code, and message.
@@ -87,8 +95,12 @@ func serviceErrToHTTP(err error) (int, string, string) {
 		return http.StatusNotFound, "not_found", msg
 	case strings.Contains(msg, "not running"), strings.Contains(msg, "not paused"):
 		return http.StatusConflict, "invalid_state", msg
+	case strings.Contains(msg, "conflict:"):
+		return http.StatusConflict, "conflict", msg
 	case strings.Contains(msg, "forbidden"):
 		return http.StatusForbidden, "forbidden", msg
+	case strings.Contains(msg, "invalid or expired"):
+		return http.StatusUnauthorized, "unauthorized", msg
 	case strings.Contains(msg, "invalid"):
 		return http.StatusBadRequest, "invalid_request", msg
 	default:

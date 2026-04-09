@@ -14,17 +14,18 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type execHandler struct {
-	db    *db.Queries
-	agent hostagentv1connect.HostAgentServiceClient
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newExecHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *execHandler {
-	return &execHandler{db: db, agent: agent}
+func newExecHandler(db *db.Queries, pool *lifecycle.HostClientPool) *execHandler {
+	return &execHandler{db: db, pool: pool}
 }
 
 type execRequest struct {
@@ -46,9 +47,15 @@ type execResponse struct {
 
 // Exec handles POST /v1/sandboxes/{id}/exec.
 func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -73,8 +80,14 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	resp, err := h.agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
-		SandboxId:  sandboxID,
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
+	resp, err := agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
+		SandboxId:  sandboxIDStr,
 		Cmd:        req.Cmd,
 		Args:       req.Args,
 		TimeoutSec: req.TimeoutSec,
@@ -95,7 +108,7 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 			Valid: true,
 		},
 	}); err != nil {
-		slog.Warn("failed to update last_active_at", "id", sandboxID, "error", err)
+		slog.Warn("failed to update last_active_at", "id", sandboxIDStr, "error", err)
 	}
 
 	// Use base64 encoding if output contains non-UTF-8 bytes.
@@ -106,7 +119,7 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 	if !utf8.Valid(stdout) || !utf8.Valid(stderr) {
 		encoding = "base64"
 		writeJSON(w, http.StatusOK, execResponse{
-			SandboxID:  sandboxID,
+			SandboxID:  sandboxIDStr,
 			Cmd:        req.Cmd,
 			Stdout:     base64.StdEncoding.EncodeToString(stdout),
 			Stderr:     base64.StdEncoding.EncodeToString(stderr),
@@ -118,7 +131,7 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, execResponse{
-		SandboxID:  sandboxID,
+		SandboxID:  sandboxIDStr,
 		Cmd:        req.Cmd,
 		Stdout:     string(stdout),
 		Stderr:     string(stderr),

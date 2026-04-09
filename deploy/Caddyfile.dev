@@ -1,0 +1,41 @@
+# Sandbox port forwarding: {port}-{sandbox_id}.localhost
+# Matches subdomains like 49999-sb-abcd1234.localhost and proxies them
+# to the control plane, which inspects the Host header and routes to
+# the correct host agent.
+#
+# NOTE: Wildcard *.localhost DNS resolution requires local setup.
+# Option 1: Add entries to /etc/hosts for each sandbox
+# Option 2: Use dnsmasq: address=/.localhost/127.0.0.1
+# Option 3: Use systemd-resolved (Ubuntu default — *.localhost resolves to 127.0.0.1)
+http://*.localhost {
+	reverse_proxy host.docker.internal:8080
+}
+
+# Main entry point: API + frontend
+http://localhost {
+	# API routes — strip /api prefix and proxy to the control plane.
+	# The frontend calls /api/v1/... which becomes /v1/... at the CP.
+	handle_path /api/* {
+		reverse_proxy host.docker.internal:8080
+	}
+
+	# Backend routes served directly (SDK clients, OAuth initiation)
+	handle /v1/* {
+		reverse_proxy host.docker.internal:8080
+	}
+	handle /openapi.yaml {
+		reverse_proxy host.docker.internal:8080
+	}
+	handle /docs {
+		reverse_proxy host.docker.internal:8080
+	}
+	handle /auth/oauth/* {
+		reverse_proxy host.docker.internal:8080
+	}
+
+	# Everything else — proxy to the frontend dev server
+	# This includes: /login, /dashboard/*, /admin/*, /auth/github/callback
+	handle {
+		reverse_proxy host.docker.internal:5173
+	}
+}

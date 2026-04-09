@@ -1,6 +1,6 @@
 module git.omukk.dev/wrenn/sandbox/envd
 
-go 1.25.5
+go 1.25.8
 
 require (
 	connectrpc.com/authn v0.1.0

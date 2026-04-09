@@ -9,42 +9,77 @@ import (
 )
 
 type AdminPermission struct {
-	ID         string             `json:"id"`
-	UserID     string             `json:"user_id"`
+	ID         pgtype.UUID        `json:"id"`
+	UserID     pgtype.UUID        `json:"user_id"`
 	Permission string             `json:"permission"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type AuditLog struct {
+	ID           pgtype.UUID        `json:"id"`
+	TeamID       pgtype.UUID        `json:"team_id"`
+	ActorType    string             `json:"actor_type"`
+	ActorID      pgtype.Text        `json:"actor_id"`
+	ActorName    string             `json:"actor_name"`
+	ResourceType string             `json:"resource_type"`
+	ResourceID   pgtype.Text        `json:"resource_id"`
+	Action       string             `json:"action"`
+	Scope        string             `json:"scope"`
+	Status       string             `json:"status"`
+	Metadata     []byte             `json:"metadata"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type Channel struct {
+	ID         pgtype.UUID        `json:"id"`
+	TeamID     pgtype.UUID        `json:"team_id"`
+	Name       string             `json:"name"`
+	Provider   string             `json:"provider"`
+	Config     []byte             `json:"config"`
+	EventTypes []string           `json:"event_types"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Host struct {
-	ID               string             `json:"id"`
+	ID               pgtype.UUID        `json:"id"`
 	Type             string             `json:"type"`
-	TeamID           pgtype.Text        `json:"team_id"`
-	Provider         pgtype.Text        `json:"provider"`
-	AvailabilityZone pgtype.Text        `json:"availability_zone"`
-	Arch             pgtype.Text        `json:"arch"`
-	CpuCores         pgtype.Int4        `json:"cpu_cores"`
-	MemoryMb         pgtype.Int4        `json:"memory_mb"`
-	DiskGb           pgtype.Int4        `json:"disk_gb"`
-	Address          pgtype.Text        `json:"address"`
+	TeamID           pgtype.UUID        `json:"team_id"`
+	Provider         string             `json:"provider"`
+	AvailabilityZone string             `json:"availability_zone"`
+	Arch             string             `json:"arch"`
+	CpuCores         int32              `json:"cpu_cores"`
+	MemoryMb         int32              `json:"memory_mb"`
+	DiskGb           int32              `json:"disk_gb"`
+	Address          string             `json:"address"`
 	Status           string             `json:"status"`
 	LastHeartbeatAt  pgtype.Timestamptz `json:"last_heartbeat_at"`
 	Metadata         []byte             `json:"metadata"`
-	CreatedBy        string             `json:"created_by"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	CertFingerprint  pgtype.Text        `json:"cert_fingerprint"`
-	MtlsEnabled      bool               `json:"mtls_enabled"`
+	CertFingerprint  string             `json:"cert_fingerprint"`
+	CertExpiresAt    pgtype.Timestamptz `json:"cert_expires_at"`
+}
+
+type HostRefreshToken struct {
+	ID        pgtype.UUID        `json:"id"`
+	HostID    pgtype.UUID        `json:"host_id"`
+	TokenHash string             `json:"token_hash"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type HostTag struct {
-	HostID string `json:"host_id"`
-	Tag    string `json:"tag"`
+	HostID pgtype.UUID `json:"host_id"`
+	Tag    string      `json:"tag"`
 }
 
 type HostToken struct {
-	ID        string             `json:"id"`
-	HostID    string             `json:"host_id"`
-	CreatedBy string             `json:"created_by"`
+	ID        pgtype.UUID        `json:"id"`
+	HostID    pgtype.UUID        `json:"host_id"`
+	CreatedBy pgtype.UUID        `json:"created_by"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 	UsedAt    pgtype.Timestamptz `json:"used_at"`
@@ -53,42 +88,65 @@ type HostToken struct {
 type OauthProvider struct {
 	Provider   string             `json:"provider"`
 	ProviderID string             `json:"provider_id"`
-	UserID     string             `json:"user_id"`
+	UserID     pgtype.UUID        `json:"user_id"`
 	Email      string             `json:"email"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type Sandbox struct {
-	ID           string             `json:"id"`
-	HostID       string             `json:"host_id"`
-	Template     string             `json:"template"`
-	Status       string             `json:"status"`
-	Vcpus        int32              `json:"vcpus"`
-	MemoryMb     int32              `json:"memory_mb"`
-	TimeoutSec   int32              `json:"timeout_sec"`
-	GuestIp      string             `json:"guest_ip"`
-	HostIp       string             `json:"host_ip"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	StartedAt    pgtype.Timestamptz `json:"started_at"`
-	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
-	LastUpdated  pgtype.Timestamptz `json:"last_updated"`
-	TeamID       string             `json:"team_id"`
+	ID             pgtype.UUID        `json:"id"`
+	TeamID         pgtype.UUID        `json:"team_id"`
+	HostID         pgtype.UUID        `json:"host_id"`
+	Template       string             `json:"template"`
+	Status         string             `json:"status"`
+	Vcpus          int32              `json:"vcpus"`
+	MemoryMb       int32              `json:"memory_mb"`
+	TimeoutSec     int32              `json:"timeout_sec"`
+	DiskSizeMb     int32              `json:"disk_size_mb"`
+	GuestIp        string             `json:"guest_ip"`
+	HostIp         string             `json:"host_ip"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	LastActiveAt   pgtype.Timestamptz `json:"last_active_at"`
+	LastUpdated    pgtype.Timestamptz `json:"last_updated"`
+	TemplateID     pgtype.UUID        `json:"template_id"`
+	TemplateTeamID pgtype.UUID        `json:"template_team_id"`
+}
+
+type SandboxMetricPoint struct {
+	SandboxID pgtype.UUID `json:"sandbox_id"`
+	Tier      string      `json:"tier"`
+	Ts        int64       `json:"ts"`
+	CpuPct    float64     `json:"cpu_pct"`
+	MemBytes  int64       `json:"mem_bytes"`
+	DiskBytes int64       `json:"disk_bytes"`
+}
+
+type SandboxMetricsSnapshot struct {
+	ID               int64              `json:"id"`
+	TeamID           pgtype.UUID        `json:"team_id"`
+	SampledAt        pgtype.Timestamptz `json:"sampled_at"`
+	RunningCount     int32              `json:"running_count"`
+	VcpusReserved    int32              `json:"vcpus_reserved"`
+	MemoryMbReserved int32              `json:"memory_mb_reserved"`
 }
 
 type Team struct {
-	ID        string             `json:"id"`
+	ID        pgtype.UUID        `json:"id"`
 	Name      string             `json:"name"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Slug      string             `json:"slug"`
 	IsByoc    bool               `json:"is_byoc"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type TeamApiKey struct {
-	ID        string             `json:"id"`
-	TeamID    string             `json:"team_id"`
+	ID        pgtype.UUID        `json:"id"`
+	TeamID    pgtype.UUID        `json:"team_id"`
 	Name      string             `json:"name"`
 	KeyHash   string             `json:"key_hash"`
 	KeyPrefix string             `json:"key_prefix"`
-	CreatedBy string             `json:"created_by"`
+	CreatedBy pgtype.UUID        `json:"created_by"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	LastUsed  pgtype.Timestamptz `json:"last_used"`
 }
@@ -96,25 +154,50 @@ type TeamApiKey struct {
 type Template struct {
 	Name      string             `json:"name"`
 	Type      string             `json:"type"`
-	Vcpus     pgtype.Int4        `json:"vcpus"`
-	MemoryMb  pgtype.Int4        `json:"memory_mb"`
+	Vcpus     int32              `json:"vcpus"`
+	MemoryMb  int32              `json:"memory_mb"`
 	SizeBytes int64              `json:"size_bytes"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	TeamID    string             `json:"team_id"`
+	TeamID    pgtype.UUID        `json:"team_id"`
+	ID        pgtype.UUID        `json:"id"`
+}
+
+type TemplateBuild struct {
+	ID           pgtype.UUID        `json:"id"`
+	Name         string             `json:"name"`
+	BaseTemplate string             `json:"base_template"`
+	Recipe       []byte             `json:"recipe"`
+	Healthcheck  string             `json:"healthcheck"`
+	Vcpus        int32              `json:"vcpus"`
+	MemoryMb     int32              `json:"memory_mb"`
+	Status       string             `json:"status"`
+	CurrentStep  int32              `json:"current_step"`
+	TotalSteps   int32              `json:"total_steps"`
+	Logs         []byte             `json:"logs"`
+	Error        string             `json:"error"`
+	SandboxID    pgtype.UUID        `json:"sandbox_id"`
+	HostID       pgtype.UUID        `json:"host_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	StartedAt    pgtype.Timestamptz `json:"started_at"`
+	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+	TemplateID   pgtype.UUID        `json:"template_id"`
+	TeamID       pgtype.UUID        `json:"team_id"`
+	SkipPrePost  bool               `json:"skip_pre_post"`
 }
 
 type User struct {
-	ID           string             `json:"id"`
+	ID           pgtype.UUID        `json:"id"`
 	Email        string             `json:"email"`
 	PasswordHash pgtype.Text        `json:"password_hash"`
+	Name         string             `json:"name"`
+	IsAdmin      bool               `json:"is_admin"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	IsAdmin      bool               `json:"is_admin"`
 }
 
 type UsersTeam struct {
-	UserID    string             `json:"user_id"`
-	TeamID    string             `json:"team_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	TeamID    pgtype.UUID        `json:"team_id"`
 	IsDefault bool               `json:"is_default"`
 	Role      string             `json:"role"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`

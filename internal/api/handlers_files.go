@@ -11,17 +11,18 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type filesHandler struct {
-	db    *db.Queries
-	agent hostagentv1connect.HostAgentServiceClient
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newFilesHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *filesHandler {
-	return &filesHandler{db: db, agent: agent}
+func newFilesHandler(db *db.Queries, pool *lifecycle.HostClientPool) *filesHandler {
+	return &filesHandler{db: db, pool: pool}
 }
 
 // Upload handles POST /v1/sandboxes/{id}/files/write.
@@ -29,9 +30,15 @@ func newFilesHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceCl
 //   - "path" text field: absolute destination path inside the sandbox
 //   - "file" file field: binary content to write
 func (h *filesHandler) Upload(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -75,8 +82,14 @@ func (h *filesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.agent.WriteFile(ctx, connect.NewRequest(&pb.WriteFileRequest{
-		SandboxId: sandboxID,
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
+	if _, err := agent.WriteFile(ctx, connect.NewRequest(&pb.WriteFileRequest{
+		SandboxId: sandboxIDStr,
 		Path:      filePath,
 		Content:   content,
 	})); err != nil {
@@ -95,9 +108,15 @@ type readFileRequest struct {
 // Download handles POST /v1/sandboxes/{id}/files/read.
 // Accepts JSON body with path, returns raw file content with Content-Disposition.
 func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -120,8 +139,14 @@ func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.agent.ReadFile(ctx, connect.NewRequest(&pb.ReadFileRequest{
-		SandboxId: sandboxID,
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
+	resp, err := agent.ReadFile(ctx, connect.NewRequest(&pb.ReadFileRequest{
+		SandboxId: sandboxIDStr,
 		Path:      req.Path,
 	}))
 	if err != nil {

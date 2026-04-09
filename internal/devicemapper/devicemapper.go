@@ -116,9 +116,10 @@ type SnapshotDevice struct {
 // writable CoW layer.
 //
 // The origin loop device must already exist (from LoopRegistry.Acquire).
-func CreateSnapshot(name, originLoopDev, cowPath string, originSizeBytes int64) (*SnapshotDevice, error) {
-	// Create sparse CoW file sized to match the origin.
-	if err := createSparseFile(cowPath, originSizeBytes); err != nil {
+func CreateSnapshot(name, originLoopDev, cowPath string, originSizeBytes, cowSizeBytes int64) (*SnapshotDevice, error) {
+	// Create sparse CoW file. The logical size limits how many blocks can be
+	// modified; because the file is sparse, only written blocks use real disk.
+	if err := createSparseFile(cowPath, cowSizeBytes); err != nil {
 		return nil, fmt.Errorf("create cow file: %w", err)
 	}
 
@@ -128,6 +129,9 @@ func CreateSnapshot(name, originLoopDev, cowPath string, originSizeBytes int64) 
 		return nil, fmt.Errorf("losetup cow: %w", err)
 	}
 
+	// The dm-snapshot virtual device size must match the origin — the snapshot
+	// target maps 1:1 onto origin sectors. The CoW file just needs enough
+	// space to store all modified blocks (it's sparse, so 20GB costs nothing).
 	sectors := originSizeBytes / 512
 	if err := dmsetupCreate(name, originLoopDev, cowLoopDev, sectors); err != nil {
 		if detachErr := losetupDetach(cowLoopDev); detachErr != nil {
@@ -220,6 +224,7 @@ func FlattenSnapshot(dmDevPath, outputPath string) error {
 		"if="+dmDevPath,
 		"of="+outputPath,
 		"bs=4M",
+		"conv=sparse",
 		"status=none",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {

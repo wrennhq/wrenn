@@ -1,6 +1,10 @@
 package auth
 
-import "context"
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
+)
 
 type contextKey int
 
@@ -8,9 +12,14 @@ const authCtxKey contextKey = 0
 
 // AuthContext is stamped into request context by auth middleware.
 type AuthContext struct {
-	TeamID string
-	UserID string // empty when authenticated via API key
-	Email  string // empty when authenticated via API key
+	TeamID     pgtype.UUID
+	UserID     pgtype.UUID // zero value (Valid=false) when authenticated via API key
+	Email      string      // empty when authenticated via API key
+	Name       string      // empty when authenticated via API key
+	Role       string      // owner, admin, or member; empty when authenticated via API key
+	IsAdmin    bool        // platform-level admin; always false when authenticated via API key
+	APIKeyID   pgtype.UUID // populated when authenticated via API key; zero value for JWT auth
+	APIKeyName string      // display name of the key, snapshotted at auth time; empty for JWT auth
 }
 
 // WithAuthContext returns a new context with the given AuthContext.
@@ -38,7 +47,7 @@ const hostCtxKey contextKey = 1
 
 // HostContext is stamped into request context by host token middleware.
 type HostContext struct {
-	HostID string
+	HostID pgtype.UUID
 }
 
 // WithHostContext returns a new context with the given HostContext.

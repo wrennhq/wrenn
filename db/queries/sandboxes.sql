@@ -1,6 +1,6 @@
 -- name: InsertSandbox :one
-INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, template_id, template_team_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: GetSandbox :one
@@ -8,6 +8,14 @@ SELECT * FROM sandboxes WHERE id = $1;
 
 -- name: GetSandboxByTeam :one
 SELECT * FROM sandboxes WHERE id = $1 AND team_id = $2;
+
+-- name: GetSandboxProxyTarget :one
+-- Returns the sandbox status and its host's address in one query.
+-- Used by SandboxProxyWrapper to avoid two round-trips.
+SELECT s.status, h.address AS host_address
+FROM sandboxes s
+JOIN hosts h ON h.id = s.host_id
+WHERE s.id = $1 AND s.team_id = $2;
 
 -- name: ListSandboxes :many
 SELECT * FROM sandboxes ORDER BY created_at DESC;
@@ -50,4 +58,26 @@ WHERE id = $1;
 UPDATE sandboxes
 SET status = $2,
     last_updated = NOW()
-WHERE id = ANY($1::text[]);
+WHERE id = ANY($1::uuid[]);
+
+-- name: ListActiveSandboxesByTeam :many
+SELECT * FROM sandboxes
+WHERE team_id = $1 AND status IN ('running', 'paused', 'starting')
+ORDER BY created_at DESC;
+
+-- name: MarkSandboxesMissingByHost :exec
+-- Called when the host monitor marks a host unreachable.
+-- Marks running/starting/pending sandboxes on that host as 'missing' so users see
+-- the sandbox is not currently reachable, without permanently losing the record.
+UPDATE sandboxes
+SET status       = 'missing',
+    last_updated = NOW()
+WHERE host_id = $1 AND status IN ('running', 'starting', 'pending');
+
+-- name: BulkRestoreRunning :exec
+-- Called by the reconciler when a host comes back online and its sandboxes are
+-- confirmed alive. Restores only sandboxes that are in 'missing' state.
+UPDATE sandboxes
+SET status       = 'running',
+    last_updated = NOW()
+WHERE id = ANY($1::uuid[]) AND status = 'missing';

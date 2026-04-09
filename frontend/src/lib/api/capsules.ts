@@ -20,6 +20,10 @@ export async function listCapsules(): Promise<ApiResult<Capsule[]>> {
 	return apiFetch('GET', '/api/v1/sandboxes');
 }
 
+export async function getCapsule(id: string): Promise<ApiResult<Capsule>> {
+	return apiFetch('GET', `/api/v1/sandboxes/${id}`);
+}
+
 export type CreateCapsuleParams = {
 	template?: string;
 	vcpus?: number;
@@ -50,6 +54,7 @@ export type Snapshot = {
 	memory_mb?: number;
 	size_bytes: number;
 	created_at: string;
+	platform: boolean;
 };
 
 export async function createSnapshot(sandboxId: string, name?: string): Promise<ApiResult<Snapshot>> {

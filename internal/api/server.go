@@ -9,10 +9,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
+	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
+	"git.omukk.dev/wrenn/sandbox/internal/channels"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
+	"git.omukk.dev/wrenn/sandbox/internal/scheduler"
 	"git.omukk.dev/wrenn/sandbox/internal/service"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 //go:embed openapi.yaml
@@ -20,30 +24,54 @@ var openapiYAML []byte
 
 // Server is the control plane HTTP server.
 type Server struct {
-	router chi.Router
+	router   chi.Router
+	BuildSvc *service.BuildService
 }
 
 // New constructs the chi router and registers all routes.
-func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, pool *pgxpool.Pool, rdb *redis.Client, jwtSecret []byte, oauthRegistry *oauth.Registry, oauthRedirectURL string) *Server {
+func New(
+	queries *db.Queries,
+	pool *lifecycle.HostClientPool,
+	sched scheduler.HostScheduler,
+	pgPool *pgxpool.Pool,
+	rdb *redis.Client,
+	jwtSecret []byte,
+	oauthRegistry *oauth.Registry,
+	oauthRedirectURL string,
+	ca *auth.CA,
+	al *audit.AuditLogger,
+	channelSvc *channels.Service,
+) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
 
 	// Shared service layer.
-	sandboxSvc := &service.SandboxService{DB: queries, Agent: agent}
+	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
 	apiKeySvc := &service.APIKeyService{DB: queries}
 	templateSvc := &service.TemplateService{DB: queries}
-	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret}
+	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
+	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
+	auditSvc := &service.AuditService{DB: queries}
+	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
+	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
 
-	sandbox := newSandboxHandler(sandboxSvc)
-	exec := newExecHandler(queries, agent)
-	execStream := newExecStreamHandler(queries, agent)
-	files := newFilesHandler(queries, agent)
-	filesStream := newFilesStreamHandler(queries, agent)
-	snapshots := newSnapshotHandler(templateSvc, queries, agent)
-	authH := newAuthHandler(queries, pool, jwtSecret)
-	oauthH := newOAuthHandler(queries, pool, jwtSecret, oauthRegistry, oauthRedirectURL)
-	apiKeys := newAPIKeyHandler(apiKeySvc)
-	hostH := newHostHandler(hostSvc, queries)
+	sandbox := newSandboxHandler(sandboxSvc, al)
+	exec := newExecHandler(queries, pool)
+	execStream := newExecStreamHandler(queries, pool)
+	files := newFilesHandler(queries, pool)
+	filesStream := newFilesStreamHandler(queries, pool)
+	snapshots := newSnapshotHandler(templateSvc, queries, pool, al)
+	authH := newAuthHandler(queries, pgPool, jwtSecret)
+	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, oauthRegistry, oauthRedirectURL)
+	apiKeys := newAPIKeyHandler(apiKeySvc, al)
+	hostH := newHostHandler(hostSvc, queries, al)
+	teamH := newTeamHandler(teamSvc, al)
+	usersH := newUsersHandler(queries)
+	auditH := newAuditHandler(auditSvc)
+	statsH := newStatsHandler(statsSvc)
+	metricsH := newSandboxMetricsHandler(queries, pool)
+	buildH := newBuildHandler(buildSvc, queries, pool)
+	channelH := newChannelHandler(channelSvc, al)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -55,6 +83,9 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 	r.Get("/auth/oauth/{provider}", oauthH.Redirect)
 	r.Get("/auth/oauth/{provider}/callback", oauthH.Callback)
 
+	// JWT-authenticated: switch active team.
+	r.With(requireJWT(jwtSecret)).Post("/v1/auth/switch-team", authH.SwitchTeam)
+
 	// JWT-authenticated: API key management.
 	r.Route("/v1/api-keys", func(r chi.Router) {
 		r.Use(requireJWT(jwtSecret))
@@ -63,11 +94,32 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 		r.Delete("/{id}", apiKeys.Delete)
 	})
 
+	// JWT-authenticated: team management.
+	r.Route("/v1/teams", func(r chi.Router) {
+		r.Use(requireJWT(jwtSecret))
+		r.Get("/", teamH.List)
+		r.Post("/", teamH.Create)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", teamH.Get)
+			r.Patch("/", teamH.Rename)
+			r.Delete("/", teamH.Delete)
+			r.Get("/members", teamH.ListMembers)
+			r.Post("/members", teamH.AddMember)
+			r.Patch("/members/{uid}", teamH.UpdateMemberRole)
+			r.Delete("/members/{uid}", teamH.RemoveMember)
+			r.Post("/leave", teamH.Leave)
+		})
+	})
+
+	// JWT-authenticated: user search (for add-member UI).
+	r.With(requireJWT(jwtSecret)).Get("/v1/users/search", usersH.Search)
+
 	// Sandbox lifecycle: accepts API key or JWT bearer token.
 	r.Route("/v1/sandboxes", func(r chi.Router) {
 		r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
 		r.Post("/", sandbox.Create)
 		r.Get("/", sandbox.List)
+		r.Get("/stats", statsH.GetStats)
 
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", sandbox.Get)
@@ -81,6 +133,7 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 			r.Post("/files/read", files.Download)
 			r.Post("/files/stream/write", filesStream.StreamUpload)
 			r.Post("/files/stream/read", filesStream.StreamDownload)
+			r.Get("/metrics", metricsH.GetMetrics)
 		})
 	})
 
@@ -97,6 +150,9 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 		// Unauthenticated: one-time registration token.
 		r.Post("/register", hostH.Register)
 
+		// Unauthenticated: refresh token exchange.
+		r.Post("/auth/refresh", hostH.RefreshToken)
+
 		// Host-token-authenticated: heartbeat.
 		r.With(requireHostToken(jwtSecret)).Post("/{id}/heartbeat", hostH.Heartbeat)
 
@@ -108,6 +164,7 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 			r.Route("/{id}", func(r chi.Router) {
 				r.Get("/", hostH.Get)
 				r.Delete("/", hostH.Delete)
+				r.Get("/delete-preview", hostH.DeletePreview)
 				r.Post("/token", hostH.RegenerateToken)
 				r.Get("/tags", hostH.ListTags)
 				r.Post("/tags", hostH.AddTag)
@@ -116,7 +173,37 @@ func New(queries *db.Queries, agent hostagentv1connect.HostAgentServiceClient, p
 		})
 	})
 
-	return &Server{router: r}
+	// JWT-authenticated: notification channels.
+	r.Route("/v1/channels", func(r chi.Router) {
+		r.Use(requireJWT(jwtSecret))
+		r.Post("/", channelH.Create)
+		r.Get("/", channelH.List)
+		r.Post("/test", channelH.Test)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", channelH.Get)
+			r.Patch("/", channelH.Update)
+			r.Delete("/", channelH.Delete)
+			r.Put("/config", channelH.RotateConfig)
+		})
+	})
+
+	// JWT-authenticated: audit log.
+	r.With(requireJWT(jwtSecret)).Get("/v1/audit-logs", auditH.List)
+
+	// Platform admin routes — require JWT + DB-validated admin status.
+	r.Route("/v1/admin", func(r chi.Router) {
+		r.Use(requireJWT(jwtSecret))
+		r.Use(requireAdmin(queries))
+		r.Put("/teams/{id}/byoc", teamH.SetBYOC)
+		r.Get("/templates", buildH.ListTemplates)
+		r.Delete("/templates/{name}", buildH.DeleteTemplate)
+		r.Post("/builds", buildH.Create)
+		r.Get("/builds", buildH.List)
+		r.Get("/builds/{id}", buildH.Get)
+		r.Post("/builds/{id}/cancel", buildH.Cancel)
+	})
+
+	return &Server{router: r, BuildSvc: buildSvc}
 }
 
 // Handler returns the HTTP handler.
@@ -137,7 +224,7 @@ func serveDocs(w http.ResponseWriter, r *http.Request) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Wrenn Sandbox API</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui.css" integrity="sha384-rcbEi6xgdPk0iWkAQzT2F3FeBJXdG+ydrawGlfHAFIZG7wU6aKbQaRewysYpmrlW" crossorigin="anonymous">
   <style>
     body { margin: 0; background: #fafafa; }
     .swagger-ui .topbar { display: none; }
@@ -145,7 +232,7 @@ func serveDocs(w http.ResponseWriter, r *http.Request) {
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui-bundle.js" integrity="sha384-NXtFPpN61oWCuN4D42K6Zd5Rt2+uxeIT36R7kpXBuY9tLnZorzrJ4ykpqwJfgjpZ" crossorigin="anonymous"></script>
   <script>
     SwaggerUIBundle({
       url: "/openapi.yaml",

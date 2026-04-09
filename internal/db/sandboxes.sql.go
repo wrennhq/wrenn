@@ -11,16 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bulkRestoreRunning = `-- name: BulkRestoreRunning :exec
+UPDATE sandboxes
+SET status       = 'running',
+    last_updated = NOW()
+WHERE id = ANY($1::uuid[]) AND status = 'missing'
+`
+
+// Called by the reconciler when a host comes back online and its sandboxes are
+// confirmed alive. Restores only sandboxes that are in 'missing' state.
+func (q *Queries) BulkRestoreRunning(ctx context.Context, dollar_1 []pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, bulkRestoreRunning, dollar_1)
+	return err
+}
+
 const bulkUpdateStatusByIDs = `-- name: BulkUpdateStatusByIDs :exec
 UPDATE sandboxes
 SET status = $2,
     last_updated = NOW()
-WHERE id = ANY($1::text[])
+WHERE id = ANY($1::uuid[])
 `
 
 type BulkUpdateStatusByIDsParams struct {
-	Column1 []string `json:"column_1"`
-	Status  string   `json:"status"`
+	Column1 []pgtype.UUID `json:"column_1"`
+	Status  string        `json:"status"`
 }
 
 func (q *Queries) BulkUpdateStatusByIDs(ctx context.Context, arg BulkUpdateStatusByIDsParams) error {
@@ -29,38 +43,41 @@ func (q *Queries) BulkUpdateStatusByIDs(ctx context.Context, arg BulkUpdateStatu
 }
 
 const getSandbox = `-- name: GetSandbox :one
-SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes WHERE id = $1
+SELECT id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id FROM sandboxes WHERE id = $1
 `
 
-func (q *Queries) GetSandbox(ctx context.Context, id string) (Sandbox, error) {
+func (q *Queries) GetSandbox(ctx context.Context, id pgtype.UUID) (Sandbox, error) {
 	row := q.db.QueryRow(ctx, getSandbox, id)
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,
+		&i.TeamID,
 		&i.HostID,
 		&i.Template,
 		&i.Status,
 		&i.Vcpus,
 		&i.MemoryMb,
 		&i.TimeoutSec,
+		&i.DiskSizeMb,
 		&i.GuestIp,
 		&i.HostIp,
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.LastActiveAt,
 		&i.LastUpdated,
-		&i.TeamID,
+		&i.TemplateID,
+		&i.TemplateTeamID,
 	)
 	return i, err
 }
 
 const getSandboxByTeam = `-- name: GetSandboxByTeam :one
-SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes WHERE id = $1 AND team_id = $2
+SELECT id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id FROM sandboxes WHERE id = $1 AND team_id = $2
 `
 
 type GetSandboxByTeamParams struct {
-	ID     string `json:"id"`
-	TeamID string `json:"team_id"`
+	ID     pgtype.UUID `json:"id"`
+	TeamID pgtype.UUID `json:"team_id"`
 }
 
 func (q *Queries) GetSandboxByTeam(ctx context.Context, arg GetSandboxByTeamParams) (Sandbox, error) {
@@ -68,38 +85,70 @@ func (q *Queries) GetSandboxByTeam(ctx context.Context, arg GetSandboxByTeamPara
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,
+		&i.TeamID,
 		&i.HostID,
 		&i.Template,
 		&i.Status,
 		&i.Vcpus,
 		&i.MemoryMb,
 		&i.TimeoutSec,
+		&i.DiskSizeMb,
 		&i.GuestIp,
 		&i.HostIp,
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.LastActiveAt,
 		&i.LastUpdated,
-		&i.TeamID,
+		&i.TemplateID,
+		&i.TemplateTeamID,
 	)
 	return i, err
 }
 
+const getSandboxProxyTarget = `-- name: GetSandboxProxyTarget :one
+SELECT s.status, h.address AS host_address
+FROM sandboxes s
+JOIN hosts h ON h.id = s.host_id
+WHERE s.id = $1 AND s.team_id = $2
+`
+
+type GetSandboxProxyTargetParams struct {
+	ID     pgtype.UUID `json:"id"`
+	TeamID pgtype.UUID `json:"team_id"`
+}
+
+type GetSandboxProxyTargetRow struct {
+	Status      string `json:"status"`
+	HostAddress string `json:"host_address"`
+}
+
+// Returns the sandbox status and its host's address in one query.
+// Used by SandboxProxyWrapper to avoid two round-trips.
+func (q *Queries) GetSandboxProxyTarget(ctx context.Context, arg GetSandboxProxyTargetParams) (GetSandboxProxyTargetRow, error) {
+	row := q.db.QueryRow(ctx, getSandboxProxyTarget, arg.ID, arg.TeamID)
+	var i GetSandboxProxyTargetRow
+	err := row.Scan(&i.Status, &i.HostAddress)
+	return i, err
+}
+
 const insertSandbox = `-- name: InsertSandbox :one
-INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id
+INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, template_id, template_team_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id
 `
 
 type InsertSandboxParams struct {
-	ID         string `json:"id"`
-	TeamID     string `json:"team_id"`
-	HostID     string `json:"host_id"`
-	Template   string `json:"template"`
-	Status     string `json:"status"`
-	Vcpus      int32  `json:"vcpus"`
-	MemoryMb   int32  `json:"memory_mb"`
-	TimeoutSec int32  `json:"timeout_sec"`
+	ID             pgtype.UUID `json:"id"`
+	TeamID         pgtype.UUID `json:"team_id"`
+	HostID         pgtype.UUID `json:"host_id"`
+	Template       string      `json:"template"`
+	Status         string      `json:"status"`
+	Vcpus          int32       `json:"vcpus"`
+	MemoryMb       int32       `json:"memory_mb"`
+	TimeoutSec     int32       `json:"timeout_sec"`
+	DiskSizeMb     int32       `json:"disk_size_mb"`
+	TemplateID     pgtype.UUID `json:"template_id"`
+	TemplateTeamID pgtype.UUID `json:"template_team_id"`
 }
 
 func (q *Queries) InsertSandbox(ctx context.Context, arg InsertSandboxParams) (Sandbox, error) {
@@ -112,29 +161,79 @@ func (q *Queries) InsertSandbox(ctx context.Context, arg InsertSandboxParams) (S
 		arg.Vcpus,
 		arg.MemoryMb,
 		arg.TimeoutSec,
+		arg.DiskSizeMb,
+		arg.TemplateID,
+		arg.TemplateTeamID,
 	)
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,
+		&i.TeamID,
 		&i.HostID,
 		&i.Template,
 		&i.Status,
 		&i.Vcpus,
 		&i.MemoryMb,
 		&i.TimeoutSec,
+		&i.DiskSizeMb,
 		&i.GuestIp,
 		&i.HostIp,
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.LastActiveAt,
 		&i.LastUpdated,
-		&i.TeamID,
+		&i.TemplateID,
+		&i.TemplateTeamID,
 	)
 	return i, err
 }
 
+const listActiveSandboxesByTeam = `-- name: ListActiveSandboxesByTeam :many
+SELECT id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id FROM sandboxes
+WHERE team_id = $1 AND status IN ('running', 'paused', 'starting')
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListActiveSandboxesByTeam(ctx context.Context, teamID pgtype.UUID) ([]Sandbox, error) {
+	rows, err := q.db.Query(ctx, listActiveSandboxesByTeam, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Sandbox
+	for rows.Next() {
+		var i Sandbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.HostID,
+			&i.Template,
+			&i.Status,
+			&i.Vcpus,
+			&i.MemoryMb,
+			&i.TimeoutSec,
+			&i.DiskSizeMb,
+			&i.GuestIp,
+			&i.HostIp,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.LastActiveAt,
+			&i.LastUpdated,
+			&i.TemplateID,
+			&i.TemplateTeamID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSandboxes = `-- name: ListSandboxes :many
-SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes ORDER BY created_at DESC
+SELECT id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id FROM sandboxes ORDER BY created_at DESC
 `
 
 func (q *Queries) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
@@ -148,19 +247,22 @@ func (q *Queries) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 		var i Sandbox
 		if err := rows.Scan(
 			&i.ID,
+			&i.TeamID,
 			&i.HostID,
 			&i.Template,
 			&i.Status,
 			&i.Vcpus,
 			&i.MemoryMb,
 			&i.TimeoutSec,
+			&i.DiskSizeMb,
 			&i.GuestIp,
 			&i.HostIp,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.LastActiveAt,
 			&i.LastUpdated,
-			&i.TeamID,
+			&i.TemplateID,
+			&i.TemplateTeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -173,14 +275,14 @@ func (q *Queries) ListSandboxes(ctx context.Context) ([]Sandbox, error) {
 }
 
 const listSandboxesByHostAndStatus = `-- name: ListSandboxesByHostAndStatus :many
-SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes
+SELECT id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id FROM sandboxes
 WHERE host_id = $1 AND status = ANY($2::text[])
 ORDER BY created_at DESC
 `
 
 type ListSandboxesByHostAndStatusParams struct {
-	HostID  string   `json:"host_id"`
-	Column2 []string `json:"column_2"`
+	HostID  pgtype.UUID `json:"host_id"`
+	Column2 []string    `json:"column_2"`
 }
 
 func (q *Queries) ListSandboxesByHostAndStatus(ctx context.Context, arg ListSandboxesByHostAndStatusParams) ([]Sandbox, error) {
@@ -194,19 +296,22 @@ func (q *Queries) ListSandboxesByHostAndStatus(ctx context.Context, arg ListSand
 		var i Sandbox
 		if err := rows.Scan(
 			&i.ID,
+			&i.TeamID,
 			&i.HostID,
 			&i.Template,
 			&i.Status,
 			&i.Vcpus,
 			&i.MemoryMb,
 			&i.TimeoutSec,
+			&i.DiskSizeMb,
 			&i.GuestIp,
 			&i.HostIp,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.LastActiveAt,
 			&i.LastUpdated,
-			&i.TeamID,
+			&i.TemplateID,
+			&i.TemplateTeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -219,12 +324,12 @@ func (q *Queries) ListSandboxesByHostAndStatus(ctx context.Context, arg ListSand
 }
 
 const listSandboxesByTeam = `-- name: ListSandboxesByTeam :many
-SELECT id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id FROM sandboxes
+SELECT id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id FROM sandboxes
 WHERE team_id = $1 AND status NOT IN ('stopped', 'error')
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListSandboxesByTeam(ctx context.Context, teamID string) ([]Sandbox, error) {
+func (q *Queries) ListSandboxesByTeam(ctx context.Context, teamID pgtype.UUID) ([]Sandbox, error) {
 	rows, err := q.db.Query(ctx, listSandboxesByTeam, teamID)
 	if err != nil {
 		return nil, err
@@ -235,19 +340,22 @@ func (q *Queries) ListSandboxesByTeam(ctx context.Context, teamID string) ([]San
 		var i Sandbox
 		if err := rows.Scan(
 			&i.ID,
+			&i.TeamID,
 			&i.HostID,
 			&i.Template,
 			&i.Status,
 			&i.Vcpus,
 			&i.MemoryMb,
 			&i.TimeoutSec,
+			&i.DiskSizeMb,
 			&i.GuestIp,
 			&i.HostIp,
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.LastActiveAt,
 			&i.LastUpdated,
-			&i.TeamID,
+			&i.TemplateID,
+			&i.TemplateTeamID,
 		); err != nil {
 			return nil, err
 		}
@@ -259,6 +367,21 @@ func (q *Queries) ListSandboxesByTeam(ctx context.Context, teamID string) ([]San
 	return items, nil
 }
 
+const markSandboxesMissingByHost = `-- name: MarkSandboxesMissingByHost :exec
+UPDATE sandboxes
+SET status       = 'missing',
+    last_updated = NOW()
+WHERE host_id = $1 AND status IN ('running', 'starting', 'pending')
+`
+
+// Called when the host monitor marks a host unreachable.
+// Marks running/starting/pending sandboxes on that host as 'missing' so users see
+// the sandbox is not currently reachable, without permanently losing the record.
+func (q *Queries) MarkSandboxesMissingByHost(ctx context.Context, hostID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markSandboxesMissingByHost, hostID)
+	return err
+}
+
 const updateLastActive = `-- name: UpdateLastActive :exec
 UPDATE sandboxes
 SET last_active_at = $2,
@@ -267,7 +390,7 @@ WHERE id = $1
 `
 
 type UpdateLastActiveParams struct {
-	ID           string             `json:"id"`
+	ID           pgtype.UUID        `json:"id"`
 	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
 }
 
@@ -285,11 +408,11 @@ SET status = 'running',
     last_active_at = $4,
     last_updated = NOW()
 WHERE id = $1
-RETURNING id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id
+RETURNING id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id
 `
 
 type UpdateSandboxRunningParams struct {
-	ID        string             `json:"id"`
+	ID        pgtype.UUID        `json:"id"`
 	HostIp    string             `json:"host_ip"`
 	GuestIp   string             `json:"guest_ip"`
 	StartedAt pgtype.Timestamptz `json:"started_at"`
@@ -305,19 +428,22 @@ func (q *Queries) UpdateSandboxRunning(ctx context.Context, arg UpdateSandboxRun
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,
+		&i.TeamID,
 		&i.HostID,
 		&i.Template,
 		&i.Status,
 		&i.Vcpus,
 		&i.MemoryMb,
 		&i.TimeoutSec,
+		&i.DiskSizeMb,
 		&i.GuestIp,
 		&i.HostIp,
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.LastActiveAt,
 		&i.LastUpdated,
-		&i.TeamID,
+		&i.TemplateID,
+		&i.TemplateTeamID,
 	)
 	return i, err
 }
@@ -327,12 +453,12 @@ UPDATE sandboxes
 SET status = $2,
     last_updated = NOW()
 WHERE id = $1
-RETURNING id, host_id, template, status, vcpus, memory_mb, timeout_sec, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, team_id
+RETURNING id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id
 `
 
 type UpdateSandboxStatusParams struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID     pgtype.UUID `json:"id"`
+	Status string      `json:"status"`
 }
 
 func (q *Queries) UpdateSandboxStatus(ctx context.Context, arg UpdateSandboxStatusParams) (Sandbox, error) {
@@ -340,19 +466,22 @@ func (q *Queries) UpdateSandboxStatus(ctx context.Context, arg UpdateSandboxStat
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,
+		&i.TeamID,
 		&i.HostID,
 		&i.Template,
 		&i.Status,
 		&i.Vcpus,
 		&i.MemoryMb,
 		&i.TimeoutSec,
+		&i.DiskSizeMb,
 		&i.GuestIp,
 		&i.HostIp,
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.LastActiveAt,
 		&i.LastUpdated,
-		&i.TeamID,
+		&i.TemplateID,
+		&i.TemplateTeamID,
 	)
 	return i, err
 }

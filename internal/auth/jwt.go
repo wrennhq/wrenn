@@ -5,27 +5,37 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"git.omukk.dev/wrenn/sandbox/internal/id"
 )
 
 const jwtExpiry = 6 * time.Hour
-const hostJWTExpiry = 8760 * time.Hour // 1 year
+const hostJWTExpiry = 7 * 24 * time.Hour           // 7 days; host refreshes via refresh token
+const HostRefreshTokenExpiry = 60 * 24 * time.Hour // 60 days; exported for service layer
 
 // Claims are the JWT payload for user tokens.
 type Claims struct {
-	Type   string `json:"typ,omitempty"` // empty for user tokens; used to reject host tokens
-	TeamID string `json:"team_id"`
-	Email  string `json:"email"`
+	Type    string `json:"typ,omitempty"` // empty for user tokens; used to reject host tokens
+	TeamID  string `json:"team_id"`
+	Role    string `json:"role"` // owner, admin, or member within TeamID
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	IsAdmin bool   `json:"is_admin,omitempty"` // platform-level admin flag
 	jwt.RegisteredClaims
 }
 
 // SignJWT signs a new 6-hour JWT for the given user.
-func SignJWT(secret []byte, userID, teamID, email string) (string, error) {
+func SignJWT(secret []byte, userID, teamID pgtype.UUID, email, name, role string, isAdmin bool) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		TeamID: teamID,
-		Email:  email,
+		TeamID:  id.FormatTeamID(teamID),
+		Role:    role,
+		Email:   email,
+		Name:    name,
+		IsAdmin: isAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   userID,
+			Subject:   id.FormatUserID(userID),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(jwtExpiry)),
 		},
@@ -63,14 +73,15 @@ type HostClaims struct {
 	jwt.RegisteredClaims
 }
 
-// SignHostJWT signs a long-lived (1 year) JWT for a registered host agent.
-func SignHostJWT(secret []byte, hostID string) (string, error) {
+// SignHostJWT signs a long-lived (7-day) JWT for a registered host agent.
+func SignHostJWT(secret []byte, hostID pgtype.UUID) (string, error) {
+	formatted := id.FormatHostID(hostID)
 	now := time.Now()
 	claims := HostClaims{
 		Type:   "host",
-		HostID: hostID,
+		HostID: formatted,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   hostID,
+			Subject:   formatted,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(hostJWTExpiry)),
 		},

@@ -42,6 +42,47 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/auth/switch-team:
+    post:
+      summary: Switch active team
+      operationId: switchTeam
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      description: |
+        Re-issues a JWT scoped to a different team. The user must be a member of
+        the target team (verified from DB). Use the returned token for subsequent
+        requests to that team's resources.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [team_id]
+              properties:
+                team_id:
+                  type: string
+      responses:
+        "200":
+          description: New JWT issued for the target team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "403":
+          description: Not a member of this team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/auth/login:
     post:
       summary: Log in with email and password
@@ -195,6 +236,340 @@ paths:
         "204":
           description: API key deleted
 
+  /v1/users/search:
+    get:
+      summary: Search users by email prefix
+      operationId: searchUsers
+      tags: [users]
+      security:
+        - bearerAuth: []
+      description: |
+        Returns up to 10 users whose email starts with the given prefix.
+        The prefix must contain "@". Intended for the add-member UI autocomplete.
+      parameters:
+        - name: email
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Email prefix (must contain "@", e.g. "alice@")
+      responses:
+        "200":
+          description: Matching users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserSearchResult"
+        "400":
+          description: Prefix does not contain "@"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/teams:
+    get:
+      summary: List teams for the authenticated user
+      operationId: listTeams
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Teams the user belongs to, each with their role
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeamWithRole"
+
+    post:
+      summary: Create a new team
+      operationId: createTeam
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: 1-128 chars; A-Z a-z 0-9 space _
+      responses:
+        "201":
+          description: Team created (caller is owner)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamWithRole"
+        "400":
+          description: Invalid team name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/teams/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Team ID (must match the JWT's team_id)
+
+    get:
+      summary: Get team info and member list
+      operationId: getTeam
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Team details with members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamDetail"
+        "403":
+          description: JWT team does not match requested team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    patch:
+      summary: Rename the team
+      operationId: renameTeam
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      description: Admin or owner role required (verified from DB).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "204":
+          description: Renamed
+        "400":
+          description: Invalid team name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Insufficient role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Delete the team
+      operationId: deleteTeam
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      description: |
+        Owner only. Soft-deletes the team and destroys all running/paused/starting
+        sandboxes. All DB records are preserved. The team slug is permanently reserved.
+      responses:
+        "204":
+          description: Team deleted
+        "403":
+          description: Caller is not the owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/teams/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: List team members
+      operationId: listTeamMembers
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Members with roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeamMember"
+
+    post:
+      summary: Add a member by email
+      operationId: addTeamMember
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      description: Admin or owner role required. User is added instantly as a member.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "201":
+          description: Member added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamMember"
+        "403":
+          description: Insufficient role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No account with that email
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "400":
+          description: User is already a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/teams/{id}/members/{uid}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: uid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Target user ID
+
+    patch:
+      summary: Update member role
+      operationId: updateMemberRole
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      description: |
+        Admin or owner required. Valid target roles: admin, member.
+        The owner's role cannot be changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [admin, member]
+      responses:
+        "204":
+          description: Role updated
+        "403":
+          description: Insufficient role or attempt to modify owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Remove a member
+      operationId: removeTeamMember
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      description: Admin or owner required. Owner cannot be removed.
+      responses:
+        "204":
+          description: Member removed
+        "403":
+          description: Insufficient role or attempt to remove owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/teams/{id}/leave:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Leave the team
+      operationId: leaveTeam
+      tags: [teams]
+      security:
+        - bearerAuth: []
+      description: The owner cannot leave; they must delete the team instead.
+      responses:
+        "204":
+          description: Left the team
+        "403":
+          description: Owner cannot leave
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/sandboxes:
     post:
       summary: Create a sandbox
@@ -237,6 +612,32 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Sandbox"
+
+  /v1/sandboxes/stats:
+    get:
+      summary: Get sandbox usage stats for your team
+      operationId: getSandboxStats
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [5m, 1h, 6h, 24h, 30d]
+            default: 1h
+          description: Time window for the time-series data.
+      responses:
+        "200":
+          description: Sandbox stats for the team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxStats"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /v1/sandboxes/{id}:
     parameters:
@@ -345,6 +746,60 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/metrics:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get per-sandbox resource metrics
+      operationId: getSandboxMetrics
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+      description: |
+        Returns time-series CPU, memory, and disk metrics for a sandbox.
+        Three tiers are available with different granularity and retention:
+        - `10m`: 500ms samples, last 10 minutes
+        - `2h`: 30-second averages, last 2 hours
+        - `24h`: 5-minute averages, last 24 hours
+
+        For running sandboxes, data comes from the host agent's in-memory
+        ring buffer. For paused sandboxes, data is read from persisted
+        snapshots in the database. Stopped/destroyed sandboxes return 404.
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["5m", "10m", "1h", "2h", "6h", "12h", "24h"]
+            default: "10m"
+          description: Time range filter to query
+      responses:
+        "200":
+          description: Metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxMetrics"
+        "400":
+          description: Invalid range parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Sandbox not found or metrics not available
           content:
             application/json:
               schema:
@@ -818,8 +1273,16 @@ paths:
       security:
         - bearerAuth: []
       description: |
-        Admins can delete any host. Team owners can delete BYOC hosts
-        belonging to their team.
+        Admins can delete any host. Team owners and admins can delete BYOC hosts
+        belonging to their team. Without `?force=true`, returns 409 if the host
+        has active sandboxes. With `?force=true`, destroys all sandboxes first.
+      parameters:
+        - name: force
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: If true, destroy all sandboxes on the host before deleting.
       responses:
         "204":
           description: Host deleted
@@ -829,6 +1292,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "409":
+          description: Host has active sandboxes (only when force is not set)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostHasSandboxesError"
 
   /v1/hosts/{id}/token:
     parameters:
@@ -937,6 +1406,72 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/hosts/auth/refresh:
+    post:
+      summary: Refresh host JWT
+      operationId: refreshHostToken
+      tags: [hosts]
+      description: |
+        Exchanges a refresh token for a new JWT and rotated refresh token.
+        The old refresh token is immediately revoked. No authentication required —
+        the refresh token itself is the credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshHostTokenRequest"
+      responses:
+        "200":
+          description: New JWT and rotated refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshHostTokenResponse"
+        "401":
+          description: Invalid, expired, or revoked refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/hosts/{id}/delete-preview:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Preview host deletion
+      operationId: getHostDeletePreview
+      tags: [hosts]
+      security:
+        - bearerAuth: []
+      description: |
+        Returns the list of sandbox IDs that would be destroyed if the host
+        were deleted with `?force=true`. No state is modified.
+      responses:
+        "200":
+          description: Deletion preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostDeletePreview"
+        "403":
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Host not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/hosts/{id}/tags:
     parameters:
       - name: id
@@ -1012,6 +1547,176 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/channels:
+    post:
+      summary: Create a notification channel
+      operationId: createChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChannelRequest"
+      responses:
+        "201":
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      summary: List notification channels
+      operationId: listChannels
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Channels list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChannelResponse"
+
+  /v1/channels/test:
+    post:
+      summary: Test a channel configuration
+      description: >
+        Sends a test notification using the provided provider and config without
+        saving anything. Use this to verify credentials before creating a channel.
+      operationId: testChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestChannelRequest"
+      responses:
+        "200":
+          description: Test notification sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/channels/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get a notification channel
+      operationId: getChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Channel details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      summary: Update a notification channel
+      operationId: updateChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateChannelRequest"
+      responses:
+        "200":
+          description: Channel updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: Delete a notification channel
+      operationId: deleteChannel
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Channel deleted
+
+  /v1/channels/{id}/config:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      summary: Rotate channel secrets
+      description: >
+        Replaces the channel's provider configuration entirely with new secrets.
+        The previous config is discarded. Config fields must match the provider's
+        required fields.
+      operationId: rotateChannelConfig
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateConfigRequest"
+      responses:
+        "200":
+          description: Config rotated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     apiKeyAuth:
@@ -1030,12 +1735,12 @@ components:
       type: apiKey
       in: header
       name: X-Host-Token
-      description: Long-lived host JWT returned from POST /v1/hosts/register. Valid for 1 year.
+      description: Host JWT returned from POST /v1/hosts/register or POST /v1/hosts/auth/refresh. Valid for 7 days.
 
   schemas:
     SignupRequest:
       type: object
-      required: [email, password]
+      required: [email, password, name]
       properties:
         email:
           type: string
@@ -1043,6 +1748,9 @@ components:
         password:
           type: string
           minLength: 8
+        name:
+          type: string
+          maxLength: 100
 
     LoginRequest:
       type: object
@@ -1065,6 +1773,8 @@ components:
         team_id:
           type: string
         email:
+          type: string
+        name:
           type: string
 
     CreateAPIKeyRequest:
@@ -1118,6 +1828,57 @@ components:
             after this duration of inactivity (no exec or ping). 0 means
             no auto-pause.
 
+    SandboxStats:
+      type: object
+      properties:
+        range:
+          type: string
+          enum: [5m, 1h, 6h, 24h, 30d]
+        current:
+          type: object
+          properties:
+            running_count:
+              type: integer
+            vcpus_reserved:
+              type: integer
+            memory_mb_reserved:
+              type: integer
+            sampled_at:
+              type: string
+              format: date-time
+              nullable: true
+        peaks:
+          type: object
+          description: Maximum values over the last 30 days.
+          properties:
+            running_count:
+              type: integer
+            vcpus:
+              type: integer
+            memory_mb:
+              type: integer
+        series:
+          type: object
+          description: Parallel arrays for chart rendering.
+          properties:
+            labels:
+              type: array
+              items:
+                type: string
+                format: date-time
+            running:
+              type: array
+              items:
+                type: integer
+            vcpus:
+              type: array
+              items:
+                type: integer
+            memory_mb:
+              type: array
+              items:
+                type: integer
+
     Sandbox:
       type: object
       properties:
@@ -1125,7 +1886,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, running, paused, stopped, error]
+          enum: [pending, starting, running, paused, hibernated, stopped, missing, error]
         template:
           type: string
         vcpus:
@@ -1281,7 +2042,10 @@ components:
           $ref: "#/components/schemas/Host"
         token:
           type: string
-          description: Long-lived host JWT for X-Host-Token header. Valid for 1 year.
+          description: Host JWT for X-Host-Token header. Valid for 7 days.
+        refresh_token:
+          type: string
+          description: Refresh token for obtaining new JWTs. Valid for 60 days; rotated on each use.
 
     Host:
       type: object
@@ -1317,7 +2081,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: [pending, online, offline, draining]
+          enum: [pending, online, offline, draining, unreachable]
         last_heartbeat_at:
           type: string
           format: date-time
@@ -1331,12 +2095,253 @@ components:
           type: string
           format: date-time
 
+    RefreshHostTokenRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          description: Refresh token obtained from registration or a previous refresh.
+
+    RefreshHostTokenResponse:
+      type: object
+      properties:
+        host:
+          $ref: "#/components/schemas/Host"
+        token:
+          type: string
+          description: New host JWT. Valid for 7 days.
+        refresh_token:
+          type: string
+          description: New refresh token. Valid for 60 days; old token is revoked.
+
+    HostDeletePreview:
+      type: object
+      properties:
+        host:
+          $ref: "#/components/schemas/Host"
+        sandbox_ids:
+          type: array
+          items:
+            type: string
+          description: IDs of sandboxes that would be destroyed on force-delete.
+
+    HostHasSandboxesError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: host_has_sandboxes
+            message:
+              type: string
+            sandbox_ids:
+              type: array
+              items:
+                type: string
+              description: IDs of active sandboxes blocking deletion.
+
     AddTagRequest:
       type: object
       required: [tag]
       properties:
         tag:
           type: string
+
+    UserSearchResult:
+      type: object
+      properties:
+        user_id:
+          type: string
+        email:
+          type: string
+
+    Team:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+          description: Immutable 12-char hex slug (e.g. a1b2c3-d1e2f3)
+        created_at:
+          type: string
+          format: date-time
+
+    TeamWithRole:
+      allOf:
+        - $ref: "#/components/schemas/Team"
+        - type: object
+          properties:
+            role:
+              type: string
+              enum: [owner, admin, member]
+
+    TeamMember:
+      type: object
+      properties:
+        user_id:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [owner, admin, member]
+        joined_at:
+          type: string
+          format: date-time
+
+    TeamDetail:
+      type: object
+      properties:
+        team:
+          $ref: "#/components/schemas/Team"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamMember"
+
+    SandboxMetrics:
+      type: object
+      properties:
+        sandbox_id:
+          type: string
+        range:
+          type: string
+          enum: ["5m", "10m", "1h", "2h", "6h", "12h", "24h"]
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricPoint"
+
+    MetricPoint:
+      type: object
+      properties:
+        timestamp_unix:
+          type: integer
+          format: int64
+        cpu_pct:
+          type: number
+          format: double
+          description: "CPU utilization percentage (0-100), normalized to vCPU count"
+        mem_bytes:
+          type: integer
+          format: int64
+          description: "Resident memory in bytes (VmRSS of Firecracker process)"
+        disk_bytes:
+          type: integer
+          format: int64
+          description: "Allocated disk bytes for the CoW sparse file"
+
+    CreateChannelRequest:
+      type: object
+      required: [name, provider, config, events]
+      properties:
+        name:
+          type: string
+          description: Unique channel name within the team.
+        provider:
+          type: string
+          enum: [discord, slack, teams, googlechat, telegram, matrix, webhook]
+        config:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Provider-specific configuration fields.
+            Discord/Slack/Teams/Google Chat: {"webhook_url": "..."}.
+            Telegram: {"bot_token": "...", "chat_id": "..."}.
+            Matrix: {"homeserver_url": "...", "access_token": "...", "room_id": "..."}.
+            Webhook: {"url": "...", "secret": "..."} (secret is auto-generated if omitted).
+        events:
+          type: array
+          items:
+            type: string
+            enum:
+              - capsule.created
+              - capsule.running
+              - capsule.paused
+              - capsule.destroyed
+              - template.snapshot.created
+              - template.snapshot.deleted
+              - host.up
+              - host.down
+
+    TestChannelRequest:
+      type: object
+      required: [provider, config]
+      properties:
+        provider:
+          type: string
+          enum: [discord, slack, teams, googlechat, telegram, matrix, webhook]
+        config:
+          type: object
+          additionalProperties:
+            type: string
+          description: Provider-specific configuration fields (same as CreateChannelRequest.config).
+
+    RotateConfigRequest:
+      type: object
+      required: [config]
+      properties:
+        config:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            New provider configuration fields. Must include all required fields
+            for the channel's provider. Replaces the existing config entirely.
+
+    UpdateChannelRequest:
+      type: object
+      required: [name, events]
+      properties:
+        name:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+            enum:
+              - capsule.created
+              - capsule.running
+              - capsule.paused
+              - capsule.destroyed
+              - template.snapshot.created
+              - template.snapshot.deleted
+              - host.up
+              - host.down
+
+    ChannelResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+          enum: [discord, slack, teams, googlechat, telegram, matrix, webhook]
+        events:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        secret:
+          type: string
+          nullable: true
+          description: Webhook secret. Only returned on creation, never again.
 
     Error:
       type: object

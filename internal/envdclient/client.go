@@ -3,14 +3,12 @@ package envdclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"time"
 
 	"connectrpc.com/connect"
 
@@ -47,35 +45,6 @@ func New(hostIP string) *Client {
 // BaseURL returns the HTTP base URL for reaching envd.
 func (c *Client) BaseURL() string {
 	return c.base
-}
-
-// Init calls POST /init on envd to sync the guest clock with the host.
-// This is important after snapshot resume where the guest clock is frozen.
-func (c *Client) Init(ctx context.Context) error {
-	now := time.Now().UTC()
-	body, err := json.Marshal(map[string]any{"timestamp": now})
-	if err != nil {
-		return fmt.Errorf("marshal init body: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/init", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create init request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("init request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("init: status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return nil
 }
 
 // ExecResult holds the output of a command execution.

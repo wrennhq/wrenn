@@ -25,7 +25,7 @@ type CreateSandboxRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Sandbox ID assigned by the control plane. If empty, the host agent generates one.
 	SandboxId string `protobuf:"bytes,5,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	// Template name (e.g., "minimal", "python311"). Determines base rootfs.
+	// Deprecated: use team_id + template_id instead.
 	Template string `protobuf:"bytes,1,opt,name=template,proto3" json:"template,omitempty"`
 	// Number of virtual CPUs (default: 1).
 	Vcpus int32 `protobuf:"varint,2,opt,name=vcpus,proto3" json:"vcpus,omitempty"`
@@ -33,7 +33,14 @@ type CreateSandboxRequest struct {
 	MemoryMb int32 `protobuf:"varint,3,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
 	// TTL in seconds. Sandbox is auto-paused after this duration of
 	// inactivity. 0 means no auto-pause.
-	TimeoutSec    int32 `protobuf:"varint,4,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	TimeoutSec int32 `protobuf:"varint,4,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	// Disk size in MB for the rootfs. Base images are expanded to this size
+	// at host agent startup. Default: 5120 (5 GB).
+	DiskSizeMb int32 `protobuf:"varint,6,opt,name=disk_size_mb,json=diskSizeMb,proto3" json:"disk_size_mb,omitempty"`
+	// Team UUID that owns the template (hex string). All-zeros = platform.
+	TeamId string `protobuf:"bytes,7,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	// Template UUID (hex string). Both zeros + team zeros = "minimal" sentinel.
+	TemplateId    string `protobuf:"bytes,8,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -101,6 +108,27 @@ func (x *CreateSandboxRequest) GetTimeoutSec() int32 {
 		return x.TimeoutSec
 	}
 	return 0
+}
+
+func (x *CreateSandboxRequest) GetDiskSizeMb() int32 {
+	if x != nil {
+		return x.DiskSizeMb
+	}
+	return 0
+}
+
+func (x *CreateSandboxRequest) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *CreateSandboxRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
 }
 
 type CreateSandboxResponse struct {
@@ -438,9 +466,14 @@ func (x *ResumeSandboxResponse) GetHostIp() string {
 }
 
 type CreateSnapshotRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	// Deprecated: use team_id + template_id instead.
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// Team UUID that will own the new template.
+	TeamId string `protobuf:"bytes,3,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	// Template UUID for the new snapshot template.
+	TemplateId    string `protobuf:"bytes,4,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -485,6 +518,20 @@ func (x *CreateSnapshotRequest) GetSandboxId() string {
 func (x *CreateSnapshotRequest) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateSnapshotRequest) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *CreateSnapshotRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
 	}
 	return ""
 }
@@ -542,8 +589,13 @@ func (x *CreateSnapshotResponse) GetSizeBytes() int64 {
 }
 
 type DeleteSnapshotRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Deprecated: use team_id + template_id instead.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// Team UUID that owns the template.
+	TeamId string `protobuf:"bytes,2,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	// Template UUID to delete.
+	TemplateId    string `protobuf:"bytes,3,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -581,6 +633,20 @@ func (*DeleteSnapshotRequest) Descriptor() ([]byte, []int) {
 func (x *DeleteSnapshotRequest) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *DeleteSnapshotRequest) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *DeleteSnapshotRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
 	}
 	return ""
 }
@@ -841,16 +907,19 @@ func (x *ListSandboxesResponse) GetAutoPausedSandboxIds() []string {
 }
 
 type SandboxInfo struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId        string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	Status           string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	Template         string                 `protobuf:"bytes,3,opt,name=template,proto3" json:"template,omitempty"`
-	Vcpus            int32                  `protobuf:"varint,4,opt,name=vcpus,proto3" json:"vcpus,omitempty"`
-	MemoryMb         int32                  `protobuf:"varint,5,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
-	HostIp           string                 `protobuf:"bytes,6,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
-	CreatedAtUnix    int64                  `protobuf:"varint,7,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
-	LastActiveAtUnix int64                  `protobuf:"varint,8,opt,name=last_active_at_unix,json=lastActiveAtUnix,proto3" json:"last_active_at_unix,omitempty"`
-	TimeoutSec       int32                  `protobuf:"varint,9,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	Status    string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	// Deprecated: use team_id + template_id instead.
+	Template         string `protobuf:"bytes,3,opt,name=template,proto3" json:"template,omitempty"`
+	Vcpus            int32  `protobuf:"varint,4,opt,name=vcpus,proto3" json:"vcpus,omitempty"`
+	MemoryMb         int32  `protobuf:"varint,5,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
+	HostIp           string `protobuf:"bytes,6,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
+	CreatedAtUnix    int64  `protobuf:"varint,7,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
+	LastActiveAtUnix int64  `protobuf:"varint,8,opt,name=last_active_at_unix,json=lastActiveAtUnix,proto3" json:"last_active_at_unix,omitempty"`
+	TimeoutSec       int32  `protobuf:"varint,9,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	TeamId           string `protobuf:"bytes,10,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	TemplateId       string `protobuf:"bytes,11,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -946,6 +1015,20 @@ func (x *SandboxInfo) GetTimeoutSec() int32 {
 		return x.TimeoutSec
 	}
 	return 0
+}
+
+func (x *SandboxInfo) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *SandboxInfo) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
 }
 
 type WriteFileRequest struct {
@@ -1830,11 +1913,467 @@ func (*PingSandboxResponse) Descriptor() ([]byte, []int) {
 	return file_hostagent_proto_rawDescGZIP(), []int{32}
 }
 
+type TerminateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminateRequest) Reset() {
+	*x = TerminateRequest{}
+	mi := &file_hostagent_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminateRequest) ProtoMessage() {}
+
+func (x *TerminateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminateRequest.ProtoReflect.Descriptor instead.
+func (*TerminateRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{33}
+}
+
+type TerminateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminateResponse) Reset() {
+	*x = TerminateResponse{}
+	mi := &file_hostagent_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminateResponse) ProtoMessage() {}
+
+func (x *TerminateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminateResponse.ProtoReflect.Descriptor instead.
+func (*TerminateResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{34}
+}
+
+type MetricPoint struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TimestampUnix int64                  `protobuf:"varint,1,opt,name=timestamp_unix,json=timestampUnix,proto3" json:"timestamp_unix,omitempty"`
+	CpuPct        float64                `protobuf:"fixed64,2,opt,name=cpu_pct,json=cpuPct,proto3" json:"cpu_pct,omitempty"`
+	MemBytes      int64                  `protobuf:"varint,3,opt,name=mem_bytes,json=memBytes,proto3" json:"mem_bytes,omitempty"`
+	DiskBytes     int64                  `protobuf:"varint,4,opt,name=disk_bytes,json=diskBytes,proto3" json:"disk_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetricPoint) Reset() {
+	*x = MetricPoint{}
+	mi := &file_hostagent_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricPoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricPoint) ProtoMessage() {}
+
+func (x *MetricPoint) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricPoint.ProtoReflect.Descriptor instead.
+func (*MetricPoint) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *MetricPoint) GetTimestampUnix() int64 {
+	if x != nil {
+		return x.TimestampUnix
+	}
+	return 0
+}
+
+func (x *MetricPoint) GetCpuPct() float64 {
+	if x != nil {
+		return x.CpuPct
+	}
+	return 0
+}
+
+func (x *MetricPoint) GetMemBytes() int64 {
+	if x != nil {
+		return x.MemBytes
+	}
+	return 0
+}
+
+func (x *MetricPoint) GetDiskBytes() int64 {
+	if x != nil {
+		return x.DiskBytes
+	}
+	return 0
+}
+
+type GetSandboxMetricsRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	// Range tier: "10m", "2h", or "24h".
+	Range         string `protobuf:"bytes,2,opt,name=range,proto3" json:"range,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSandboxMetricsRequest) Reset() {
+	*x = GetSandboxMetricsRequest{}
+	mi := &file_hostagent_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSandboxMetricsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSandboxMetricsRequest) ProtoMessage() {}
+
+func (x *GetSandboxMetricsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSandboxMetricsRequest.ProtoReflect.Descriptor instead.
+func (*GetSandboxMetricsRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *GetSandboxMetricsRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *GetSandboxMetricsRequest) GetRange() string {
+	if x != nil {
+		return x.Range
+	}
+	return ""
+}
+
+type GetSandboxMetricsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Points        []*MetricPoint         `protobuf:"bytes,1,rep,name=points,proto3" json:"points,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSandboxMetricsResponse) Reset() {
+	*x = GetSandboxMetricsResponse{}
+	mi := &file_hostagent_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSandboxMetricsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSandboxMetricsResponse) ProtoMessage() {}
+
+func (x *GetSandboxMetricsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSandboxMetricsResponse.ProtoReflect.Descriptor instead.
+func (*GetSandboxMetricsResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *GetSandboxMetricsResponse) GetPoints() []*MetricPoint {
+	if x != nil {
+		return x.Points
+	}
+	return nil
+}
+
+type FlushSandboxMetricsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlushSandboxMetricsRequest) Reset() {
+	*x = FlushSandboxMetricsRequest{}
+	mi := &file_hostagent_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlushSandboxMetricsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlushSandboxMetricsRequest) ProtoMessage() {}
+
+func (x *FlushSandboxMetricsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlushSandboxMetricsRequest.ProtoReflect.Descriptor instead.
+func (*FlushSandboxMetricsRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *FlushSandboxMetricsRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+type FlushSandboxMetricsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Points_10M    []*MetricPoint         `protobuf:"bytes,1,rep,name=points_10m,json=points10m,proto3" json:"points_10m,omitempty"`
+	Points_2H     []*MetricPoint         `protobuf:"bytes,2,rep,name=points_2h,json=points2h,proto3" json:"points_2h,omitempty"`
+	Points_24H    []*MetricPoint         `protobuf:"bytes,3,rep,name=points_24h,json=points24h,proto3" json:"points_24h,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlushSandboxMetricsResponse) Reset() {
+	*x = FlushSandboxMetricsResponse{}
+	mi := &file_hostagent_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlushSandboxMetricsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlushSandboxMetricsResponse) ProtoMessage() {}
+
+func (x *FlushSandboxMetricsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlushSandboxMetricsResponse.ProtoReflect.Descriptor instead.
+func (*FlushSandboxMetricsResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *FlushSandboxMetricsResponse) GetPoints_10M() []*MetricPoint {
+	if x != nil {
+		return x.Points_10M
+	}
+	return nil
+}
+
+func (x *FlushSandboxMetricsResponse) GetPoints_2H() []*MetricPoint {
+	if x != nil {
+		return x.Points_2H
+	}
+	return nil
+}
+
+func (x *FlushSandboxMetricsResponse) GetPoints_24H() []*MetricPoint {
+	if x != nil {
+		return x.Points_24H
+	}
+	return nil
+}
+
+type FlattenRootfsRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	// Deprecated: use team_id + template_id instead.
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// Team UUID that will own the resulting template.
+	TeamId string `protobuf:"bytes,3,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
+	// Template UUID for the output.
+	TemplateId    string `protobuf:"bytes,4,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlattenRootfsRequest) Reset() {
+	*x = FlattenRootfsRequest{}
+	mi := &file_hostagent_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlattenRootfsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlattenRootfsRequest) ProtoMessage() {}
+
+func (x *FlattenRootfsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlattenRootfsRequest.ProtoReflect.Descriptor instead.
+func (*FlattenRootfsRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *FlattenRootfsRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *FlattenRootfsRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *FlattenRootfsRequest) GetTeamId() string {
+	if x != nil {
+		return x.TeamId
+	}
+	return ""
+}
+
+func (x *FlattenRootfsRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+type FlattenRootfsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SizeBytes     int64                  `protobuf:"varint,1,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlattenRootfsResponse) Reset() {
+	*x = FlattenRootfsResponse{}
+	mi := &file_hostagent_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlattenRootfsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlattenRootfsResponse) ProtoMessage() {}
+
+func (x *FlattenRootfsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlattenRootfsResponse.ProtoReflect.Descriptor instead.
+func (*FlattenRootfsResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *FlattenRootfsResponse) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
 var File_hostagent_proto protoreflect.FileDescriptor
 
 const file_hostagent_proto_rawDesc = "" +
 	"\n" +
-	"\x0fhostagent.proto\x12\fhostagent.v1\"\xa5\x01\n" +
+	"\x0fhostagent.proto\x12\fhostagent.v1\"\x81\x02\n" +
 	"\x14CreateSandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x05 \x01(\tR\tsandboxId\x12\x1a\n" +
@@ -1842,7 +2381,12 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x05vcpus\x18\x02 \x01(\x05R\x05vcpus\x12\x1b\n" +
 	"\tmemory_mb\x18\x03 \x01(\x05R\bmemoryMb\x12\x1f\n" +
 	"\vtimeout_sec\x18\x04 \x01(\x05R\n" +
-	"timeoutSec\"g\n" +
+	"timeoutSec\x12 \n" +
+	"\fdisk_size_mb\x18\x06 \x01(\x05R\n" +
+	"diskSizeMb\x12\x17\n" +
+	"\ateam_id\x18\a \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\b \x01(\tR\n" +
+	"templateId\"g\n" +
 	"\x15CreateSandboxResponse\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
@@ -1865,17 +2409,23 @@ const file_hostagent_proto_rawDesc = "" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x17\n" +
-	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\"J\n" +
+	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\"\x84\x01\n" +
 	"\x15CreateSnapshotRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"K\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x17\n" +
+	"\ateam_id\x18\x03 \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\x04 \x01(\tR\n" +
+	"templateId\"K\n" +
 	"\x16CreateSnapshotResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"+\n" +
+	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"e\n" +
 	"\x15DeleteSnapshotRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\x18\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x17\n" +
+	"\ateam_id\x18\x02 \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\x03 \x01(\tR\n" +
+	"templateId\"\x18\n" +
 	"\x16DeleteSnapshotResponse\"s\n" +
 	"\vExecRequest\x12\x1d\n" +
 	"\n" +
@@ -1891,7 +2441,7 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x14ListSandboxesRequest\"\x87\x01\n" +
 	"\x15ListSandboxesResponse\x127\n" +
 	"\tsandboxes\x18\x01 \x03(\v2\x19.hostagent.v1.SandboxInfoR\tsandboxes\x125\n" +
-	"\x17auto_paused_sandbox_ids\x18\x02 \x03(\tR\x14autoPausedSandboxIds\"\xa4\x02\n" +
+	"\x17auto_paused_sandbox_ids\x18\x02 \x03(\tR\x14autoPausedSandboxIds\"\xde\x02\n" +
 	"\vSandboxInfo\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
@@ -1903,7 +2453,11 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x0fcreated_at_unix\x18\a \x01(\x03R\rcreatedAtUnix\x12-\n" +
 	"\x13last_active_at_unix\x18\b \x01(\x03R\x10lastActiveAtUnix\x12\x1f\n" +
 	"\vtimeout_sec\x18\t \x01(\x05R\n" +
-	"timeoutSec\"_\n" +
+	"timeoutSec\x12\x17\n" +
+	"\ateam_id\x18\n" +
+	" \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\v \x01(\tR\n" +
+	"templateId\"_\n" +
 	"\x10WriteFileRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
@@ -1955,7 +2509,40 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x12PingSandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"\x15\n" +
-	"\x13PingSandboxResponse2\xce\t\n" +
+	"\x13PingSandboxResponse\"\x12\n" +
+	"\x10TerminateRequest\"\x13\n" +
+	"\x11TerminateResponse\"\x89\x01\n" +
+	"\vMetricPoint\x12%\n" +
+	"\x0etimestamp_unix\x18\x01 \x01(\x03R\rtimestampUnix\x12\x17\n" +
+	"\acpu_pct\x18\x02 \x01(\x01R\x06cpuPct\x12\x1b\n" +
+	"\tmem_bytes\x18\x03 \x01(\x03R\bmemBytes\x12\x1d\n" +
+	"\n" +
+	"disk_bytes\x18\x04 \x01(\x03R\tdiskBytes\"O\n" +
+	"\x18GetSandboxMetricsRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x14\n" +
+	"\x05range\x18\x02 \x01(\tR\x05range\"N\n" +
+	"\x19GetSandboxMetricsResponse\x121\n" +
+	"\x06points\x18\x01 \x03(\v2\x19.hostagent.v1.MetricPointR\x06points\";\n" +
+	"\x1aFlushSandboxMetricsRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"\xc9\x01\n" +
+	"\x1bFlushSandboxMetricsResponse\x128\n" +
+	"\n" +
+	"points_10m\x18\x01 \x03(\v2\x19.hostagent.v1.MetricPointR\tpoints10m\x126\n" +
+	"\tpoints_2h\x18\x02 \x03(\v2\x19.hostagent.v1.MetricPointR\bpoints2h\x128\n" +
+	"\n" +
+	"points_24h\x18\x03 \x03(\v2\x19.hostagent.v1.MetricPointR\tpoints24h\"\x83\x01\n" +
+	"\x14FlattenRootfsRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x17\n" +
+	"\ateam_id\x18\x03 \x01(\tR\x06teamId\x12\x1f\n" +
+	"\vtemplate_id\x18\x04 \x01(\tR\n" +
+	"templateId\"6\n" +
+	"\x15FlattenRootfsResponse\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x01 \x01(\x03R\tsizeBytes2\xc8\f\n" +
 	"\x10HostAgentService\x12X\n" +
 	"\rCreateSandbox\x12\".hostagent.v1.CreateSandboxRequest\x1a#.hostagent.v1.CreateSandboxResponse\x12[\n" +
 	"\x0eDestroySandbox\x12#.hostagent.v1.DestroySandboxRequest\x1a$.hostagent.v1.DestroySandboxResponse\x12U\n" +
@@ -1971,7 +2558,11 @@ const file_hostagent_proto_rawDesc = "" +
 	"ExecStream\x12\x1f.hostagent.v1.ExecStreamRequest\x1a .hostagent.v1.ExecStreamResponse0\x01\x12`\n" +
 	"\x0fWriteFileStream\x12$.hostagent.v1.WriteFileStreamRequest\x1a%.hostagent.v1.WriteFileStreamResponse(\x01\x12]\n" +
 	"\x0eReadFileStream\x12#.hostagent.v1.ReadFileStreamRequest\x1a$.hostagent.v1.ReadFileStreamResponse0\x01\x12R\n" +
-	"\vPingSandbox\x12 .hostagent.v1.PingSandboxRequest\x1a!.hostagent.v1.PingSandboxResponseB\xb0\x01\n" +
+	"\vPingSandbox\x12 .hostagent.v1.PingSandboxRequest\x1a!.hostagent.v1.PingSandboxResponse\x12L\n" +
+	"\tTerminate\x12\x1e.hostagent.v1.TerminateRequest\x1a\x1f.hostagent.v1.TerminateResponse\x12d\n" +
+	"\x11GetSandboxMetrics\x12&.hostagent.v1.GetSandboxMetricsRequest\x1a'.hostagent.v1.GetSandboxMetricsResponse\x12j\n" +
+	"\x13FlushSandboxMetrics\x12(.hostagent.v1.FlushSandboxMetricsRequest\x1a).hostagent.v1.FlushSandboxMetricsResponse\x12X\n" +
+	"\rFlattenRootfs\x12\".hostagent.v1.FlattenRootfsRequest\x1a#.hostagent.v1.FlattenRootfsResponseB\xb0\x01\n" +
 	"\x10com.hostagent.v1B\x0eHostagentProtoP\x01Z;git.omukk.dev/wrenn/sandbox/proto/hostagent/gen;hostagentv1\xa2\x02\x03HXX\xaa\x02\fHostagent.V1\xca\x02\fHostagent\\V1\xe2\x02\x18Hostagent\\V1\\GPBMetadata\xea\x02\rHostagent::V1b\x06proto3"
 
 var (
@@ -1986,41 +2577,50 @@ func file_hostagent_proto_rawDescGZIP() []byte {
 	return file_hostagent_proto_rawDescData
 }
 
-var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
 var file_hostagent_proto_goTypes = []any{
-	(*CreateSandboxRequest)(nil),    // 0: hostagent.v1.CreateSandboxRequest
-	(*CreateSandboxResponse)(nil),   // 1: hostagent.v1.CreateSandboxResponse
-	(*DestroySandboxRequest)(nil),   // 2: hostagent.v1.DestroySandboxRequest
-	(*DestroySandboxResponse)(nil),  // 3: hostagent.v1.DestroySandboxResponse
-	(*PauseSandboxRequest)(nil),     // 4: hostagent.v1.PauseSandboxRequest
-	(*PauseSandboxResponse)(nil),    // 5: hostagent.v1.PauseSandboxResponse
-	(*ResumeSandboxRequest)(nil),    // 6: hostagent.v1.ResumeSandboxRequest
-	(*ResumeSandboxResponse)(nil),   // 7: hostagent.v1.ResumeSandboxResponse
-	(*CreateSnapshotRequest)(nil),   // 8: hostagent.v1.CreateSnapshotRequest
-	(*CreateSnapshotResponse)(nil),  // 9: hostagent.v1.CreateSnapshotResponse
-	(*DeleteSnapshotRequest)(nil),   // 10: hostagent.v1.DeleteSnapshotRequest
-	(*DeleteSnapshotResponse)(nil),  // 11: hostagent.v1.DeleteSnapshotResponse
-	(*ExecRequest)(nil),             // 12: hostagent.v1.ExecRequest
-	(*ExecResponse)(nil),            // 13: hostagent.v1.ExecResponse
-	(*ListSandboxesRequest)(nil),    // 14: hostagent.v1.ListSandboxesRequest
-	(*ListSandboxesResponse)(nil),   // 15: hostagent.v1.ListSandboxesResponse
-	(*SandboxInfo)(nil),             // 16: hostagent.v1.SandboxInfo
-	(*WriteFileRequest)(nil),        // 17: hostagent.v1.WriteFileRequest
-	(*WriteFileResponse)(nil),       // 18: hostagent.v1.WriteFileResponse
-	(*ReadFileRequest)(nil),         // 19: hostagent.v1.ReadFileRequest
-	(*ReadFileResponse)(nil),        // 20: hostagent.v1.ReadFileResponse
-	(*ExecStreamRequest)(nil),       // 21: hostagent.v1.ExecStreamRequest
-	(*ExecStreamResponse)(nil),      // 22: hostagent.v1.ExecStreamResponse
-	(*ExecStreamStart)(nil),         // 23: hostagent.v1.ExecStreamStart
-	(*ExecStreamData)(nil),          // 24: hostagent.v1.ExecStreamData
-	(*ExecStreamEnd)(nil),           // 25: hostagent.v1.ExecStreamEnd
-	(*WriteFileStreamRequest)(nil),  // 26: hostagent.v1.WriteFileStreamRequest
-	(*WriteFileStreamMeta)(nil),     // 27: hostagent.v1.WriteFileStreamMeta
-	(*WriteFileStreamResponse)(nil), // 28: hostagent.v1.WriteFileStreamResponse
-	(*ReadFileStreamRequest)(nil),   // 29: hostagent.v1.ReadFileStreamRequest
-	(*ReadFileStreamResponse)(nil),  // 30: hostagent.v1.ReadFileStreamResponse
-	(*PingSandboxRequest)(nil),      // 31: hostagent.v1.PingSandboxRequest
-	(*PingSandboxResponse)(nil),     // 32: hostagent.v1.PingSandboxResponse
+	(*CreateSandboxRequest)(nil),        // 0: hostagent.v1.CreateSandboxRequest
+	(*CreateSandboxResponse)(nil),       // 1: hostagent.v1.CreateSandboxResponse
+	(*DestroySandboxRequest)(nil),       // 2: hostagent.v1.DestroySandboxRequest
+	(*DestroySandboxResponse)(nil),      // 3: hostagent.v1.DestroySandboxResponse
+	(*PauseSandboxRequest)(nil),         // 4: hostagent.v1.PauseSandboxRequest
+	(*PauseSandboxResponse)(nil),        // 5: hostagent.v1.PauseSandboxResponse
+	(*ResumeSandboxRequest)(nil),        // 6: hostagent.v1.ResumeSandboxRequest
+	(*ResumeSandboxResponse)(nil),       // 7: hostagent.v1.ResumeSandboxResponse
+	(*CreateSnapshotRequest)(nil),       // 8: hostagent.v1.CreateSnapshotRequest
+	(*CreateSnapshotResponse)(nil),      // 9: hostagent.v1.CreateSnapshotResponse
+	(*DeleteSnapshotRequest)(nil),       // 10: hostagent.v1.DeleteSnapshotRequest
+	(*DeleteSnapshotResponse)(nil),      // 11: hostagent.v1.DeleteSnapshotResponse
+	(*ExecRequest)(nil),                 // 12: hostagent.v1.ExecRequest
+	(*ExecResponse)(nil),                // 13: hostagent.v1.ExecResponse
+	(*ListSandboxesRequest)(nil),        // 14: hostagent.v1.ListSandboxesRequest
+	(*ListSandboxesResponse)(nil),       // 15: hostagent.v1.ListSandboxesResponse
+	(*SandboxInfo)(nil),                 // 16: hostagent.v1.SandboxInfo
+	(*WriteFileRequest)(nil),            // 17: hostagent.v1.WriteFileRequest
+	(*WriteFileResponse)(nil),           // 18: hostagent.v1.WriteFileResponse
+	(*ReadFileRequest)(nil),             // 19: hostagent.v1.ReadFileRequest
+	(*ReadFileResponse)(nil),            // 20: hostagent.v1.ReadFileResponse
+	(*ExecStreamRequest)(nil),           // 21: hostagent.v1.ExecStreamRequest
+	(*ExecStreamResponse)(nil),          // 22: hostagent.v1.ExecStreamResponse
+	(*ExecStreamStart)(nil),             // 23: hostagent.v1.ExecStreamStart
+	(*ExecStreamData)(nil),              // 24: hostagent.v1.ExecStreamData
+	(*ExecStreamEnd)(nil),               // 25: hostagent.v1.ExecStreamEnd
+	(*WriteFileStreamRequest)(nil),      // 26: hostagent.v1.WriteFileStreamRequest
+	(*WriteFileStreamMeta)(nil),         // 27: hostagent.v1.WriteFileStreamMeta
+	(*WriteFileStreamResponse)(nil),     // 28: hostagent.v1.WriteFileStreamResponse
+	(*ReadFileStreamRequest)(nil),       // 29: hostagent.v1.ReadFileStreamRequest
+	(*ReadFileStreamResponse)(nil),      // 30: hostagent.v1.ReadFileStreamResponse
+	(*PingSandboxRequest)(nil),          // 31: hostagent.v1.PingSandboxRequest
+	(*PingSandboxResponse)(nil),         // 32: hostagent.v1.PingSandboxResponse
+	(*TerminateRequest)(nil),            // 33: hostagent.v1.TerminateRequest
+	(*TerminateResponse)(nil),           // 34: hostagent.v1.TerminateResponse
+	(*MetricPoint)(nil),                 // 35: hostagent.v1.MetricPoint
+	(*GetSandboxMetricsRequest)(nil),    // 36: hostagent.v1.GetSandboxMetricsRequest
+	(*GetSandboxMetricsResponse)(nil),   // 37: hostagent.v1.GetSandboxMetricsResponse
+	(*FlushSandboxMetricsRequest)(nil),  // 38: hostagent.v1.FlushSandboxMetricsRequest
+	(*FlushSandboxMetricsResponse)(nil), // 39: hostagent.v1.FlushSandboxMetricsResponse
+	(*FlattenRootfsRequest)(nil),        // 40: hostagent.v1.FlattenRootfsRequest
+	(*FlattenRootfsResponse)(nil),       // 41: hostagent.v1.FlattenRootfsResponse
 }
 var file_hostagent_proto_depIdxs = []int32{
 	16, // 0: hostagent.v1.ListSandboxesResponse.sandboxes:type_name -> hostagent.v1.SandboxInfo
@@ -2028,39 +2628,51 @@ var file_hostagent_proto_depIdxs = []int32{
 	24, // 2: hostagent.v1.ExecStreamResponse.data:type_name -> hostagent.v1.ExecStreamData
 	25, // 3: hostagent.v1.ExecStreamResponse.end:type_name -> hostagent.v1.ExecStreamEnd
 	27, // 4: hostagent.v1.WriteFileStreamRequest.meta:type_name -> hostagent.v1.WriteFileStreamMeta
-	0,  // 5: hostagent.v1.HostAgentService.CreateSandbox:input_type -> hostagent.v1.CreateSandboxRequest
-	2,  // 6: hostagent.v1.HostAgentService.DestroySandbox:input_type -> hostagent.v1.DestroySandboxRequest
-	4,  // 7: hostagent.v1.HostAgentService.PauseSandbox:input_type -> hostagent.v1.PauseSandboxRequest
-	6,  // 8: hostagent.v1.HostAgentService.ResumeSandbox:input_type -> hostagent.v1.ResumeSandboxRequest
-	12, // 9: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
-	14, // 10: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
-	17, // 11: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
-	19, // 12: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
-	8,  // 13: hostagent.v1.HostAgentService.CreateSnapshot:input_type -> hostagent.v1.CreateSnapshotRequest
-	10, // 14: hostagent.v1.HostAgentService.DeleteSnapshot:input_type -> hostagent.v1.DeleteSnapshotRequest
-	21, // 15: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
-	26, // 16: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
-	29, // 17: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
-	31, // 18: hostagent.v1.HostAgentService.PingSandbox:input_type -> hostagent.v1.PingSandboxRequest
-	1,  // 19: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
-	3,  // 20: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
-	5,  // 21: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
-	7,  // 22: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
-	13, // 23: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
-	15, // 24: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
-	18, // 25: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
-	20, // 26: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
-	9,  // 27: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
-	11, // 28: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
-	22, // 29: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
-	28, // 30: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
-	30, // 31: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
-	32, // 32: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
-	19, // [19:33] is the sub-list for method output_type
-	5,  // [5:19] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	35, // 5: hostagent.v1.GetSandboxMetricsResponse.points:type_name -> hostagent.v1.MetricPoint
+	35, // 6: hostagent.v1.FlushSandboxMetricsResponse.points_10m:type_name -> hostagent.v1.MetricPoint
+	35, // 7: hostagent.v1.FlushSandboxMetricsResponse.points_2h:type_name -> hostagent.v1.MetricPoint
+	35, // 8: hostagent.v1.FlushSandboxMetricsResponse.points_24h:type_name -> hostagent.v1.MetricPoint
+	0,  // 9: hostagent.v1.HostAgentService.CreateSandbox:input_type -> hostagent.v1.CreateSandboxRequest
+	2,  // 10: hostagent.v1.HostAgentService.DestroySandbox:input_type -> hostagent.v1.DestroySandboxRequest
+	4,  // 11: hostagent.v1.HostAgentService.PauseSandbox:input_type -> hostagent.v1.PauseSandboxRequest
+	6,  // 12: hostagent.v1.HostAgentService.ResumeSandbox:input_type -> hostagent.v1.ResumeSandboxRequest
+	12, // 13: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
+	14, // 14: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
+	17, // 15: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
+	19, // 16: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
+	8,  // 17: hostagent.v1.HostAgentService.CreateSnapshot:input_type -> hostagent.v1.CreateSnapshotRequest
+	10, // 18: hostagent.v1.HostAgentService.DeleteSnapshot:input_type -> hostagent.v1.DeleteSnapshotRequest
+	21, // 19: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
+	26, // 20: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
+	29, // 21: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
+	31, // 22: hostagent.v1.HostAgentService.PingSandbox:input_type -> hostagent.v1.PingSandboxRequest
+	33, // 23: hostagent.v1.HostAgentService.Terminate:input_type -> hostagent.v1.TerminateRequest
+	36, // 24: hostagent.v1.HostAgentService.GetSandboxMetrics:input_type -> hostagent.v1.GetSandboxMetricsRequest
+	38, // 25: hostagent.v1.HostAgentService.FlushSandboxMetrics:input_type -> hostagent.v1.FlushSandboxMetricsRequest
+	40, // 26: hostagent.v1.HostAgentService.FlattenRootfs:input_type -> hostagent.v1.FlattenRootfsRequest
+	1,  // 27: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
+	3,  // 28: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
+	5,  // 29: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
+	7,  // 30: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
+	13, // 31: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
+	15, // 32: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
+	18, // 33: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
+	20, // 34: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
+	9,  // 35: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
+	11, // 36: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
+	22, // 37: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
+	28, // 38: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
+	30, // 39: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
+	32, // 40: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
+	34, // 41: hostagent.v1.HostAgentService.Terminate:output_type -> hostagent.v1.TerminateResponse
+	37, // 42: hostagent.v1.HostAgentService.GetSandboxMetrics:output_type -> hostagent.v1.GetSandboxMetricsResponse
+	39, // 43: hostagent.v1.HostAgentService.FlushSandboxMetrics:output_type -> hostagent.v1.FlushSandboxMetricsResponse
+	41, // 44: hostagent.v1.HostAgentService.FlattenRootfs:output_type -> hostagent.v1.FlattenRootfsResponse
+	27, // [27:45] is the sub-list for method output_type
+	9,  // [9:27] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_hostagent_proto_init() }
@@ -2087,7 +2699,7 @@ func file_hostagent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hostagent_proto_rawDesc), len(file_hostagent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   33,
+			NumMessages:   42,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

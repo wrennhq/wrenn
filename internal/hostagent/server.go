@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
@@ -22,12 +24,28 @@ import (
 // Server implements the HostAgentService Connect RPC handler.
 type Server struct {
 	hostagentv1connect.UnimplementedHostAgentServiceHandler
-	mgr *sandbox.Manager
+	mgr       *sandbox.Manager
+	terminate func() // called when the CP requests agent termination
 }
 
 // NewServer creates a new host agent RPC server.
-func NewServer(mgr *sandbox.Manager) *Server {
-	return &Server{mgr: mgr}
+// terminate is invoked (in a goroutine) when the CP calls the Terminate RPC,
+// allowing main to perform a clean shutdown.
+func NewServer(mgr *sandbox.Manager, terminate func()) *Server {
+	return &Server{mgr: mgr, terminate: terminate}
+}
+
+// parseUUIDString parses a UUID hex string into a pgtype.UUID.
+// An empty string yields an all-zeros UUID (valid).
+func parseUUIDString(s string) (pgtype.UUID, error) {
+	if s == "" {
+		return pgtype.UUID{Bytes: [16]byte{}, Valid: true}, nil
+	}
+	parsed, err := uuid.Parse(s)
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("invalid UUID %q: %w", s, err)
+	}
+	return pgtype.UUID{Bytes: parsed, Valid: true}, nil
 }
 
 func (s *Server) CreateSandbox(
@@ -36,7 +54,16 @@ func (s *Server) CreateSandbox(
 ) (*connect.Response[pb.CreateSandboxResponse], error) {
 	msg := req.Msg
 
-	sb, err := s.mgr.Create(ctx, msg.SandboxId, msg.Template, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec))
+	teamID, err := parseUUIDString(msg.TeamId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err := parseUUIDString(msg.TemplateId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	sb, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create sandbox: %w", err))
 	}
@@ -87,12 +114,21 @@ func (s *Server) CreateSnapshot(
 	ctx context.Context,
 	req *connect.Request[pb.CreateSnapshotRequest],
 ) (*connect.Response[pb.CreateSnapshotResponse], error) {
-	sizeBytes, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, req.Msg.Name)
+	msg := req.Msg
+	teamID, err := parseUUIDString(msg.TeamId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err := parseUUIDString(msg.TemplateId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	sizeBytes, err := s.mgr.CreateSnapshot(ctx, msg.SandboxId, teamID, templateID)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create snapshot: %w", err))
 	}
 	return connect.NewResponse(&pb.CreateSnapshotResponse{
-		Name:      req.Msg.Name,
 		SizeBytes: sizeBytes,
 	}), nil
 }
@@ -101,10 +137,43 @@ func (s *Server) DeleteSnapshot(
 	ctx context.Context,
 	req *connect.Request[pb.DeleteSnapshotRequest],
 ) (*connect.Response[pb.DeleteSnapshotResponse], error) {
-	if err := s.mgr.DeleteSnapshot(req.Msg.Name); err != nil {
+	msg := req.Msg
+	teamID, err := parseUUIDString(msg.TeamId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err := parseUUIDString(msg.TemplateId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	if err := s.mgr.DeleteSnapshot(teamID, templateID); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("delete snapshot: %w", err))
 	}
 	return connect.NewResponse(&pb.DeleteSnapshotResponse{}), nil
+}
+
+func (s *Server) FlattenRootfs(
+	ctx context.Context,
+	req *connect.Request[pb.FlattenRootfsRequest],
+) (*connect.Response[pb.FlattenRootfsResponse], error) {
+	msg := req.Msg
+	teamID, err := parseUUIDString(msg.TeamId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err := parseUUIDString(msg.TemplateId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	sizeBytes, err := s.mgr.FlattenRootfs(ctx, msg.SandboxId, teamID, templateID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("flatten rootfs: %w", err))
+	}
+	return connect.NewResponse(&pb.FlattenRootfsResponse{
+		SizeBytes: sizeBytes,
+	}), nil
 }
 
 func (s *Server) PingSandbox(
@@ -397,7 +466,8 @@ func (s *Server) ListSandboxes(
 		infos[i] = &pb.SandboxInfo{
 			SandboxId:        sb.ID,
 			Status:           string(sb.Status),
-			Template:         sb.Template,
+			TeamId:           uuid.UUID(sb.TemplateTeamID).String(),
+			TemplateId:       uuid.UUID(sb.TemplateID).String(),
 			Vcpus:            int32(sb.VCPUs),
 			MemoryMb:         int32(sb.MemoryMB),
 			HostIp:           sb.HostIP.String(),
@@ -411,4 +481,67 @@ func (s *Server) ListSandboxes(
 		Sandboxes:            infos,
 		AutoPausedSandboxIds: s.mgr.DrainAutoPausedIDs(),
 	}), nil
+}
+
+func (s *Server) Terminate(
+	_ context.Context,
+	_ *connect.Request[pb.TerminateRequest],
+) (*connect.Response[pb.TerminateResponse], error) {
+	slog.Info("terminate RPC received — scheduling shutdown")
+	if s.terminate != nil {
+		go s.terminate()
+	}
+	return connect.NewResponse(&pb.TerminateResponse{}), nil
+}
+
+func (s *Server) GetSandboxMetrics(
+	_ context.Context,
+	req *connect.Request[pb.GetSandboxMetricsRequest],
+) (*connect.Response[pb.GetSandboxMetricsResponse], error) {
+	msg := req.Msg
+
+	points, err := s.mgr.GetMetrics(msg.SandboxId, msg.Range)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		if strings.Contains(err.Error(), "invalid range") {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	return connect.NewResponse(&pb.GetSandboxMetricsResponse{Points: metricPointsToPB(points)}), nil
+}
+
+func (s *Server) FlushSandboxMetrics(
+	_ context.Context,
+	req *connect.Request[pb.FlushSandboxMetricsRequest],
+) (*connect.Response[pb.FlushSandboxMetricsResponse], error) {
+	pts10m, pts2h, pts24h, err := s.mgr.FlushMetrics(req.Msg.SandboxId)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	return connect.NewResponse(&pb.FlushSandboxMetricsResponse{
+		Points_10M: metricPointsToPB(pts10m),
+		Points_2H:  metricPointsToPB(pts2h),
+		Points_24H: metricPointsToPB(pts24h),
+	}), nil
+}
+
+func metricPointsToPB(pts []sandbox.MetricPoint) []*pb.MetricPoint {
+	out := make([]*pb.MetricPoint, len(pts))
+	for i, p := range pts {
+		out[i] = &pb.MetricPoint{
+			TimestampUnix: p.Timestamp.Unix(),
+			CpuPct:        p.CPUPct,
+			MemBytes:      p.MemBytes,
+			DiskBytes:     p.DiskBytes,
+		}
+	}
+	return out
 }

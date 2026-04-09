@@ -14,17 +14,18 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type execStreamHandler struct {
-	db    *db.Queries
-	agent hostagentv1connect.HostAgentServiceClient
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newExecStreamHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *execStreamHandler {
-	return &execStreamHandler{db: db, agent: agent}
+func newExecStreamHandler(db *db.Queries, pool *lifecycle.HostClientPool) *execStreamHandler {
+	return &execStreamHandler{db: db, pool: pool}
 }
 
 var upgrader = websocket.Upgrader{
@@ -48,9 +49,15 @@ type wsOutMsg struct {
 
 // ExecStream handles WS /v1/sandboxes/{id}/exec/stream.
 func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -80,12 +87,18 @@ func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		sendWSError(conn, "sandbox host is not reachable")
+		return
+	}
+
 	// Open streaming exec to host agent.
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	stream, err := h.agent.ExecStream(streamCtx, connect.NewRequest(&pb.ExecStreamRequest{
-		SandboxId: sandboxID,
+	stream, err := agent.ExecStream(streamCtx, connect.NewRequest(&pb.ExecStreamRequest{
+		SandboxId: sandboxIDStr,
 		Cmd:       startMsg.Cmd,
 		Args:      startMsg.Args,
 	}))
@@ -151,7 +164,7 @@ func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
 			Valid: true,
 		},
 	}); err != nil {
-		slog.Warn("failed to update last active after stream exec", "sandbox_id", sandboxID, "error", err)
+		slog.Warn("failed to update last active after stream exec", "sandbox_id", sandboxIDStr, "error", err)
 	}
 }
 

@@ -12,26 +12,33 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
 	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
 )
 
 type filesStreamHandler struct {
-	db    *db.Queries
-	agent hostagentv1connect.HostAgentServiceClient
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newFilesStreamHandler(db *db.Queries, agent hostagentv1connect.HostAgentServiceClient) *filesStreamHandler {
-	return &filesStreamHandler{db: db, agent: agent}
+func newFilesStreamHandler(db *db.Queries, pool *lifecycle.HostClientPool) *filesStreamHandler {
+	return &filesStreamHandler{db: db, pool: pool}
 }
 
 // StreamUpload handles POST /v1/sandboxes/{id}/files/stream/write.
 // Expects multipart/form-data with "path" text field and "file" file field.
 // Streams file content directly from the request body to the host agent without buffering.
 func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -88,14 +95,20 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	}
 	defer filePart.Close()
 
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
 	// Open client-streaming RPC to host agent.
-	stream := h.agent.WriteFileStream(ctx)
+	stream := agent.WriteFileStream(ctx)
 
 	// Send metadata first.
 	if err := stream.Send(&pb.WriteFileStreamRequest{
 		Content: &pb.WriteFileStreamRequest_Meta{
 			Meta: &pb.WriteFileStreamMeta{
-				SandboxId: sandboxID,
+				SandboxId: sandboxIDStr,
 				Path:      filePath,
 			},
 		},
@@ -140,9 +153,15 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 // StreamDownload handles POST /v1/sandboxes/{id}/files/stream/read.
 // Accepts JSON body with path, streams file content back without buffering.
 func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Request) {
-	sandboxID := chi.URLParam(r, "id")
+	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
+
+	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		return
+	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
@@ -164,9 +183,15 @@ func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		return
+	}
+
 	// Open server-streaming RPC to host agent.
-	stream, err := h.agent.ReadFileStream(ctx, connect.NewRequest(&pb.ReadFileStreamRequest{
-		SandboxId: sandboxID,
+	stream, err := agent.ReadFileStream(ctx, connect.NewRequest(&pb.ReadFileStreamRequest{
+		SandboxId: sandboxIDStr,
 		Path:      req.Path,
 	}))
 	if err != nil {

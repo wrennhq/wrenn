@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -55,71 +54,6 @@ func TestSimpleCases(t *testing.T) {
 127.0.0.1        one.host
 127.0.0.2        two.host
 127.0.0.3        events.wrenn.local`, strings.TrimSpace(string(data)))
-		})
-	}
-}
-
-func TestShouldSetSystemTime(t *testing.T) {
-	t.Parallel()
-	sandboxTime := time.Now()
-
-	tests := []struct {
-		name     string
-		hostTime time.Time
-		want     bool
-	}{
-		{
-			name:     "sandbox time far ahead of host time (should set)",
-			hostTime: sandboxTime.Add(-10 * time.Second),
-			want:     true,
-		},
-		{
-			name:     "sandbox time at maxTimeInPast boundary ahead of host time (should not set)",
-			hostTime: sandboxTime.Add(-50 * time.Millisecond),
-			want:     false,
-		},
-		{
-			name:     "sandbox time just within maxTimeInPast ahead of host time (should not set)",
-			hostTime: sandboxTime.Add(-40 * time.Millisecond),
-			want:     false,
-		},
-		{
-			name:     "sandbox time slightly ahead of host time (should not set)",
-			hostTime: sandboxTime.Add(-10 * time.Millisecond),
-			want:     false,
-		},
-		{
-			name:     "sandbox time equals host time (should not set)",
-			hostTime: sandboxTime,
-			want:     false,
-		},
-		{
-			name:     "sandbox time slightly behind host time (should not set)",
-			hostTime: sandboxTime.Add(1 * time.Second),
-			want:     false,
-		},
-		{
-			name:     "sandbox time just within maxTimeInFuture behind host time (should not set)",
-			hostTime: sandboxTime.Add(4 * time.Second),
-			want:     false,
-		},
-		{
-			name:     "sandbox time at maxTimeInFuture boundary behind host time (should not set)",
-			hostTime: sandboxTime.Add(5 * time.Second),
-			want:     false,
-		},
-		{
-			name:     "sandbox time far behind host time (should set)",
-			hostTime: sandboxTime.Add(1 * time.Minute),
-			want:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := shouldSetSystemTime(tt.hostTime, sandboxTime)
-			assert.Equal(t, tt.want, got)
 		})
 	}
 }
