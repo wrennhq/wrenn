@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -15,6 +16,7 @@ import (
 	"git.omukk.dev/wrenn/sandbox/internal/db"
 	"git.omukk.dev/wrenn/sandbox/internal/events"
 	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/sandbox/internal/validate"
 )
 
 // Valid providers.
@@ -72,9 +74,11 @@ type CreateResult struct {
 
 // Create creates a new notification channel.
 func (s *Service) Create(ctx context.Context, p CreateParams) (CreateResult, error) {
-	if p.Name == "" {
-		return CreateResult{}, fmt.Errorf("invalid: channel name is required")
+	clean, err := cleanName(p.Name)
+	if err != nil {
+		return CreateResult{}, err
 	}
+	p.Name = clean
 
 	if !validProviders[p.Provider] {
 		return CreateResult{}, fmt.Errorf("invalid: unsupported provider %q", p.Provider)
@@ -154,9 +158,11 @@ func (s *Service) Get(ctx context.Context, channelID, teamID pgtype.UUID) (db.Ch
 
 // Update updates a channel's name and event types.
 func (s *Service) Update(ctx context.Context, channelID, teamID pgtype.UUID, name string, eventTypes []string) (db.Channel, error) {
-	if name == "" {
-		return db.Channel{}, fmt.Errorf("invalid: channel name is required")
+	clean, err := cleanName(name)
+	if err != nil {
+		return db.Channel{}, err
 	}
+	name = clean
 
 	if len(eventTypes) == 0 {
 		return db.Channel{}, fmt.Errorf("invalid: at least one event type is required")
@@ -269,6 +275,18 @@ func (s *Service) Test(ctx context.Context, provider string, config map[string]s
 // Delete removes a channel by ID, scoped to the given team.
 func (s *Service) Delete(ctx context.Context, channelID, teamID pgtype.UUID) error {
 	return s.DB.DeleteChannelByTeam(ctx, db.DeleteChannelByTeamParams{ID: channelID, TeamID: teamID})
+}
+
+// cleanName normalises a channel name: trim whitespace, lowercase, replace
+// spaces with hyphens, then validate against SafeName rules.
+func cleanName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	name = strings.ToLower(name)
+	name = strings.ReplaceAll(name, " ", "-")
+	if err := validate.SafeName(name); err != nil {
+		return "", fmt.Errorf("invalid: %w", err)
+	}
+	return name, nil
 }
 
 func generateSecret() string {

@@ -71,7 +71,7 @@ func New(
 	statsH := newStatsHandler(statsSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
 	buildH := newBuildHandler(buildSvc, queries, pool)
-	channelH := newChannelHandler(channelSvc)
+	channelH := newChannelHandler(channelSvc, al)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)

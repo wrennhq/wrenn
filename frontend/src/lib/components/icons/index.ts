@@ -27,3 +27,4 @@ export { default as IconServer } from './IconServer.svelte';
 export { default as IconGear } from './IconGear.svelte';
 export { default as IconShield } from './IconShield.svelte';
 export { default as IconMetrics } from './IconMetrics.svelte';
+export { default as IconBroadcast } from './IconBroadcast.svelte';

@@ -39,7 +39,7 @@ func discordURL(config map[string]string) (string, error) {
 		return "", fmt.Errorf("unexpected discord webhook URL format")
 	}
 	webhookID, token := parts[2], parts[3]
-	return fmt.Sprintf("discord://%s@%s", token, webhookID), nil
+	return fmt.Sprintf("discord://%s@%s?splitLines=No", token, webhookID), nil
 }
 
 // slackURL converts https://hooks.slack.com/services/T.../B.../XXX → slack://T.../B.../XXX

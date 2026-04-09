@@ -281,6 +281,76 @@ func (l *AuditLogger) LogTeamRename(ctx context.Context, ac auth.AuthContext, te
 	})
 }
 
+// --- Channel events (scope: team) ---
+
+func (l *AuditLogger) LogChannelCreate(ctx context.Context, ac auth.AuthContext, channelID pgtype.UUID, name, provider string) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       ac.TeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "channel",
+		ResourceID:   optText(id.FormatChannelID(channelID)),
+		Action:       "create",
+		Scope:        "team",
+		Status:       "success",
+		Metadata:     marshalMeta(map[string]any{"name": name, "provider": provider}),
+	})
+}
+
+func (l *AuditLogger) LogChannelUpdate(ctx context.Context, ac auth.AuthContext, channelID pgtype.UUID) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       ac.TeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "channel",
+		ResourceID:   optText(id.FormatChannelID(channelID)),
+		Action:       "update",
+		Scope:        "team",
+		Status:       "info",
+		Metadata:     []byte("{}"),
+	})
+}
+
+func (l *AuditLogger) LogChannelRotateConfig(ctx context.Context, ac auth.AuthContext, channelID pgtype.UUID) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       ac.TeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "channel",
+		ResourceID:   optText(id.FormatChannelID(channelID)),
+		Action:       "rotate_config",
+		Scope:        "team",
+		Status:       "info",
+		Metadata:     []byte("{}"),
+	})
+}
+
+func (l *AuditLogger) LogChannelDelete(ctx context.Context, ac auth.AuthContext, channelID pgtype.UUID) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       ac.TeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "channel",
+		ResourceID:   optText(id.FormatChannelID(channelID)),
+		Action:       "delete",
+		Scope:        "team",
+		Status:       "warning",
+		Metadata:     []byte("{}"),
+	})
+}
+
 // --- API key events (scope: team) ---
 
 func (l *AuditLogger) LogAPIKeyCreate(ctx context.Context, ac auth.AuthContext, keyID pgtype.UUID, keyName string) {

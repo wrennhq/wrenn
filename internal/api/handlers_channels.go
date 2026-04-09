@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
+	"git.omukk.dev/wrenn/sandbox/internal/audit"
 	"git.omukk.dev/wrenn/sandbox/internal/auth"
 	"git.omukk.dev/wrenn/sandbox/internal/channels"
 	"git.omukk.dev/wrenn/sandbox/internal/db"
@@ -15,11 +16,12 @@ import (
 )
 
 type channelHandler struct {
-	svc *channels.Service
+	svc   *channels.Service
+	audit *audit.AuditLogger
 }
 
-func newChannelHandler(svc *channels.Service) *channelHandler {
-	return &channelHandler{svc: svc}
+func newChannelHandler(svc *channels.Service, al *audit.AuditLogger) *channelHandler {
+	return &channelHandler{svc: svc, audit: al}
 }
 
 type createChannelRequest struct {
@@ -93,6 +95,8 @@ func (h *channelHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, code, msg)
 		return
 	}
+
+	h.audit.LogChannelCreate(r.Context(), ac, result.Channel.ID, result.Channel.Name, result.Channel.Provider)
 
 	resp := channelToResponse(result.Channel)
 	if result.PlaintextSecret != "" {
@@ -168,6 +172,7 @@ func (h *channelHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogChannelUpdate(r.Context(), ac, channelID)
 	writeJSON(w, http.StatusOK, channelToResponse(ch))
 }
 
@@ -212,6 +217,7 @@ func (h *channelHandler) RotateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogChannelRotateConfig(r.Context(), ac, channelID)
 	writeJSON(w, http.StatusOK, channelToResponse(ch))
 }
 
@@ -231,5 +237,6 @@ func (h *channelHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogChannelDelete(r.Context(), ac, channelID)
 	w.WriteHeader(http.StatusNoContent)
 }
