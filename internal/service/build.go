@@ -13,12 +13,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 
-	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
-	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
-	"git.omukk.dev/wrenn/sandbox/internal/recipe"
-	"git.omukk.dev/wrenn/sandbox/internal/scheduler"
-	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/internal/recipe"
+	"git.omukk.dev/wrenn/wrenn/internal/scheduler"
+	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
 const (

@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
 )
 
 // TimeRange identifies a chart time window.

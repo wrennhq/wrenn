@@ -1,6 +1,6 @@
-# Wrenn Sandbox
+# Wrenn
 
-MicroVM-based code execution platform. Firecracker VMs, not containers. Pool-based pricing, persistent sandboxes, Python/TS/Go SDKs.
+Secure infrastructure for AI
 
 ## Deployment
 

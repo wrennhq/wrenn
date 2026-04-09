@@ -9,14 +9,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"git.omukk.dev/wrenn/sandbox/internal/audit"
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/auth/oauth"
-	"git.omukk.dev/wrenn/sandbox/internal/channels"
-	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
-	"git.omukk.dev/wrenn/sandbox/internal/scheduler"
-	"git.omukk.dev/wrenn/sandbox/internal/service"
+	"git.omukk.dev/wrenn/wrenn/internal/audit"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/auth/oauth"
+	"git.omukk.dev/wrenn/wrenn/internal/channels"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/internal/scheduler"
+	"git.omukk.dev/wrenn/wrenn/internal/service"
 )
 
 //go:embed openapi.yaml

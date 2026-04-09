@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"git.omukk.dev/wrenn/sandbox/internal/events"
+	"git.omukk.dev/wrenn/wrenn/internal/events"
 )
 
 // FormatMessage produces a human-readable notification string containing

@@ -15,12 +15,12 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/devicemapper"
-	"git.omukk.dev/wrenn/sandbox/internal/hostagent"
-	"git.omukk.dev/wrenn/sandbox/internal/network"
-	"git.omukk.dev/wrenn/sandbox/internal/sandbox"
-	"git.omukk.dev/wrenn/sandbox/proto/hostagent/gen/hostagentv1connect"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
+	"git.omukk.dev/wrenn/wrenn/internal/hostagent"
+	"git.omukk.dev/wrenn/wrenn/internal/network"
+	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 )
 
 func main() {

@@ -10,11 +10,11 @@ import (
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
-	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
-	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
+	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
 type filesStreamHandler struct {

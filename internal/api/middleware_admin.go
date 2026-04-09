@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
 )
 
 // requireAdmin validates that the authenticated user is a platform admin.

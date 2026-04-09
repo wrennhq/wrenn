@@ -9,12 +9,12 @@ import (
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
-	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
-	"git.omukk.dev/wrenn/sandbox/internal/scheduler"
-	"git.omukk.dev/wrenn/sandbox/internal/validate"
-	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/internal/scheduler"
+	"git.omukk.dev/wrenn/wrenn/internal/validate"
+	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
 // SandboxService provides sandbox lifecycle operations shared between the

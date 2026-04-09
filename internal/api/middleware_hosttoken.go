@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
 )
 
 // requireHostToken validates the X-Host-Token header containing a host JWT,

@@ -9,7 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
+	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
 // DefaultStepTimeout is the fallback timeout for RUN steps that carry no

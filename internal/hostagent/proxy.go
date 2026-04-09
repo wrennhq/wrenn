@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"git.omukk.dev/wrenn/sandbox/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
 )
 
 // ProxyHandler reverse-proxies HTTP requests to services running inside

@@ -54,9 +54,9 @@ User SDK → HTTPS/WS → Control Plane → Connect RPC → Host Agent → HTTP/
 
 | Binary | Module | Entry point | Runs as |
 |--------|--------|-------------|---------|
-| wrenn-cp | `git.omukk.dev/wrenn/sandbox` | `cmd/control-plane/main.go` | Unprivileged |
-| wrenn-agent | `git.omukk.dev/wrenn/sandbox` | `cmd/host-agent/main.go` | Root (NET_ADMIN + /dev/kvm) |
-| envd | `git.omukk.dev/wrenn/sandbox/envd` (standalone `envd/go.mod`) | `envd/main.go` | PID 1 inside guest VM |
+| wrenn-cp | `git.omukk.dev/wrenn/wrenn` | `cmd/control-plane/main.go` | Unprivileged |
+| wrenn-agent | `git.omukk.dev/wrenn/wrenn` | `cmd/host-agent/main.go` | Root (NET_ADMIN + /dev/kvm) |
+| envd | `git.omukk.dev/wrenn/wrenn/envd` (standalone `envd/go.mod`) | `envd/main.go` | PID 1 inside guest VM |
 
 envd is a **completely independent Go module**. It is never imported by the main module. The only connection is the protobuf contract. It compiles to a static binary baked into rootfs images.
 
@@ -89,7 +89,7 @@ Startup (`cmd/host-agent/main.go`) wires: root check → enable IP forwarding �
 
 ### envd (Guest Agent)
 
-**Module:** `envd/` with its own `go.mod` (`git.omukk.dev/wrenn/sandbox/envd`)
+**Module:** `envd/` with its own `go.mod` (`git.omukk.dev/wrenn/wrenn/envd`)
 
 Runs as PID 1 inside the microVM via `wrenn-init.sh` (mounts procfs/sysfs/dev, sets hostname, writes resolv.conf, then execs envd). Extracted from E2B (Apache 2.0), with shared packages internalized into `envd/internal/shared/`. Listens on TCP `0.0.0.0:49983`.
 

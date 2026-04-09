@@ -1,4 +1,4 @@
-module git.omukk.dev/wrenn/sandbox
+module git.omukk.dev/wrenn/wrenn
 
 go 1.25.8
 

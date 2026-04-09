@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/sandbox/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
 )
 
 // HostScheduler selects a host for a new sandbox. Implementations may use

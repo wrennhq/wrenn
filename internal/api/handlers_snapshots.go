@@ -13,15 +13,15 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/sandbox/internal/audit"
-	"git.omukk.dev/wrenn/sandbox/internal/auth"
-	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
-	"git.omukk.dev/wrenn/sandbox/internal/layout"
-	"git.omukk.dev/wrenn/sandbox/internal/lifecycle"
-	"git.omukk.dev/wrenn/sandbox/internal/service"
-	"git.omukk.dev/wrenn/sandbox/internal/validate"
-	pb "git.omukk.dev/wrenn/sandbox/proto/hostagent/gen"
+	"git.omukk.dev/wrenn/wrenn/internal/audit"
+	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/layout"
+	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/internal/service"
+	"git.omukk.dev/wrenn/wrenn/internal/validate"
+	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
 type snapshotHandler struct {

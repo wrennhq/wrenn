@@ -8,9 +8,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"git.omukk.dev/wrenn/sandbox/internal/db"
-	"git.omukk.dev/wrenn/sandbox/internal/events"
-	"git.omukk.dev/wrenn/sandbox/internal/id"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
+	"git.omukk.dev/wrenn/wrenn/internal/events"
+	"git.omukk.dev/wrenn/wrenn/internal/id"
 )
 
 const (
