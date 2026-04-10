@@ -29,6 +29,15 @@ service HostAgentService {
   // ReadFile reads a file from inside a sandbox.
   rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
 
+  // ListDir lists directory contents inside a sandbox.
+  rpc ListDir(ListDirRequest) returns (ListDirResponse);
+
+  // MakeDir creates a directory inside a sandbox.
+  rpc MakeDir(MakeDirRequest) returns (MakeDirResponse);
+
+  // RemovePath removes a file or directory inside a sandbox.
+  rpc RemovePath(RemovePathRequest) returns (RemovePathResponse);
+
   // CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
   // template, and destroys the sandbox.
   rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
@@ -268,6 +277,50 @@ message ReadFileStreamRequest {
 message ReadFileStreamResponse {
   bytes chunk = 1;
 }
+
+// ── Filesystem Operations ──────────────────────────────────────────
+
+message ListDirRequest {
+  string sandbox_id = 1;
+  string path = 2;
+  uint32 depth = 3;
+}
+
+message ListDirResponse {
+  repeated FileEntry entries = 1;
+}
+
+message FileEntry {
+  string name = 1;
+  string path = 2;
+  // "file", "directory", or "symlink".
+  string type = 3;
+  int64 size = 4;
+  uint32 mode = 5;
+  // Human-readable permissions string, e.g. "-rwxr-xr-x".
+  string permissions = 6;
+  string owner = 7;
+  string group = 8;
+  // Last modification time as Unix timestamp (seconds).
+  int64 modified_at = 9;
+  optional string symlink_target = 10;
+}
+
+message MakeDirRequest {
+  string sandbox_id = 1;
+  string path = 2;
+}
+
+message MakeDirResponse {
+  FileEntry entry = 1;
+}
+
+message RemovePathRequest {
+  string sandbox_id = 1;
+  string path = 2;
+}
+
+message RemovePathResponse {}
 
 // ── Ping ────────────────────────────────────────────────────────────
 

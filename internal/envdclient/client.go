@@ -282,3 +282,30 @@ func (c *Client) ListDir(ctx context.Context, path string, depth uint32) (*envdp
 
 	return resp.Msg, nil
 }
+
+// MakeDir creates a directory inside the sandbox.
+func (c *Client) MakeDir(ctx context.Context, path string) (*envdpb.MakeDirResponse, error) {
+	req := connect.NewRequest(&envdpb.MakeDirRequest{
+		Path: path,
+	})
+
+	resp, err := c.filesystem.MakeDir(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("make dir: %w", err)
+	}
+
+	return resp.Msg, nil
+}
+
+// Remove removes a file or directory inside the sandbox.
+func (c *Client) Remove(ctx context.Context, path string) error {
+	req := connect.NewRequest(&envdpb.RemoveRequest{
+		Path: path,
+	})
+
+	if _, err := c.filesystem.Remove(ctx, req); err != nil {
+		return fmt.Errorf("remove: %w", err)
+	}
+
+	return nil
+}
