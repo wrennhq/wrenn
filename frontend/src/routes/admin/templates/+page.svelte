@@ -419,7 +419,7 @@
 						<td class="px-4 py-3.5">
 							<div class="flex items-center gap-1.5">
 								<span class="font-mono text-meta text-[var(--color-text-primary)]">{tmpl.name}</span>
-								<CopyButton value={tmpl.name} label="Copied name" />
+								<CopyButton value={tmpl.name} />
 							</div>
 						</td>
 						<td class="px-4 py-3.5">

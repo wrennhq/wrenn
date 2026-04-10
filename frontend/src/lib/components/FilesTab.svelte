@@ -17,7 +17,7 @@
 	let { sandboxId, isRunning }: Props = $props();
 
 	// Directory navigation state
-	let currentPath = $state('/');
+	let currentPath = $state('~');
 	let entries = $state<FileEntry[]>([]);
 	let dirLoading = $state(false);
 	let dirError = $state<string | null>(null);
@@ -29,8 +29,9 @@
 	let fileError = $state<string | null>(null);
 
 	// Path input
-	let pathInput = $state('/');
+	let pathInput = $state('~');
 	let pathInputFocused = $state(false);
+	let pathInputEl = $state<HTMLInputElement | undefined>(undefined);
 
 	// Sorted entries: directories first, then files, alphabetical within each group
 	const sortedEntries = $derived(
@@ -51,6 +52,10 @@
 		return crumbs;
 	});
 
+	// Count of dirs vs files for the footer
+	const dirCount = $derived(entries.filter((e) => e.type === 'directory').length);
+	const fileCount = $derived(entries.filter((e) => e.type !== 'directory').length);
+
 	async function navigateTo(path: string) {
 		currentPath = normalizePath(path);
 		pathInput = currentPath;
@@ -61,6 +66,11 @@
 	}
 
 	function normalizePath(p: string): string {
+		// Let envd handle ~ expansion — pass through as-is
+		if (p === '~' || p.startsWith('~/')) {
+			return p;
+		}
+
 		if (!p.startsWith('/')) {
 			// Relative path — resolve against current directory
 			p = currentPath.replace(/\/$/, '') + '/' + p;
@@ -75,6 +85,13 @@
 		return '/' + resolved.join('/');
 	}
 
+	/** Derive the parent directory from an entry's absolute path. */
+	function parentFromEntry(entryPath: string): string {
+		const lastSlash = entryPath.lastIndexOf('/');
+		if (lastSlash <= 0) return '/';
+		return entryPath.slice(0, lastSlash);
+	}
+
 	async function loadDir() {
 		if (!isRunning) return;
 		dirLoading = true;
@@ -82,6 +99,11 @@
 		const result = await listDir(sandboxId, currentPath);
 		if (result.ok) {
 			entries = result.data.entries ?? [];
+			// Resolve actual path when envd expanded ~ or a relative path
+			if (!currentPath.startsWith('/') && entries.length > 0) {
+				currentPath = parentFromEntry(entries[0].path);
+				pathInput = currentPath;
+			}
 		} else {
 			dirError = result.error;
 			entries = [];
@@ -146,10 +168,7 @@
 		e.preventDefault();
 		const target = pathInput.trim();
 		if (!target) return;
-		// If ends with / or has no extension, treat as directory navigation
-		// Otherwise, attempt to open as a file
 		const resolved = normalizePath(target);
-		// Try to navigate — if it fails we'll show an error
 		navigateOrOpenFile(resolved);
 	}
 
@@ -157,9 +176,20 @@
 		// First try as directory
 		const dirResult = await listDir(sandboxId, path);
 		if (dirResult.ok) {
-			currentPath = path;
-			pathInput = path;
-			entries = dirResult.data.entries ?? [];
+			// Resolve actual path from entries (handles ~ expansion by envd)
+			const resolvedEntries = dirResult.data.entries ?? [];
+			let resolvedPath = path;
+			if (resolvedEntries.length > 0) {
+				// Derive parent dir from first entry's absolute path
+				const firstPath = resolvedEntries[0].path;
+				const lastSlash = firstPath.lastIndexOf('/');
+				if (lastSlash >= 0) {
+					resolvedPath = lastSlash === 0 ? '/' : firstPath.slice(0, lastSlash);
+				}
+			}
+			currentPath = resolvedPath;
+			pathInput = resolvedPath;
+			entries = resolvedEntries;
 			selectedFile = null;
 			fileContent = null;
 			fileError = null;
@@ -183,7 +213,6 @@
 			if (found && found.type !== 'directory') {
 				await selectFile(found);
 			} else {
-				// Not found in parent either — show error
 				dirError = `Not found: ${path}`;
 			}
 		} else {
@@ -204,20 +233,23 @@
 		return 'file';
 	}
 
-	function fmtModified(ts: number): string {
-		if (!ts) return '—';
-		return new Date(ts * 1000).toLocaleString([], {
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-		});
+	// File extension for subtle coloring
+	function fileExt(name: string): string {
+		const dot = name.lastIndexOf('.');
+		return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
 	}
 
-	// Load initial directory on mount
+	// Load initial directory on mount, falling back to / if home can't be resolved
 	$effect(() => {
 		if (isRunning) {
-			loadDir();
+			loadDir().then(() => {
+				// If ~ couldn't be resolved (empty dir or error), fall back to /
+				if (!currentPath.startsWith('/')) {
+					currentPath = '/';
+					pathInput = '/';
+					if (dirError) loadDir();
+				}
+			});
 		}
 	});
 </script>
@@ -230,7 +262,11 @@
 		background-color: var(--color-bg-3);
 	}
 	.file-row.active {
-		background-color: rgba(94, 140, 88, 0.08);
+		background-color: var(--color-accent-glow);
+		border-left: 2px solid var(--color-accent);
+	}
+	.file-row:not(.active) {
+		border-left: 2px solid transparent;
 	}
 
 	.preview-code {
@@ -238,23 +274,21 @@
 		-moz-tab-size: 4;
 	}
 
-	/* Thin scrollbar for file tree and preview */
-	.thin-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
-	.thin-scroll::-webkit-scrollbar-track { background: transparent; }
-	.thin-scroll::-webkit-scrollbar-thumb {
-		background: var(--color-bg-5);
-		border-radius: 3px;
+	/* Staggered row entrance */
+	@keyframes rowSlideIn {
+		from { opacity: 0; transform: translateX(-4px); }
+		to   { opacity: 1; transform: translateX(0); }
 	}
-	.thin-scroll::-webkit-scrollbar-thumb:hover {
-		background: var(--color-text-muted);
+	.row-enter {
+		animation: rowSlideIn 0.15s ease both;
 	}
 
-	@keyframes fadeIn {
-		from { opacity: 0; }
-		to   { opacity: 1; }
+	/* Line highlight on hover */
+	.code-line:hover .line-content {
+		background-color: var(--color-bg-3);
 	}
-	.fade-in {
-		animation: fadeIn 0.2s ease both;
+	.code-line:hover .line-num {
+		color: var(--color-text-tertiary);
 	}
 </style>
 
@@ -264,50 +298,52 @@
 			<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
 		</svg>
 		<span class="text-ui text-[var(--color-text-tertiary)]">
-			File browser is only available for running capsules.
+			File browser requires a running capsule.
 		</span>
 	</div>
 {:else}
 	<div class="flex flex-1 min-h-0">
 
 		<!-- Left panel: File tree -->
-		<div class="flex w-[380px] shrink-0 flex-col border-r border-[var(--color-border)]">
+		<div class="flex w-[380px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-2)]">
 
 			<!-- Path input -->
 			<form onsubmit={handlePathSubmit} class="border-b border-[var(--color-border)] px-4 py-3">
 				<div class="flex items-center gap-2 rounded-[var(--radius-input)] border px-3 py-1.5 transition-colors duration-150
 					{pathInputFocused
-						? 'border-[var(--color-accent)]/50 bg-[var(--color-bg-1)]'
-						: 'border-[var(--color-border)] bg-[var(--color-bg-2)]'}">
-					<svg class="shrink-0 text-[var(--color-text-muted)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<polyline points="16 3 21 3 21 8" />
-						<line x1="4" y1="20" x2="21" y2="3" />
-						<polyline points="21 16 21 21 16 21" />
-						<line x1="15" y1="15" x2="21" y2="21" />
-						<line x1="4" y1="4" x2="9" y2="9" />
-					</svg>
+						? 'border-[var(--color-accent)]/50 bg-[var(--color-bg-0)]'
+						: 'border-[var(--color-border)] bg-[var(--color-bg-1)]'}">
+					<!-- Terminal prompt icon -->
+					<span class="shrink-0 font-mono text-badge text-[var(--color-text-muted)] select-none" aria-hidden="true">
+						$
+					</span>
 					<input
 						type="text"
+						bind:this={pathInputEl}
 						bind:value={pathInput}
 						onfocus={() => (pathInputFocused = true)}
 						onblur={() => (pathInputFocused = false)}
 						onkeydown={handleKeydown}
-						placeholder="/path/to/file"
+						placeholder="Enter path..."
 						spellcheck="false"
 						autocomplete="off"
 						class="flex-1 bg-transparent font-mono text-meta text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-muted)]"
 					/>
 					<button
 						type="submit"
-						class="shrink-0 rounded-[3px] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-secondary)]"
+						class="shrink-0 flex items-center gap-1 rounded-[var(--radius-button)] px-2 py-0.5 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-glow-mid)] hover:text-[var(--color-accent-mid)]"
 					>
+						<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+							<line x1="5" y1="12" x2="19" y2="12" />
+							<polyline points="12 5 19 12 12 19" />
+						</svg>
 						Go
 					</button>
 				</div>
 			</form>
 
 			<!-- Breadcrumbs -->
-			<div class="flex items-center gap-1 border-b border-[var(--color-border)] px-4 py-2 overflow-x-auto">
+			<div class="flex items-center gap-0.5 border-b border-[var(--color-border)] px-4 py-2 overflow-x-auto">
 				{#each breadcrumbs() as crumb, i}
 					{#if i > 0}
 						<svg class="shrink-0 text-[var(--color-text-muted)]" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -316,16 +352,25 @@
 					{/if}
 					<button
 						onclick={() => navigateTo(crumb.path)}
-						class="shrink-0 rounded-[3px] px-1.5 py-0.5 font-mono text-label text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]
-							{i === breadcrumbs().length - 1 ? 'text-[var(--color-text-primary)]' : ''}"
+						class="shrink-0 rounded-[3px] px-1.5 py-0.5 font-mono text-label transition-colors hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]
+							{i === breadcrumbs().length - 1
+								? 'text-[var(--color-text-primary)]'
+								: 'text-[var(--color-text-tertiary)]'}"
 					>
-						{crumb.name}
+						{#if i === 0}
+							<!-- Root icon -->
+							<svg class="inline -mt-px" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+							</svg>
+						{:else}
+							{crumb.name}
+						{/if}
 					</button>
 				{/each}
 			</div>
 
 			<!-- File list -->
-			<div class="thin-scroll flex-1 overflow-y-auto">
+			<div class="flex-1 overflow-y-auto">
 				{#if dirLoading}
 					<div class="flex items-center justify-center py-12">
 						<div class="flex items-center gap-2 text-meta text-[var(--color-text-secondary)]">
@@ -345,11 +390,13 @@
 						</div>
 					</div>
 				{:else if entries.length === 0}
-					<div class="flex flex-col items-center justify-center py-12 gap-2">
-						<svg class="text-[var(--color-text-muted)]" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-						</svg>
-						<span class="text-meta text-[var(--color-text-muted)]">Empty directory</span>
+					<div class="flex flex-col items-center justify-center py-16 gap-3">
+						<div class="flex h-10 w-10 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]" style="animation: iconFloat 3s ease-in-out infinite">
+							<svg class="text-[var(--color-text-muted)]" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+							</svg>
+						</div>
+						<span class="text-meta text-[var(--color-text-muted)]">Nothing here yet</span>
 					</div>
 				{:else}
 					<!-- Parent directory -->
@@ -365,11 +412,12 @@
 						</button>
 					{/if}
 
-					{#each sortedEntries as entry (entry.path)}
+					{#each sortedEntries as entry, idx (entry.path)}
 						<button
 							onclick={() => selectFile(entry)}
-							class="file-row flex w-full items-center gap-3 px-4 py-[7px] text-left
+							class="file-row row-enter flex w-full items-center gap-3 px-4 py-[7px] text-left
 								{selectedFile?.path === entry.path ? 'active' : ''}"
+							style="animation-delay: {Math.min(idx * 12, 200)}ms"
 						>
 							<!-- Icon -->
 							{#if fileIcon(entry) === 'dir'}
@@ -420,11 +468,18 @@
 			</div>
 
 			<!-- Footer: entry count -->
-			{#if !dirLoading && !dirError}
-				<div class="border-t border-[var(--color-border)] px-4 py-2">
-					<span class="font-mono text-badge text-[var(--color-text-muted)]">
-						{entries.length} item{entries.length !== 1 ? 's' : ''}
-					</span>
+			{#if !dirLoading && !dirError && entries.length > 0}
+				<div class="border-t border-[var(--color-border)] px-4 py-2 flex items-center gap-3">
+					{#if dirCount > 0}
+						<span class="font-mono text-badge text-[var(--color-text-muted)]">
+							{dirCount} dir{dirCount !== 1 ? 's' : ''}
+						</span>
+					{/if}
+					{#if fileCount > 0}
+						<span class="font-mono text-badge text-[var(--color-text-muted)]">
+							{fileCount} file{fileCount !== 1 ? 's' : ''}
+						</span>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -435,24 +490,41 @@
 				<!-- Empty state -->
 				<div class="flex flex-1 items-center justify-center">
 					<div class="flex flex-col items-center gap-3 text-center">
-						<svg class="text-[var(--color-text-muted)]" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5">
-							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-							<polyline points="14 2 14 8 20 8" />
-						</svg>
-						<span class="text-meta text-[var(--color-text-muted)]">Select a file to preview</span>
+						<div class="flex h-12 w-12 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]" style="animation: iconFloat 3s ease-in-out infinite">
+							<svg class="text-[var(--color-text-muted)]" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+								<polyline points="14 2 14 8 20 8" />
+							</svg>
+						</div>
+						<div class="flex flex-col gap-1">
+							<span class="text-ui text-[var(--color-text-secondary)]">No file selected</span>
+							<span class="text-meta text-[var(--color-text-muted)]">Choose a file from the tree, or enter a path directly</span>
+						</div>
 					</div>
 				</div>
 			{:else}
 				<!-- File header -->
-				<div class="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3">
+				<div class="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-2)] px-5 py-2.5">
 					<div class="flex items-center gap-2.5 overflow-hidden">
-						<svg class="shrink-0 text-[var(--color-text-muted)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-							<polyline points="14 2 14 8 20 8" />
-						</svg>
+						{#if isBinaryFile(selectedFile.name) || isFileTooLarge(selectedFile.size)}
+							<svg class="shrink-0 text-[var(--color-amber)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+								<polyline points="14 2 14 8 20 8" />
+							</svg>
+						{:else}
+							<svg class="shrink-0 text-[var(--color-accent-mid)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+								<polyline points="14 2 14 8 20 8" />
+							</svg>
+						{/if}
 						<span class="truncate font-mono text-meta text-[var(--color-text-primary)]">{selectedFile.path}</span>
+						{#if fileExt(selectedFile.name)}
+							<span class="shrink-0 rounded-[3px] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge uppercase text-[var(--color-text-muted)]">
+								{fileExt(selectedFile.name)}
+							</span>
+						{/if}
 					</div>
-					<div class="flex items-center gap-3 shrink-0 ml-3">
+					<div class="flex items-center gap-3 shrink-0 ml-4">
 						<span class="font-mono text-badge text-[var(--color-text-muted)]">{formatFileSize(selectedFile.size)}</span>
 						<button
 							onclick={handleDownload}
@@ -469,7 +541,7 @@
 				</div>
 
 				<!-- File content -->
-				<div class="thin-scroll flex-1 overflow-auto">
+				<div class="flex-1 overflow-auto">
 					{#if fileLoading}
 						<div class="flex items-center justify-center py-16">
 							<div class="flex items-center gap-2 text-meta text-[var(--color-text-secondary)]">
@@ -490,17 +562,17 @@
 						</div>
 					{:else if isBinaryFile(selectedFile.name) || isFileTooLarge(selectedFile.size) || (selectedFile && fileContent === null && !fileLoading)}
 						<!-- Binary / too large / unreadable — download prompt -->
-						<div class="flex flex-1 items-center justify-center py-16">
-							<div class="fade-in flex flex-col items-center gap-4 text-center">
-								<div class="flex h-12 w-12 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]">
+						<div class="flex flex-1 items-center justify-center py-20">
+							<div class="flex flex-col items-center gap-5 text-center" style="animation: fadeUp 0.25s ease both">
+								<div class="flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]">
 									{#if isFileTooLarge(selectedFile.size)}
-										<svg class="text-[var(--color-amber)]" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+										<svg class="text-[var(--color-amber)]" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
 											<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
 											<line x1="12" y1="9" x2="12" y2="13" />
 											<line x1="12" y1="17" x2="12.01" y2="17" />
 										</svg>
 									{:else}
-										<svg class="text-[var(--color-text-muted)]" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+										<svg class="text-[var(--color-text-muted)]" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
 											<rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
 											<line x1="9" y1="3" x2="9" y2="21" />
 										</svg>
@@ -508,20 +580,20 @@
 								</div>
 								<div class="flex flex-col gap-1.5">
 									{#if isFileTooLarge(selectedFile.size)}
-										<span class="text-ui font-medium text-[var(--color-text-primary)]">File too large to preview</span>
+										<span class="text-ui font-medium text-[var(--color-text-primary)]">Too large to preview</span>
 										<span class="text-meta text-[var(--color-text-tertiary)]">
-											{formatFileSize(selectedFile.size)} exceeds the 10 MB preview limit
+											{formatFileSize(selectedFile.size)} — preview limit is 10 MB
 										</span>
 									{:else}
 										<span class="text-ui font-medium text-[var(--color-text-primary)]">Binary file</span>
 										<span class="text-meta text-[var(--color-text-tertiary)]">
-											This file cannot be displayed as text
+											Cannot display as text — download to view
 										</span>
 									{/if}
 								</div>
 								<button
 									onclick={handleDownload}
-									class="mt-1 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent-glow-mid)] px-4 py-2 text-meta font-semibold text-[var(--color-accent-bright)] transition-colors hover:border-[var(--color-accent)]/50 hover:bg-[var(--color-accent-glow-mid)]"
+									class="mt-1 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent-glow-mid)] px-4 py-2 text-meta font-semibold text-[var(--color-accent-bright)] transition-all duration-150 hover:border-[var(--color-accent)]/50 hover:bg-[var(--color-accent)]/15 hover:-translate-y-px active:translate-y-0"
 								>
 									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -534,8 +606,8 @@
 						</div>
 					{:else if fileContent !== null}
 						<!-- Text preview with line numbers -->
-						<div class="fade-in">
-							<pre class="preview-code p-0 m-0"><code class="block">{#each fileContent.split('\n') as line, i}<div class="flex hover:bg-[var(--color-bg-2)]"><span class="sticky left-0 inline-block w-[52px] shrink-0 select-none border-r border-[var(--color-border)] bg-[var(--color-bg-1)] px-3 py-0 text-right font-mono text-badge leading-[1.65rem] text-[var(--color-text-muted)]">{i + 1}</span><span class="flex-1 whitespace-pre-wrap break-all px-4 py-0 font-mono text-meta leading-[1.65rem] text-[var(--color-text-secondary)]">{line}</span></div>{/each}</code></pre>
+						<div style="animation: fadeUp 0.15s ease both">
+							<pre class="preview-code p-0 m-0"><code class="block">{#each fileContent.split('\n') as line, i}<div class="code-line flex"><span class="line-num sticky left-0 inline-block w-[52px] shrink-0 select-none border-r border-[var(--color-border)] bg-[var(--color-bg-1)] px-3 py-0 text-right font-mono text-badge leading-[1.65rem] text-[var(--color-text-muted)] transition-colors duration-75">{i + 1}</span><span class="line-content flex-1 whitespace-pre-wrap break-all px-4 py-0 font-mono text-meta leading-[1.65rem] text-[var(--color-text-secondary)] transition-colors duration-75">{line || ' '}</span></div>{/each}</code></pre>
 						</div>
 					{/if}
 				</div>
