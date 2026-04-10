@@ -120,5 +120,6 @@ export async function downloadFile(sandboxId: string, path: string, filename: st
 	document.body.appendChild(a);
 	a.click();
 	a.remove();
-	URL.revokeObjectURL(url);
+	// Delay revocation so the browser has time to start the download
+	setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
