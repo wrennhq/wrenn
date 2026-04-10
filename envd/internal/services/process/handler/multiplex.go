@@ -56,7 +56,7 @@ func (m *MultiplexedChannel[T]) Fork() (chan T, func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	consumer := make(chan T, 64)
+	consumer := make(chan T, 4096)
 
 	m.channels = append(m.channels, consumer)
 
