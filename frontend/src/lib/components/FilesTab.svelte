@@ -56,6 +56,8 @@
 	const dirCount = $derived(entries.filter((e) => e.type === 'directory').length);
 	const fileCount = $derived(entries.filter((e) => e.type !== 'directory').length);
 
+	const canGoUp = $derived(currentPath !== '/' && currentPath.startsWith('/'));
+
 	async function navigateTo(path: string) {
 		currentPath = normalizePath(path);
 		pathInput = currentPath;
@@ -343,7 +345,22 @@
 			</form>
 
 			<!-- Breadcrumbs -->
-			<div class="flex items-center gap-0.5 border-b border-[var(--color-border)] px-4 py-2 overflow-x-auto">
+			<div class="flex items-center gap-0.5 border-b border-[var(--color-border)] px-2 py-2 overflow-x-auto">
+				<!-- Up button -->
+				<button
+					onclick={() => navigateTo(currentPath + '/..')}
+					disabled={!canGoUp}
+					title="Go to parent directory"
+					class="shrink-0 flex items-center justify-center rounded-[3px] w-6 h-6 transition-colors
+						{canGoUp
+							? 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]'
+							: 'text-[var(--color-text-muted)] opacity-30 cursor-not-allowed'}"
+				>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M15 18l-6-6 6-6" />
+					</svg>
+				</button>
+				<span class="w-px h-4 bg-[var(--color-border)] shrink-0 mx-1"></span>
 				{#each breadcrumbs() as crumb, i}
 					{#if i > 0}
 						<svg class="shrink-0 text-[var(--color-text-muted)]" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -399,19 +416,6 @@
 						<span class="text-meta text-[var(--color-text-muted)]">Nothing here yet</span>
 					</div>
 				{:else}
-					<!-- Parent directory -->
-					{#if currentPath !== '/'}
-						<button
-							onclick={() => navigateTo(currentPath + '/..')}
-							class="file-row flex w-full items-center gap-3 px-4 py-2 text-left"
-						>
-							<svg class="shrink-0 text-[var(--color-text-muted)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<polyline points="15 18 9 12 15 6" />
-							</svg>
-							<span class="font-mono text-meta text-[var(--color-text-secondary)]">..</span>
-						</button>
-					{/if}
-
 					{#each sortedEntries as entry, idx (entry.path)}
 						<button
 							onclick={() => selectFile(entry)}
