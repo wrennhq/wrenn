@@ -1223,6 +1223,70 @@ func (m *Manager) GetClient(sandboxID string) (*envdclient.Client, error) {
 	return sb.client, nil
 }
 
+// PtyAttach starts a new PTY process or reconnects to an existing one.
+// If cmd is non-empty, starts a new process. If empty, reconnects using tag.
+func (m *Manager) PtyAttach(ctx context.Context, sandboxID, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd string) (<-chan envdclient.PtyEvent, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if sb.Status != models.StatusRunning {
+		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	if cmd != "" {
+		return sb.client.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd)
+	}
+	return sb.client.PtyConnect(ctx, tag)
+}
+
+// PtySendInput sends raw bytes to a PTY process in a sandbox.
+func (m *Manager) PtySendInput(ctx context.Context, sandboxID, tag string, data []byte) error {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.PtySendInput(ctx, tag, data)
+}
+
+// PtyResize updates the terminal dimensions for a PTY process in a sandbox.
+func (m *Manager) PtyResize(ctx context.Context, sandboxID, tag string, cols, rows uint32) error {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	return sb.client.PtyResize(ctx, tag, cols, rows)
+}
+
+// PtyKill sends SIGKILL to a PTY process in a sandbox.
+func (m *Manager) PtyKill(ctx context.Context, sandboxID, tag string) error {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	return sb.client.PtyKill(ctx, tag)
+}
+
 // AcquireProxyConn atomically looks up a sandbox by ID and registers an
 // in-flight proxy connection. Returns the sandbox's host-reachable IP, the
 // connection tracker, and true on success. The caller must call

@@ -73,6 +73,7 @@ func New(
 	metricsH := newSandboxMetricsHandler(queries, pool)
 	buildH := newBuildHandler(buildSvc, queries, pool)
 	channelH := newChannelHandler(channelSvc, al)
+	ptyH := newPtyHandler(queries, pool)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -138,6 +139,7 @@ func New(
 			r.Post("/files/mkdir", fsH.MakeDir)
 			r.Post("/files/remove", fsH.Remove)
 			r.Get("/metrics", metricsH.GetMetrics)
+			r.Get("/pty", ptyH.PtySession)
 		})
 	})
 

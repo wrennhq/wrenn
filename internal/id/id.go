@@ -167,6 +167,11 @@ func UUIDString(id pgtype.UUID) string {
 	return uuid.UUID(id.Bytes).String()
 }
 
+// NewPtyTag generates a PTY session tag: 8 random hex characters.
+func NewPtyTag() string {
+	return hex8()
+}
+
 // --- Helpers ---
 
 func hex8() string {
