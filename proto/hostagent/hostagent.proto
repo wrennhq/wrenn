@@ -76,6 +76,21 @@ service HostAgentService {
   // produce image-only templates (no memory/CPU state).
   rpc FlattenRootfs(FlattenRootfsRequest) returns (FlattenRootfsResponse);
 
+  // PtyAttach starts a new PTY process or reconnects to an existing one.
+  // If cmd is non-empty, starts a new process with the given PTY dimensions.
+  // If tag is set and cmd is empty, reconnects to the existing process with that tag.
+  // Returns a stream of output events (started, output data, exit).
+  rpc PtyAttach(PtyAttachRequest) returns (stream PtyAttachResponse);
+
+  // PtySendInput sends raw bytes to a PTY process identified by tag.
+  rpc PtySendInput(PtySendInputRequest) returns (PtySendInputResponse);
+
+  // PtyResize updates the terminal dimensions for a PTY process.
+  rpc PtyResize(PtyResizeRequest) returns (PtyResizeResponse);
+
+  // PtyKill sends a signal to a PTY process.
+  rpc PtyKill(PtyKillRequest) returns (PtyKillResponse);
+
 }
 
 message CreateSandboxRequest {
@@ -382,3 +397,70 @@ message FlattenRootfsRequest {
 message FlattenRootfsResponse {
   int64 size_bytes = 1;
 }
+
+// ── PTY ─────────────────────────────────────────────────────────────
+
+message PtyAttachRequest {
+  string sandbox_id = 1;
+  // Tag is the stable identifier for this PTY session (e.g. "pty-abc123de").
+  // Chosen by the caller and used to reconnect later.
+  string tag = 2;
+  // If cmd is non-empty, a new process is started. If empty, reconnects to
+  // the existing process identified by tag.
+  string cmd = 3;
+  repeated string args = 4;
+  uint32 cols = 5;
+  uint32 rows = 6;
+  // Environment variables for the process.
+  map<string, string> envs = 7;
+  // Working directory. Empty means default.
+  string cwd = 8;
+  // User to run as. Empty means default (root).
+  string user = 9;
+}
+
+message PtyAttachResponse {
+  oneof event {
+    PtyStarted started = 1;
+    PtyOutput  output  = 2;
+    PtyExited  exited  = 3;
+  }
+}
+
+message PtyStarted {
+  uint32 pid = 1;
+  string tag = 2;
+}
+
+message PtyOutput {
+  bytes data = 1;
+}
+
+message PtyExited {
+  int32  exit_code = 1;
+  string error = 2;
+}
+
+message PtySendInputRequest {
+  string sandbox_id = 1;
+  string tag = 2;
+  bytes  data = 3;
+}
+
+message PtySendInputResponse {}
+
+message PtyResizeRequest {
+  string sandbox_id = 1;
+  string tag = 2;
+  uint32 cols = 3;
+  uint32 rows = 4;
+}
+
+message PtyResizeResponse {}
+
+message PtyKillRequest {
+  string sandbox_id = 1;
+  string tag = 2;
+}
+
+message PtyKillResponse {}

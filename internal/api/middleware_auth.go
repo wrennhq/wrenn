@@ -38,9 +38,14 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 				return
 			}
 
-			// Try JWT bearer token.
+			// Try JWT bearer token (header or query param for WebSocket).
+			tokenStr := ""
 			if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
-				tokenStr := strings.TrimPrefix(header, "Bearer ")
+				tokenStr = strings.TrimPrefix(header, "Bearer ")
+			} else if t := r.URL.Query().Get("token"); t != "" {
+				tokenStr = t
+			}
+			if tokenStr != "" {
 				claims, err := auth.VerifyJWT(jwtSecret, tokenStr)
 				if err != nil {
 					slog.Warn("jwt auth failed", "error", err, "ip", r.RemoteAddr)

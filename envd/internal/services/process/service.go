@@ -62,16 +62,15 @@ func (s *Service) getProcess(selector *rpc.ProcessSelector) (*handler.Handler, e
 
 		s.processes.Range(func(_ uint32, value *handler.Handler) bool {
 			if value.Tag == nil {
-				return true
+				return true // no tag, keep looking
 			}
 
 			if *value.Tag == tag {
 				proc = value
-
-				return true
+				return false // found, stop iterating
 			}
 
-			return false
+			return true // different tag, keep looking
 		})
 
 		if proc == nil {

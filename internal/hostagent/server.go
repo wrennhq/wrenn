@@ -610,6 +610,83 @@ func metricPointsToPB(pts []sandbox.MetricPoint) []*pb.MetricPoint {
 	return out
 }
 
+func (s *Server) PtyAttach(
+	ctx context.Context,
+	req *connect.Request[pb.PtyAttachRequest],
+	stream *connect.ServerStream[pb.PtyAttachResponse],
+) error {
+	msg := req.Msg
+
+	events, err := s.mgr.PtyAttach(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Cols, msg.Rows, msg.Envs, msg.Cwd)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("pty attach: %w", err))
+	}
+
+	for ev := range events {
+		var resp pb.PtyAttachResponse
+		switch ev.Type {
+		case "started":
+			resp.Event = &pb.PtyAttachResponse_Started{
+				Started: &pb.PtyStarted{Pid: ev.PID, Tag: msg.Tag},
+			}
+		case "output":
+			resp.Event = &pb.PtyAttachResponse_Output{
+				Output: &pb.PtyOutput{Data: ev.Data},
+			}
+		case "end":
+			resp.Event = &pb.PtyAttachResponse_Exited{
+				Exited: &pb.PtyExited{ExitCode: ev.ExitCode, Error: ev.Error},
+			}
+		default:
+			continue
+		}
+		if err := stream.Send(&resp); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) PtySendInput(
+	ctx context.Context,
+	req *connect.Request[pb.PtySendInputRequest],
+) (*connect.Response[pb.PtySendInputResponse], error) {
+	msg := req.Msg
+
+	if err := s.mgr.PtySendInput(ctx, msg.SandboxId, msg.Tag, msg.Data); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("pty send input: %w", err))
+	}
+
+	return connect.NewResponse(&pb.PtySendInputResponse{}), nil
+}
+
+func (s *Server) PtyResize(
+	ctx context.Context,
+	req *connect.Request[pb.PtyResizeRequest],
+) (*connect.Response[pb.PtyResizeResponse], error) {
+	msg := req.Msg
+
+	if err := s.mgr.PtyResize(ctx, msg.SandboxId, msg.Tag, msg.Cols, msg.Rows); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("pty resize: %w", err))
+	}
+
+	return connect.NewResponse(&pb.PtyResizeResponse{}), nil
+}
+
+func (s *Server) PtyKill(
+	ctx context.Context,
+	req *connect.Request[pb.PtyKillRequest],
+) (*connect.Response[pb.PtyKillResponse], error) {
+	msg := req.Msg
+
+	if err := s.mgr.PtyKill(ctx, msg.SandboxId, msg.Tag); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("pty kill: %w", err))
+	}
+
+	return connect.NewResponse(&pb.PtyKillResponse{}), nil
+}
+
 // entryInfoToPB maps an envd EntryInfo to a hostagent FileEntry.
 func entryInfoToPB(e *envdpb.EntryInfo) *pb.FileEntry {
 	if e == nil {

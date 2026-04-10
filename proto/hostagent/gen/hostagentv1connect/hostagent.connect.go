@@ -95,6 +95,18 @@ const (
 	// HostAgentServiceFlattenRootfsProcedure is the fully-qualified name of the HostAgentService's
 	// FlattenRootfs RPC.
 	HostAgentServiceFlattenRootfsProcedure = "/hostagent.v1.HostAgentService/FlattenRootfs"
+	// HostAgentServicePtyAttachProcedure is the fully-qualified name of the HostAgentService's
+	// PtyAttach RPC.
+	HostAgentServicePtyAttachProcedure = "/hostagent.v1.HostAgentService/PtyAttach"
+	// HostAgentServicePtySendInputProcedure is the fully-qualified name of the HostAgentService's
+	// PtySendInput RPC.
+	HostAgentServicePtySendInputProcedure = "/hostagent.v1.HostAgentService/PtySendInput"
+	// HostAgentServicePtyResizeProcedure is the fully-qualified name of the HostAgentService's
+	// PtyResize RPC.
+	HostAgentServicePtyResizeProcedure = "/hostagent.v1.HostAgentService/PtyResize"
+	// HostAgentServicePtyKillProcedure is the fully-qualified name of the HostAgentService's PtyKill
+	// RPC.
+	HostAgentServicePtyKillProcedure = "/hostagent.v1.HostAgentService/PtyKill"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -149,6 +161,17 @@ type HostAgentServiceClient interface {
 	// cleans up all sandbox resources. Used by the template build system to
 	// produce image-only templates (no memory/CPU state).
 	FlattenRootfs(context.Context, *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error)
+	// PtyAttach starts a new PTY process or reconnects to an existing one.
+	// If cmd is non-empty, starts a new process with the given PTY dimensions.
+	// If tag is set and cmd is empty, reconnects to the existing process with that tag.
+	// Returns a stream of output events (started, output data, exit).
+	PtyAttach(context.Context, *connect.Request[gen.PtyAttachRequest]) (*connect.ServerStreamForClient[gen.PtyAttachResponse], error)
+	// PtySendInput sends raw bytes to a PTY process identified by tag.
+	PtySendInput(context.Context, *connect.Request[gen.PtySendInputRequest]) (*connect.Response[gen.PtySendInputResponse], error)
+	// PtyResize updates the terminal dimensions for a PTY process.
+	PtyResize(context.Context, *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error)
+	// PtyKill sends a signal to a PTY process.
+	PtyKill(context.Context, *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -288,6 +311,30 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("FlattenRootfs")),
 			connect.WithClientOptions(opts...),
 		),
+		ptyAttach: connect.NewClient[gen.PtyAttachRequest, gen.PtyAttachResponse](
+			httpClient,
+			baseURL+HostAgentServicePtyAttachProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("PtyAttach")),
+			connect.WithClientOptions(opts...),
+		),
+		ptySendInput: connect.NewClient[gen.PtySendInputRequest, gen.PtySendInputResponse](
+			httpClient,
+			baseURL+HostAgentServicePtySendInputProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("PtySendInput")),
+			connect.WithClientOptions(opts...),
+		),
+		ptyResize: connect.NewClient[gen.PtyResizeRequest, gen.PtyResizeResponse](
+			httpClient,
+			baseURL+HostAgentServicePtyResizeProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("PtyResize")),
+			connect.WithClientOptions(opts...),
+		),
+		ptyKill: connect.NewClient[gen.PtyKillRequest, gen.PtyKillResponse](
+			httpClient,
+			baseURL+HostAgentServicePtyKillProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("PtyKill")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -314,6 +361,10 @@ type hostAgentServiceClient struct {
 	getSandboxMetrics   *connect.Client[gen.GetSandboxMetricsRequest, gen.GetSandboxMetricsResponse]
 	flushSandboxMetrics *connect.Client[gen.FlushSandboxMetricsRequest, gen.FlushSandboxMetricsResponse]
 	flattenRootfs       *connect.Client[gen.FlattenRootfsRequest, gen.FlattenRootfsResponse]
+	ptyAttach           *connect.Client[gen.PtyAttachRequest, gen.PtyAttachResponse]
+	ptySendInput        *connect.Client[gen.PtySendInputRequest, gen.PtySendInputResponse]
+	ptyResize           *connect.Client[gen.PtyResizeRequest, gen.PtyResizeResponse]
+	ptyKill             *connect.Client[gen.PtyKillRequest, gen.PtyKillResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -421,6 +472,26 @@ func (c *hostAgentServiceClient) FlattenRootfs(ctx context.Context, req *connect
 	return c.flattenRootfs.CallUnary(ctx, req)
 }
 
+// PtyAttach calls hostagent.v1.HostAgentService.PtyAttach.
+func (c *hostAgentServiceClient) PtyAttach(ctx context.Context, req *connect.Request[gen.PtyAttachRequest]) (*connect.ServerStreamForClient[gen.PtyAttachResponse], error) {
+	return c.ptyAttach.CallServerStream(ctx, req)
+}
+
+// PtySendInput calls hostagent.v1.HostAgentService.PtySendInput.
+func (c *hostAgentServiceClient) PtySendInput(ctx context.Context, req *connect.Request[gen.PtySendInputRequest]) (*connect.Response[gen.PtySendInputResponse], error) {
+	return c.ptySendInput.CallUnary(ctx, req)
+}
+
+// PtyResize calls hostagent.v1.HostAgentService.PtyResize.
+func (c *hostAgentServiceClient) PtyResize(ctx context.Context, req *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error) {
+	return c.ptyResize.CallUnary(ctx, req)
+}
+
+// PtyKill calls hostagent.v1.HostAgentService.PtyKill.
+func (c *hostAgentServiceClient) PtyKill(ctx context.Context, req *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error) {
+	return c.ptyKill.CallUnary(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -473,6 +544,17 @@ type HostAgentServiceHandler interface {
 	// cleans up all sandbox resources. Used by the template build system to
 	// produce image-only templates (no memory/CPU state).
 	FlattenRootfs(context.Context, *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error)
+	// PtyAttach starts a new PTY process or reconnects to an existing one.
+	// If cmd is non-empty, starts a new process with the given PTY dimensions.
+	// If tag is set and cmd is empty, reconnects to the existing process with that tag.
+	// Returns a stream of output events (started, output data, exit).
+	PtyAttach(context.Context, *connect.Request[gen.PtyAttachRequest], *connect.ServerStream[gen.PtyAttachResponse]) error
+	// PtySendInput sends raw bytes to a PTY process identified by tag.
+	PtySendInput(context.Context, *connect.Request[gen.PtySendInputRequest]) (*connect.Response[gen.PtySendInputResponse], error)
+	// PtyResize updates the terminal dimensions for a PTY process.
+	PtyResize(context.Context, *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error)
+	// PtyKill sends a signal to a PTY process.
+	PtyKill(context.Context, *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error)
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -608,6 +690,30 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("FlattenRootfs")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServicePtyAttachHandler := connect.NewServerStreamHandler(
+		HostAgentServicePtyAttachProcedure,
+		svc.PtyAttach,
+		connect.WithSchema(hostAgentServiceMethods.ByName("PtyAttach")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServicePtySendInputHandler := connect.NewUnaryHandler(
+		HostAgentServicePtySendInputProcedure,
+		svc.PtySendInput,
+		connect.WithSchema(hostAgentServiceMethods.ByName("PtySendInput")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServicePtyResizeHandler := connect.NewUnaryHandler(
+		HostAgentServicePtyResizeProcedure,
+		svc.PtyResize,
+		connect.WithSchema(hostAgentServiceMethods.ByName("PtyResize")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServicePtyKillHandler := connect.NewUnaryHandler(
+		HostAgentServicePtyKillProcedure,
+		svc.PtyKill,
+		connect.WithSchema(hostAgentServiceMethods.ByName("PtyKill")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -652,6 +758,14 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceFlushSandboxMetricsHandler.ServeHTTP(w, r)
 		case HostAgentServiceFlattenRootfsProcedure:
 			hostAgentServiceFlattenRootfsHandler.ServeHTTP(w, r)
+		case HostAgentServicePtyAttachProcedure:
+			hostAgentServicePtyAttachHandler.ServeHTTP(w, r)
+		case HostAgentServicePtySendInputProcedure:
+			hostAgentServicePtySendInputHandler.ServeHTTP(w, r)
+		case HostAgentServicePtyResizeProcedure:
+			hostAgentServicePtyResizeHandler.ServeHTTP(w, r)
+		case HostAgentServicePtyKillProcedure:
+			hostAgentServicePtyKillHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -743,4 +857,20 @@ func (UnimplementedHostAgentServiceHandler) FlushSandboxMetrics(context.Context,
 
 func (UnimplementedHostAgentServiceHandler) FlattenRootfs(context.Context, *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.FlattenRootfs is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) PtyAttach(context.Context, *connect.Request[gen.PtyAttachRequest], *connect.ServerStream[gen.PtyAttachResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PtyAttach is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) PtySendInput(context.Context, *connect.Request[gen.PtySendInputRequest]) (*connect.Response[gen.PtySendInputResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PtySendInput is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) PtyResize(context.Context, *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PtyResize is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) PtyKill(context.Context, *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PtyKill is not implemented"))
 }

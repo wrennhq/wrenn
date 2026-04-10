@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { getCapsule, type Capsule } from '$lib/api/capsules';
 	import FilesTab from '$lib/components/FilesTab.svelte';
+	import TerminalTab from '$lib/components/TerminalTab.svelte';
 	import {
 		fetchSandboxMetrics,
 		METRIC_RANGES,
@@ -18,8 +19,20 @@
 	let capsuleLoading = $state(true);
 	let capsuleError = $state<string | null>(null);
 
-	type Tab = 'metrics' | 'files';
+	type Tab = 'metrics' | 'files' | 'terminal';
+	const VALID_TABS: Tab[] = ['metrics', 'files', 'terminal'];
 	let activeTab = $state<Tab>('metrics');
+
+	function setTab(tab: Tab) {
+		activeTab = tab;
+		const url = new URL(window.location.href);
+		if (tab === 'metrics') {
+			url.searchParams.delete('tab');
+		} else {
+			url.searchParams.set('tab', tab);
+		}
+		history.replaceState(null, '', url.toString());
+	}
 
 	let range = $state<MetricRange>('10m');
 	let points = $state<MetricPoint[]>([]);
@@ -304,7 +317,14 @@
 	});
 
 	onMount(async () => {
-		const urlRange = new URLSearchParams(window.location.search).get('range');
+		const params = new URLSearchParams(window.location.search);
+
+		const urlTab = params.get('tab') as Tab | null;
+		if (urlTab && VALID_TABS.includes(urlTab)) {
+			activeTab = urlTab;
+		}
+
+		const urlRange = params.get('range');
 		if (urlRange && METRIC_RANGES.includes(urlRange as MetricRange)) {
 			range = urlRange as MetricRange;
 		}
@@ -407,7 +427,7 @@
 	<!-- Tabs (matches Templates page pattern) -->
 	<div class="mt-5 flex gap-0 border-b border-[var(--color-border)] px-7">
 			<button
-				onclick={() => (activeTab = 'metrics')}
+				onclick={() => setTab('metrics')}
 				class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150
 					{activeTab === 'metrics'
 						? 'border-[var(--color-accent)] text-[var(--color-accent-bright)]'
@@ -420,7 +440,7 @@
 			</button>
 
 			<button
-				onclick={() => (activeTab = 'files')}
+				onclick={() => setTab('files')}
 				class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150
 					{activeTab === 'files'
 						? 'border-[var(--color-accent)] text-[var(--color-accent-bright)]'
@@ -431,9 +451,26 @@
 				</svg>
 				Files
 			</button>
+
+			<button
+				onclick={() => setTab('terminal')}
+				class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150
+					{activeTab === 'terminal'
+						? 'border-[var(--color-accent)] text-[var(--color-accent-bright)]'
+						: 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
+			>
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+				</svg>
+				Terminal
+			</button>
 	</div>
 
-	<!-- Stats tab content -->
+	<!-- Tab content -->
+	<!-- Terminal stays mounted so sessions survive tab switches -->
+	<div class="flex flex-1 min-h-0" style:display={activeTab === 'terminal' ? 'flex' : 'none'}>
+		<TerminalTab sandboxId={sandboxId} isRunning={capsule.status === 'running'} visible={activeTab === 'terminal'} />
+	</div>
 	{#if activeTab === 'files'}
 		<div class="anim-in flex flex-1 min-h-0" style="animation-delay: 0.05s">
 			<FilesTab sandboxId={sandboxId} isRunning={capsule.status === 'running'} />

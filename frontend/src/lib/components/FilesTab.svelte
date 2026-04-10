@@ -27,6 +27,13 @@
 	let fileContent = $state<string | null>(null);
 	let fileLoading = $state(false);
 	let fileError = $state<string | null>(null);
+	let downloading = $state(false);
+
+	// Request generation counters — discard stale responses from rapid clicks
+	let dirGeneration = 0;
+	let fileGeneration = 0;
+
+	const MAX_PREVIEW_LINES = 5000;
 
 	// Path input
 	let pathInput = $state('~');
@@ -98,7 +105,9 @@
 		if (!isRunning) return;
 		dirLoading = true;
 		dirError = null;
+		const gen = ++dirGeneration;
 		const result = await listDir(sandboxId, currentPath);
+		if (gen !== dirGeneration) return; // stale response
 		if (result.ok) {
 			entries = result.data.entries ?? [];
 			// Resolve actual path when envd expanded ~ or a relative path
@@ -130,12 +139,12 @@
 		}
 
 		fileLoading = true;
+		const gen = ++fileGeneration;
 		const result = await readFile(sandboxId, entry.path);
+		if (gen !== fileGeneration) return; // stale response — user clicked another file
 		if (result.ok) {
-			// Check if content appears to be binary (contains null bytes or mostly non-printable)
 			if (looksLikeBinary(result.data)) {
 				fileContent = null;
-				// Will show download prompt
 			} else {
 				fileContent = result.data;
 			}
@@ -158,12 +167,14 @@
 	}
 
 	async function handleDownload() {
-		if (!selectedFile) return;
+		if (!selectedFile || downloading) return;
+		downloading = true;
 		try {
 			await downloadFile(sandboxId, selectedFile.path, selectedFile.name);
 		} catch {
 			fileError = 'Download failed';
 		}
+		downloading = false;
 	}
 
 	function handlePathSubmit(e: SubmitEvent) {
@@ -242,10 +253,11 @@
 	}
 
 	// Load initial directory on mount, falling back to / if home can't be resolved
+	let hasInitiallyLoaded = false;
 	$effect(() => {
-		if (isRunning) {
+		if (isRunning && !hasInitiallyLoaded) {
+			hasInitiallyLoaded = true;
 			loadDir().then(() => {
-				// If ~ couldn't be resolved (empty dir or error), fall back to /
 				if (!currentPath.startsWith('/')) {
 					currentPath = '/';
 					pathInput = '/';
@@ -295,13 +307,18 @@
 </style>
 
 {#if !isRunning}
-	<div class="flex items-center gap-3 rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] px-5 py-4 m-8">
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-			<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-		</svg>
-		<span class="text-ui text-[var(--color-text-tertiary)]">
-			File browser requires a running capsule.
-		</span>
+	<div class="flex flex-1 items-center justify-center">
+		<div class="flex flex-col items-center gap-4 text-center">
+			<div class="flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]" style="animation: iconFloat 3s ease-in-out infinite">
+				<svg class="text-[var(--color-text-muted)]" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+				</svg>
+			</div>
+			<div class="flex flex-col gap-1">
+				<span class="text-ui font-medium text-[var(--color-text-secondary)]">File browser unavailable</span>
+				<span class="text-meta text-[var(--color-text-muted)]">Start the capsule to browse its filesystem</span>
+			</div>
+		</div>
 	</div>
 {:else}
 	<div class="flex flex-1 min-h-0">
@@ -532,13 +549,18 @@
 						<span class="font-mono text-badge text-[var(--color-text-muted)]">{formatFileSize(selectedFile.size)}</span>
 						<button
 							onclick={handleDownload}
-							class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]"
+							disabled={downloading}
+							class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
 						>
-							<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-								<polyline points="7 10 12 15 17 10" />
-								<line x1="12" y1="15" x2="12" y2="3" />
-							</svg>
+							{#if downloading}
+								<svg class="animate-spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+							{:else}
+								<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+									<polyline points="7 10 12 15 17 10" />
+									<line x1="12" y1="15" x2="12" y2="3" />
+								</svg>
+							{/if}
 							Download
 						</button>
 					</div>
@@ -609,10 +631,24 @@
 							</div>
 						</div>
 					{:else if fileContent !== null}
-						<!-- Text preview with line numbers -->
+						<!-- Text preview with line numbers (capped at MAX_PREVIEW_LINES) -->
+						{@const allLines = fileContent.split('\n')}
+						{@const lines = allLines.length > MAX_PREVIEW_LINES ? allLines.slice(0, MAX_PREVIEW_LINES) : allLines}
+						{@const truncated = allLines.length > MAX_PREVIEW_LINES}
 						<div style="animation: fadeUp 0.15s ease both">
-							<pre class="preview-code p-0 m-0"><code class="block">{#each fileContent.split('\n') as line, i}<div class="code-line flex"><span class="line-num sticky left-0 inline-block w-[52px] shrink-0 select-none border-r border-[var(--color-border)] bg-[var(--color-bg-1)] px-3 py-0 text-right font-mono text-badge leading-[1.65rem] text-[var(--color-text-muted)] transition-colors duration-75">{i + 1}</span><span class="line-content flex-1 whitespace-pre-wrap break-all px-4 py-0 font-mono text-meta leading-[1.65rem] text-[var(--color-text-secondary)] transition-colors duration-75">{line || ' '}</span></div>{/each}</code></pre>
+							<pre class="preview-code p-0 m-0"><code class="block">{#each lines as line, i}<div class="code-line flex"><span class="line-num sticky left-0 inline-block w-[52px] shrink-0 select-none border-r border-[var(--color-border)] bg-[var(--color-bg-1)] px-3 py-0 text-right font-mono text-badge leading-[1.65rem] text-[var(--color-text-muted)] transition-colors duration-75">{i + 1}</span><span class="line-content flex-1 whitespace-pre-wrap break-all px-4 py-0 font-mono text-meta leading-[1.65rem] text-[var(--color-text-secondary)] transition-colors duration-75">{line || ' '}</span></div>{/each}</code></pre>
 						</div>
+						{#if truncated}
+							<div class="flex items-center justify-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-2)] px-4 py-3">
+								<span class="text-meta text-[var(--color-text-tertiary)]">
+									Showing {MAX_PREVIEW_LINES.toLocaleString()} of {allLines.length.toLocaleString()} lines
+								</span>
+								<button
+									onclick={handleDownload}
+									class="font-mono text-meta text-[var(--color-accent-mid)] transition-colors hover:text-[var(--color-accent-bright)]"
+								>Download full file</button>
+							</div>
+						{/if}
 					{/if}
 				</div>
 			{/if}

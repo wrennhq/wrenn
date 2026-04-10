@@ -1206,6 +1206,84 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/sandboxes/{id}/pty:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Interactive PTY session via WebSocket
+      operationId: ptySession
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Opens a WebSocket connection for an interactive PTY (terminal) session.
+        Supports creating new sessions, sending input, resizing, killing, and
+        reconnecting to existing sessions.
+
+        **Client sends** (first message — start a new PTY):
+        ```json
+        {
+          "type": "start",
+          "cmd": "/bin/bash",
+          "args": [],
+          "cols": 80,
+          "rows": 24,
+          "envs": {"TERM": "xterm-256color"},
+          "cwd": "/home/user",
+          "user": "user"
+        }
+        ```
+        All fields except `type` are optional. Defaults: cmd="/bin/bash", cols=80, rows=24.
+
+        **Client sends** (first message — reconnect to existing PTY):
+        ```json
+        {"type": "connect", "tag": "pty-abc123de"}
+        ```
+
+        **Client sends** (after session is established):
+        ```json
+        {"type": "input", "data": "<base64-encoded bytes>"}
+        {"type": "resize", "cols": 120, "rows": 40}
+        {"type": "kill"}
+        ```
+
+        **Server sends**:
+        ```json
+        {"type": "started", "tag": "pty-abc123de", "pid": 42}
+        {"type": "output", "data": "<base64-encoded PTY bytes>"}
+        {"type": "exit", "exit_code": 0}
+        {"type": "error", "data": "description", "fatal": true}
+        {"type": "ping"}
+        ```
+
+        PTY data (input and output) is base64-encoded because it contains raw
+        terminal bytes (escape sequences, control codes) that are not valid UTF-8.
+
+        Sessions have a 120-second inactivity timeout (reset on input/resize).
+        Sessions persist across WebSocket disconnections — the process keeps
+        running in the sandbox. Use the `tag` from the "started" response to
+        reconnect later.
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/sandboxes/{id}/files/stream/write:
     parameters:
       - name: id
