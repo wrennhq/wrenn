@@ -28,7 +28,11 @@
 		ws: WebSocket | null;
 		resizeObserver: ResizeObserver | null;
 		fitDebounce: ReturnType<typeof setTimeout> | null;
+		inputFlushTimer: ReturnType<typeof setTimeout> | null;
+		inputBuffer: string;
 	};
+
+	const MAX_SESSIONS = 8;
 
 	let sessions = $state<SessionDisplay[]>([]);
 	const internals = new Map<number, SessionInternal>();
@@ -73,10 +77,31 @@
 		brightWhite: '#eae7e2',
 	};
 
+	// Binary-safe base64 encode (handles multi-byte UTF-8 from xterm onData)
+	function toBase64(str: string): string {
+		return btoa(
+			Array.from(new TextEncoder().encode(str), (b) => String.fromCharCode(b)).join('')
+		);
+	}
+
+	// Binary-safe base64 decode (handles raw PTY bytes)
+	function fromBase64(b64: string): string {
+		const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+		return new TextDecoder().decode(bytes);
+	}
+
 	function getWsUrl(): string {
 		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 		const token = auth.token ? `?token=${encodeURIComponent(auth.token)}` : '';
 		return `${proto}//${window.location.host}/api/v1/sandboxes/${sandboxId}/pty${token}`;
+	}
+
+	function wsSend(ws: WebSocket | null, data: string) {
+		try {
+			if (ws?.readyState === WebSocket.OPEN) ws.send(data);
+		} catch {
+			// Connection closing — ignore
+		}
 	}
 
 	function updateSession(id: number, updates: Partial<SessionDisplay>) {
@@ -122,8 +147,18 @@
 		}
 	});
 
+	// Close all sessions when capsule stops running
+	$effect(() => {
+		if (!isRunning && sessions.length > 0) {
+			// Copy IDs to avoid mutating during iteration
+			const ids = sessions.map(s => s.id);
+			for (const id of ids) closeSession(id);
+		}
+	});
+
 	async function createSession() {
 		if (!isRunning || !containerRef) return;
+		if (sessions.length >= MAX_SESSIONS) return;
 		await loadModules();
 
 		const id = nextId++;
@@ -140,7 +175,12 @@
 		await tick();
 
 		const el = containerRef?.querySelector(`[data-session-id="${id}"]`) as HTMLDivElement | null;
-		if (!el) return;
+		if (!el) {
+			// DOM didn't render — clean up the orphaned display entry
+			sessions = sessions.filter(s => s.id !== id);
+			if (activeSessionId === id) activeSessionId = null;
+			return;
+		}
 
 		const fitAddon = new FitAddonClass();
 		const term = new TerminalClass({
@@ -167,6 +207,8 @@
 			ws: null,
 			resizeObserver: null,
 			fitDebounce: null,
+			inputFlushTimer: null,
+			inputBuffer: '',
 		};
 		internals.set(id, internal);
 
@@ -183,34 +225,27 @@
 		internal.resizeObserver.observe(el);
 
 		// Register input/resize handlers ONCE per terminal (not per connection).
-		// Buffer keystrokes and flush every 100ms to reduce request volume.
-		// 100ms is imperceptible but coalesces paste
-		// operations and fast typing into single messages.
-		let inputBuffer = '';
-		let inputFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
 		function flushInput() {
-			inputFlushTimer = null;
-			if (!inputBuffer) return;
-			const i = internals.get(id);
-			if (i?.ws?.readyState === WebSocket.OPEN) {
-				i.ws.send(JSON.stringify({ type: 'input', data: btoa(inputBuffer) }));
-			}
-			inputBuffer = '';
+			const int = internals.get(id);
+			if (!int) return;
+			int.inputFlushTimer = null;
+			if (!int.inputBuffer) return;
+			wsSend(int.ws, JSON.stringify({ type: 'input', data: toBase64(int.inputBuffer) }));
+			int.inputBuffer = '';
 		}
 
 		term.onData((data: string) => {
-			inputBuffer += data;
-			if (!inputFlushTimer) {
-				inputFlushTimer = setTimeout(flushInput, 100);
+			const int = internals.get(id);
+			if (!int) return;
+			int.inputBuffer += data;
+			if (!int.inputFlushTimer) {
+				int.inputFlushTimer = setTimeout(flushInput, 50);
 			}
 		});
 
 		term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
 			const i = internals.get(id);
-			if (i?.ws?.readyState === WebSocket.OPEN) {
-				i.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-			}
+			wsSend(i?.ws ?? null, JSON.stringify({ type: 'resize', cols, rows }));
 		});
 
 		connectSession(id);
@@ -240,7 +275,7 @@
 				msg.cmd = '/bin/bash';
 				msg.envs = { TERM: 'xterm-256color' };
 			}
-			ws.send(JSON.stringify(msg));
+			wsSend(ws, JSON.stringify(msg));
 		};
 
 		ws.onmessage = (event) => {
@@ -256,7 +291,7 @@
 						if (activeSessionId === id) int.term.focus();
 						break;
 					case 'output':
-						if (msg.data) int.term.write(atob(msg.data));
+						if (msg.data) int.term.write(fromBase64(msg.data));
 						break;
 					case 'exit':
 						closeSession(id);
@@ -268,7 +303,7 @@
 						}
 						break;
 					case 'ping':
-						ws.send(JSON.stringify({ type: 'pong' }));
+						wsSend(ws, JSON.stringify({ type: 'pong' }));
 						break;
 				}
 			} catch {
@@ -276,9 +311,19 @@
 			}
 		};
 
-		ws.onclose = () => {
+		ws.onclose = (event) => {
 			const s = sessions.find(s => s.id === id);
-			if (s?.state === 'connected') {
+			if (!s) return;
+
+			// Abnormal close with a live session — auto-reconnect
+			if (!event.wasClean && s.state === 'connected' && s.ptyTag) {
+				updateSession(id, { state: 'connecting', errorMessage: null });
+				int.term.write('\r\n\x1b[38;2;107;104;98m[reconnecting...]\x1b[0m\r\n');
+				setTimeout(() => connectSession(id, s.ptyTag ?? undefined), 1000);
+				return;
+			}
+
+			if (s.state === 'connected') {
 				updateSession(id, { state: 'disconnected' });
 			}
 		};
@@ -306,10 +351,9 @@
 		const int = internals.get(id);
 		if (int) {
 			if (int.fitDebounce) clearTimeout(int.fitDebounce);
+			if (int.inputFlushTimer) clearTimeout(int.inputFlushTimer);
 			int.resizeObserver?.disconnect();
-			if (int.ws?.readyState === WebSocket.OPEN) {
-				int.ws.send(JSON.stringify({ type: 'kill' }));
-			}
+			wsSend(int.ws, JSON.stringify({ type: 'kill' }));
 			int.ws?.close();
 			int.term?.dispose();
 			internals.delete(id);
@@ -347,6 +391,7 @@
 	onDestroy(() => {
 		for (const [, int] of internals) {
 			if (int.fitDebounce) clearTimeout(int.fitDebounce);
+			if (int.inputFlushTimer) clearTimeout(int.inputFlushTimer);
 			int.resizeObserver?.disconnect();
 			int.ws?.close();
 			int.term?.dispose();
@@ -360,7 +405,6 @@
 		padding: 12px 4px 12px 16px;
 		height: 100%;
 	}
-	/* Paint xterm's own background to cover any fractional-pixel gaps */
 	.terminal-container :global(.xterm-viewport),
 	.terminal-container :global(.xterm-screen) {
 		background-color: #0a0c0b !important;
@@ -406,7 +450,6 @@
 	.term-tab-active::after {
 		display: none;
 	}
-	/* Hide separator on tab right before active tab */
 	.term-tab:has(+ .term-tab-active)::after {
 		display: none;
 	}
@@ -428,9 +471,8 @@
 			</div>
 		</div>
 	{:else}
-		<!-- Unified session bar: tabs + status integrated into one row (hidden when no sessions) -->
+		<!-- Unified session bar (hidden when no sessions) -->
 		<div class="flex items-stretch bg-[var(--color-bg-1)]" style:display={sessions.length === 0 ? 'none' : 'flex'}>
-			<!-- Tabs -->
 			<div class="tab-scroll flex items-stretch overflow-x-auto">
 				{#each sessions as session (session.id)}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -475,21 +517,19 @@
 				{/each}
 			</div>
 
-			<!-- New tab button -->
 			<button
 				onclick={createSession}
-				class="flex shrink-0 items-center justify-center aspect-square self-stretch border-b border-[var(--color-border)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-2)] hover:text-[var(--color-text-primary)]"
-				title="New terminal session"
+				disabled={sessions.length >= MAX_SESSIONS}
+				class="flex shrink-0 items-center justify-center aspect-square self-stretch border-b border-[var(--color-border)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-2)] hover:text-[var(--color-text-primary)] disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]"
+				title={sessions.length >= MAX_SESSIONS ? `Maximum ${MAX_SESSIONS} sessions` : 'New terminal session'}
 			>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 				</svg>
 			</button>
 
-			<!-- Spacer fills remaining width with bg-1, has bottom border like inactive area -->
 			<div class="flex-1 border-b border-[var(--color-border)] bg-[var(--color-bg-1)]"></div>
 
-			<!-- Right-side status info (reconnect button, pty tag) -->
 			{#if activeSession}
 				<div class="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-1)] pr-4">
 					{#if activeSession.state === 'error' && activeSession.errorMessage}
