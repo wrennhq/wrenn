@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 
@@ -250,6 +251,69 @@ func (s *Server) ReadFile(
 	}
 
 	return connect.NewResponse(&pb.ReadFileResponse{Content: content}), nil
+}
+
+func (s *Server) ListDir(
+	ctx context.Context,
+	req *connect.Request[pb.ListDirRequest],
+) (*connect.Response[pb.ListDirResponse], error) {
+	msg := req.Msg
+
+	client, err := s.mgr.GetClient(msg.SandboxId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+
+	resp, err := client.ListDir(ctx, msg.Path, msg.Depth)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list dir: %w", err))
+	}
+
+	entries := make([]*pb.FileEntry, 0, len(resp.Entries))
+	for _, e := range resp.Entries {
+		entries = append(entries, entryInfoToPB(e))
+	}
+
+	return connect.NewResponse(&pb.ListDirResponse{Entries: entries}), nil
+}
+
+func (s *Server) MakeDir(
+	ctx context.Context,
+	req *connect.Request[pb.MakeDirRequest],
+) (*connect.Response[pb.MakeDirResponse], error) {
+	msg := req.Msg
+
+	client, err := s.mgr.GetClient(msg.SandboxId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+
+	resp, err := client.MakeDir(ctx, msg.Path)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("make dir: %w", err))
+	}
+
+	return connect.NewResponse(&pb.MakeDirResponse{
+		Entry: entryInfoToPB(resp.Entry),
+	}), nil
+}
+
+func (s *Server) RemovePath(
+	ctx context.Context,
+	req *connect.Request[pb.RemovePathRequest],
+) (*connect.Response[pb.RemovePathResponse], error) {
+	msg := req.Msg
+
+	client, err := s.mgr.GetClient(msg.SandboxId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+
+	if err := client.Remove(ctx, msg.Path); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("remove: %w", err))
+	}
+
+	return connect.NewResponse(&pb.RemovePathResponse{}), nil
 }
 
 func (s *Server) ExecStream(
@@ -544,4 +608,44 @@ func metricPointsToPB(pts []sandbox.MetricPoint) []*pb.MetricPoint {
 		}
 	}
 	return out
+}
+
+// entryInfoToPB maps an envd EntryInfo to a hostagent FileEntry.
+func entryInfoToPB(e *envdpb.EntryInfo) *pb.FileEntry {
+	if e == nil {
+		return nil
+	}
+
+	var fileType string
+	switch e.Type {
+	case envdpb.FileType_FILE_TYPE_FILE:
+		fileType = "file"
+	case envdpb.FileType_FILE_TYPE_DIRECTORY:
+		fileType = "directory"
+	case envdpb.FileType_FILE_TYPE_SYMLINK:
+		fileType = "symlink"
+	default:
+		fileType = "unknown"
+	}
+
+	entry := &pb.FileEntry{
+		Name:        e.Name,
+		Path:        e.Path,
+		Type:        fileType,
+		Size:        e.Size,
+		Mode:        e.Mode,
+		Permissions: e.Permissions,
+		Owner:       e.Owner,
+		Group:       e.Group,
+	}
+
+	if e.ModifiedTime != nil {
+		entry.ModifiedAt = e.ModifiedTime.GetSeconds()
+	}
+
+	if e.SymlinkTarget != nil {
+		entry.SymlinkTarget = e.SymlinkTarget
+	}
+
+	return entry
 }

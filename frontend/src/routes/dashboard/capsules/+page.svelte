@@ -1,5 +1,6 @@
 <script lang="ts">
 	import CreateCapsuleDialog from '$lib/components/CreateCapsuleDialog.svelte';
+	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { capsuleRunningCount } from '$lib/capsule-store.svelte';
 	import { onMount } from 'svelte';
 	import { toast } from '$lib/toast.svelte';
@@ -457,6 +458,7 @@
 						{:else}
 							<a href="/dashboard/capsules/{capsule.id}" class="font-mono text-ui text-[var(--color-text-bright)] hover:text-[var(--color-accent-bright)] transition-colors duration-150">{capsule.id}</a>
 						{/if}
+						<CopyButton value={capsule.id} />
 					</div>
 
 					<!-- Template -->

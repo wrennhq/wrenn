@@ -56,6 +56,15 @@ const (
 	// HostAgentServiceReadFileProcedure is the fully-qualified name of the HostAgentService's ReadFile
 	// RPC.
 	HostAgentServiceReadFileProcedure = "/hostagent.v1.HostAgentService/ReadFile"
+	// HostAgentServiceListDirProcedure is the fully-qualified name of the HostAgentService's ListDir
+	// RPC.
+	HostAgentServiceListDirProcedure = "/hostagent.v1.HostAgentService/ListDir"
+	// HostAgentServiceMakeDirProcedure is the fully-qualified name of the HostAgentService's MakeDir
+	// RPC.
+	HostAgentServiceMakeDirProcedure = "/hostagent.v1.HostAgentService/MakeDir"
+	// HostAgentServiceRemovePathProcedure is the fully-qualified name of the HostAgentService's
+	// RemovePath RPC.
+	HostAgentServiceRemovePathProcedure = "/hostagent.v1.HostAgentService/RemovePath"
 	// HostAgentServiceCreateSnapshotProcedure is the fully-qualified name of the HostAgentService's
 	// CreateSnapshot RPC.
 	HostAgentServiceCreateSnapshotProcedure = "/hostagent.v1.HostAgentService/CreateSnapshot"
@@ -106,6 +115,12 @@ type HostAgentServiceClient interface {
 	WriteFile(context.Context, *connect.Request[gen.WriteFileRequest]) (*connect.Response[gen.WriteFileResponse], error)
 	// ReadFile reads a file from inside a sandbox.
 	ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error)
+	// ListDir lists directory contents inside a sandbox.
+	ListDir(context.Context, *connect.Request[gen.ListDirRequest]) (*connect.Response[gen.ListDirResponse], error)
+	// MakeDir creates a directory inside a sandbox.
+	MakeDir(context.Context, *connect.Request[gen.MakeDirRequest]) (*connect.Response[gen.MakeDirResponse], error)
+	// RemovePath removes a file or directory inside a sandbox.
+	RemovePath(context.Context, *connect.Request[gen.RemovePathRequest]) (*connect.Response[gen.RemovePathResponse], error)
 	// CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
 	// template, and destroys the sandbox.
 	CreateSnapshot(context.Context, *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error)
@@ -195,6 +210,24 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("ReadFile")),
 			connect.WithClientOptions(opts...),
 		),
+		listDir: connect.NewClient[gen.ListDirRequest, gen.ListDirResponse](
+			httpClient,
+			baseURL+HostAgentServiceListDirProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("ListDir")),
+			connect.WithClientOptions(opts...),
+		),
+		makeDir: connect.NewClient[gen.MakeDirRequest, gen.MakeDirResponse](
+			httpClient,
+			baseURL+HostAgentServiceMakeDirProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("MakeDir")),
+			connect.WithClientOptions(opts...),
+		),
+		removePath: connect.NewClient[gen.RemovePathRequest, gen.RemovePathResponse](
+			httpClient,
+			baseURL+HostAgentServiceRemovePathProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("RemovePath")),
+			connect.WithClientOptions(opts...),
+		),
 		createSnapshot: connect.NewClient[gen.CreateSnapshotRequest, gen.CreateSnapshotResponse](
 			httpClient,
 			baseURL+HostAgentServiceCreateSnapshotProcedure,
@@ -268,6 +301,9 @@ type hostAgentServiceClient struct {
 	listSandboxes       *connect.Client[gen.ListSandboxesRequest, gen.ListSandboxesResponse]
 	writeFile           *connect.Client[gen.WriteFileRequest, gen.WriteFileResponse]
 	readFile            *connect.Client[gen.ReadFileRequest, gen.ReadFileResponse]
+	listDir             *connect.Client[gen.ListDirRequest, gen.ListDirResponse]
+	makeDir             *connect.Client[gen.MakeDirRequest, gen.MakeDirResponse]
+	removePath          *connect.Client[gen.RemovePathRequest, gen.RemovePathResponse]
 	createSnapshot      *connect.Client[gen.CreateSnapshotRequest, gen.CreateSnapshotResponse]
 	deleteSnapshot      *connect.Client[gen.DeleteSnapshotRequest, gen.DeleteSnapshotResponse]
 	execStream          *connect.Client[gen.ExecStreamRequest, gen.ExecStreamResponse]
@@ -318,6 +354,21 @@ func (c *hostAgentServiceClient) WriteFile(ctx context.Context, req *connect.Req
 // ReadFile calls hostagent.v1.HostAgentService.ReadFile.
 func (c *hostAgentServiceClient) ReadFile(ctx context.Context, req *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error) {
 	return c.readFile.CallUnary(ctx, req)
+}
+
+// ListDir calls hostagent.v1.HostAgentService.ListDir.
+func (c *hostAgentServiceClient) ListDir(ctx context.Context, req *connect.Request[gen.ListDirRequest]) (*connect.Response[gen.ListDirResponse], error) {
+	return c.listDir.CallUnary(ctx, req)
+}
+
+// MakeDir calls hostagent.v1.HostAgentService.MakeDir.
+func (c *hostAgentServiceClient) MakeDir(ctx context.Context, req *connect.Request[gen.MakeDirRequest]) (*connect.Response[gen.MakeDirResponse], error) {
+	return c.makeDir.CallUnary(ctx, req)
+}
+
+// RemovePath calls hostagent.v1.HostAgentService.RemovePath.
+func (c *hostAgentServiceClient) RemovePath(ctx context.Context, req *connect.Request[gen.RemovePathRequest]) (*connect.Response[gen.RemovePathResponse], error) {
+	return c.removePath.CallUnary(ctx, req)
 }
 
 // CreateSnapshot calls hostagent.v1.HostAgentService.CreateSnapshot.
@@ -388,6 +439,12 @@ type HostAgentServiceHandler interface {
 	WriteFile(context.Context, *connect.Request[gen.WriteFileRequest]) (*connect.Response[gen.WriteFileResponse], error)
 	// ReadFile reads a file from inside a sandbox.
 	ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error)
+	// ListDir lists directory contents inside a sandbox.
+	ListDir(context.Context, *connect.Request[gen.ListDirRequest]) (*connect.Response[gen.ListDirResponse], error)
+	// MakeDir creates a directory inside a sandbox.
+	MakeDir(context.Context, *connect.Request[gen.MakeDirRequest]) (*connect.Response[gen.MakeDirResponse], error)
+	// RemovePath removes a file or directory inside a sandbox.
+	RemovePath(context.Context, *connect.Request[gen.RemovePathRequest]) (*connect.Response[gen.RemovePathResponse], error)
 	// CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
 	// template, and destroys the sandbox.
 	CreateSnapshot(context.Context, *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error)
@@ -473,6 +530,24 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("ReadFile")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServiceListDirHandler := connect.NewUnaryHandler(
+		HostAgentServiceListDirProcedure,
+		svc.ListDir,
+		connect.WithSchema(hostAgentServiceMethods.ByName("ListDir")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceMakeDirHandler := connect.NewUnaryHandler(
+		HostAgentServiceMakeDirProcedure,
+		svc.MakeDir,
+		connect.WithSchema(hostAgentServiceMethods.ByName("MakeDir")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceRemovePathHandler := connect.NewUnaryHandler(
+		HostAgentServiceRemovePathProcedure,
+		svc.RemovePath,
+		connect.WithSchema(hostAgentServiceMethods.ByName("RemovePath")),
+		connect.WithHandlerOptions(opts...),
+	)
 	hostAgentServiceCreateSnapshotHandler := connect.NewUnaryHandler(
 		HostAgentServiceCreateSnapshotProcedure,
 		svc.CreateSnapshot,
@@ -551,6 +626,12 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceWriteFileHandler.ServeHTTP(w, r)
 		case HostAgentServiceReadFileProcedure:
 			hostAgentServiceReadFileHandler.ServeHTTP(w, r)
+		case HostAgentServiceListDirProcedure:
+			hostAgentServiceListDirHandler.ServeHTTP(w, r)
+		case HostAgentServiceMakeDirProcedure:
+			hostAgentServiceMakeDirHandler.ServeHTTP(w, r)
+		case HostAgentServiceRemovePathProcedure:
+			hostAgentServiceRemovePathHandler.ServeHTTP(w, r)
 		case HostAgentServiceCreateSnapshotProcedure:
 			hostAgentServiceCreateSnapshotHandler.ServeHTTP(w, r)
 		case HostAgentServiceDeleteSnapshotProcedure:
@@ -610,6 +691,18 @@ func (UnimplementedHostAgentServiceHandler) WriteFile(context.Context, *connect.
 
 func (UnimplementedHostAgentServiceHandler) ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ReadFile is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) ListDir(context.Context, *connect.Request[gen.ListDirRequest]) (*connect.Response[gen.ListDirResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ListDir is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) MakeDir(context.Context, *connect.Request[gen.MakeDirRequest]) (*connect.Response[gen.MakeDirResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.MakeDir is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) RemovePath(context.Context, *connect.Request[gen.RemovePathRequest]) (*connect.Response[gen.RemovePathResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.RemovePath is not implemented"))
 }
 
 func (UnimplementedHostAgentServiceHandler) CreateSnapshot(context.Context, *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error) {

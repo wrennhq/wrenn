@@ -1037,6 +1037,122 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/sandboxes/{id}/files/list:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: List directory contents
+      operationId: listDir
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListDirRequest"
+      responses:
+        "200":
+          description: Directory listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDirResponse"
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/mkdir:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Create a directory
+      operationId: makeDir
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MakeDirRequest"
+      responses:
+        "200":
+          description: Directory created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MakeDirResponse"
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/sandboxes/{id}/files/remove:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Remove a file or directory
+      operationId: removePath
+      tags: [sandboxes]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveRequest"
+      responses:
+        "204":
+          description: File or directory removed
+        "404":
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Sandbox not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/sandboxes/{id}/exec/stream:
     parameters:
       - name: id
@@ -1987,6 +2103,78 @@ components:
         path:
           type: string
           description: Absolute file path inside the sandbox
+
+    ListDirRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Directory path inside the sandbox
+        depth:
+          type: integer
+          default: 1
+          description: Recursion depth (0 = non-recursive, 1 = immediate children)
+
+    ListDirResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileEntry"
+
+    FileEntry:
+      type: object
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        type:
+          type: string
+          enum: [file, directory, symlink]
+        size:
+          type: integer
+          format: int64
+        mode:
+          type: integer
+        permissions:
+          type: string
+          description: Human-readable permissions (e.g. "-rwxr-xr-x")
+        owner:
+          type: string
+        group:
+          type: string
+        modified_at:
+          type: integer
+          format: int64
+          description: Unix timestamp (seconds)
+        symlink_target:
+          type: string
+          nullable: true
+
+    MakeDirRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Directory path to create inside the sandbox
+
+    MakeDirResponse:
+      type: object
+      properties:
+        entry:
+          $ref: "#/components/schemas/FileEntry"
+
+    RemoveRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Path to remove inside the sandbox
 
     CreateHostRequest:
       type: object

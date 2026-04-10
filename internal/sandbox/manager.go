@@ -697,6 +697,11 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
+	// Trigger envd to re-read MMDS so it picks up the new sandbox/template IDs.
+	if err := client.PostInit(waitCtx); err != nil {
+		slog.Warn("post-init failed after resume, metadata files may be stale", "sandbox", sandboxID, "error", err)
+	}
+
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -1096,6 +1101,11 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		os.Remove(cowPath)
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("wait for envd: %w", err)
+	}
+
+	// Trigger envd to re-read MMDS so it picks up the new sandbox/template IDs.
+	if err := client.PostInit(waitCtx); err != nil {
+		slog.Warn("post-init failed after template restore, metadata files may be stale", "sandbox", sandboxID, "error", err)
 	}
 
 	now := time.Now()

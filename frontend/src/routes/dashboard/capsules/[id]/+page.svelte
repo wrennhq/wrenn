@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { getCapsule, type Capsule } from '$lib/api/capsules';
+	import FilesTab from '$lib/components/FilesTab.svelte';
 	import {
 		fetchSandboxMetrics,
 		METRIC_RANGES,
@@ -31,6 +32,8 @@
 	let chartCpu: any = null;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let chartRam: any = null;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let ChartJS = $state<any>(null);
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
 	const metricsAvailable = $derived(
@@ -182,23 +185,13 @@
 		},
 	};
 
-	onMount(async () => {
-		const urlRange = new URLSearchParams(window.location.search).get('range');
-		if (urlRange && METRIC_RANGES.includes(urlRange as MetricRange)) {
-			range = urlRange as MetricRange;
-		}
+	function initCharts() {
+		if (!ChartJS || !canvasCpu || !canvasRam) return;
 
-		await loadCapsule();
+		chartCpu?.destroy();
+		chartRam?.destroy();
 
-		if (!metricsAvailable) return;
-
-		await tick();
-
-		if (!canvasCpu || !canvasRam) return;
-
-		const { Chart } = await import('chart.js/auto');
-
-		chartCpu = new Chart(canvasCpu, {
+		chartCpu = new ChartJS(canvasCpu, {
 			type: 'line',
 			data: {
 				labels: [],
@@ -241,7 +234,7 @@
 			},
 		});
 
-		chartRam = new Chart(canvasRam, {
+		chartRam = new ChartJS(canvasRam, {
 			type: 'line',
 			data: {
 				labels: [],
@@ -285,7 +278,43 @@
 		});
 
 		updateCharts();
-		restartPolling();
+	}
+
+	// Re-create charts whenever the metrics tab becomes active (canvases remount)
+	$effect(() => {
+		// Only track these two values for re-triggering
+		const tab = activeTab;
+		const chartLib = ChartJS;
+
+		if (tab !== 'metrics' || !chartLib) return;
+
+		// Wait for canvases to mount after the tab switch
+		tick().then(() => {
+			if (canvasCpu && canvasRam) {
+				initCharts();
+				restartPolling();
+			}
+		});
+
+		return () => {
+			if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+			chartCpu?.destroy(); chartCpu = null;
+			chartRam?.destroy(); chartRam = null;
+		};
+	});
+
+	onMount(async () => {
+		const urlRange = new URLSearchParams(window.location.search).get('range');
+		if (urlRange && METRIC_RANGES.includes(urlRange as MetricRange)) {
+			range = urlRange as MetricRange;
+		}
+
+		await loadCapsule();
+
+		if (!metricsAvailable) return;
+
+		const mod = await import('chart.js/auto');
+		ChartJS = mod.Chart;
 	});
 
 	onDestroy(() => {
@@ -391,22 +420,25 @@
 			</button>
 
 			<button
-				disabled
-				title="Coming soon"
-				class="flex cursor-not-allowed items-center gap-2 border-b-2 border-transparent px-4 py-2.5 text-ui font-medium opacity-40"
+				onclick={() => (activeTab = 'files')}
+				class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150
+					{activeTab === 'files'
+						? 'border-[var(--color-accent)] text-[var(--color-accent-bright)]'
+						: 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}"
 			>
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
 				</svg>
 				Files
-				<span class="rounded-[3px] bg-[var(--color-bg-4)] px-1.5 py-0.5 text-badge font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
-					Soon
-				</span>
 			</button>
 	</div>
 
 	<!-- Stats tab content -->
-	{#if activeTab === 'metrics'}
+	{#if activeTab === 'files'}
+		<div class="anim-in flex flex-1 min-h-0" style="animation-delay: 0.05s">
+			<FilesTab sandboxId={sandboxId} isRunning={capsule.status === 'running'} />
+		</div>
+	{:else if activeTab === 'metrics'}
 		<div
 			class="anim-in flex flex-1 flex-col gap-5 min-h-0 p-8"
 			style="animation-delay: 0.05s"
