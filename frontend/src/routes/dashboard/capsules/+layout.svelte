@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { capsuleRunningCount } from '$lib/capsule-store.svelte';
 
 	let { children } = $props();
@@ -33,8 +34,11 @@
 							Capsules
 						</a>
 						<span class="text-[var(--color-text-muted)] select-none" style="font-size: 1.1rem">›</span>
-						<span class="font-mono text-[1.1rem] leading-none text-[var(--color-text-bright)]">
-							{$page.params.id}
+						<span class="copy-host flex items-center gap-1.5">
+							<span class="font-mono text-[1.1rem] leading-none text-[var(--color-text-bright)]">
+								{$page.params.id}
+							</span>
+							<CopyButton value={$page.params.id} />
 						</span>
 					</div>
 				</div>

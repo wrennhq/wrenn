@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { fly } from 'svelte/transition';
@@ -350,7 +351,10 @@
 
 										<!-- Name -->
 										<div class="min-w-0 px-5 py-4">
-											<span class="block truncate font-mono text-ui text-[var(--color-text-bright)]">{snapshot.name}</span>
+											<div class="flex items-center gap-1.5">
+												<span class="block truncate font-mono text-ui text-[var(--color-text-bright)]">{snapshot.name}</span>
+												<CopyButton value={snapshot.name} />
+											</div>
 										</div>
 
 										<!-- Type badge -->

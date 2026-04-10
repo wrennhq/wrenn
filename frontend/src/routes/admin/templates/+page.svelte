@@ -1,5 +1,6 @@
 <script lang="ts">
 	import AdminSidebar from '$lib/components/AdminSidebar.svelte';
+	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { toast } from '$lib/toast.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
@@ -262,7 +263,7 @@
 					</p>
 				</div>
 				<button
-					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '' }; }}
+					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false }; }}
 					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-2 text-ui font-semibold text-white shadow-sm transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 				>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -416,7 +417,10 @@
 				{#each templates as tmpl (tmpl.name)}
 					<tr class="border-b border-[var(--color-border)] last:border-0 transition-colors duration-200 hover:bg-[var(--color-bg-2)]">
 						<td class="px-4 py-3.5">
-							<span class="font-mono text-meta text-[var(--color-text-primary)]">{tmpl.name}</span>
+							<div class="flex items-center gap-1.5">
+								<span class="font-mono text-meta text-[var(--color-text-primary)]">{tmpl.name}</span>
+								<CopyButton value={tmpl.name} label="Copied name" />
+							</div>
 						</td>
 						<td class="px-4 py-3.5">
 							{#if tmpl.type === 'snapshot'}

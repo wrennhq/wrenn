@@ -185,7 +185,7 @@
 						...BASE_CHART_OPTIONS.scales.y,
 						ticks: {
 							...BASE_CHART_OPTIONS.scales.y.ticks,
-							callback: (v: number) => `${v}`,
+							callback: (v: string | number) => `${v}`,
 						},
 					},
 				},
@@ -215,7 +215,8 @@
 					tooltip: {
 						...BASE_CHART_OPTIONS.plugins.tooltip,
 						callbacks: {
-							label: (ctx: { parsed: { y: number } }) => ` ${ctx.parsed.y.toFixed(1)} GB`,
+							// eslint-disable-next-line @typescript-eslint/no-explicit-any
+							label: (ctx: any) => ` ${ctx.parsed.y.toFixed(1)} GB`,
 						},
 					},
 				},
@@ -225,7 +226,7 @@
 						...BASE_CHART_OPTIONS.scales.y,
 						ticks: {
 							...BASE_CHART_OPTIONS.scales.y.ticks,
-							callback: (v: number) => `${(+v).toFixed(1)} GB`,
+							callback: (v: string | number) => `${(+v).toFixed(1)} GB`,
 						},
 					},
 				},
