@@ -295,13 +295,18 @@
 </style>
 
 {#if !isRunning}
-	<div class="flex items-center gap-3 rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] px-5 py-4 m-8">
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-			<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-		</svg>
-		<span class="text-ui text-[var(--color-text-tertiary)]">
-			File browser requires a running capsule.
-		</span>
+	<div class="flex flex-1 items-center justify-center">
+		<div class="flex flex-col items-center gap-4 text-center">
+			<div class="flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]" style="animation: iconFloat 3s ease-in-out infinite">
+				<svg class="text-[var(--color-text-muted)]" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+				</svg>
+			</div>
+			<div class="flex flex-col gap-1">
+				<span class="text-ui font-medium text-[var(--color-text-secondary)]">File browser unavailable</span>
+				<span class="text-meta text-[var(--color-text-muted)]">Start the capsule to browse its filesystem</span>
+			</div>
+		</div>
 	</div>
 {:else}
 	<div class="flex flex-1 min-h-0">
