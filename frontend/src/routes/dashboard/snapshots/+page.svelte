@@ -53,6 +53,9 @@
 		return snapshots.filter((s) => s.type === typeFilter);
 	});
 
+	// Suppress row fly-transitions after initial load so filter switches are instant.
+	let initialLoadDone = $state(false);
+
 	async function fetchSnapshots() {
 		loading = true;
 		error = null;
@@ -63,6 +66,9 @@
 			error = result.error;
 		}
 		loading = false;
+		// Allow entrance animations to play on initial load, then suppress
+		// them on subsequent filter changes to avoid visual flicker.
+		setTimeout(() => { initialLoadDone = true; }, 400);
 	}
 
 	async function handleDelete() {
@@ -343,8 +349,8 @@
 										class="snapshot-row row-item relative grid items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 last:border-b-0
 											{isSnapshot ? 'type-snapshot' : 'type-image'}"
 										style="grid-template-columns: 2fr 1fr 0.7fr 0.9fr 0.8fr 1.3fr 140px"
-										in:fly={{ y: 6, duration: 350, delay: i * 40, easing: cubicOut }}
-										out:fly={{ x: -12, duration: 180, easing: cubicIn }}
+										in:fly={initialLoadDone ? { duration: 0 } : { y: 6, duration: 350, delay: i * 40, easing: cubicOut }}
+										out:fly={initialLoadDone ? { duration: 0 } : { x: -12, duration: 180, easing: cubicIn }}
 									>
 										<!-- Left accent stripe -->
 										<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-[3px]" style="background: {typeColor}"></div>
