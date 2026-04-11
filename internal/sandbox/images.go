@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"git.omukk.dev/wrenn/wrenn/internal/id"
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
@@ -64,6 +66,42 @@ func EnsureImageSizes(wrennDir string, targetMB int) error {
 	}
 
 	return nil
+}
+
+// ParseSizeToMB parses a human-readable size string into megabytes.
+// Supported suffixes: G, Gi (gibibytes), M, Mi (mebibytes).
+// Examples: "5G" → 5120, "2Gi" → 2048, "1000M" → 1000, "512Mi" → 512.
+func ParseSizeToMB(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty size string")
+	}
+
+	// Find where the numeric part ends.
+	i := 0
+	for i < len(s) && (s[i] == '.' || (s[i] >= '0' && s[i] <= '9')) {
+		i++
+	}
+	if i == 0 {
+		return 0, fmt.Errorf("invalid size %q: no numeric value", s)
+	}
+
+	numStr := s[:i]
+	suffix := strings.TrimSpace(s[i:])
+
+	num, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size %q: %w", s, err)
+	}
+
+	switch suffix {
+	case "G", "Gi":
+		return int(num * 1024), nil
+	case "M", "Mi", "":
+		return int(num), nil
+	default:
+		return 0, fmt.Errorf("invalid size %q: unknown suffix %q (use G, Gi, M, or Mi)", s, suffix)
+	}
 }
 
 // expandImage expands a single rootfs image if it is smaller than targetBytes.

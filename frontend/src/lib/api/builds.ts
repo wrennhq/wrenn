@@ -1,4 +1,4 @@
-import { apiFetch, type ApiResult } from '$lib/api/client';
+import { apiFetch, apiFetchMultipart, type ApiResult } from '$lib/api/client';
 
 export type BuildLogEntry = {
 	step: number;
@@ -26,6 +26,8 @@ export type Build = {
 	error?: string;
 	sandbox_id?: string;
 	host_id?: string;
+	default_user: string;
+	default_env: Record<string, string>;
 	created_at: string;
 	started_at?: string;
 	completed_at?: string;
@@ -39,9 +41,18 @@ export type CreateBuildParams = {
 	vcpus?: number;
 	memory_mb?: number;
 	skip_pre_post?: boolean;
+	archive?: File;
 };
 
 export async function createBuild(params: CreateBuildParams): Promise<ApiResult<Build>> {
+	if (params.archive) {
+		// Use multipart when an archive file is provided.
+		const { archive, ...config } = params;
+		const formData = new FormData();
+		formData.append('config', JSON.stringify(config));
+		formData.append('archive', archive);
+		return apiFetchMultipart('POST', '/api/v1/admin/builds', formData);
+	}
 	return apiFetch('POST', '/api/v1/admin/builds', params);
 }
 

@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -54,6 +56,8 @@ type buildResponse struct {
 	Error        *string         `json:"error,omitempty"`
 	SandboxID    *string         `json:"sandbox_id,omitempty"`
 	HostID       *string         `json:"host_id,omitempty"`
+	DefaultUser  string          `json:"default_user"`
+	DefaultEnv   json.RawMessage `json:"default_env"`
 	CreatedAt    string          `json:"created_at"`
 	StartedAt    *string         `json:"started_at,omitempty"`
 	CompletedAt  *string         `json:"completed_at,omitempty"`
@@ -71,6 +75,8 @@ func buildToResponse(b db.TemplateBuild) buildResponse {
 		CurrentStep:  b.CurrentStep,
 		TotalSteps:   b.TotalSteps,
 		Logs:         b.Logs,
+		DefaultUser:  b.DefaultUser,
+		DefaultEnv:   b.DefaultEnv,
 	}
 	if b.Healthcheck != "" {
 		resp.Healthcheck = &b.Healthcheck
@@ -101,11 +107,54 @@ func buildToResponse(b db.TemplateBuild) buildResponse {
 }
 
 // Create handles POST /v1/admin/builds.
+// Accepts either JSON body or multipart/form-data with a "config" JSON part
+// and an optional "archive" file part (tar/tar.gz/zip for COPY commands).
 func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createBuildRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
-		return
+	var archive []byte
+	var archiveName string
+
+	ct := r.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "multipart/") {
+		// 100 MB max for multipart (archive + JSON config).
+		if err := r.ParseMultipartForm(100 << 20); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse multipart form")
+			return
+		}
+
+		// Parse JSON config from "config" field.
+		configStr := r.FormValue("config")
+		if configStr == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "multipart form requires a 'config' JSON field")
+			return
+		}
+		if err := json.Unmarshal([]byte(configStr), &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid config JSON in multipart form")
+			return
+		}
+
+		// Read optional archive file (max 100 MB).
+		file, header, err := r.FormFile("archive")
+		if err == nil {
+			defer file.Close()
+			const maxArchiveSize = 100 << 20 // 100 MB
+			lr := io.LimitReader(file, maxArchiveSize+1)
+			archive, err = io.ReadAll(lr)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_request", "failed to read archive file")
+				return
+			}
+			if int64(len(archive)) > maxArchiveSize {
+				writeError(w, http.StatusRequestEntityTooLarge, "invalid_request", "archive exceeds 100 MB limit")
+				return
+			}
+			archiveName = header.Filename
+		}
+	} else {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			return
+		}
 	}
 
 	if req.Name == "" {
@@ -129,6 +178,8 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 		VCPUs:        req.VCPUs,
 		MemoryMB:     req.MemoryMB,
 		SkipPrePost:  req.SkipPrePost,
+		Archive:      archive,
+		ArchiveName:  archiveName,
 	})
 	if err != nil {
 		slog.Error("failed to create build", "error", err)

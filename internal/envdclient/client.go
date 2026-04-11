@@ -3,6 +3,7 @@ package envdclient
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -273,9 +274,35 @@ func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
 // env vars and the corresponding files under /run/wrenn/ inside the guest.
 // Must be called after snapshot restore so envd picks up the new sandbox's metadata.
 func (c *Client) PostInit(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/init", nil)
+	return c.PostInitWithDefaults(ctx, "", nil)
+}
+
+// PostInitWithDefaults calls envd's POST /init endpoint with optional default
+// user and environment variables. These are applied to envd's defaults so all
+// subsequent process executions use them.
+func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, envVars map[string]string) error {
+	var body io.Reader
+	if defaultUser != "" || len(envVars) > 0 {
+		payload := make(map[string]any)
+		if defaultUser != "" {
+			payload["defaultUser"] = defaultUser
+		}
+		if len(envVars) > 0 {
+			payload["envVars"] = envVars
+		}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshal init body: %w", err)
+		}
+		body = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/init", body)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -285,8 +312,8 @@ func (c *Client) PostInit(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("post init: status %d: %s", resp.StatusCode, string(body))
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("post init: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

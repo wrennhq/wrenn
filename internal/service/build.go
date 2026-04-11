@@ -27,8 +27,11 @@ const (
 )
 
 // preBuildCmds run before the user recipe to prepare the build environment.
+// apt update runs as root first, then USER switches to wrenn-user for the recipe.
 var preBuildCmds = []string{
 	"RUN apt update",
+	"USER wrenn-user",
+	"WORKDIR /home/wrenn-user",
 }
 
 // postBuildCmds run after the user recipe to clean up caches and reduce image size.
@@ -36,6 +39,7 @@ var postBuildCmds = []string{
 	"RUN apt clean",
 	"RUN apt autoremove -y",
 	"RUN rm -rf /var/lib/apt/lists/*",
+	"RUN rm -rf /tmp/build-files /tmp/build-files.*",
 }
 
 // buildAgentClient is the subset of the host agent client used by the build worker.
@@ -43,6 +47,7 @@ type buildAgentClient interface {
 	CreateSandbox(ctx context.Context, req *connect.Request[pb.CreateSandboxRequest]) (*connect.Response[pb.CreateSandboxResponse], error)
 	DestroySandbox(ctx context.Context, req *connect.Request[pb.DestroySandboxRequest]) (*connect.Response[pb.DestroySandboxResponse], error)
 	Exec(ctx context.Context, req *connect.Request[pb.ExecRequest]) (*connect.Response[pb.ExecResponse], error)
+	WriteFile(ctx context.Context, req *connect.Request[pb.WriteFileRequest]) (*connect.Response[pb.WriteFileResponse], error)
 	CreateSnapshot(ctx context.Context, req *connect.Request[pb.CreateSnapshotRequest]) (*connect.Response[pb.CreateSnapshotResponse], error)
 	FlattenRootfs(ctx context.Context, req *connect.Request[pb.FlattenRootfsRequest]) (*connect.Response[pb.FlattenRootfsResponse], error)
 }
@@ -56,6 +61,7 @@ type BuildService struct {
 
 	mu        sync.Mutex
 	cancelMap map[string]context.CancelFunc // buildID → per-build cancel func
+	filesMap  map[string][]byte             // buildID → uploaded archive bytes
 }
 
 // BuildCreateParams holds the parameters for creating a template build.
@@ -67,6 +73,27 @@ type BuildCreateParams struct {
 	VCPUs        int32
 	MemoryMB     int32
 	SkipPrePost  bool
+	Archive      []byte // Optional tar/tar.gz/zip archive for COPY commands.
+	ArchiveName  string // Original filename (used to detect format).
+}
+
+// storeArchive stores uploaded archive bytes keyed by build ID for the worker.
+func (s *BuildService) storeArchive(buildID string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.filesMap == nil {
+		s.filesMap = make(map[string][]byte)
+	}
+	s.filesMap[buildID] = data
+}
+
+// takeArchive retrieves and removes stored archive bytes for a build.
+func (s *BuildService) takeArchive(buildID string) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data := s.filesMap[buildID]
+	delete(s.filesMap, buildID)
+	return data
 }
 
 // Create inserts a new build record and enqueues it to Redis.
@@ -115,6 +142,11 @@ func (s *BuildService) Create(ctx context.Context, p BuildCreateParams) (db.Temp
 	// Enqueue build ID (as formatted string) to Redis for workers to pick up.
 	if err := s.Redis.RPush(ctx, buildQueueKey, buildIDStr).Err(); err != nil {
 		return db.TemplateBuild{}, fmt.Errorf("enqueue build: %w", err)
+	}
+
+	// Store archive for the worker if provided.
+	if len(p.Archive) > 0 {
+		s.storeArchive(buildIDStr, p.Archive)
 	}
 
 	return build, nil
@@ -303,6 +335,16 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		HostID:    host.ID,
 	})
 
+	// Upload and extract build archive if provided.
+	archive := s.takeArchive(buildIDStr)
+	if len(archive) > 0 {
+		if err := s.uploadAndExtractArchive(buildCtx, agent, sandboxIDStr, archive, buildIDStr); err != nil {
+			s.destroySandbox(buildCtx, agent, sandboxIDStr)
+			s.failBuild(buildCtx, buildID, fmt.Sprintf("archive upload failed: %v", err))
+			return
+		}
+	}
+
 	// Parse recipe steps. preBuildCmds and postBuildCmds are hardcoded and always
 	// valid; panic on error is appropriate here since it would be a programmer mistake.
 	preBuildSteps, err := recipe.ParseRecipe(preBuildCmds)
@@ -331,10 +373,18 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 			"HOME": "/root",
 		}
 	}
-	bctx := &recipe.ExecContext{EnvVars: envVars}
+	bctx := &recipe.ExecContext{EnvVars: envVars, User: "root"}
+
+	// Per-step progress callback for live UI updates.
+	progressFn := func(currentStep int, allEntries []recipe.BuildLogEntry) {
+		s.updateLogs(buildCtx, buildID, currentStep, allEntries)
+	}
 
 	runPhase := func(phase string, steps []recipe.Step, defaultTimeout time.Duration) bool {
-		newEntries, nextStep, ok := recipe.Execute(buildCtx, phase, steps, sandboxIDStr, step, defaultTimeout, bctx, agent.Exec)
+		newEntries, nextStep, ok := recipe.Execute(buildCtx, phase, steps, sandboxIDStr, step, defaultTimeout, bctx, agent.Exec, func(currentStep int, phaseEntries []recipe.BuildLogEntry) {
+			// Progress callback: combine prior logs with current phase entries.
+			progressFn(currentStep, append(logs, phaseEntries...))
+		})
 		logs = append(logs, newEntries...)
 		step = nextStep
 		s.updateLogs(buildCtx, buildID, step, logs)
@@ -344,24 +394,40 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 			if buildCtx.Err() != nil {
 				return false
 			}
-			last := newEntries[len(newEntries)-1]
-			reason := last.Stderr
-			if reason == "" {
-				reason = fmt.Sprintf("exit code %d", last.Exit)
+			reason := "unknown error"
+			if len(newEntries) > 0 {
+				last := newEntries[len(newEntries)-1]
+				reason = last.Stderr
+				if reason == "" {
+					reason = fmt.Sprintf("exit code %d", last.Exit)
+				}
 			}
 			s.failBuild(buildCtx, buildID, fmt.Sprintf("%s step %d failed: %s", phase, step, reason))
 		}
 		return ok
 	}
 
+	// Phase 1: Pre-build (as root) — creates wrenn-user, updates apt.
 	if !build.SkipPrePost {
 		if !runPhase("pre-build", preBuildSteps, 0) {
 			return
 		}
 	}
+
+	// Phase 2: User recipe — starts as wrenn-user (set by USER in pre-build)
+	// or root if skip_pre_post.
 	if !runPhase("recipe", userRecipeSteps, buildCommandTimeout) {
 		return
 	}
+
+	// Capture the final user and env vars as template defaults.
+	// Filter out user-specific and runtime vars that should be resolved at
+	// sandbox creation time, not baked in from the build environment.
+	templateDefaultUser := bctx.User
+	templateDefaultEnv := filterBuildEnv(bctx.EnvVars)
+
+	// Phase 3: Post-build (as root) — cleanup.
+	bctx.User = "root"
 	if !build.SkipPrePost {
 		if !runPhase("post-build", postBuildSteps, 0) {
 			return
@@ -430,18 +496,33 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		templateType = "snapshot"
 	}
 
+	// Serialize env vars for DB storage.
+	defaultEnvJSON, err := json.Marshal(templateDefaultEnv)
+	if err != nil {
+		defaultEnvJSON = []byte("{}")
+	}
+
 	if _, err := s.DB.InsertTemplate(buildCtx, db.InsertTemplateParams{
-		ID:        build.TemplateID,
-		Name:      build.Name,
-		Type:      templateType,
-		Vcpus:     build.Vcpus,
-		MemoryMb:  build.MemoryMb,
-		SizeBytes: sizeBytes,
-		TeamID:    id.PlatformTeamID,
+		ID:          build.TemplateID,
+		Name:        build.Name,
+		Type:        templateType,
+		Vcpus:       build.Vcpus,
+		MemoryMb:    build.MemoryMb,
+		SizeBytes:   sizeBytes,
+		TeamID:      id.PlatformTeamID,
+		DefaultUser: templateDefaultUser,
+		DefaultEnv:  defaultEnvJSON,
 	}); err != nil {
 		log.Error("failed to insert template record", "error", err)
 		// Build succeeded on disk, just DB record failed — don't mark as failed.
 	}
+
+	// Record defaults on the build record for inspection.
+	_ = s.DB.UpdateBuildDefaults(buildCtx, db.UpdateBuildDefaultsParams{
+		ID:          buildID,
+		DefaultUser: templateDefaultUser,
+		DefaultEnv:  defaultEnvJSON,
+	})
 
 	// For CreateSnapshot, the sandbox is already destroyed by the snapshot process.
 	// For FlattenRootfs, the sandbox is already destroyed by the flatten process.
@@ -602,4 +683,88 @@ func parseSandboxEnv(raw string) map[string]string {
 	}
 
 	return envVars
+}
+
+// uploadAndExtractArchive writes the archive to the sandbox and extracts it
+// to /tmp/build-files/. Detects format from content (tar.gz, tar, zip).
+func (s *BuildService) uploadAndExtractArchive(
+	ctx context.Context,
+	agent buildAgentClient,
+	sandboxID string,
+	archive []byte,
+	buildID string,
+) error {
+	// Detect archive type from magic bytes.
+	var archivePath, extractCmd string
+	switch {
+	case len(archive) >= 2 && archive[0] == 0x1f && archive[1] == 0x8b:
+		// gzip (tar.gz)
+		archivePath = "/tmp/build-files.tar.gz"
+		extractCmd = "mkdir -p /tmp/build-files && tar xzf /tmp/build-files.tar.gz -C /tmp/build-files"
+	case len(archive) >= 4 && string(archive[:4]) == "PK\x03\x04":
+		// zip
+		archivePath = "/tmp/build-files.zip"
+		extractCmd = "mkdir -p /tmp/build-files && unzip -o /tmp/build-files.zip -d /tmp/build-files"
+	case len(archive) >= 262 && string(archive[257:262]) == "ustar":
+		// tar (ustar magic at offset 257)
+		archivePath = "/tmp/build-files.tar"
+		extractCmd = "mkdir -p /tmp/build-files && tar xf /tmp/build-files.tar -C /tmp/build-files"
+	default:
+		// Fallback: try tar.gz
+		archivePath = "/tmp/build-files.tar.gz"
+		extractCmd = "mkdir -p /tmp/build-files && tar xzf /tmp/build-files.tar.gz -C /tmp/build-files"
+	}
+
+	slog.Info("uploading build archive", "build_id", buildID, "path", archivePath, "size", len(archive))
+
+	// Write archive to VM.
+	if _, err := agent.WriteFile(ctx, connect.NewRequest(&pb.WriteFileRequest{
+		SandboxId: sandboxID,
+		Path:      archivePath,
+		Content:   archive,
+	})); err != nil {
+		return fmt.Errorf("write archive: %w", err)
+	}
+
+	// Extract and ensure files are readable.
+	fullCmd := extractCmd + " && chmod -R a+rX /tmp/build-files"
+
+	resp, err := agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
+		SandboxId:  sandboxID,
+		Cmd:        "/bin/sh",
+		Args:       []string{"-c", fullCmd},
+		TimeoutSec: 120,
+	}))
+	if err != nil {
+		return fmt.Errorf("extract archive: %w", err)
+	}
+	if resp.Msg.ExitCode != 0 {
+		return fmt.Errorf("extract archive: exit code %d: %s", resp.Msg.ExitCode, string(resp.Msg.Stderr))
+	}
+
+	return nil
+}
+
+// runtimeEnvVars lists env vars that are user- or session-specific and should
+// not be persisted into template defaults. These are resolved at runtime by
+// envd based on the actual user and sandbox context.
+var runtimeEnvVars = map[string]bool{
+	"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true,
+	"PWD": true, "OLDPWD": true, "HOSTNAME": true, "TERM": true,
+	"SHLVL": true, "_": true,
+	// Per-sandbox identifiers set by envd at boot via MMDS.
+	"WRENN_SANDBOX_ID": true, "WRENN_TEMPLATE_ID": true,
+}
+
+// filterBuildEnv returns a copy of envVars with runtime/user-specific
+// variables removed so they don't override envd's per-user resolution.
+func filterBuildEnv(envVars map[string]string) map[string]string {
+	filtered := make(map[string]string, len(envVars))
+	for k, v := range envVars {
+		if runtimeEnvVars[k] {
+			continue
+		}
+		filtered[k] = v
+	}
+	return filtered
 }

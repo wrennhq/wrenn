@@ -49,7 +49,7 @@
 
 	const platformItems: NavItem[] = [
 		{ label: 'Capsules', icon: IconMonitor, href: '/dashboard/capsules' },
-		{ label: 'Templates', icon: IconBox, href: '/dashboard/snapshots' },
+		{ label: 'Templates', icon: IconBox, href: '/dashboard/templates' },
 		{ label: 'Metrics', icon: IconMetrics, href: '/dashboard/metrics' }
 	];
 

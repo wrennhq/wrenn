@@ -162,10 +162,10 @@
 	<div class="flex flex-1 flex-col overflow-hidden">
 		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
-			<div class="px-7 pt-8">
+			<div class="px-8 pt-8">
 				<div class="flex items-start justify-between">
 					<div>
-						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<h1 class="font-serif text-page tracking-[-0.03em] text-[var(--color-text-bright)]">
 							Templates
 						</h1>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -231,15 +231,15 @@
 							</div>
 							<div class="skeleton h-4 w-20 rounded-sm"></div>
 						</div>
-						<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]">
-							<div class="grid border-b border-[var(--color-border)] bg-[var(--color-bg-3)]" style="grid-template-columns: 2fr 1fr 0.7fr 0.9fr 0.8fr 1.3fr 140px">
-								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Name</div>
-								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Type</div>
-								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">vCPUs</div>
-								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Memory</div>
-								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Size</div>
-								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created</div>
-								<div class="px-5 py-3 text-right text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Actions</div>
+						<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)] shadow-sm">
+							<div class="grid border-b border-[var(--color-border)] bg-[var(--color-bg-0)]/40" style="grid-template-columns: 2fr 1fr 0.7fr 0.9fr 0.8fr 1.3fr 140px">
+								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Name</div>
+								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Type</div>
+								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">vCPUs</div>
+								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Memory</div>
+								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Size</div>
+								<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Created</div>
+								<div class="px-5 py-3 text-right text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Actions</div>
 							</div>
 							{#each Array(4) as _, i}
 								<div
@@ -294,30 +294,28 @@
 
 						{#if filteredSnapshots.length === 0}
 							<!-- Empty state -->
-							<div class="flex flex-col items-center justify-center py-[72px]">
-								<div class="relative mb-5">
-									<!-- Radial glow behind icon -->
-									<div class="absolute inset-0 -m-4 rounded-full" style="background: radial-gradient(circle, rgba(94,140,88,0.08) 0%, transparent 70%)"></div>
+							<div class="flex flex-col items-center justify-center py-28 text-center">
+								<div class="relative mb-7">
+									<div class="absolute -inset-3 rounded-2xl bg-[var(--color-accent-glow)] blur-xl"></div>
 									<div
-										class="relative flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]"
-										style="animation: iconFloat 4s ease-in-out infinite"
+										class="empty-icon-float relative flex h-18 w-18 items-center justify-center rounded-xl border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-card"
 									>
-										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-secondary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+										<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--color-accent-mid)]">
 											<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
 											<polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" />
 										</svg>
 									</div>
 								</div>
-								<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+								<p class="font-serif text-heading leading-snug text-[var(--color-text-secondary)]">
 									{emptyHeading(typeFilter)}
 								</p>
-								<p class="mt-1.5 max-w-[340px] text-center text-ui text-[var(--color-text-tertiary)]">
+								<p class="mt-2 max-w-[320px] text-ui text-[var(--color-text-muted)]">
 									{emptyDescription(typeFilter)}
 								</p>
 								{#if typeFilter === 'all' || typeFilter === 'snapshot'}
 									<a
 										href="/dashboard/capsules"
-										class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)] px-4 py-2 text-ui font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:border-[var(--color-border-mid)] hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] active:scale-95"
+										class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 px-4 py-2 text-ui font-medium text-[var(--color-accent-bright)] transition-all duration-200 hover:bg-[var(--color-accent)]/20 hover:border-[var(--color-accent)]/50"
 									>
 										Go to Capsules
 										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -329,16 +327,16 @@
 							</div>
 						{:else}
 							<!-- Table -->
-							<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]">
+							<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)] shadow-sm">
 								<!-- Header -->
-								<div class="grid border-b border-[var(--color-border)] bg-[var(--color-bg-3)]" style="grid-template-columns: 2fr 1fr 0.7fr 0.9fr 0.8fr 1.3fr 140px">
-									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Name</div>
-									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Type</div>
-									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">vCPUs</div>
-									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Memory</div>
-									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Size</div>
-									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created</div>
-									<div class="px-5 py-3 text-right text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Actions</div>
+								<div class="grid border-b border-[var(--color-border)] bg-[var(--color-bg-0)]/40" style="grid-template-columns: 2fr 1fr 0.7fr 0.9fr 0.8fr 1.3fr 140px">
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Name</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Type</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">vCPUs</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Memory</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Size</div>
+									<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Created</div>
+									<div class="px-5 py-3 text-right text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Actions</div>
 								</div>
 
 								<!-- Rows -->
@@ -366,25 +364,22 @@
 										<!-- Type badge -->
 										<div class="px-5 py-4">
 											{#if isSnapshot}
-												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-accent)]/25 bg-[var(--color-accent)]/10 px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
-													<span
-														class="inline-block h-[5px] w-[5px] shrink-0 rounded-full bg-[var(--color-accent)]"
-														style="box-shadow: 0 0 6px rgba(94,140,88,0.5); animation: wrenn-glow 1.8s ease-in-out infinite"
-													></span>
-													Snapshot
+												<span class="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-accent)]/25 bg-[var(--color-accent)]/8 px-2.5 py-0.5 text-label font-medium text-[var(--color-accent-bright)]">
+													<span class="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]"></span>
+													snapshot
 												</span>
 											{:else}
-												<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-blue)]/25 bg-[var(--color-blue)]/10 px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-blue)]">
-													<span class="inline-block h-[5px] w-[5px] shrink-0 rounded-full bg-[var(--color-blue)]"></span>
-													Image
+												<span class="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-blue)]/25 bg-[var(--color-blue)]/8 px-2.5 py-0.5 text-label font-medium text-[var(--color-blue)]">
+													<span class="h-1.5 w-1.5 rounded-full bg-[var(--color-blue)]"></span>
+													image
 												</span>
 											{/if}
 										</div>
 
 										<!-- vCPUs -->
 										<div class="px-5 py-4">
-											{#if snapshot.type === 'snapshot' && snapshot.vcpus != null}
-												<span class="flex items-center gap-1.5">
+											{#if snapshot.vcpus != null && snapshot.vcpus > 0}
+												<span class="flex items-center gap-1.5" title={isSnapshot ? 'Required' : 'Recommended'}>
 													<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={typeColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-50">
 														<rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" /><line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" /><line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" /><line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
 													</svg>
@@ -397,8 +392,8 @@
 
 										<!-- Memory -->
 										<div class="px-5 py-4">
-											{#if snapshot.type === 'snapshot' && snapshot.memory_mb != null}
-												<span class="flex items-center gap-1.5">
+											{#if snapshot.memory_mb != null && snapshot.memory_mb > 0}
+												<span class="flex items-center gap-1.5" title={isSnapshot ? 'Required' : 'Recommended'}>
 													<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={typeColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-50">
 														<rect x="2" y="6" width="20" height="12" rx="2" /><line x1="6" y1="12" x2="6" y2="12.01" /><line x1="10" y1="12" x2="10" y2="12.01" /><line x1="14" y1="12" x2="14" y2="12.01" /><line x1="18" y1="12" x2="18" y2="12.01" />
 													</svg>
@@ -475,7 +470,7 @@
 		</main>
 
 		<!-- Status bar -->
-		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
+		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-8">
 			<div class="flex items-center gap-1.5">
 				<span
 					class="inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"
@@ -526,12 +521,16 @@
 		></div>
 
 		<div
-			class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
-			style="animation: fadeUp 0.2s ease both"
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-dialog"
+			style="animation: fadeUp 0.18s cubic-bezier(0.25,1,0.5,1) both"
 		>
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Delete snapshot</h2>
-			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-				Permanently delete <span class="font-mono font-medium text-[var(--color-text-secondary)]">{deleteTarget.name}</span>.
+			<!-- Danger accent edge -->
+			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-red)] to-transparent"></div>
+
+			<div class="p-6">
+			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">Delete snapshot</h2>
+			<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
+				Permanently delete <code class="rounded bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-[0.8rem] text-[var(--color-text-primary)]">{deleteTarget.name}</code>.
 				Running capsules won't be affected, but you won't be able to launch new ones from it.
 			</p>
 
@@ -548,7 +547,7 @@
 			{/if}
 
 			{#if deleteError}
-				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
+				<div class="mt-3 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
 					{deleteError}
 				</div>
 			{/if}
@@ -564,7 +563,7 @@
 				<button
 					onclick={handleDelete}
 					disabled={deleting}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 active:scale-95 disabled:opacity-50 disabled:hover:translate-y-0"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2.5 text-ui font-semibold text-white transition-all duration-200 hover:shadow-[0_0_16px_rgba(207,129,114,0.25)] hover:brightness-110 disabled:opacity-50"
 				>
 					{#if deleting}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -575,6 +574,7 @@
 						Delete Snapshot
 					{/if}
 				</button>
+			</div>
 			</div>
 		</div>
 	</div>
@@ -591,11 +591,15 @@
 		></div>
 
 		<div
-			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
-			style="animation: fadeUp 0.2s ease both"
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-dialog"
+			style="animation: fadeUp 0.18s cubic-bezier(0.25,1,0.5,1) both"
 		>
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
-			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
+			<!-- Top accent edge -->
+			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-accent)] to-transparent"></div>
+
+			<div class="p-6">
+			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
+			<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
 				Configure resources and launch a new capsule from this snapshot.
 			</p>
 
@@ -612,12 +616,9 @@
 				</label>
 				<div class="flex items-center gap-2 rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-0)] px-3 py-2">
 					{#if launchTarget.type === 'snapshot'}
-						<span
-							class="inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-accent)]"
-							style="box-shadow: 0 0 6px rgba(94,140,88,0.5); animation: wrenn-glow 1.8s ease-in-out infinite"
-						></span>
+						<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]"></span>
 					{:else}
-						<span class="inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-blue)]"></span>
+						<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-blue)]"></span>
 					{/if}
 					<span class="flex-1 font-mono text-ui text-[var(--color-text-bright)]">{launchTarget.name}</span>
 					<span class="text-label text-[var(--color-text-muted)]">
@@ -694,7 +695,7 @@
 				<button
 					onclick={handleLaunch}
 					disabled={launching}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 active:scale-95 disabled:opacity-50 disabled:hover:translate-y-0"
+					class="group flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white transition-all duration-200 hover:shadow-[0_0_20px_var(--color-accent-glow-mid)] hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none"
 				>
 					{#if launching}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -706,6 +707,7 @@
 					{/if}
 				</button>
 			</div>
+			</div>
 		</div>
 	</div>
 {/if}
@@ -715,17 +717,17 @@
 	.skeleton {
 		background: linear-gradient(
 			90deg,
-			var(--color-bg-4) 0%,
-			var(--color-bg-5) 50%,
-			var(--color-bg-4) 100%
+			var(--color-bg-3) 25%,
+			var(--color-bg-4) 50%,
+			var(--color-bg-3) 75%
 		);
 		background-size: 200% 100%;
-		animation: shimmer 1.6s ease-in-out infinite;
+		animation: shimmer 1.4s ease infinite;
 	}
 
 	@keyframes shimmer {
-		0% { background-position: 200% center; }
-		100% { background-position: -200% center; }
+		0% { background-position: -200% 0; }
+		100% { background-position: 200% 0; }
 	}
 
 	/* Left accent stripe — slides in on hover, color-keyed to snapshot type */
@@ -744,5 +746,10 @@
 	}
 	.snapshot-row.type-image:hover {
 		background: rgba(90, 159, 212, 0.04);
+	}
+
+	/* Empty state icon float — matches admin pattern */
+	.empty-icon-float {
+		animation: iconFloat 3s ease-in-out infinite;
 	}
 </style>

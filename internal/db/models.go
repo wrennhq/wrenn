@@ -152,14 +152,16 @@ type TeamApiKey struct {
 }
 
 type Template struct {
-	Name      string             `json:"name"`
-	Type      string             `json:"type"`
-	Vcpus     int32              `json:"vcpus"`
-	MemoryMb  int32              `json:"memory_mb"`
-	SizeBytes int64              `json:"size_bytes"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	TeamID    pgtype.UUID        `json:"team_id"`
-	ID        pgtype.UUID        `json:"id"`
+	Name        string             `json:"name"`
+	Type        string             `json:"type"`
+	Vcpus       int32              `json:"vcpus"`
+	MemoryMb    int32              `json:"memory_mb"`
+	SizeBytes   int64              `json:"size_bytes"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	TeamID      pgtype.UUID        `json:"team_id"`
+	ID          pgtype.UUID        `json:"id"`
+	DefaultUser string             `json:"default_user"`
+	DefaultEnv  []byte             `json:"default_env"`
 }
 
 type TemplateBuild struct {
@@ -183,6 +185,8 @@ type TemplateBuild struct {
 	TemplateID   pgtype.UUID        `json:"template_id"`
 	TeamID       pgtype.UUID        `json:"team_id"`
 	SkipPrePost  bool               `json:"skip_pre_post"`
+	DefaultUser  string             `json:"default_user"`
+	DefaultEnv   []byte             `json:"default_env"`
 }
 
 type User struct {

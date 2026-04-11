@@ -119,6 +119,12 @@ message CreateSandboxRequest {
 
   // Template UUID (hex string). Both zeros + team zeros = "minimal" sentinel.
   string template_id = 8;
+
+  // Default unix user for the sandbox (set in envd via PostInit).
+  string default_user = 9;
+
+  // Default environment variables (set in envd via PostInit).
+  map<string, string> default_env = 10;
 }
 
 message CreateSandboxResponse {
@@ -145,6 +151,12 @@ message ResumeSandboxRequest {
   // TTL in seconds restored from the DB so the reaper can auto-pause
   // the sandbox again after inactivity. 0 means no auto-pause.
   int32 timeout_sec = 2;
+
+  // Default unix user for the sandbox (set in envd via PostInit on resume).
+  string default_user = 3;
+
+  // Default environment variables (set in envd via PostInit on resume).
+  map<string, string> default_env = 4;
 }
 
 message ResumeSandboxResponse {

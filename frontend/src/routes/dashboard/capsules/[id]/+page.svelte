@@ -478,60 +478,8 @@
 {:else if capsule}
 <div class="flex flex-1 flex-col min-h-0">
 
-	<!-- Action buttons -->
-	<div class="flex items-center justify-end gap-2 px-7 pt-5">
-		{#if capsule.status === 'running'}
-			<button
-				onclick={handlePause}
-				disabled={actionLoading !== null}
-				class="flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-amber)]/30 bg-[var(--color-amber)]/8 px-3.5 py-2 text-ui font-medium text-[var(--color-amber)] transition-all duration-150 hover:bg-[var(--color-amber)]/15 hover:border-[var(--color-amber)]/50 disabled:opacity-50"
-			>
-				{#if actionLoading === 'pause'}
-					<svg class="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-					Pausing...
-				{:else}
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
-					Pause
-				{/if}
-			</button>
-		{:else if capsule.status === 'paused'}
-			<button
-				onclick={handleResume}
-				disabled={actionLoading !== null}
-				class="flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/8 px-3.5 py-2 text-ui font-medium text-[var(--color-accent-bright)] transition-all duration-150 hover:bg-[var(--color-accent)]/15 hover:border-[var(--color-accent)]/50 disabled:opacity-50"
-			>
-				{#if actionLoading === 'resume'}
-					<svg class="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-					Resuming...
-				{:else}
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-					Resume
-				{/if}
-			</button>
-			<button
-				onclick={() => { showSnapshot = true; }}
-				disabled={actionLoading !== null}
-				class="flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-3.5 py-2 text-ui font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
-			>
-				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
-				Snapshot
-			</button>
-		{/if}
-
-		{#if capsule.status === 'running' || capsule.status === 'paused'}
-			<button
-				onclick={() => { showDestroy = true; }}
-				disabled={actionLoading !== null}
-				class="flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/8 px-3.5 py-2 text-ui font-medium text-[var(--color-red)] transition-all duration-150 hover:bg-[var(--color-red)]/15 hover:border-[var(--color-red)]/50 disabled:opacity-50"
-			>
-				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
-				Destroy
-			</button>
-		{/if}
-	</div>
-
-	<!-- Tabs (matches Templates page pattern) -->
-	<div class="mt-5 flex gap-0 border-b border-[var(--color-border)] px-7">
+	<!-- Tabs + lifecycle actions -->
+	<div class="mt-5 flex items-center border-b border-[var(--color-border)] px-7">
 			<button
 				onclick={() => setTab('metrics')}
 				class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-ui font-medium transition-colors duration-150
@@ -570,6 +518,58 @@
 				</svg>
 				Terminal
 			</button>
+
+			<!-- Lifecycle actions (right-aligned) -->
+			<div class="ml-auto flex items-center gap-2">
+				{#if capsule.status === 'running'}
+					<button
+						onclick={handlePause}
+						disabled={actionLoading !== null}
+						class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-amber)]/30 bg-[var(--color-amber)]/8 px-3 py-1.5 text-meta font-medium text-[var(--color-amber)] transition-all duration-150 hover:bg-[var(--color-amber)]/15 hover:border-[var(--color-amber)]/50 disabled:opacity-50"
+					>
+						{#if actionLoading === 'pause'}
+							<svg class="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+							Pausing...
+						{:else}
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
+							Pause
+						{/if}
+					</button>
+				{:else if capsule.status === 'paused'}
+					<button
+						onclick={handleResume}
+						disabled={actionLoading !== null}
+						class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/8 px-3 py-1.5 text-meta font-medium text-[var(--color-accent-bright)] transition-all duration-150 hover:bg-[var(--color-accent)]/15 hover:border-[var(--color-accent)]/50 disabled:opacity-50"
+					>
+						{#if actionLoading === 'resume'}
+							<svg class="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+							Resuming...
+						{:else}
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+							Resume
+						{/if}
+					</button>
+					<button
+						onclick={() => { showSnapshot = true; }}
+						disabled={actionLoading !== null}
+						class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-3 py-1.5 text-meta font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					>
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
+						Snapshot
+					</button>
+				{/if}
+
+				{#if capsule.status === 'running' || capsule.status === 'paused'}
+					<button
+						onclick={() => { showDestroy = true; }}
+						disabled={actionLoading !== null}
+						class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/8 px-3 py-1.5 text-meta font-medium text-[var(--color-red)] transition-all duration-150 hover:bg-[var(--color-red)]/15 hover:border-[var(--color-red)]/50 disabled:opacity-50"
+					>
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
+						Destroy
+					</button>
+				{/if}
+			</div>
 	</div>
 
 	<!-- Tab content -->

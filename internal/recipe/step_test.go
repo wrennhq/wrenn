@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -111,16 +112,42 @@ func TestParseStep(t *testing.T) {
 			input:   "WORKDIR",
 			wantErr: true,
 		},
-		// USER and COPY stubs
+		// USER
 		{
-			name:  "USER stub",
+			name:  "USER basic",
 			input: "USER www-data",
-			want:  Step{Kind: KindUSER, Raw: "USER www-data"},
+			want:  Step{Kind: KindUSER, Raw: "USER www-data", Key: "www-data"},
 		},
 		{
-			name:  "COPY stub",
+			name:    "USER empty",
+			input:   "USER",
+			wantErr: true,
+		},
+		{
+			name:    "USER invalid chars",
+			input:   "USER bad user",
+			wantErr: true,
+		},
+		// COPY
+		{
+			name:  "COPY basic",
 			input: "COPY config.yaml /etc/app/config.yaml",
-			want:  Step{Kind: KindCOPY, Raw: "COPY config.yaml /etc/app/config.yaml"},
+			want:  Step{Kind: KindCOPY, Raw: "COPY config.yaml /etc/app/config.yaml", Srcs: []string{"config.yaml"}, Dst: "/etc/app/config.yaml"},
+		},
+		{
+			name:  "COPY multiple sources",
+			input: "COPY a.txt b.txt /dest/",
+			want:  Step{Kind: KindCOPY, Raw: "COPY a.txt b.txt /dest/", Srcs: []string{"a.txt", "b.txt"}, Dst: "/dest/"},
+		},
+		{
+			name:    "COPY missing dst",
+			input:   "COPY config.yaml",
+			wantErr: true,
+		},
+		{
+			name:    "COPY empty",
+			input:   "COPY",
+			wantErr: true,
 		},
 		// Unknown keyword
 		{
@@ -148,7 +175,7 @@ func TestParseStep(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseStep(%q) unexpected error: %v", tc.input, err)
 			}
-			if got != tc.want {
+			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("ParseStep(%q)\n  got  %+v\n  want %+v", tc.input, got, tc.want)
 			}
 		})

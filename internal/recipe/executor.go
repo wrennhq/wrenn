@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path"
 	"strings"
 	"time"
 
@@ -15,6 +16,10 @@ import (
 // DefaultStepTimeout is the fallback timeout for RUN steps that carry no
 // explicit --timeout flag.
 const DefaultStepTimeout = 30 * time.Second
+
+// BuildFilesDir is the directory inside the sandbox where uploaded build
+// archives are extracted. COPY instructions reference paths relative to this.
+const BuildFilesDir = "/tmp/build-files"
 
 // BuildLogEntry is the per-step record stored in template_builds.logs (JSONB).
 type BuildLogEntry struct {
@@ -32,13 +37,18 @@ type BuildLogEntry struct {
 // the method on the hostagent Connect RPC client.
 type ExecFunc func(ctx context.Context, req *connect.Request[pb.ExecRequest]) (*connect.Response[pb.ExecResponse], error)
 
+// ProgressFunc is called after each step with the current step counter and
+// accumulated log entries. Used for per-step DB progress updates.
+type ProgressFunc func(step int, entries []BuildLogEntry)
+
 // Execute runs steps sequentially against sandboxID using execFn.
 //
 //   - phase labels the log entries (e.g., "pre-build", "recipe", "post-build").
 //   - startStep is the 1-based offset so entries are globally numbered across phases.
 //   - defaultTimeout applies to RUN steps with no per-step --timeout; 0 → 10 minutes.
-//   - bctx is mutated in place as ENV/WORKDIR steps execute, and carries forward
+//   - bctx is mutated in place as ENV/WORKDIR/USER steps execute, and carries forward
 //     into subsequent phases when the caller passes the same pointer.
+//   - onProgress is called after each step for live progress updates (may be nil).
 //
 // Returns all log entries appended during this call, the next step counter
 // value, and whether all steps succeeded. On false the last entry contains
@@ -53,6 +63,7 @@ func Execute(
 	defaultTimeout time.Duration,
 	bctx *ExecContext,
 	execFn ExecFunc,
+	onProgress ProgressFunc,
 ) (entries []BuildLogEntry, nextStep int, ok bool) {
 	if defaultTimeout <= 0 {
 		defaultTimeout = 10 * time.Minute
@@ -72,19 +83,30 @@ func Execute(
 			entries = append(entries, BuildLogEntry{Step: step, Phase: phase, Cmd: st.Raw, Ok: true})
 
 		case KindWORKDIR:
+			// Create the directory if it doesn't exist.
+			mkdirEntry := execRawShell(ctx, st.Raw, sandboxID, phase, step, 10*time.Second, execFn,
+				"mkdir -p "+shellescape(st.Path))
+			if !mkdirEntry.Ok {
+				entries = append(entries, mkdirEntry)
+				return entries, step, false
+			}
 			bctx.WorkDir = st.Path
-			entries = append(entries, BuildLogEntry{Step: step, Phase: phase, Cmd: st.Raw, Ok: true})
+			mkdirEntry.Ok = true
+			entries = append(entries, mkdirEntry)
 
-		case KindUSER, KindCOPY:
-			verb := strings.ToUpper(strings.Fields(st.Raw)[0])
-			entries = append(entries, BuildLogEntry{
-				Step:   step,
-				Phase:  phase,
-				Cmd:    st.Raw,
-				Stderr: verb + " is not yet supported",
-				Ok:     false,
-			})
-			return entries, step, false
+		case KindUSER:
+			entry, succeeded := execUser(ctx, st, sandboxID, phase, step, bctx, execFn)
+			entries = append(entries, entry)
+			if !succeeded {
+				return entries, step, false
+			}
+
+		case KindCOPY:
+			entry, succeeded := execCopy(ctx, st, sandboxID, phase, step, bctx, execFn)
+			entries = append(entries, entry)
+			if !succeeded {
+				return entries, step, false
+			}
 
 		case KindSTART:
 			entry, succeeded := execStart(ctx, st, sandboxID, phase, step, bctx, execFn)
@@ -103,6 +125,10 @@ func Execute(
 			if !succeeded {
 				return entries, step, false
 			}
+		}
+
+		if onProgress != nil {
+			onProgress(step, entries)
 		}
 	}
 	return entries, step, true
@@ -143,6 +169,114 @@ func execRun(
 	entry.Exit = resp.Msg.ExitCode
 	entry.Ok = resp.Msg.ExitCode == 0
 	return entry, entry.Ok
+}
+
+// execUser creates a unix user (if not exists), grants passwordless sudo,
+// and updates bctx.User for subsequent steps.
+func execUser(
+	ctx context.Context,
+	st Step,
+	sandboxID, phase string,
+	step int,
+	bctx *ExecContext,
+	execFn ExecFunc,
+) (BuildLogEntry, bool) {
+	username := st.Key
+	// Create user if not exists, with home directory and bash shell.
+	// Grant passwordless sudo access (E2B convention).
+	// Uses printf %s to avoid shell injection in the sudoers line.
+	script := fmt.Sprintf(
+		"id %s >/dev/null 2>&1 || (adduser --disabled-password --gecos '' --shell /bin/bash %s && printf '%%s ALL=(ALL) NOPASSWD:ALL\\n' %s >> /etc/sudoers)",
+		shellescape(username), shellescape(username), shellescape(username),
+	)
+
+	entry := execRawShell(ctx, st.Raw, sandboxID, phase, step, 30*time.Second, execFn, script)
+	if entry.Ok {
+		bctx.User = username
+	}
+	return entry, entry.Ok
+}
+
+// execCopy copies a file or directory from the build archive (extracted at
+// BuildFilesDir) to the destination path inside the sandbox. Ownership is
+// set to the current user from bctx.
+func execCopy(
+	ctx context.Context,
+	st Step,
+	sandboxID, phase string,
+	step int,
+	bctx *ExecContext,
+	execFn ExecFunc,
+) (BuildLogEntry, bool) {
+	// Validate all source paths: must be relative and not escape the archive directory.
+	var srcPaths []string
+	for _, s := range st.Srcs {
+		cleaned := path.Clean(s)
+		if strings.HasPrefix(cleaned, "..") || strings.HasPrefix(cleaned, "/") {
+			return BuildLogEntry{
+				Step:   step,
+				Phase:  phase,
+				Cmd:    st.Raw,
+				Stderr: fmt.Sprintf("COPY source must be a relative path within the archive: %q", s),
+			}, false
+		}
+		srcPaths = append(srcPaths, shellescape(BuildFilesDir+"/"+cleaned))
+	}
+
+	dst := st.Dst
+	// Resolve relative destination against the current WORKDIR.
+	if dst != "" && dst[0] != '/' && bctx.WorkDir != "" {
+		dst = bctx.WorkDir + "/" + dst
+	}
+	owner := "root"
+	if bctx.User != "" {
+		owner = bctx.User
+	}
+	script := fmt.Sprintf(
+		"cp -r %s %s && chown -R %s:%s %s",
+		strings.Join(srcPaths, " "), shellescape(dst), shellescape(owner), shellescape(owner), shellescape(dst),
+	)
+
+	entry := execRawShell(ctx, st.Raw, sandboxID, phase, step, 60*time.Second, execFn, script)
+	return entry, entry.Ok
+}
+
+// execRawShell runs a shell command directly (as root) without ExecContext
+// wrapping. Used for internal operations like user creation and file copy.
+func execRawShell(
+	ctx context.Context,
+	raw, sandboxID, phase string,
+	step int,
+	timeout time.Duration,
+	execFn ExecFunc,
+	shellCmd string,
+) BuildLogEntry {
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	start := time.Now()
+	resp, err := execFn(execCtx, connect.NewRequest(&pb.ExecRequest{
+		SandboxId:  sandboxID,
+		Cmd:        "/bin/sh",
+		Args:       []string{"-c", shellCmd},
+		TimeoutSec: int32(timeout.Seconds()),
+	}))
+
+	entry := BuildLogEntry{
+		Step:    step,
+		Phase:   phase,
+		Cmd:     raw,
+		Elapsed: time.Since(start).Milliseconds(),
+	}
+	if err != nil {
+		entry.Stderr = fmt.Sprintf("exec error: %v", err)
+		return entry
+	}
+	entry.Stdout = string(resp.Msg.Stdout)
+	entry.Stderr = string(resp.Msg.Stderr)
+	entry.Exit = resp.Msg.ExitCode
+	entry.Ok = resp.Msg.ExitCode == 0
+	return entry
 }
 
 func execStart(

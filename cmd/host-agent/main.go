@@ -63,15 +63,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Expand base images to the standard disk size (sparse, no extra physical
+	// Parse default rootfs size from env (e.g. "5G", "2Gi", "1000M").
+	defaultRootfsSizeMB := sandbox.DefaultDiskSizeMB
+	if sizeStr := os.Getenv("WRENN_DEFAULT_ROOTFS_SIZE"); sizeStr != "" {
+		parsed, err := sandbox.ParseSizeToMB(sizeStr)
+		if err != nil {
+			slog.Error("invalid WRENN_DEFAULT_ROOTFS_SIZE", "value", sizeStr, "error", err)
+			os.Exit(1)
+		}
+		defaultRootfsSizeMB = parsed
+		slog.Info("using custom rootfs size", "size_mb", defaultRootfsSizeMB)
+	}
+
+	// Expand base images to the configured disk size (sparse, no extra physical
 	// disk). This ensures dm-snapshot sandboxes see the full size from boot.
-	if err := sandbox.EnsureImageSizes(rootDir, sandbox.DefaultDiskSizeMB); err != nil {
+	if err := sandbox.EnsureImageSizes(rootDir, defaultRootfsSizeMB); err != nil {
 		slog.Error("failed to expand base images", "error", err)
 		os.Exit(1)
 	}
 
 	cfg := sandbox.Config{
-		WrennDir: rootDir,
+		WrennDir:            rootDir,
+		DefaultRootfsSizeMB: defaultRootfsSizeMB,
 	}
 
 	mgr := sandbox.New(cfg)
