@@ -11,7 +11,7 @@
 	import {
 		fetchSandboxMetrics,
 		METRIC_RANGES,
-		METRIC_POLL_INTERVAL,
+		METRIC_POLL_INTERVALS,
 		type MetricRange,
 		type MetricPoint
 	} from '$lib/api/metrics';
@@ -80,6 +80,8 @@
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let ChartJS = $state<any>(null);
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let lastDataKey = '';   // fingerprint to skip redundant chart redraws
+	let visibilityHandler: (() => void) | null = null;
 
 	const metricsAvailable = $derived(
 		capsule?.status === 'running' || capsule?.status === 'paused'
@@ -141,6 +143,10 @@
 
 	function updateCharts() {
 		if (!points.length) return;
+		// Skip redraw if data hasn't changed.
+		const key = `${points.length}:${points.at(-1)?.timestamp_unix ?? ''}`;
+		if (key === lastDataKey) return;
+		lastDataKey = key;
 		const labels = formatLabels(Array.from(points), range);
 		const w = smoothWindow(points.length);
 		if (chartCpu) {
@@ -171,15 +177,20 @@
 
 	function setRange(r: MetricRange) {
 		range = r;
+		lastDataKey = '';   // force chart redraw on range switch
 		goto(`?range=${r}`, { replaceState: true, noScroll: true, keepFocus: true });
 		metricsLoading = true;
 		restartPolling();
 	}
 
+	function stopPolling() {
+		if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+	}
+
 	function restartPolling() {
-		if (pollInterval) clearInterval(pollInterval);
+		stopPolling();
 		loadMetrics();
-		pollInterval = setInterval(loadMetrics, METRIC_POLL_INTERVAL);
+		pollInterval = setInterval(loadMetrics, METRIC_POLL_INTERVALS[range]);
 	}
 
 	// Chart design tokens (match StatsPanel.svelte)
@@ -342,7 +353,7 @@
 		});
 
 		return () => {
-			if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+			stopPolling();
 			chartCpu?.destroy(); chartCpu = null;
 			chartRam?.destroy(); chartRam = null;
 		};
@@ -367,10 +378,21 @@
 
 		const mod = await import('chart.js/auto');
 		ChartJS = mod.Chart;
+
+		// Pause polling when the browser tab is hidden.
+		visibilityHandler = () => {
+			if (document.hidden) {
+				stopPolling();
+			} else if (activeTab === 'metrics' && metricsAvailable) {
+				restartPolling();
+			}
+		};
+		document.addEventListener('visibilitychange', visibilityHandler);
 	});
 
 	onDestroy(() => {
-		if (pollInterval) clearInterval(pollInterval);
+		stopPolling();
+		if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
 		chartCpu?.destroy();
 		chartRam?.destroy();
 	});

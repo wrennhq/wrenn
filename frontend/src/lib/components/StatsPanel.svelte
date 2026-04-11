@@ -26,6 +26,8 @@
 	let chartRam: any = null;
 
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let lastDataKey = '';   // cheap fingerprint to skip redundant chart redraws
+	let visibilityHandler: (() => void) | null = null;
 
 	async function load() {
 		const result = await fetchStats(range);
@@ -43,6 +45,10 @@
 
 	function updateCharts() {
 		if (!stats) return;
+		// Skip redraw if data hasn't changed (same length + same last label).
+		const key = `${stats.series.labels.length}:${stats.series.labels.at(-1) ?? ''}`;
+		if (key === lastDataKey) return;
+		lastDataKey = key;
 		// Use Array.from to pass plain JS arrays to Chart.js — Svelte 5 $state
 		// wraps arrays in reactive proxies which Chart.js can't iterate reliably.
 		const labels = formatLabels(Array.from(stats.series.labels), range);
@@ -77,14 +83,19 @@
 		});
 	}
 
+	function stopPolling() {
+		if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+	}
+
 	function restartPolling() {
-		if (pollInterval) clearInterval(pollInterval);
+		stopPolling();
 		load();
 		pollInterval = setInterval(load, POLL_INTERVALS[range]);
 	}
 
 	function setRange(r: TimeRange) {
 		range = r;
+		lastDataKey = '';   // force chart redraw on range switch
 		goto(`?range=${r}`, { replaceState: true, noScroll: true, keepFocus: true });
 		restartPolling();
 	}
@@ -237,10 +248,21 @@
 		updateCharts();
 
 		restartPolling();
+
+		// Pause polling when the browser tab is hidden to save bandwidth/CPU.
+		visibilityHandler = () => {
+			if (document.hidden) {
+				stopPolling();
+			} else {
+				restartPolling();
+			}
+		};
+		document.addEventListener('visibilitychange', visibilityHandler);
 	});
 
 	onDestroy(() => {
-		if (pollInterval) clearInterval(pollInterval);
+		stopPolling();
+		if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
 		chartRunning?.destroy();
 		chartCpu?.destroy();
 		chartRam?.destroy();
