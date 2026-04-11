@@ -109,13 +109,8 @@ const getSandboxProxyTarget = `-- name: GetSandboxProxyTarget :one
 SELECT s.status, h.address AS host_address
 FROM sandboxes s
 JOIN hosts h ON h.id = s.host_id
-WHERE s.id = $1 AND s.team_id = $2
+WHERE s.id = $1
 `
-
-type GetSandboxProxyTargetParams struct {
-	ID     pgtype.UUID `json:"id"`
-	TeamID pgtype.UUID `json:"team_id"`
-}
 
 type GetSandboxProxyTargetRow struct {
 	Status      string `json:"status"`
@@ -124,8 +119,8 @@ type GetSandboxProxyTargetRow struct {
 
 // Returns the sandbox status and its host's address in one query.
 // Used by SandboxProxyWrapper to avoid two round-trips.
-func (q *Queries) GetSandboxProxyTarget(ctx context.Context, arg GetSandboxProxyTargetParams) (GetSandboxProxyTargetRow, error) {
-	row := q.db.QueryRow(ctx, getSandboxProxyTarget, arg.ID, arg.TeamID)
+func (q *Queries) GetSandboxProxyTarget(ctx context.Context, id pgtype.UUID) (GetSandboxProxyTargetRow, error) {
+	row := q.db.QueryRow(ctx, getSandboxProxyTarget, id)
 	var i GetSandboxProxyTargetRow
 	err := row.Scan(&i.Status, &i.HostAddress)
 	return i, err

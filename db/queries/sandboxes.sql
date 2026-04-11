@@ -15,7 +15,7 @@ SELECT * FROM sandboxes WHERE id = $1 AND team_id = $2;
 SELECT s.status, h.address AS host_address
 FROM sandboxes s
 JOIN hosts h ON h.id = s.host_id
-WHERE s.id = $1 AND s.team_id = $2;
+WHERE s.id = $1;
 
 -- name: ListSandboxes :many
 SELECT * FROM sandboxes ORDER BY created_at DESC;
