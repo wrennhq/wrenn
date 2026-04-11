@@ -420,8 +420,10 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 	}
 
 	// Capture the final user and env vars as template defaults.
+	// Filter out user-specific and runtime vars that should be resolved at
+	// sandbox creation time, not baked in from the build environment.
 	templateDefaultUser := bctx.User
-	templateDefaultEnv := bctx.EnvVars
+	templateDefaultEnv := filterBuildEnv(bctx.EnvVars)
 
 	// Phase 3: Post-build (as root) — cleanup.
 	bctx.User = "root"
@@ -738,4 +740,28 @@ func (s *BuildService) uploadAndExtractArchive(
 	}
 
 	return nil
+}
+
+// runtimeEnvVars lists env vars that are user- or session-specific and should
+// not be persisted into template defaults. These are resolved at runtime by
+// envd based on the actual user and sandbox context.
+var runtimeEnvVars = map[string]bool{
+	"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true,
+	"PWD": true, "OLDPWD": true, "HOSTNAME": true, "TERM": true,
+	"SHLVL": true, "_": true,
+	// Per-sandbox identifiers set by envd at boot via MMDS.
+	"WRENN_SANDBOX_ID": true, "WRENN_TEMPLATE_ID": true,
+}
+
+// filterBuildEnv returns a copy of envVars with runtime/user-specific
+// variables removed so they don't override envd's per-user resolution.
+func filterBuildEnv(envVars map[string]string) map[string]string {
+	filtered := make(map[string]string, len(envVars))
+	for k, v := range envVars {
+		if runtimeEnvVars[k] {
+			continue
+		}
+		filtered[k] = v
+	}
+	return filtered
 }
