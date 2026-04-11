@@ -270,47 +270,50 @@
 
 	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
 		<!-- Header -->
-		<header class="flex shrink-0 flex-col gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg-1)] px-6 py-5">
-			<div class="flex items-start justify-between">
+		<header class="relative shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-1)]">
+			<!-- Subtle gradient wash behind header for depth -->
+			<div class="absolute inset-0 bg-gradient-to-b from-[var(--color-accent)]/[0.02] to-transparent pointer-events-none"></div>
+
+			<div class="relative flex items-start justify-between px-8 pt-7 pb-5">
 				<div>
-					<h1 class="font-serif text-[1.75rem] leading-none tracking-[-0.03em] text-[var(--color-text-bright)]">
+					<h1 class="font-serif text-page leading-none tracking-[-0.03em] text-[var(--color-text-bright)]">
 						Templates
 					</h1>
-					<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
+					<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 						Build and manage global templates available to all teams.
 					</p>
 				</div>
 				<button
 					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, archive: null }; }}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-2 text-ui font-semibold text-white shadow-sm transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
+					class="group flex items-center gap-2.5 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white shadow-sm transition-all duration-200 hover:shadow-[0_0_20px_var(--color-accent-glow-mid)] hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 				>
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform duration-200 group-hover:rotate-90"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
 					Create Template
 				</button>
 			</div>
 
-			<!-- Stat pills -->
+			<!-- Stat strip — generous horizontal spacing, bolder presence -->
 			{#if !templatesLoading && !templatesError}
-				<div class="flex items-center gap-2">
-					<div class="flex items-baseline gap-1 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-2)] px-2.5 py-1">
-						<span class="font-mono font-semibold text-ui tabular-nums text-[var(--color-text-bright)]">{templateCount}</span>
+				<div class="relative flex items-center gap-3 px-8 pb-5">
+					<div class="stat-pill border-[var(--color-border)] bg-[var(--color-bg-2)]">
+						<span class="font-mono text-body font-bold tabular-nums text-[var(--color-text-bright)]">{templateCount}</span>
 						<span class="text-label text-[var(--color-text-muted)]">templates</span>
 					</div>
-					<div class="flex items-baseline gap-1 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-2)] px-2.5 py-1">
-						<span class="font-mono font-semibold text-ui tabular-nums text-[var(--color-text-bright)]">{baseCount}</span>
+					<div class="stat-pill border-[var(--color-border)] bg-[var(--color-bg-2)]">
+						<span class="font-mono text-body font-bold tabular-nums text-[var(--color-text-bright)]">{baseCount}</span>
 						<span class="text-label text-[var(--color-text-muted)]">base</span>
 					</div>
-					<div class="flex items-baseline gap-1 rounded-[var(--radius-button)] border border-[var(--color-accent)]/25 bg-[var(--color-accent)]/8 px-2.5 py-1">
-						<span class="font-mono font-semibold text-ui tabular-nums text-[var(--color-accent-bright)]">{snapshotCount}</span>
+					<div class="stat-pill border-[var(--color-accent)]/25 bg-[var(--color-accent)]/8">
+						<span class="font-mono text-body font-bold tabular-nums text-[var(--color-accent-bright)]">{snapshotCount}</span>
 						<span class="text-label text-[var(--color-accent-bright)]/70">snapshots</span>
 					</div>
 					{#if runningBuilds > 0}
-						<div class="flex items-baseline gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-blue)]/25 bg-[var(--color-blue)]/8 px-2.5 py-1">
-							<span class="relative mt-px flex h-1.5 w-1.5 shrink-0 self-center">
-								<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--color-blue)] opacity-60"></span>
-								<span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--color-blue)]"></span>
+						<div class="stat-pill border-[var(--color-blue)]/25 bg-[var(--color-blue)]/8 gap-2">
+							<span class="relative flex h-2 w-2 shrink-0">
+								<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-blue)] opacity-60"></span>
+								<span class="relative inline-flex h-2 w-2 rounded-full bg-[var(--color-blue)]"></span>
 							</span>
-							<span class="font-mono font-semibold text-ui tabular-nums text-[var(--color-blue)]">{runningBuilds}</span>
+							<span class="font-mono text-body font-bold tabular-nums text-[var(--color-blue)]">{runningBuilds}</span>
 							<span class="text-label text-[var(--color-blue)]/70">building</span>
 						</div>
 					{/if}
@@ -318,30 +321,32 @@
 			{/if}
 		</header>
 
-		<!-- Tabs -->
-		<div class="flex shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-1)] px-6">
+		<!-- Tabs — heavier presence -->
+		<div class="flex shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-1)] px-8">
 			{#each [['templates', 'Templates', templateCount], ['builds', 'Builds', builds.length]] as [id, label, count] (id)}
 				<button
 					onclick={() => { activeTab = id as 'templates' | 'builds'; }}
-					class="relative py-3 pr-5 text-ui transition-colors duration-150 {activeTab === id
-						? 'font-medium text-[var(--color-text-bright)]'
+					class="tab-button {activeTab === id
+						? 'text-[var(--color-text-bright)] font-medium'
 						: 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'}"
 				>
 					{label}
-					{#if activeTab === id}
-						<span class="absolute bottom-0 left-0 right-5 h-[2px] rounded-t-full bg-[var(--color-accent)]"></span>
-					{/if}
 					{#if !templatesLoading}
-						<span class="ml-2 rounded-full bg-[var(--color-bg-4)] px-1.5 py-0.5 text-label text-[var(--color-text-muted)]">
+						<span class="ml-2 rounded-full px-2 py-0.5 text-label tabular-nums transition-colors duration-200 {activeTab === id
+							? 'bg-[var(--color-accent)]/12 text-[var(--color-accent-bright)]'
+							: 'bg-[var(--color-bg-4)] text-[var(--color-text-muted)]'}">
 							{count}
 						</span>
+					{/if}
+					{#if activeTab === id}
+						<span class="absolute bottom-0 left-0 right-0 h-[2px] rounded-t-full bg-[var(--color-accent)]"></span>
 					{/if}
 				</button>
 			{/each}
 		</div>
 
 		<!-- Body -->
-		<div class="flex-1 overflow-y-auto p-6">
+		<div class="flex-1 overflow-y-auto px-8 py-6">
 			{#if activeTab === 'templates'}
 				{#if templatesLoading}
 					{@render skeletonRows(5, ['Name', 'Type', 'Specs', 'Size', 'Created', ''])}
@@ -374,20 +379,20 @@
 <!-- ── Snippets ─────────────────────────────────────────────────────── -->
 
 {#snippet skeletonRows(count: number, headers: string[])}
-	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden">
+	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden shadow-sm">
 		<table class="w-full">
 			<thead>
-				<tr class="border-b border-[var(--color-border)]">
+				<tr class="border-b border-[var(--color-border)] bg-[var(--color-bg-0)]/40">
 					{#each headers as h}
-						<th class="px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">{h}</th>
+						<th class="table-header">{h}</th>
 					{/each}
 				</tr>
 			</thead>
 			<tbody>
 				{#each Array(count) as _, i}
-					<tr class="border-b border-[var(--color-border)] last:border-0" style="animation-delay: {i * 60}ms">
+					<tr class="border-b border-[var(--color-border)] last:border-0 table-row-animate" style="animation-delay: {i * 60}ms">
 						{#each headers as _h, j}
-							<td class="px-4 py-3.5">
+							<td class="px-5 py-3.5">
 								<div class="skeleton h-3 rounded" style="width: {60 + j * 12}px"></div>
 							</td>
 						{/each}
@@ -399,81 +404,99 @@
 {/snippet}
 
 {#snippet emptyState(type: 'templates' | 'builds')}
-	<div class="flex flex-col items-center justify-center py-24 text-center">
-		<div class="mb-5 flex h-16 w-16 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
-			{#if type === 'templates'}
-				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--color-text-muted)]"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-			{:else}
-				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--color-text-muted)]"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="m16 13-3.5 3.5-2-2L8 17"/></svg>
-			{/if}
+	<div class="flex flex-col items-center justify-center py-28 text-center">
+		<!-- Floating icon with glow ring -->
+		<div class="relative mb-7">
+			<div class="absolute -inset-3 rounded-2xl bg-[var(--color-accent-glow)] blur-xl"></div>
+			<div class="empty-icon-float relative flex h-18 w-18 items-center justify-center rounded-xl border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-card">
+				{#if type === 'templates'}
+					<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--color-accent-mid)]"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+				{:else}
+					<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--color-accent-mid)]"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="m16 13-3.5 3.5-2-2L8 17"/></svg>
+				{/if}
+			</div>
 		</div>
-		<p class="font-serif text-[1.125rem] leading-snug text-[var(--color-text-secondary)]">
-			{type === 'templates' ? 'No templates yet.' : 'No builds yet.'}
+		<p class="font-serif text-heading leading-snug text-[var(--color-text-secondary)]">
+			{type === 'templates' ? 'No templates yet' : 'No builds yet'}
 		</p>
-		<p class="mt-1.5 text-ui text-[var(--color-text-muted)]">
+		<p class="mt-2 max-w-[320px] text-ui text-[var(--color-text-muted)]">
 			{type === 'templates'
 				? 'Create a template to provide pre-configured environments for all teams.'
 				: 'Start a template build to see progress and logs here.'}
 		</p>
+		{#if type === 'templates'}
+			<button
+				onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, archive: null }; }}
+				class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 px-4 py-2 text-ui font-medium text-[var(--color-accent-bright)] transition-all duration-200 hover:bg-[var(--color-accent)]/20 hover:border-[var(--color-accent)]/50"
+			>
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+				Create your first template
+			</button>
+		{/if}
 	</div>
 {/snippet}
 
 {#snippet templatesTable()}
-	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden">
+	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden shadow-sm">
 		<table class="w-full">
 			<thead>
-				<tr class="border-b border-[var(--color-border)]">
-					<th class="px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Name</th>
-					<th class="px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Type</th>
-					<th class="hidden px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)] md:table-cell">Specs</th>
-					<th class="hidden px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)] lg:table-cell">Size</th>
-					<th class="hidden px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)] lg:table-cell">Created</th>
-					<th class="px-4 py-3"></th>
+				<tr class="border-b border-[var(--color-border)] bg-[var(--color-bg-0)]/40">
+					<th class="table-header">Name</th>
+					<th class="table-header">Type</th>
+					<th class="table-header hidden md:table-cell">Specs</th>
+					<th class="table-header hidden lg:table-cell">Size</th>
+					<th class="table-header hidden lg:table-cell">Created</th>
+					<th class="table-header w-20"></th>
 				</tr>
 			</thead>
 			<tbody>
-				{#each templates as tmpl (tmpl.name)}
-					<tr class="border-b border-[var(--color-border)] last:border-0 transition-colors duration-200 hover:bg-[var(--color-bg-2)]">
-						<td class="px-4 py-3.5">
-							<div class="flex items-center gap-1.5">
-								<span class="font-mono text-meta text-[var(--color-text-primary)]">{tmpl.name}</span>
+				{#each templates as tmpl, i (tmpl.name)}
+					<tr
+						class="table-row-animate border-b border-[var(--color-border)] last:border-0 transition-colors duration-200 hover:bg-[var(--color-bg-2)]"
+						style="animation-delay: {i * 30}ms"
+					>
+						<td class="px-5 py-3.5">
+							<div class="flex items-center gap-2">
+								<span class="font-mono text-ui font-medium text-[var(--color-text-bright)]">{tmpl.name}</span>
 								<CopyButton value={tmpl.name} />
 							</div>
 						</td>
-						<td class="px-4 py-3.5">
+						<td class="px-5 py-3.5">
 							{#if tmpl.type === 'snapshot'}
-								<span class="inline-flex items-center rounded-full border border-[var(--color-accent)]/25 bg-[var(--color-accent)]/8 px-2 py-0.5 text-label font-medium text-[var(--color-accent-bright)]">
+								<span class="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-accent)]/25 bg-[var(--color-accent)]/8 px-2.5 py-0.5 text-label font-medium text-[var(--color-accent-bright)]">
+									<span class="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]"></span>
 									snapshot
 								</span>
 							{:else}
-								<span class="inline-flex items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-3)] px-2 py-0.5 text-label font-medium text-[var(--color-text-secondary)]">
+								<span class="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-3)] px-2.5 py-0.5 text-label font-medium text-[var(--color-text-secondary)]">
+									<span class="h-1.5 w-1.5 rounded-full bg-[var(--color-text-muted)]"></span>
 									base
 								</span>
 							{/if}
 						</td>
-						<td class="hidden px-4 py-3.5 md:table-cell">
+						<td class="hidden px-5 py-3.5 md:table-cell">
 							{#if tmpl.vcpus && tmpl.memory_mb}
-								<span class="text-meta text-[var(--color-text-secondary)]">
+								<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">
 									{tmpl.vcpus} vCPU · {tmpl.memory_mb} MB
 								</span>
 							{:else}
 								<span class="text-meta text-[var(--color-text-muted)]">—</span>
 							{/if}
 						</td>
-						<td class="hidden px-4 py-3.5 lg:table-cell">
-							<span class="font-mono text-meta text-[var(--color-text-muted)]">
+						<td class="hidden px-5 py-3.5 lg:table-cell">
+							<span class="font-mono text-meta tabular-nums text-[var(--color-text-muted)]">
 								{tmpl.size_bytes ? formatBytes(tmpl.size_bytes) : '—'}
 							</span>
 						</td>
-						<td class="hidden px-4 py-3.5 lg:table-cell">
+						<td class="hidden px-5 py-3.5 lg:table-cell">
 							<span class="text-meta text-[var(--color-text-muted)]" title={formatDate(tmpl.created_at)}>
 								{timeAgo(tmpl.created_at)}
 							</span>
 						</td>
-						<td class="px-4 py-3.5 text-right">
+						<td class="px-5 py-3.5 text-right">
 							<button
 								onclick={() => { deleteTarget = tmpl; deleteError = null; }}
-								class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta text-[var(--color-text-tertiary)] transition-colors duration-150 hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]"
+								class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta text-[var(--color-text-tertiary)] transition-all duration-150 hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]"
 							>
 								Delete
 							</button>
@@ -486,28 +509,30 @@
 {/snippet}
 
 {#snippet buildsTable()}
-	<div class="space-y-0 rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden">
+	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden shadow-sm">
 		<table class="w-full">
 			<thead>
-				<tr class="border-b border-[var(--color-border)]">
-					<th class="px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Build</th>
-					<th class="px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Name</th>
-					<th class="hidden px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)] md:table-cell">Base</th>
-					<th class="px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Status</th>
-					<th class="hidden px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)] md:table-cell">Progress</th>
-					<th class="hidden px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)] lg:table-cell">Started</th>
-					<th class="hidden px-4 py-3 text-left text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)] lg:table-cell">Duration</th>
+				<tr class="border-b border-[var(--color-border)] bg-[var(--color-bg-0)]/40">
+					<th class="table-header">Build</th>
+					<th class="table-header">Name</th>
+					<th class="table-header hidden md:table-cell">Base</th>
+					<th class="table-header">Status</th>
+					<th class="table-header hidden md:table-cell">Progress</th>
+					<th class="table-header hidden lg:table-cell">Started</th>
+					<th class="table-header hidden lg:table-cell">Duration</th>
 				</tr>
 			</thead>
 			<tbody>
-				{#each builds as build (build.id)}
+				{#each builds as build, i (build.id)}
 					<tr
-						class="border-b border-[var(--color-border)] last:border-0 cursor-pointer transition-colors duration-200
-							{expandedBuildId === build.id ? 'bg-[var(--color-bg-2)]' : 'hover:bg-[var(--color-bg-2)]'}"
+						class="table-row-animate border-b border-[var(--color-border)] last:border-0 cursor-pointer transition-colors duration-200
+							{expandedBuildId === build.id ? 'bg-[var(--color-bg-2)]' : 'hover:bg-[var(--color-bg-2)]'}
+							{build.status === 'running' ? 'build-row-active' : ''}"
+						style="animation-delay: {i * 30}ms"
 						onclick={() => toggleBuildExpand(build.id)}
 					>
-						<td class="px-4 py-3.5">
-							<div class="flex items-center gap-2">
+						<td class="px-5 py-3.5">
+							<div class="flex items-center gap-2.5">
 								<svg
 									width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
 									stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -518,49 +543,51 @@
 								<span class="font-mono text-meta text-[var(--color-text-primary)]">{build.id}</span>
 							</div>
 						</td>
-						<td class="px-4 py-3.5">
-							<span class="text-meta text-[var(--color-text-primary)]">{build.name}</span>
+						<td class="px-5 py-3.5">
+							<span class="text-ui font-medium text-[var(--color-text-primary)]">{build.name}</span>
 						</td>
-						<td class="hidden px-4 py-3.5 md:table-cell">
+						<td class="hidden px-5 py-3.5 md:table-cell">
 							<span class="font-mono text-meta text-[var(--color-text-muted)]">{build.base_template}</span>
 						</td>
-						<td class="px-4 py-3.5">
-							<span class="flex items-center gap-1.5 text-meta font-medium" style="color: {statusColor(build.status)}">
+						<td class="px-5 py-3.5">
+							<span class="flex items-center gap-2 text-meta font-semibold" style="color: {statusColor(build.status)}">
 								{#if build.status === 'running'}
-									<span class="relative flex h-1.5 w-1.5 shrink-0">
-										<span class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" style="background: {statusColor(build.status)}"></span>
-										<span class="relative inline-flex h-1.5 w-1.5 rounded-full" style="background: {statusColor(build.status)}"></span>
+									<span class="relative flex h-2 w-2 shrink-0">
+										<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full opacity-60" style="background: {statusColor(build.status)}"></span>
+										<span class="relative inline-flex h-2 w-2 rounded-full" style="background: {statusColor(build.status)}"></span>
 									</span>
 								{:else if build.status === 'success'}
-									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
 								{:else if build.status === 'failed'}
-									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 								{:else}
-									<span class="h-1.5 w-1.5 shrink-0 rounded-full" style="background: {statusColor(build.status)}"></span>
+									<span class="h-2 w-2 shrink-0 rounded-full" style="background: {statusColor(build.status)}"></span>
 								{/if}
 								{build.status}
 							</span>
 						</td>
-						<td class="hidden px-4 py-3.5 md:table-cell">
-							<span class="font-mono text-meta text-[var(--color-text-muted)]">
-								{build.current_step} / {build.total_steps}
-							</span>
-							{#if build.status === 'running' && build.total_steps > 0}
-								<div class="mt-1.5 h-1 w-20 overflow-hidden rounded-full bg-[var(--color-bg-4)]">
-									<div
-										class="h-full rounded-full bg-[var(--color-blue)] transition-all duration-500"
-										style="width: {(build.current_step / build.total_steps) * 100}%"
-									></div>
-								</div>
-							{/if}
+						<td class="hidden px-5 py-3.5 md:table-cell">
+							<div class="flex items-center gap-3">
+								<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">
+									{build.current_step}/{build.total_steps}
+								</span>
+								{#if build.total_steps > 0}
+									<div class="relative h-1.5 w-24 overflow-hidden rounded-full bg-[var(--color-bg-4)]">
+										<div
+											class="h-full rounded-full transition-all duration-700 ease-out {build.status === 'running' ? 'progress-bar-glow' : ''}"
+											style="width: {(build.current_step / build.total_steps) * 100}%; background: {statusColor(build.status)}"
+										></div>
+									</div>
+								{/if}
+							</div>
 						</td>
-						<td class="hidden px-4 py-3.5 lg:table-cell">
+						<td class="hidden px-5 py-3.5 lg:table-cell">
 							<span class="text-meta text-[var(--color-text-muted)]" title={formatDate(build.started_at)}>
 								{build.started_at ? timeAgo(build.started_at) : '—'}
 							</span>
 						</td>
-						<td class="hidden px-4 py-3.5 lg:table-cell">
-							<span class="font-mono text-meta text-[var(--color-text-muted)]">
+						<td class="hidden px-5 py-3.5 lg:table-cell">
+							<span class="font-mono text-meta tabular-nums text-[var(--color-text-muted)]">
 								{formatDuration(build.started_at, build.completed_at)}
 							</span>
 						</td>
@@ -569,7 +596,7 @@
 					{#if expandedBuildId === build.id}
 						<tr>
 							<td colspan="7" class="border-b border-[var(--color-border)] last:border-0">
-								<div class="bg-[var(--color-bg-0)] px-6 py-4" style="animation: fadeUp 0.15s ease both">
+								<div class="bg-[var(--color-bg-0)] px-6 py-5" style="animation: fadeUp 0.15s ease both">
 									{#if build.status === 'pending' || build.status === 'running'}
 										<div class="mb-4 flex justify-end">
 											<button
@@ -708,10 +735,14 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !creating) showCreate = false; }}
 		></div>
 		<div
-			class="relative w-full max-w-[520px] max-h-[90vh] overflow-y-auto rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6 shadow-xl"
+			class="relative w-full max-w-[520px] max-h-[90vh] overflow-y-auto rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-dialog"
 			style="animation: fadeUp 0.18s cubic-bezier(0.25,1,0.5,1) both"
 		>
-			<h2 class="font-serif text-[1.375rem] leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">
+			<!-- Top accent edge -->
+			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-accent)] to-transparent"></div>
+
+			<div class="p-6">
+			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">
 				Create Template
 			</h2>
 			<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
@@ -872,7 +903,7 @@
 				<button
 					onclick={handleCreate}
 					disabled={creating || !createForm.name.trim() || !createForm.recipe.trim()}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					class="group flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white transition-all duration-200 hover:shadow-[0_0_20px_var(--color-accent-glow-mid)] hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none"
 				>
 					{#if creating}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
@@ -881,6 +912,7 @@
 						Start Build
 					{/if}
 				</button>
+			</div>
 			</div>
 		</div>
 	</div>
@@ -897,10 +929,14 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !deleting) deleteTarget = null; }}
 		></div>
 		<div
-			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6 shadow-xl"
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-dialog"
 			style="animation: fadeUp 0.18s cubic-bezier(0.25,1,0.5,1) both"
 		>
-			<h2 class="font-serif text-[1.375rem] leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">
+			<!-- Danger accent edge -->
+			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-red)] to-transparent"></div>
+
+			<div class="p-6">
+			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">
 				Delete Template
 			</h2>
 			<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
@@ -924,7 +960,7 @@
 				<button
 					onclick={handleDeleteTemplate}
 					disabled={deleting}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-110 disabled:opacity-50"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2.5 text-ui font-semibold text-white transition-all duration-200 hover:shadow-[0_0_16px_rgba(207,129,114,0.25)] hover:brightness-110 disabled:opacity-50"
 				>
 					{#if deleting}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
@@ -933,6 +969,7 @@
 						Delete
 					{/if}
 				</button>
+			</div>
 			</div>
 		</div>
 	</div>
@@ -958,5 +995,60 @@
 		);
 		background-size: 200% 100%;
 		animation: shimmer 1.4s ease infinite;
+	}
+
+	/* Stat pill — shared base */
+	.stat-pill {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		border-radius: var(--radius-button);
+		border-width: 1px;
+		padding: 6px 12px;
+		transition: transform 0.15s ease, box-shadow 0.15s ease;
+	}
+	.stat-pill:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+	}
+
+	/* Table header */
+	.table-header {
+		padding: 10px 20px;
+		text-align: left;
+		font-size: var(--text-label);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--color-text-tertiary);
+	}
+
+	/* Staggered row entrance */
+	.table-row-animate {
+		animation: fadeUp 0.25s ease both;
+	}
+
+	/* Tab button */
+	.tab-button {
+		position: relative;
+		padding: 14px 20px 14px 0;
+		font-size: var(--text-ui);
+		transition: color 0.15s ease;
+		cursor: pointer;
+	}
+
+	/* Active build row — subtle left accent */
+	.build-row-active {
+		box-shadow: inset 3px 0 0 var(--color-blue);
+	}
+
+	/* Progress bar glow for running builds */
+	.progress-bar-glow {
+		box-shadow: 0 0 8px rgba(90, 159, 212, 0.4);
+	}
+
+	/* Empty state icon float */
+	.empty-icon-float {
+		animation: iconFloat 3s ease-in-out infinite;
 	}
 </style>

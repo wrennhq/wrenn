@@ -383,8 +383,8 @@
 
 										<!-- vCPUs -->
 										<div class="px-5 py-4">
-											{#if snapshot.type === 'snapshot' && snapshot.vcpus != null}
-												<span class="flex items-center gap-1.5">
+											{#if snapshot.vcpus != null && snapshot.vcpus > 0}
+												<span class="flex items-center gap-1.5" title={isSnapshot ? 'Required' : 'Recommended'}>
 													<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={typeColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-50">
 														<rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" /><line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" /><line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" /><line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
 													</svg>
@@ -397,8 +397,8 @@
 
 										<!-- Memory -->
 										<div class="px-5 py-4">
-											{#if snapshot.type === 'snapshot' && snapshot.memory_mb != null}
-												<span class="flex items-center gap-1.5">
+											{#if snapshot.memory_mb != null && snapshot.memory_mb > 0}
+												<span class="flex items-center gap-1.5" title={isSnapshot ? 'Required' : 'Recommended'}>
 													<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={typeColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-50">
 														<rect x="2" y="6" width="20" height="12" rx="2" /><line x1="6" y1="12" x2="6" y2="12.01" /><line x1="10" y1="12" x2="10" y2="12.01" /><line x1="14" y1="12" x2="14" y2="12.01" /><line x1="18" y1="12" x2="18" y2="12.01" />
 													</svg>
