@@ -99,7 +99,7 @@
 							</div>
 						</div>
 						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
-							Enterprise feature
+							Cloud Feature
 						</p>
 						<p class="mt-2 max-w-sm text-center text-ui leading-relaxed text-[var(--color-text-tertiary)]">
 							Billing management is available on Wrenn Cloud.
