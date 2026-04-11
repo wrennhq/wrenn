@@ -27,7 +27,7 @@ type Step struct {
 	Key     string        // KindENV: variable name; KindUSER: username
 	Value   string        // KindENV: variable value
 	Path    string        // KindWORKDIR: directory path
-	Src     string        // KindCOPY: source path (relative to build archive)
+	Srcs    []string      // KindCOPY: source paths (relative to build archive)
 	Dst     string        // KindCOPY: destination path inside sandbox
 }
 
@@ -148,12 +148,14 @@ func parseUSER(raw, username string) (Step, error) {
 
 func parseCOPY(raw, rest string) (Step, error) {
 	if rest == "" {
-		return Step{}, fmt.Errorf("COPY requires <src> <dst>: %q", raw)
+		return Step{}, fmt.Errorf("COPY requires <src>... <dst>: %q", raw)
 	}
-	src, dst, found := strings.Cut(rest, " ")
-	dst = strings.TrimSpace(dst)
-	if !found || dst == "" {
-		return Step{}, fmt.Errorf("COPY requires <src> <dst>: %q", raw)
+	parts := strings.Fields(rest)
+	if len(parts) < 2 {
+		return Step{}, fmt.Errorf("COPY requires <src>... <dst>: %q", raw)
 	}
-	return Step{Kind: KindCOPY, Raw: raw, Src: src, Dst: dst}, nil
+	// Last argument is the destination, everything before is sources.
+	dst := parts[len(parts)-1]
+	srcs := parts[:len(parts)-1]
+	return Step{Kind: KindCOPY, Raw: raw, Srcs: srcs, Dst: dst}, nil
 }

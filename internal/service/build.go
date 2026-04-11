@@ -31,6 +31,7 @@ const (
 var preBuildCmds = []string{
 	"RUN apt update",
 	"USER wrenn-user",
+	"WORKDIR /home/wrenn-user",
 }
 
 // postBuildCmds run after the user recipe to clean up caches and reduce image size.
@@ -725,11 +726,13 @@ func (s *BuildService) uploadAndExtractArchive(
 		return fmt.Errorf("write archive: %w", err)
 	}
 
-	// Extract.
+	// Extract and ensure files are readable.
+	fullCmd := extractCmd + " && chmod -R a+rX /tmp/build-files"
+
 	resp, err := agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
 		SandboxId:  sandboxID,
 		Cmd:        "/bin/sh",
-		Args:       []string{"-c", extractCmd},
+		Args:       []string{"-c", fullCmd},
 		TimeoutSec: 120,
 	}))
 	if err != nil {

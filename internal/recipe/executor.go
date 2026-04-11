@@ -208,25 +208,33 @@ func execCopy(
 	bctx *ExecContext,
 	execFn ExecFunc,
 ) (BuildLogEntry, bool) {
-	// Validate source path: must be relative and not escape the archive directory.
-	cleaned := path.Clean(st.Src)
-	if strings.HasPrefix(cleaned, "..") || strings.HasPrefix(cleaned, "/") {
-		return BuildLogEntry{
-			Step:   step,
-			Phase:  phase,
-			Cmd:    st.Raw,
-			Stderr: "COPY source must be a relative path within the archive",
-		}, false
+	// Validate all source paths: must be relative and not escape the archive directory.
+	var srcPaths []string
+	for _, s := range st.Srcs {
+		cleaned := path.Clean(s)
+		if strings.HasPrefix(cleaned, "..") || strings.HasPrefix(cleaned, "/") {
+			return BuildLogEntry{
+				Step:   step,
+				Phase:  phase,
+				Cmd:    st.Raw,
+				Stderr: fmt.Sprintf("COPY source must be a relative path within the archive: %q", s),
+			}, false
+		}
+		srcPaths = append(srcPaths, shellescape(BuildFilesDir+"/"+cleaned))
 	}
-	src := BuildFilesDir + "/" + cleaned
+
 	dst := st.Dst
+	// Resolve relative destination against the current WORKDIR.
+	if dst != "" && dst[0] != '/' && bctx.WorkDir != "" {
+		dst = bctx.WorkDir + "/" + dst
+	}
 	owner := "root"
 	if bctx.User != "" {
 		owner = bctx.User
 	}
 	script := fmt.Sprintf(
 		"cp -r %s %s && chown -R %s:%s %s",
-		shellescape(src), shellescape(dst), shellescape(owner), shellescape(owner), shellescape(dst),
+		strings.Join(srcPaths, " "), shellescape(dst), shellescape(owner), shellescape(owner), shellescape(dst),
 	)
 
 	entry := execRawShell(ctx, st.Raw, sandboxID, phase, step, 60*time.Second, execFn, script)

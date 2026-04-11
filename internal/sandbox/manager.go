@@ -28,8 +28,9 @@ import (
 
 // Config holds the paths and defaults for the sandbox manager.
 type Config struct {
-	WrennDir    string // root directory (e.g. /var/lib/wrenn); all sub-paths derived via layout package
-	EnvdTimeout time.Duration
+	WrennDir           string // root directory (e.g. /var/lib/wrenn); all sub-paths derived via layout package
+	EnvdTimeout        time.Duration
+	DefaultRootfsSizeMB int // target size for template rootfs images; 0 → DefaultDiskSizeMB
 }
 
 // Manager orchestrates sandbox lifecycle: VM, network, filesystem, envd.
@@ -924,8 +925,8 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 	// Clean up dm device and loop device now that flatten is complete.
 	m.cleanupDM(sb)
 
-	// Shrink the flattened image to its minimum size so stored templates are
-	// compact. EnsureImageSizes will re-expand them on the next agent startup.
+	// Shrink the flattened image to its minimum size, then re-expand to the
+	// configured default rootfs size so sandboxes see the full disk from boot.
 	if out, err := exec.Command("e2fsck", "-fy", outputPath).CombinedOutput(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() > 1 {
 			slog.Warn("e2fsck before shrink failed (non-fatal)", "output", string(out), "error", err)
@@ -933,6 +934,15 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 	}
 	if out, err := exec.Command("resize2fs", "-M", outputPath).CombinedOutput(); err != nil {
 		slog.Warn("resize2fs -M failed (non-fatal)", "output", string(out), "error", err)
+	}
+
+	// Re-expand to default rootfs size.
+	targetMB := m.cfg.DefaultRootfsSizeMB
+	if targetMB <= 0 {
+		targetMB = DefaultDiskSizeMB
+	}
+	if err := expandImage(outputPath, int64(targetMB)*1024*1024, targetMB); err != nil {
+		slog.Warn("failed to expand template to default size (non-fatal)", "error", err)
 	}
 
 	sizeBytes, err := snapshot.DirSize(flattenDstDir, "")

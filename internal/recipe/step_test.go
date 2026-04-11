@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -131,7 +132,12 @@ func TestParseStep(t *testing.T) {
 		{
 			name:  "COPY basic",
 			input: "COPY config.yaml /etc/app/config.yaml",
-			want:  Step{Kind: KindCOPY, Raw: "COPY config.yaml /etc/app/config.yaml", Src: "config.yaml", Dst: "/etc/app/config.yaml"},
+			want:  Step{Kind: KindCOPY, Raw: "COPY config.yaml /etc/app/config.yaml", Srcs: []string{"config.yaml"}, Dst: "/etc/app/config.yaml"},
+		},
+		{
+			name:  "COPY multiple sources",
+			input: "COPY a.txt b.txt /dest/",
+			want:  Step{Kind: KindCOPY, Raw: "COPY a.txt b.txt /dest/", Srcs: []string{"a.txt", "b.txt"}, Dst: "/dest/"},
 		},
 		{
 			name:    "COPY missing dst",
@@ -169,7 +175,7 @@ func TestParseStep(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseStep(%q) unexpected error: %v", tc.input, err)
 			}
-			if got != tc.want {
+			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("ParseStep(%q)\n  got  %+v\n  want %+v", tc.input, got, tc.want)
 			}
 		})
