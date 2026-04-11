@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { createCapsule, listSnapshots, type Capsule, type CreateCapsuleParams, type Snapshot } from '$lib/api/capsules';
 
 	type Props = {
@@ -292,7 +291,7 @@
 				</button>
 				<button
 					onclick={handleCreate}
-					disabled={creating}
+					disabled={creating || !templateQuery.trim()}
 					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
 				>
 					{#if creating}

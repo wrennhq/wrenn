@@ -132,6 +132,9 @@
 		const result = await listCapsules();
 		if (result.ok) {
 			capsules = result.data;
+			error = null;
+		} else {
+			error = result.error;
 		}
 		loading = false;
 
@@ -236,10 +239,23 @@
 		}
 	}
 
+	function handleVisibility() {
+		if (document.hidden) {
+			stopAutoRefresh();
+		} else if (autoRefresh) {
+			fetchCapsules();
+			startAutoRefresh();
+		}
+	}
+
 	onMount(() => {
 		fetchCapsules();
 		startAutoRefresh();
-		return () => stopAutoRefresh();
+		document.addEventListener('visibilitychange', handleVisibility);
+		return () => {
+			stopAutoRefresh();
+			document.removeEventListener('visibilitychange', handleVisibility);
+		};
 	});
 </script>
 
@@ -376,7 +392,31 @@
 					Loading capsules...
 				</div>
 			</div>
+		{:else if filteredCapsules.length === 0 && searchQuery}
+			<!-- No search results -->
+			<div class="flex flex-col items-center justify-center py-[72px]">
+				<div class="relative mb-5">
+					<div class="relative flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-3)]">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+						</svg>
+					</div>
+				</div>
+				<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+					No matching capsules
+				</p>
+				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
+					No capsules match "<span class="font-mono text-[var(--color-text-secondary)]">{searchQuery}</span>". Try a different ID.
+				</p>
+				<button
+					onclick={() => { searchQuery = ''; }}
+					class="mt-4 rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]"
+				>
+					Clear search
+				</button>
+			</div>
 		{:else if filteredCapsules.length === 0}
+			<!-- No capsules at all -->
 			<div class="flex flex-col items-center justify-center py-[72px]">
 				<div class="relative mb-5">
 					<div class="absolute inset-0 -m-4 rounded-full" style="background: radial-gradient(circle, rgba(94,140,88,0.08) 0%, transparent 70%)"></div>
@@ -480,7 +520,13 @@
 										openMenuId = null;
 									} else {
 										const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-										menuPos = { top: rect.bottom + 4, left: rect.right - 180 };
+										const menuW = 180;
+										const menuH = 140; // approximate max menu height
+										const top = rect.bottom + 4 + menuH > window.innerHeight
+											? rect.top - menuH - 4
+											: rect.bottom + 4;
+										const left = Math.max(8, Math.min(rect.right - menuW, window.innerWidth - menuW - 8));
+										menuPos = { top, left };
 										openMenuId = capsule.id;
 									}
 								}}
