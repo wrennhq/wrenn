@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -85,6 +86,8 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	// Resolve template name → (teamID, templateID).
 	templateTeamID := id.PlatformTeamID
 	templateID := id.MinimalTemplateID
+	var templateDefaultUser string
+	var templateDefaultEnv map[string]string
 	if p.Template != "minimal" {
 		tmpl, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: p.Template, TeamID: p.TeamID})
 		if err != nil {
@@ -92,6 +95,11 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		}
 		templateTeamID = tmpl.TeamID
 		templateID = tmpl.ID
+		templateDefaultUser = tmpl.DefaultUser
+		// Parse default_env JSONB into a map.
+		if len(tmpl.DefaultEnv) > 0 {
+			_ = json.Unmarshal(tmpl.DefaultEnv, &templateDefaultEnv)
+		}
 		// If the template is a snapshot, use its baked-in vcpus/memory.
 		if tmpl.Type == "snapshot" {
 			p.VCPUs = tmpl.Vcpus
@@ -140,14 +148,16 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	}
 
 	resp, err := agent.CreateSandbox(ctx, connect.NewRequest(&pb.CreateSandboxRequest{
-		SandboxId:  sandboxIDStr,
-		Template:   p.Template,
-		TeamId:     id.UUIDString(templateTeamID),
-		TemplateId: id.UUIDString(templateID),
-		Vcpus:      p.VCPUs,
-		MemoryMb:   p.MemoryMB,
-		TimeoutSec: p.TimeoutSec,
-		DiskSizeMb: p.DiskSizeMB,
+		SandboxId:   sandboxIDStr,
+		Template:    p.Template,
+		TeamId:      id.UUIDString(templateTeamID),
+		TemplateId:  id.UUIDString(templateID),
+		Vcpus:       p.VCPUs,
+		MemoryMb:    p.MemoryMB,
+		TimeoutSec:  p.TimeoutSec,
+		DiskSizeMb:  p.DiskSizeMB,
+		DefaultUser: templateDefaultUser,
+		DefaultEnv:  templateDefaultEnv,
 	}))
 	if err != nil {
 		if _, dbErr := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
@@ -249,9 +259,24 @@ func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID pgtype.UU
 
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 
+	// Look up template defaults for resume.
+	var resumeDefaultUser string
+	var resumeDefaultEnv map[string]string
+	if sb.TemplateID.Valid {
+		tmpl, err := s.DB.GetTemplate(ctx, sb.TemplateID)
+		if err == nil {
+			resumeDefaultUser = tmpl.DefaultUser
+			if len(tmpl.DefaultEnv) > 0 {
+				_ = json.Unmarshal(tmpl.DefaultEnv, &resumeDefaultEnv)
+			}
+		}
+	}
+
 	resp, err := agent.ResumeSandbox(ctx, connect.NewRequest(&pb.ResumeSandboxRequest{
-		SandboxId:  sandboxIDStr,
-		TimeoutSec: sb.TimeoutSec,
+		SandboxId:   sandboxIDStr,
+		TimeoutSec:  sb.TimeoutSec,
+		DefaultUser: resumeDefaultUser,
+		DefaultEnv:  resumeDefaultEnv,
 	}))
 	if err != nil {
 		return db.Sandbox{}, fmt.Errorf("agent resume: %w", err)

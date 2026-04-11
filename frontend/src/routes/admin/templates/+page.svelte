@@ -56,7 +56,8 @@
 		memory_mb: 512,
 		recipe: '',
 		healthcheck: '',
-		skip_pre_post: false
+		skip_pre_post: false,
+		archive: null as File | null
 	});
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
@@ -131,12 +132,13 @@
 			healthcheck: createForm.healthcheck.trim() || undefined,
 			vcpus: createForm.vcpus,
 			memory_mb: createForm.memory_mb,
-			skip_pre_post: createForm.skip_pre_post
+			skip_pre_post: createForm.skip_pre_post,
+			archive: createForm.archive || undefined
 		});
 
 		if (result.ok) {
 			showCreate = false;
-			createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false };
+			createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, archive: null };
 			builds = [result.data, ...builds];
 			activeTab = 'builds';
 			expandedBuildId = result.data.id;
@@ -235,6 +237,8 @@
 			case 'RUN':     return 'var(--color-blue)';
 			case 'START':   return 'var(--color-accent-bright)';
 			case 'ENV':     return 'var(--color-amber)';
+			case 'USER':    return 'var(--color-accent)';
+			case 'COPY':    return 'var(--color-text-bright)';
 			case 'WORKDIR': return 'var(--color-text-tertiary)';
 			default:        return 'var(--color-text-muted)';
 		}
@@ -277,7 +281,7 @@
 					</p>
 				</div>
 				<button
-					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false }; }}
+					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, archive: null }; }}
 					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-4 py-2 text-ui font-semibold text-white shadow-sm transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 				>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -608,7 +612,7 @@
 															<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 														{/if}
 														<span class="shrink-0 text-label font-semibold text-[var(--color-text-tertiary)]">{phaseLabel}</span>
-														<code class="flex-1 truncate font-mono text-meta"><span style="color: {keywordColor(kw)}">{kw}</span>{#if kwRest}<span class="text-[var(--color-text-secondary)]"> {kwRest}</span>{/if}</code>
+														<code class="flex-1 truncate font-mono text-meta"><span style="color: {keywordColor(kw)}">{kw}</span>{#if kwRest}{' '}<span class="text-[var(--color-text-secondary)]">{kwRest}</span>{/if}</code>
 														<span class="shrink-0 font-mono text-label text-[var(--color-text-muted)]">{log.elapsed_ms}ms</span>
 														{#if log.exit !== 0}
 															<span class="shrink-0 rounded-full bg-[var(--color-red)]/10 px-1.5 py-0.5 font-mono text-label text-[var(--color-red)]">
@@ -661,13 +665,16 @@
 									<!-- Recipe reference -->
 									{#if build.recipe && build.recipe.length > 0}
 										<div class="mt-4 border-t border-[var(--color-border)] pt-4">
-											<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Recipe</span>
+											<div class="flex items-center gap-1.5">
+												<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Recipe</span>
+												<CopyButton value={build.recipe.join('\n')} />
+											</div>
 											<div class="mt-2 rounded-[var(--radius-input)] bg-[var(--color-bg-1)] border border-[var(--color-border)] px-3 py-2">
 												{#each build.recipe as cmd, i}
 													{@const [kw, kwRest] = splitInstruction(cmd)}
 													<div class="flex gap-2 py-0.5">
 														<span class="shrink-0 font-mono text-label text-[var(--color-text-muted)] tabular-nums">{i + 1}.</span>
-														<code class="font-mono text-meta"><span style="color: {keywordColor(kw)}">{kw}</span>{#if kwRest}<span class="text-[var(--color-text-secondary)]"> {kwRest}</span>{/if}</code>
+														<code class="font-mono text-meta"><span style="color: {keywordColor(kw)}">{kw}</span>{#if kwRest}{' '}<span class="text-[var(--color-text-secondary)]">{kwRest}</span>{/if}</code>
 													</div>
 												{/each}
 											</div>
@@ -787,8 +794,43 @@
 						class="w-full resize-y rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-meta leading-relaxed text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)] disabled:opacity-60"
 					></textarea>
 					<p class="mt-1 text-label text-[var(--color-text-muted)]">
-						Supports <code class="font-mono">RUN</code>, <code class="font-mono">START</code>, <code class="font-mono">WORKDIR</code>, <code class="font-mono">ENV key=value</code>. RUN steps have a 30s timeout; override with <code class="font-mono">RUN --timeout=5m</code>.
+						Supports <code class="font-mono">RUN</code>, <code class="font-mono">START</code>, <code class="font-mono">WORKDIR</code>, <code class="font-mono">ENV key=value</code>, <code class="font-mono">USER name</code>, <code class="font-mono">COPY src dst</code>. RUN steps have a 30s timeout; override with <code class="font-mono">RUN --timeout=5m</code>. COPY references files from the uploaded archive.
 					</p>
+				</div>
+
+				<div>
+					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="tmpl-archive">
+						Build Archive <span class="normal-case font-normal text-[var(--color-text-muted)]">(optional, for COPY commands)</span>
+					</label>
+					<div class="flex items-center gap-3">
+						<label
+							class="flex cursor-pointer items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]"
+						>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+							Choose file
+							<input
+								id="tmpl-archive"
+								type="file"
+								accept=".tar,.tar.gz,.tgz,.zip"
+								disabled={creating}
+								onchange={(e) => { const f = (e.target as HTMLInputElement).files?.[0]; createForm.archive = f ?? null; }}
+								class="hidden"
+							/>
+						</label>
+						{#if createForm.archive}
+							<span class="flex items-center gap-1.5 text-meta text-[var(--color-text-secondary)]">
+								<span class="font-mono">{createForm.archive.name}</span>
+								<button
+									onclick={() => { createForm.archive = null; }}
+									class="text-[var(--color-text-muted)] hover:text-[var(--color-red)] transition-colors"
+								>
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+								</button>
+							</span>
+						{:else}
+							<span class="text-meta text-[var(--color-text-muted)]">tar, tar.gz, or zip</span>
+						{/if}
+					</div>
 				</div>
 
 				<div>

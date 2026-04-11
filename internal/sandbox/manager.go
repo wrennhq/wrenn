@@ -1223,6 +1223,23 @@ func (m *Manager) GetClient(sandboxID string) (*envdclient.Client, error) {
 	return sb.client, nil
 }
 
+// SetDefaults calls envd's PostInit to configure the default user and
+// environment variables for a running sandbox. This is called by the host
+// agent after sandbox creation or resume when the template specifies defaults.
+func (m *Manager) SetDefaults(ctx context.Context, sandboxID, defaultUser string, defaultEnv map[string]string) error {
+	if defaultUser == "" && len(defaultEnv) == 0 {
+		return nil
+	}
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+	return sb.client.PostInitWithDefaults(ctx, defaultUser, defaultEnv)
+}
+
 // PtyAttach starts a new PTY process or reconnects to an existing one.
 // If cmd is non-empty, starts a new process. If empty, reconnects using tag.
 func (m *Manager) PtyAttach(ctx context.Context, sandboxID, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd string) (<-chan envdclient.PtyEvent, error) {

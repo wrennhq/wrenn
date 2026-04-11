@@ -69,6 +69,13 @@ func (s *Server) CreateSandbox(
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create sandbox: %w", err))
 	}
 
+	// Apply template defaults (user, env vars) if provided.
+	if msg.DefaultUser != "" || len(msg.DefaultEnv) > 0 {
+		if err := s.mgr.SetDefaults(ctx, sb.ID, msg.DefaultUser, msg.DefaultEnv); err != nil {
+			slog.Warn("failed to set sandbox defaults", "sandbox", sb.ID, "error", err)
+		}
+	}
+
 	return connect.NewResponse(&pb.CreateSandboxResponse{
 		SandboxId: sb.ID,
 		Status:    string(sb.Status),
@@ -100,10 +107,19 @@ func (s *Server) ResumeSandbox(
 	ctx context.Context,
 	req *connect.Request[pb.ResumeSandboxRequest],
 ) (*connect.Response[pb.ResumeSandboxResponse], error) {
-	sb, err := s.mgr.Resume(ctx, req.Msg.SandboxId, int(req.Msg.TimeoutSec))
+	msg := req.Msg
+	sb, err := s.mgr.Resume(ctx, msg.SandboxId, int(msg.TimeoutSec))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+
+	// Apply template defaults (user, env vars) if provided.
+	if msg.DefaultUser != "" || len(msg.DefaultEnv) > 0 {
+		if err := s.mgr.SetDefaults(ctx, sb.ID, msg.DefaultUser, msg.DefaultEnv); err != nil {
+			slog.Warn("failed to set sandbox defaults on resume", "sandbox", sb.ID, "error", err)
+		}
+	}
+
 	return connect.NewResponse(&pb.ResumeSandboxResponse{
 		SandboxId: sb.ID,
 		Status:    string(sb.Status),

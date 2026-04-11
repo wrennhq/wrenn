@@ -210,13 +210,15 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tmpl, err := h.db.InsertTemplate(snapCtx, db.InsertTemplateParams{
-		ID:        newTemplateID,
-		Name:      req.Name,
-		Type:      "snapshot",
-		Vcpus:     sb.Vcpus,
-		MemoryMb:  sb.MemoryMb,
-		SizeBytes: resp.Msg.SizeBytes,
-		TeamID:    ac.TeamID,
+		ID:          newTemplateID,
+		Name:        req.Name,
+		Type:        "snapshot",
+		Vcpus:       sb.Vcpus,
+		MemoryMb:    sb.MemoryMb,
+		SizeBytes:   resp.Msg.SizeBytes,
+		TeamID:      ac.TeamID,
+		DefaultUser: "root",
+		DefaultEnv:  []byte("{}"),
 	})
 	if err != nil {
 		slog.Error("failed to insert template record", "name", req.Name, "error", err)

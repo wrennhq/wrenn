@@ -24,9 +24,11 @@ type Step struct {
 	Raw     string        // original string, preserved for logging
 	Shell   string        // KindRUN, KindSTART: the shell command text
 	Timeout time.Duration // KindRUN: 0 means use caller's default
-	Key     string        // KindENV: variable name
+	Key     string        // KindENV: variable name; KindUSER: username
 	Value   string        // KindENV: variable value
 	Path    string        // KindWORKDIR: directory path
+	Src     string        // KindCOPY: source path (relative to build archive)
+	Dst     string        // KindCOPY: destination path inside sandbox
 }
 
 // ParseStep parses a single recipe instruction string into a Step.
@@ -61,9 +63,9 @@ func ParseStep(s string) (Step, error) {
 	case "WORKDIR":
 		return parseWORKDIR(s, rest)
 	case "USER":
-		return Step{Kind: KindUSER, Raw: s}, nil
+		return parseUSER(s, rest)
 	case "COPY":
-		return Step{Kind: KindCOPY, Raw: s}, nil
+		return parseCOPY(s, rest)
 	default:
 		return Step{}, fmt.Errorf("unknown instruction %q (expected RUN, START, ENV, WORKDIR, USER, or COPY)", keyword)
 	}
@@ -126,4 +128,32 @@ func parseWORKDIR(raw, path string) (Step, error) {
 		return Step{}, fmt.Errorf("WORKDIR requires a path: %q", raw)
 	}
 	return Step{Kind: KindWORKDIR, Raw: raw, Path: path}, nil
+}
+
+func parseUSER(raw, username string) (Step, error) {
+	if username == "" {
+		return Step{}, fmt.Errorf("USER requires a username: %q", raw)
+	}
+	// Validate: alphanumeric, hyphens, underscores only; must start with a letter or underscore.
+	for i, c := range username {
+		if i == 0 && !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+			return Step{}, fmt.Errorf("USER username must start with a letter or underscore: %q", raw)
+		}
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return Step{}, fmt.Errorf("USER username contains invalid character %q: %q", string(c), raw)
+		}
+	}
+	return Step{Kind: KindUSER, Raw: raw, Key: username}, nil
+}
+
+func parseCOPY(raw, rest string) (Step, error) {
+	if rest == "" {
+		return Step{}, fmt.Errorf("COPY requires <src> <dst>: %q", raw)
+	}
+	src, dst, found := strings.Cut(rest, " ")
+	dst = strings.TrimSpace(dst)
+	if !found || dst == "" {
+		return Step{}, fmt.Errorf("COPY requires <src> <dst>: %q", raw)
+	}
+	return Step{Kind: KindCOPY, Raw: raw, Src: src, Dst: dst}, nil
 }
