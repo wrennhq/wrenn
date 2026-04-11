@@ -290,7 +290,7 @@ func (s *Server) MakeDir(
 
 	resp, err := client.MakeDir(ctx, msg.Path)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("make dir: %w", err))
+		return nil, fmt.Errorf("make dir: %w", err)
 	}
 
 	return connect.NewResponse(&pb.MakeDirResponse{
