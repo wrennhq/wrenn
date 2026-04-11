@@ -1,5 +1,7 @@
 <script lang="ts">
 	import CreateCapsuleDialog from '$lib/components/CreateCapsuleDialog.svelte';
+	import SnapshotDialog from '$lib/components/SnapshotDialog.svelte';
+	import DestroyDialog from '$lib/components/DestroyDialog.svelte';
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { capsuleRunningCount } from '$lib/capsule-store.svelte';
 	import { onMount } from 'svelte';
@@ -9,8 +11,6 @@
 		listCapsules,
 		pauseCapsule,
 		resumeCapsule,
-		destroyCapsule,
-		createSnapshot,
 		type Capsule
 	} from '$lib/api/capsules';
 
@@ -45,14 +45,9 @@
 
 	// Snapshot dialog state
 	let snapshotTarget = $state<{ capsule: Capsule; pauseFirst: boolean } | null>(null);
-	let snapshotName = $state('');
-	let snapshotting = $state(false);
-	let snapshotError = $state<string | null>(null);
 
 	// Destroy confirmation state
 	let destroyTarget = $state<Capsule | null>(null);
-	let destroying = $state(false);
-	let destroyError = $state<string | null>(null);
 
 	// Briefly highlight a newly created capsule row
 	let newCapsuleId = $state<string | null>(null);
@@ -137,6 +132,9 @@
 		const result = await listCapsules();
 		if (result.ok) {
 			capsules = result.data;
+			error = null;
+		} else {
+			error = result.error;
 		}
 		loading = false;
 
@@ -179,45 +177,25 @@
 
 	function handleSnapshot(capsule: Capsule) {
 		openMenuId = null;
-		snapshotName = '';
-		snapshotError = null;
 		snapshotTarget = { capsule, pauseFirst: false };
 	}
 
 	function handlePauseAndSnapshot(capsule: Capsule) {
 		openMenuId = null;
-		snapshotName = '';
-		snapshotError = null;
 		snapshotTarget = { capsule, pauseFirst: true };
 	}
 
-	async function handleSnapshotConfirm() {
-		if (!snapshotTarget) return;
-		snapshotting = true;
-		snapshotError = null;
-		const result = await createSnapshot(snapshotTarget.capsule.id, snapshotName.trim() || undefined);
-		if (result.ok) {
-			snapshotTarget = null;
-			await fetchCapsules();
-		} else {
-			snapshotError = result.error;
-		}
-		snapshotting = false;
+	function handleSnapshotDone() {
+		snapshotTarget = null;
+		fetchCapsules();
 	}
 
-	async function handleDestroy() {
-		if (!destroyTarget) return;
-		destroying = true;
-		destroyError = null;
-		const id = destroyTarget.id;
-		const result = await destroyCapsule(id);
-		if (result.ok) {
+	function handleDestroyed() {
+		if (destroyTarget) {
+			const id = destroyTarget.id;
 			capsules = capsules.filter((c) => c.id !== id);
-			destroyTarget = null;
-		} else {
-			destroyError = result.error;
 		}
-		destroying = false;
+		destroyTarget = null;
 	}
 
 	function handleCapsuleCreated(capsule: Capsule) {
@@ -261,10 +239,23 @@
 		}
 	}
 
+	function handleVisibility() {
+		if (document.hidden) {
+			stopAutoRefresh();
+		} else if (autoRefresh) {
+			fetchCapsules();
+			startAutoRefresh();
+		}
+	}
+
 	onMount(() => {
 		fetchCapsules();
 		startAutoRefresh();
-		return () => stopAutoRefresh();
+		document.addEventListener('visibilitychange', handleVisibility);
+		return () => {
+			stopAutoRefresh();
+			document.removeEventListener('visibilitychange', handleVisibility);
+		};
 	});
 </script>
 
@@ -401,7 +392,31 @@
 					Loading capsules...
 				</div>
 			</div>
+		{:else if filteredCapsules.length === 0 && searchQuery}
+			<!-- No search results -->
+			<div class="flex flex-col items-center justify-center py-[72px]">
+				<div class="relative mb-5">
+					<div class="relative flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-3)]">
+						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+						</svg>
+					</div>
+				</div>
+				<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+					No matching capsules
+				</p>
+				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
+					No capsules match "<span class="font-mono text-[var(--color-text-secondary)]">{searchQuery}</span>". Try a different ID.
+				</p>
+				<button
+					onclick={() => { searchQuery = ''; }}
+					class="mt-4 rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]"
+				>
+					Clear search
+				</button>
+			</div>
 		{:else if filteredCapsules.length === 0}
+			<!-- No capsules at all -->
 			<div class="flex flex-col items-center justify-center py-[72px]">
 				<div class="relative mb-5">
 					<div class="absolute inset-0 -m-4 rounded-full" style="background: radial-gradient(circle, rgba(94,140,88,0.08) 0%, transparent 70%)"></div>
@@ -505,7 +520,13 @@
 										openMenuId = null;
 									} else {
 										const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-										menuPos = { top: rect.bottom + 4, left: rect.right - 180 };
+										const menuW = 180;
+										const menuH = 140; // approximate max menu height
+										const top = rect.bottom + 4 + menuH > window.innerHeight
+											? rect.top - menuH - 4
+											: rect.bottom + 4;
+										const left = Math.max(8, Math.min(rect.right - menuW, window.innerWidth - menuW - 8));
+										menuPos = { top, left };
 										openMenuId = capsule.id;
 									}
 								}}
@@ -579,7 +600,7 @@
 			{/if}
 			<div class="my-1 border-t border-[var(--color-border)]"></div>
 			<button
-				onclick={() => { const target = openCapsule; openMenuId = null; destroyError = null; destroyTarget = target; }}
+				onclick={() => { const target = openCapsule; openMenuId = null; destroyTarget = target; }}
 				class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
 			>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
@@ -594,139 +615,23 @@
 
 <!-- Snapshot Dialog -->
 {#if snapshotTarget}
-	<div class="fixed inset-0 z-50 flex items-center justify-center">
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div
-			class="absolute inset-0 bg-black/60"
-			onclick={() => { if (!snapshotting) snapshotTarget = null; }}
-			onkeydown={(e) => { if (e.key === 'Escape' && !snapshotting) snapshotTarget = null; }}
-		></div>
-
-		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] overflow-hidden" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<div class="flex items-center gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-6 py-5">
-				<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-input)] bg-[var(--color-accent)]/15 text-[var(--color-accent)] shadow-[0_0_12px_var(--color-accent-glow)]">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" />
-						<circle cx="12" cy="15" r="3" />
-					</svg>
-				</div>
-				<div>
-					<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Capture snapshot</h2>
-					<p class="mt-0.5 text-meta text-[var(--color-text-muted)] font-mono">{snapshotTarget.capsule.id}</p>
-				</div>
-			</div>
-
-			<div class="px-6 pt-5 pb-6 space-y-4">
-				{#if snapshotTarget.pauseFirst}
-					<div class="flex items-start gap-2.5 rounded-[var(--radius-input)] border border-[var(--color-amber)]/25 bg-[var(--color-amber)]/8 px-3 py-2.5">
-						<svg class="mt-px shrink-0 text-[var(--color-amber)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-							<line x1="12" y1="9" x2="12" y2="13" />
-							<line x1="12" y1="17" x2="12.01" y2="17" />
-						</svg>
-						<p class="text-meta text-[var(--color-amber)] leading-relaxed">This capsule will be <strong class="font-semibold">paused first</strong>, then its full state (memory + disk) will be captured.</p>
-					</div>
-				{:else}
-					<p class="text-ui text-[var(--color-text-tertiary)]">The capsule's current memory state will be captured and stored as a reusable snapshot.</p>
-				{/if}
-
-				{#if snapshotError}
-					<div class="rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
-						{snapshotError}
-					</div>
-				{/if}
-
-				<div>
-					<div class="mb-1.5 flex items-baseline justify-between">
-						<label class="text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="snapshot-name">Snapshot name</label>
-						<span class="text-meta text-[var(--color-text-muted)]">optional</span>
-					</div>
-					<input
-						id="snapshot-name"
-						type="text"
-						bind:value={snapshotName}
-						disabled={snapshotting}
-						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)] disabled:opacity-50"
-						placeholder="e.g. after-apt-install, pre-migration"
-						onkeydown={(e) => { if (e.key === 'Enter' && !snapshotting) handleSnapshotConfirm(); }}
-					/>
-					<p class="mt-1.5 text-meta text-[var(--color-text-muted)]">Leave blank to use an auto-generated name.</p>
-				</div>
-
-				<div class="flex justify-end gap-3 pt-1">
-					<button
-						onclick={() => { snapshotTarget = null; }}
-						disabled={snapshotting}
-						class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
-					>
-						Cancel
-					</button>
-					<button
-						onclick={handleSnapshotConfirm}
-						disabled={snapshotting}
-						class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
-					>
-						{#if snapshotting}
-							<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<path d="M21 12a9 9 0 1 1-6.219-8.56" />
-							</svg>
-							Capturing...
-						{:else}
-							Capture snapshot
-						{/if}
-					</button>
-				</div>
-			</div>
-		</div>
-	</div>
+	<SnapshotDialog
+		open={true}
+		capsuleId={snapshotTarget.capsule.id}
+		pauseFirst={snapshotTarget.pauseFirst}
+		onclose={() => { snapshotTarget = null; }}
+		onsnapshot={handleSnapshotDone}
+	/>
 {/if}
 
-<!-- Destroy confirmation dialog -->
+<!-- Destroy Dialog -->
 {#if destroyTarget}
-	<div class="fixed inset-0 z-50 flex items-center justify-center">
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div
-			class="absolute inset-0 bg-black/60"
-			onclick={() => { if (!destroying) destroyTarget = null; }}
-			onkeydown={(e) => { if (e.key === 'Escape' && !destroying) destroyTarget = null; }}
-		></div>
-		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Destroy Capsule</h2>
-			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
-				Terminate <span class="font-mono text-[var(--color-text-secondary)]">{destroyTarget.id}</span> and destroy all data inside it. This cannot be undone.
-			</p>
-
-			{#if destroyError}
-				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
-					{destroyError}
-				</div>
-			{/if}
-
-			<div class="mt-6 flex justify-end gap-3">
-				<button
-					onclick={() => { destroyTarget = null; }}
-					disabled={destroying}
-					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
-				>
-					Cancel
-				</button>
-				<button
-					onclick={handleDestroy}
-					disabled={destroying}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-110 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
-				>
-					{#if destroying}
-						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M21 12a9 9 0 1 1-6.219-8.56" />
-						</svg>
-						Destroying...
-					{:else}
-						Destroy
-					{/if}
-				</button>
-			</div>
-		</div>
-	</div>
+	<DestroyDialog
+		open={true}
+		capsuleId={destroyTarget.id}
+		onclose={() => { destroyTarget = null; }}
+		ondestroyed={handleDestroyed}
+	/>
 {/if}
 
 <!-- Create Capsule Dialog -->

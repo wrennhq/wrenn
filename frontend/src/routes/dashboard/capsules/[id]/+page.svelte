@@ -2,13 +2,16 @@
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { getCapsule, type Capsule } from '$lib/api/capsules';
+	import { getCapsule, pauseCapsule, resumeCapsule, type Capsule } from '$lib/api/capsules';
+	import { toast } from '$lib/toast.svelte';
+	import SnapshotDialog from '$lib/components/SnapshotDialog.svelte';
+	import DestroyDialog from '$lib/components/DestroyDialog.svelte';
 	import FilesTab from '$lib/components/FilesTab.svelte';
 	import TerminalTab from '$lib/components/TerminalTab.svelte';
 	import {
 		fetchSandboxMetrics,
 		METRIC_RANGES,
-		METRIC_POLL_INTERVAL,
+		METRIC_POLL_INTERVALS,
 		type MetricRange,
 		type MetricPoint
 	} from '$lib/api/metrics';
@@ -18,6 +21,35 @@
 	let capsule = $state<Capsule | null>(null);
 	let capsuleLoading = $state(true);
 	let capsuleError = $state<string | null>(null);
+
+	// Lifecycle action state
+	let actionLoading = $state<string | null>(null);
+	let showDestroy = $state(false);
+	let showSnapshot = $state(false);
+
+	async function handlePause() {
+		if (!capsule) return;
+		actionLoading = 'pause';
+		const result = await pauseCapsule(capsule.id);
+		if (result.ok) {
+			capsule = result.data;
+		} else {
+			toast.error(result.error);
+		}
+		actionLoading = null;
+	}
+
+	async function handleResume() {
+		if (!capsule) return;
+		actionLoading = 'resume';
+		const result = await resumeCapsule(capsule.id);
+		if (result.ok) {
+			capsule = result.data;
+		} else {
+			toast.error(result.error);
+		}
+		actionLoading = null;
+	}
 
 	type Tab = 'metrics' | 'files' | 'terminal';
 	const VALID_TABS: Tab[] = ['metrics', 'files', 'terminal'];
@@ -48,6 +80,8 @@
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let ChartJS = $state<any>(null);
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let lastDataKey = '';   // fingerprint to skip redundant chart redraws
+	let visibilityHandler: (() => void) | null = null;
 
 	const metricsAvailable = $derived(
 		capsule?.status === 'running' || capsule?.status === 'paused'
@@ -109,6 +143,10 @@
 
 	function updateCharts() {
 		if (!points.length) return;
+		// Skip redraw if data hasn't changed.
+		const key = `${points.length}:${points.at(-1)?.timestamp_unix ?? ''}`;
+		if (key === lastDataKey) return;
+		lastDataKey = key;
 		const labels = formatLabels(Array.from(points), range);
 		const w = smoothWindow(points.length);
 		if (chartCpu) {
@@ -139,15 +177,20 @@
 
 	function setRange(r: MetricRange) {
 		range = r;
+		lastDataKey = '';   // force chart redraw on range switch
 		goto(`?range=${r}`, { replaceState: true, noScroll: true, keepFocus: true });
 		metricsLoading = true;
 		restartPolling();
 	}
 
+	function stopPolling() {
+		if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+	}
+
 	function restartPolling() {
-		if (pollInterval) clearInterval(pollInterval);
+		stopPolling();
 		loadMetrics();
-		pollInterval = setInterval(loadMetrics, METRIC_POLL_INTERVAL);
+		pollInterval = setInterval(loadMetrics, METRIC_POLL_INTERVALS[range]);
 	}
 
 	// Chart design tokens (match StatsPanel.svelte)
@@ -310,7 +353,7 @@
 		});
 
 		return () => {
-			if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+			stopPolling();
 			chartCpu?.destroy(); chartCpu = null;
 			chartRam?.destroy(); chartRam = null;
 		};
@@ -335,10 +378,21 @@
 
 		const mod = await import('chart.js/auto');
 		ChartJS = mod.Chart;
+
+		// Pause polling when the browser tab is hidden.
+		visibilityHandler = () => {
+			if (document.hidden) {
+				stopPolling();
+			} else if (activeTab === 'metrics' && metricsAvailable) {
+				restartPolling();
+			}
+		};
+		document.addEventListener('visibilitychange', visibilityHandler);
 	});
 
 	onDestroy(() => {
-		if (pollInterval) clearInterval(pollInterval);
+		stopPolling();
+		if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
 		chartCpu?.destroy();
 		chartRam?.destroy();
 	});
@@ -423,6 +477,58 @@
 	</div>
 {:else if capsule}
 <div class="flex flex-1 flex-col min-h-0">
+
+	<!-- Action buttons -->
+	<div class="flex items-center justify-end gap-2 px-7 pt-5">
+		{#if capsule.status === 'running'}
+			<button
+				onclick={handlePause}
+				disabled={actionLoading !== null}
+				class="flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-amber)]/30 bg-[var(--color-amber)]/8 px-3.5 py-2 text-ui font-medium text-[var(--color-amber)] transition-all duration-150 hover:bg-[var(--color-amber)]/15 hover:border-[var(--color-amber)]/50 disabled:opacity-50"
+			>
+				{#if actionLoading === 'pause'}
+					<svg class="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+					Pausing...
+				{:else}
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
+					Pause
+				{/if}
+			</button>
+		{:else if capsule.status === 'paused'}
+			<button
+				onclick={handleResume}
+				disabled={actionLoading !== null}
+				class="flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/8 px-3.5 py-2 text-ui font-medium text-[var(--color-accent-bright)] transition-all duration-150 hover:bg-[var(--color-accent)]/15 hover:border-[var(--color-accent)]/50 disabled:opacity-50"
+			>
+				{#if actionLoading === 'resume'}
+					<svg class="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+					Resuming...
+				{:else}
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+					Resume
+				{/if}
+			</button>
+			<button
+				onclick={() => { showSnapshot = true; }}
+				disabled={actionLoading !== null}
+				class="flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-3.5 py-2 text-ui font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+			>
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
+				Snapshot
+			</button>
+		{/if}
+
+		{#if capsule.status === 'running' || capsule.status === 'paused'}
+			<button
+				onclick={() => { showDestroy = true; }}
+				disabled={actionLoading !== null}
+				class="flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/8 px-3.5 py-2 text-ui font-medium text-[var(--color-red)] transition-all duration-150 hover:bg-[var(--color-red)]/15 hover:border-[var(--color-red)]/50 disabled:opacity-50"
+			>
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
+				Destroy
+			</button>
+		{/if}
+	</div>
 
 	<!-- Tabs (matches Templates page pattern) -->
 	<div class="mt-5 flex gap-0 border-b border-[var(--color-border)] px-7">
@@ -648,4 +754,18 @@
 		</div>
 	{/if}
 </div>
+
+<SnapshotDialog
+	open={showSnapshot}
+	capsuleId={sandboxId}
+	onclose={() => { showSnapshot = false; }}
+	onsnapshot={() => { goto('/dashboard/capsules'); }}
+/>
+
+<DestroyDialog
+	open={showDestroy}
+	capsuleId={sandboxId}
+	onclose={() => { showDestroy = false; }}
+	ondestroyed={() => { goto('/dashboard/capsules'); }}
+/>
 {/if}

@@ -21,5 +21,14 @@ export async function fetchSandboxMetrics(id: string, range: MetricRange): Promi
 
 export const METRIC_RANGES: MetricRange[] = ['5m', '10m', '1h', '6h', '24h'];
 
-// All ranges poll every 10 seconds.
+// Poll interval varies by range — shorter ranges need fresher data.
+export const METRIC_POLL_INTERVALS: Record<MetricRange, number> = {
+	'5m':  10_000,
+	'10m': 10_000,
+	'1h':  30_000,
+	'6h':  60_000,
+	'24h': 120_000,
+};
+
+/** @deprecated Use METRIC_POLL_INTERVALS instead */
 export const METRIC_POLL_INTERVAL = 10_000;

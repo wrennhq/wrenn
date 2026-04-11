@@ -36,6 +36,7 @@
 	// Polling
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let hasActiveBuilds = $derived(builds.some((b) => b.status === 'pending' || b.status === 'running'));
+	let visibilityHandler: (() => void) | null = null;
 
 	// Build log expansion
 	let expandedBuildId = $state<string | null>(null);
@@ -97,7 +98,7 @@
 	function startPolling() {
 		stopPolling();
 		pollInterval = setInterval(() => {
-			if (hasActiveBuilds) fetchBuilds();
+			if (hasActiveBuilds && activeTab === 'builds') fetchBuilds();
 		}, 3000);
 	}
 
@@ -242,9 +243,22 @@
 	onMount(() => {
 		fetchTemplates();
 		fetchBuilds().then(startPolling);
+
+		// Pause polling when the browser tab is hidden.
+		visibilityHandler = () => {
+			if (document.hidden) {
+				stopPolling();
+			} else {
+				startPolling();
+			}
+		};
+		document.addEventListener('visibilitychange', visibilityHandler);
 	});
 
-	onDestroy(stopPolling);
+	onDestroy(() => {
+		stopPolling();
+		if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
+	});
 </script>
 
 <div class="flex h-screen overflow-hidden bg-[var(--color-bg-0)]">

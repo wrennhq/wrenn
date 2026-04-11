@@ -8,6 +8,7 @@
 		formatFileSize,
 		type FileEntry,
 	} from '$lib/api/files';
+	import { tokenize, type ThemedToken } from '$lib/highlight';
 
 	type Props = {
 		sandboxId: string;
@@ -29,16 +30,32 @@
 	let fileError = $state<string | null>(null);
 	let downloading = $state(false);
 
+	// Syntax highlighting (lazy — loaded on first use)
+	let highlightedTokens = $state<ThemedToken[][] | null>(null);
+
 	// Request generation counters — discard stale responses from rapid clicks
 	let dirGeneration = 0;
 	let fileGeneration = 0;
 
 	const MAX_PREVIEW_LINES = 5000;
+	const MAX_HIGHLIGHT_LINES = 2000; // Don't tokenize huge files — diminishing returns
 
 	// Path input
 	let pathInput = $state('~');
 	let pathInputFocused = $state(false);
 	let pathInputEl = $state<HTMLInputElement | undefined>(undefined);
+
+	// Pre-computed preview lines — avoids re-splitting on every render
+	const previewLines = $derived.by(() => {
+		if (!fileContent) return { lines: [] as string[], truncated: false, totalLines: 0 };
+		const allLines = fileContent.split('\n');
+		const truncated = allLines.length > MAX_PREVIEW_LINES;
+		return {
+			lines: truncated ? allLines.slice(0, MAX_PREVIEW_LINES) : allLines,
+			truncated,
+			totalLines: allLines.length,
+		};
+	});
 
 	// Sorted entries: directories first, then files, alphabetical within each group
 	const sortedEntries = $derived(
@@ -71,6 +88,7 @@
 		selectedFile = null;
 		fileContent = null;
 		fileError = null;
+		highlightedTokens = null;
 		await loadDir();
 	}
 
@@ -131,6 +149,7 @@
 		selectedFile = entry;
 		fileContent = null;
 		fileError = null;
+		highlightedTokens = null;
 
 		// Check if we should preview or prompt download
 		if (isBinaryFile(entry.name) || isFileTooLarge(entry.size)) {
@@ -147,6 +166,14 @@
 				fileContent = null;
 			} else {
 				fileContent = result.data;
+				// Kick off highlighting in the background — preview shows plain text immediately.
+				// Only tokenize up to MAX_HIGHLIGHT_LINES to avoid freezing on large files.
+				const linesToHighlight = result.data.split('\n').length > MAX_HIGHLIGHT_LINES
+					? result.data.split('\n').slice(0, MAX_HIGHLIGHT_LINES).join('\n')
+					: result.data;
+				tokenize(linesToHighlight, entry.name).then((tokens) => {
+					if (gen === fileGeneration) highlightedTokens = tokens;
+				});
 			}
 		} else {
 			fileError = result.error;
@@ -252,6 +279,71 @@
 		return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
 	}
 
+	// Extension → color mapping for file icons and badges
+	function extColor(name: string): string {
+		const ext = fileExt(name);
+		switch (ext) {
+			case 'go': case 'mod': case 'sum':
+				return '#5a9fd4';           // blue — Go
+			case 'py': case 'pyi': case 'pyx':
+				return '#d4a73c';           // amber — Python
+			case 'js': case 'mjs': case 'cjs':
+				return '#d4a73c';           // amber — JavaScript
+			case 'ts': case 'mts': case 'cts': case 'tsx': case 'jsx':
+				return '#5a9fd4';           // blue — TypeScript/React
+			case 'rs':
+				return '#cf8172';           // red — Rust
+			case 'sh': case 'bash': case 'zsh': case 'fish':
+				return '#5e8c58';           // accent — shell
+			case 'json': case 'yaml': case 'yml': case 'toml': case 'ini': case 'env':
+				return '#8b7ec8';           // purple — config
+			case 'md': case 'mdx': case 'txt': case 'rst':
+				return 'var(--color-text-secondary)'; // neutral — docs
+			case 'sql':
+				return '#5a9fd4';           // blue — SQL
+			case 'proto':
+				return '#5e8c58';           // accent — protobuf
+			case 'svelte': case 'vue':
+				return '#cf8172';           // red — Svelte/Vue
+			case 'css': case 'scss': case 'less':
+				return '#5a9fd4';           // blue — styles
+			case 'html': case 'htm':
+				return '#cf8172';           // red — HTML
+			case 'dockerfile': case 'makefile':
+				return '#5e8c58';           // accent — build
+			default:
+				return 'var(--color-text-muted)';
+		}
+	}
+
+	// Descriptive label for file type badge in preview header
+	function extLabel(name: string): string {
+		const ext = fileExt(name);
+		const lower = name.toLowerCase();
+		if (lower === 'makefile') return 'Make';
+		if (lower === 'dockerfile') return 'Docker';
+		switch (ext) {
+			case 'go': return 'Go';
+			case 'py': return 'Python';
+			case 'js': case 'mjs': case 'cjs': return 'JS';
+			case 'ts': case 'mts': case 'cts': return 'TS';
+			case 'tsx': return 'TSX';
+			case 'jsx': return 'JSX';
+			case 'rs': return 'Rust';
+			case 'sh': case 'bash': return 'Shell';
+			case 'json': return 'JSON';
+			case 'yaml': case 'yml': return 'YAML';
+			case 'toml': return 'TOML';
+			case 'sql': return 'SQL';
+			case 'proto': return 'Proto';
+			case 'svelte': return 'Svelte';
+			case 'css': return 'CSS';
+			case 'html': case 'htm': return 'HTML';
+			case 'md': case 'mdx': return 'Markdown';
+			default: return ext ? ext.toUpperCase() : '';
+		}
+	}
+
 	// Load initial directory on mount, falling back to / if home can't be resolved
 	let hasInitiallyLoaded = false;
 	$effect(() => {
@@ -277,15 +369,22 @@
 	}
 	.file-row.active {
 		background-color: var(--color-accent-glow);
-		border-left: 2px solid var(--color-accent);
+		border-left: 3px solid var(--color-accent);
+		box-shadow: inset 0 0 20px rgba(94, 140, 88, 0.06);
 	}
 	.file-row:not(.active) {
-		border-left: 2px solid transparent;
+		border-left: 3px solid transparent;
 	}
 
 	.preview-code {
 		tab-size: 4;
 		-moz-tab-size: 4;
+	}
+
+	/* Let the browser skip rendering off-screen lines in long files */
+	.code-line {
+		content-visibility: auto;
+		contain-intrinsic-size: auto 1.65rem;
 	}
 
 	/* Staggered row entrance */
@@ -436,9 +535,10 @@
 					{#each sortedEntries as entry, idx (entry.path)}
 						<button
 							onclick={() => selectFile(entry)}
-							class="file-row row-enter flex w-full items-center gap-3 px-4 py-[7px] text-left
-								{selectedFile?.path === entry.path ? 'active' : ''}"
-							style="animation-delay: {Math.min(idx * 12, 200)}ms"
+							class="file-row flex w-full items-center gap-3 px-4 py-[7px] text-left
+								{selectedFile?.path === entry.path ? 'active' : ''}
+								{idx < 30 ? 'row-enter' : ''}"
+							style={idx < 30 ? `animation-delay: ${idx * 12}ms` : undefined}
 						>
 							<!-- Icon -->
 							{#if fileIcon(entry) === 'dir'}
@@ -451,7 +551,7 @@
 									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
 								</svg>
 							{:else}
-								<svg class="shrink-0 text-[var(--color-text-muted)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<svg class="shrink-0" style="color: {extColor(entry.name)}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 									<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
 									<polyline points="14 2 14 8 20 8" />
 								</svg>
@@ -461,7 +561,7 @@
 							<div class="flex flex-1 items-center gap-2 overflow-hidden">
 								<span class="truncate font-mono text-meta
 									{entry.type === 'directory'
-										? 'text-[var(--color-text-primary)]'
+										? 'text-[var(--color-text-primary)] font-medium'
 										: 'text-[var(--color-text-secondary)]'}">
 									{entry.name}
 								</span>
@@ -472,8 +572,13 @@
 								{/if}
 							</div>
 
-							<!-- Size (files only) -->
+							<!-- Size + extension hint (files only) -->
 							{#if entry.type === 'file'}
+								{#if fileExt(entry.name)}
+									<span class="shrink-0 font-mono text-[9px] uppercase tracking-[0.05em]" style="color: {extColor(entry.name)}; opacity: 0.7">
+										{fileExt(entry.name)}
+									</span>
+								{/if}
 								<span class="shrink-0 font-mono text-badge text-[var(--color-text-muted)]">
 									{formatFileSize(entry.size)}
 								</span>
@@ -533,15 +638,18 @@
 								<polyline points="14 2 14 8 20 8" />
 							</svg>
 						{:else}
-							<svg class="shrink-0 text-[var(--color-accent-mid)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<svg class="shrink-0" style="color: {extColor(selectedFile.name)}" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
 								<polyline points="14 2 14 8 20 8" />
 							</svg>
 						{/if}
 						<span class="truncate font-mono text-meta text-[var(--color-text-primary)]">{selectedFile.path}</span>
-						{#if fileExt(selectedFile.name)}
-							<span class="shrink-0 rounded-[3px] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge uppercase text-[var(--color-text-muted)]">
-								{fileExt(selectedFile.name)}
+						{#if extLabel(selectedFile.name)}
+							<span
+								class="shrink-0 rounded-[3px] border px-1.5 py-0.5 font-mono text-badge font-semibold uppercase tracking-[0.03em]"
+								style="color: {extColor(selectedFile.name)}; border-color: color-mix(in srgb, {extColor(selectedFile.name)} 25%, transparent); background: color-mix(in srgb, {extColor(selectedFile.name)} 8%, transparent)"
+							>
+								{extLabel(selectedFile.name)}
 							</span>
 						{/if}
 					</div>
@@ -632,16 +740,13 @@
 						</div>
 					{:else if fileContent !== null}
 						<!-- Text preview with line numbers (capped at MAX_PREVIEW_LINES) -->
-						{@const allLines = fileContent.split('\n')}
-						{@const lines = allLines.length > MAX_PREVIEW_LINES ? allLines.slice(0, MAX_PREVIEW_LINES) : allLines}
-						{@const truncated = allLines.length > MAX_PREVIEW_LINES}
 						<div style="animation: fadeUp 0.15s ease both">
-							<pre class="preview-code p-0 m-0"><code class="block">{#each lines as line, i}<div class="code-line flex"><span class="line-num sticky left-0 inline-block w-[52px] shrink-0 select-none border-r border-[var(--color-border)] bg-[var(--color-bg-1)] px-3 py-0 text-right font-mono text-badge leading-[1.65rem] text-[var(--color-text-muted)] transition-colors duration-75">{i + 1}</span><span class="line-content flex-1 whitespace-pre-wrap break-all px-4 py-0 font-mono text-meta leading-[1.65rem] text-[var(--color-text-secondary)] transition-colors duration-75">{line || ' '}</span></div>{/each}</code></pre>
+							<pre class="preview-code p-0 m-0"><code class="block">{#each previewLines.lines as line, i}<div class="code-line flex"><span class="line-num sticky left-0 inline-block w-[52px] shrink-0 select-none border-r border-[var(--color-border)] bg-[var(--color-bg-2)] px-3 py-0 text-right font-mono text-badge leading-[1.65rem] text-[var(--color-text-muted)]">{i + 1}</span><span class="line-content flex-1 whitespace-pre-wrap break-all px-4 py-0 font-mono text-meta leading-[1.65rem]">{#if highlightedTokens && highlightedTokens[i]}{#each highlightedTokens[i] as token}<span style="color: {token.color ?? 'var(--color-text-secondary)'}">{token.content}</span>{/each}{:else}<span class="text-[var(--color-text-secondary)]">{line || ' '}</span>{/if}</span></div>{/each}</code></pre>
 						</div>
-						{#if truncated}
+						{#if previewLines.truncated}
 							<div class="flex items-center justify-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-2)] px-4 py-3">
 								<span class="text-meta text-[var(--color-text-tertiary)]">
-									Showing {MAX_PREVIEW_LINES.toLocaleString()} of {allLines.length.toLocaleString()} lines
+									Showing {MAX_PREVIEW_LINES.toLocaleString()} of {previewLines.totalLines.toLocaleString()} lines
 								</span>
 								<button
 									onclick={handleDownload}
