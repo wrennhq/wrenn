@@ -94,6 +94,21 @@
 		return PROVIDERS.find((p) => p.value === value)?.label ?? value;
 	}
 
+	// Per-provider color palette — [text, bg, border, stripe]
+	const PROVIDER_COLORS: Record<string, { text: string; bg: string; border: string }> = {
+		discord:    { text: '#8b9cef', bg: 'rgba(88,101,242,0.12)', border: 'rgba(88,101,242,0.3)' },
+		slack:      { text: '#d4a0c0', bg: 'rgba(180,120,160,0.10)', border: 'rgba(180,120,160,0.3)' },
+		teams:      { text: '#a78bda', bg: 'rgba(120,90,200,0.10)', border: 'rgba(120,90,200,0.3)' },
+		googlechat: { text: '#6ec07a', bg: 'rgba(60,176,80,0.10)',  border: 'rgba(60,176,80,0.25)' },
+		telegram:   { text: '#6cb8d9', bg: 'rgba(42,171,226,0.10)', border: 'rgba(42,171,226,0.25)' },
+		matrix:     { text: '#6bccc4', bg: 'rgba(80,200,190,0.10)', border: 'rgba(80,200,190,0.25)' },
+		webhook:    { text: 'var(--color-text-secondary)', bg: 'rgba(255,255,255,0.04)', border: 'var(--color-border-mid)' },
+	};
+
+	function providerColor(provider: string): typeof PROVIDER_COLORS['discord'] {
+		return PROVIDER_COLORS[provider] ?? PROVIDER_COLORS['webhook'];
+	}
+
 	function fieldLabel(field: string): string {
 		return field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 	}
@@ -338,13 +353,13 @@
 			<!-- Header -->
 			<div class="px-7 pt-8">
 				<div class="flex items-start justify-between">
-					<div>
+					<div class="flex items-baseline gap-4">
 						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
 							Channels
 						</h1>
-						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-							Route capsule events to Discord, Slack, Telegram, and other destinations.
-						</p>
+						{#if !loading && channels.length > 0}
+							<span class="font-serif text-[1.75rem] tracking-[-0.03em] text-[var(--color-text-muted)]">{channels.length}</span>
+						{/if}
 					</div>
 
 					<button
@@ -357,6 +372,9 @@
 						New Channel
 					</button>
 				</div>
+				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+					Route capsule events to Discord, Slack, Telegram, and other destinations.
+				</p>
 
 				<div class="mt-5 border-b border-[var(--color-border)]"></div>
 			</div>
@@ -432,13 +450,6 @@
 						</button>
 					</div>
 				{:else}
-					<!-- Count row -->
-					<div class="mb-4 flex items-center justify-end">
-						<span class="text-meta text-[var(--color-text-muted)]">
-							{channels.length} {channels.length === 1 ? 'channel' : 'channels'} total
-						</span>
-					</div>
-
 					<!-- Table -->
 					<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]">
 						<!-- Header -->
@@ -457,7 +468,7 @@
 								in:fly={{ y: 6, duration: 350, delay: i * 40, easing: cubicOut }}
 								out:fly={{ x: -12, duration: 180, easing: cubicIn }}
 							>
-								<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-[3px] bg-[var(--color-accent)]"></div>
+								<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-[3px]" style="background: {providerColor(ch.provider).text}"></div>
 
 								<!-- Name -->
 								<div class="min-w-0 px-5 py-4">
@@ -467,7 +478,10 @@
 
 								<!-- Provider -->
 								<div class="px-5 py-4">
-									<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-accent)]/25 bg-[var(--color-accent)]/10 px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
+									<span
+										class="inline-flex items-center gap-1.5 rounded-[3px] border px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.04em]"
+										style="color: {providerColor(ch.provider).text}; background: {providerColor(ch.provider).bg}; border-color: {providerColor(ch.provider).border}"
+									>
 										{@render providerIcon(ch.provider)}
 										{providerLabel(ch.provider)}
 									</span>
@@ -687,9 +701,11 @@
 								style="animation: fadeUp 0.12s ease both"
 							>
 								{#each PROVIDERS as p}
+									{@const ppc = providerColor(p.value)}
 									<button
 										class="flex w-full items-center gap-2.5 px-3 py-2 text-ui transition-colors duration-100 hover:bg-[var(--color-bg-3)]
-											{createProvider === p.value ? 'bg-[var(--color-accent-glow)] text-[var(--color-accent-bright)] font-medium' : 'text-[var(--color-text-primary)]'}"
+											{createProvider === p.value ? 'font-medium' : 'text-[var(--color-text-primary)]'}"
+										style={createProvider === p.value ? `color: ${ppc.text}; background: ${ppc.bg}` : ''}
 										onclick={() => { createProvider = p.value; createConfig = {}; providerDropdownOpen = false; }}
 									>
 										{@render providerIcon(p.value)}
@@ -987,7 +1003,7 @@
 			</p>
 
 			<div class="mt-2">
-				<span class="inline-flex items-center gap-1.5 rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-2 py-0.5 text-meta text-[var(--color-text-secondary)]">
+				<span class="inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-meta font-medium" style="color: {providerColor(editTarget.provider).text}; background: {providerColor(editTarget.provider).bg}; border-color: {providerColor(editTarget.provider).border}">
 					{@render providerIcon(editTarget.provider)}
 					{providerLabel(editTarget.provider)}
 				</span>
@@ -1101,7 +1117,7 @@
 				Permanently delete <span class="font-medium text-[var(--color-text-secondary)]">{deleteTarget.name}</span>?
 				Events will stop being delivered to this destination immediately.
 			</p>
-			<span class="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-2 py-0.5 text-meta text-[var(--color-text-muted)]">
+			<span class="mt-2 inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-meta font-medium" style="color: {providerColor(deleteTarget.provider).text}; background: {providerColor(deleteTarget.provider).bg}; border-color: {providerColor(deleteTarget.provider).border}">
 				{@render providerIcon(deleteTarget.provider)}
 				{providerLabel(deleteTarget.provider)}
 			</span>
@@ -1162,7 +1178,7 @@
 			</p>
 
 			<div class="mt-2">
-				<span class="inline-flex items-center gap-1.5 rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-2 py-0.5 text-meta text-[var(--color-text-secondary)]">
+				<span class="inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-meta font-medium" style="color: {providerColor(rotateTarget.provider).text}; background: {providerColor(rotateTarget.provider).bg}; border-color: {providerColor(rotateTarget.provider).border}">
 					{@render providerIcon(rotateTarget.provider)}
 					{providerLabel(rotateTarget.provider)}
 				</span>
