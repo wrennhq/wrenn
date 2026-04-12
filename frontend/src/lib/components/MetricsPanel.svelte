@@ -262,11 +262,15 @@
 <div class="flex flex-1 flex-col min-h-0">
 	<!-- Controls row -->
 	<div class="flex shrink-0 items-center justify-between {layout === 'full' ? 'px-0 pb-5' : 'border-b border-[var(--color-border)] bg-[var(--color-bg-1)] px-5 py-2'}">
-		{#if !metricsLoading}
-			<span class="flex items-center gap-1.5 rounded-[3px] border border-[var(--color-accent)]/25 bg-[var(--color-accent-glow-mid)] px-2 py-1 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-accent-mid)]">
-				<span class="h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]" style="animation: wrenn-glow 2.5s ease-in-out infinite"></span>
-				Live
-			</span>
+		{#if layout === 'full'}
+			{#if !metricsLoading}
+				<span class="flex items-center gap-1.5 rounded-[3px] border border-[var(--color-accent)]/25 bg-[var(--color-accent-glow-mid)] px-2 py-1 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-accent-mid)]">
+					<span class="h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]" style="animation: wrenn-glow 2.5s ease-in-out infinite"></span>
+					Live
+				</span>
+			{:else}
+				<div></div>
+			{/if}
 		{:else}
 			<div></div>
 		{/if}

@@ -453,8 +453,8 @@
 				</svg>
 			</div>
 			<div class="flex flex-col gap-1">
-				<span class="text-ui font-medium text-[var(--color-text-secondary)]">File browser unavailable</span>
-				<span class="text-meta text-[var(--color-text-muted)]">Start the capsule to browse its filesystem</span>
+				<span class="text-ui font-medium text-[var(--color-text-secondary)]">Capsule not running</span>
+				<span class="text-meta text-[var(--color-text-muted)]">Start or resume the capsule to browse files</span>
 			</div>
 		</div>
 	</div>
@@ -462,7 +462,7 @@
 	<div class="flex flex-1 min-h-0">
 
 		<!-- Left panel: File tree -->
-		<div class="flex shrink-0 flex-col bg-[var(--color-bg-2)] {(treeOnly || (compact && !selectedFile)) ? 'flex-1' : 'w-[380px] border-r border-[var(--color-border)]'}"
+		<div class="flex shrink-0 flex-col bg-[var(--color-bg-2)] {(treeOnly || (compact && !selectedFile)) ? 'flex-1' : compact ? 'w-[28.57%] border-r border-[var(--color-border)]' : 'w-[380px] border-r border-[var(--color-border)]'}"
 		>
 
 			<!-- Path input -->
@@ -482,7 +482,7 @@
 						onfocus={() => (pathInputFocused = true)}
 						onblur={() => (pathInputFocused = false)}
 						onkeydown={handleKeydown}
-						placeholder="Enter path..."
+						placeholder="/home/user or ~/file.txt"
 						spellcheck="false"
 						autocomplete="off"
 						class="flex-1 bg-transparent font-mono text-meta text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-muted)]"
@@ -569,7 +569,7 @@
 								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
 							</svg>
 						</div>
-						<span class="text-meta text-[var(--color-text-muted)]">Nothing here yet</span>
+						<span class="text-meta text-[var(--color-text-muted)]">Empty directory</span>
 					</div>
 				{:else}
 					{#each sortedEntries as entry, idx (entry.path)}
@@ -669,8 +669,8 @@
 							</svg>
 						</div>
 						<div class="flex flex-col gap-1">
-							<span class="text-ui text-[var(--color-text-secondary)]">No file selected</span>
-							<span class="text-meta text-[var(--color-text-muted)]">Choose a file from the tree, or enter a path directly</span>
+							<span class="text-ui text-[var(--color-text-secondary)]">Select a file to preview</span>
+							<span class="text-meta text-[var(--color-text-muted)]">Click a file in the tree or type a path above</span>
 						</div>
 					</div>
 				</div>
@@ -704,7 +704,7 @@
 						<button
 							onclick={handleDownload}
 							disabled={downloading || !isDownloadable}
-							title={isDownloadable ? undefined : 'Only regular files can be downloaded'}
+							title={isDownloadable ? 'Download file' : 'Not a regular file — download unavailable'}
 							class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
 						>
 							{#if downloading}
@@ -752,13 +752,13 @@
 									</svg>
 								</div>
 								<div class="flex flex-col gap-1.5">
-									<span class="text-ui font-medium text-[var(--color-text-primary)]">Special file</span>
+									<span class="text-ui font-medium text-[var(--color-text-primary)]">Not a regular file</span>
 									<span class="text-meta text-[var(--color-text-tertiary)]">
 										<code class="rounded bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-[var(--color-text-secondary)]">{selectedFile.name}</code>
 										is a device, socket, or pipe
 									</span>
 									<span class="mt-1 text-meta text-[var(--color-text-muted)]">
-										Special files can't be previewed or downloaded.
+										These file types can't be read or downloaded.
 									</span>
 								</div>
 							</div>
@@ -781,7 +781,7 @@
 										</span>
 									{/if}
 									<span class="mt-1 text-meta text-[var(--color-text-muted)]">
-										Symlinks can't be downloaded directly. Navigate to the target file instead.
+										Open the target path to view or download its contents.
 									</span>
 								</div>
 							</div>
@@ -806,14 +806,14 @@
 								</div>
 								<div class="flex flex-col gap-1.5">
 									{#if isFileTooLarge(selectedFile.size)}
-										<span class="text-ui font-medium text-[var(--color-text-primary)]">Too large to preview</span>
+										<span class="text-ui font-medium text-[var(--color-text-primary)]">File too large to preview</span>
 										<span class="text-meta text-[var(--color-text-tertiary)]">
-											{formatFileSize(selectedFile.size)} — preview limit is 10 MB
+											{formatFileSize(selectedFile.size)} exceeds the 10 MB preview limit
 										</span>
 									{:else}
 										<span class="text-ui font-medium text-[var(--color-text-primary)]">Binary file</span>
 										<span class="text-meta text-[var(--color-text-tertiary)]">
-											Can't display as text — download to view
+											This file type can't be displayed as text
 										</span>
 									{/if}
 								</div>
