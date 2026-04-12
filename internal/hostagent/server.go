@@ -516,6 +516,16 @@ func (s *Server) ReadFileStream(
 	// Stream file content in 64KB chunks.
 	buf := make([]byte, 64*1024)
 	for {
+		// Bail out early if the client disconnected or the context was cancelled.
+		select {
+		case <-ctx.Done():
+			if ctx.Err() == context.DeadlineExceeded {
+				return connect.NewError(connect.CodeDeadlineExceeded, ctx.Err())
+			}
+			return connect.NewError(connect.CodeCanceled, ctx.Err())
+		default:
+		}
+
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			chunk := make([]byte, n)

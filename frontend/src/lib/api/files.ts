@@ -72,7 +72,11 @@ export async function listDir(capsuleId: string, path: string, depth = 1): Promi
 	}
 }
 
-export async function readFile(capsuleId: string, path: string): Promise<ApiResult<string>> {
+export async function readFile(
+	capsuleId: string,
+	path: string,
+	signal?: AbortSignal,
+): Promise<ApiResult<string>> {
 	try {
 		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 		if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
@@ -81,6 +85,7 @@ export async function readFile(capsuleId: string, path: string): Promise<ApiResu
 			method: 'POST',
 			headers,
 			body: JSON.stringify({ path }),
+			signal,
 		});
 
 		if (!res.ok) {
@@ -95,12 +100,20 @@ export async function readFile(capsuleId: string, path: string): Promise<ApiResu
 		const blob = await res.blob();
 		const text = await blob.text();
 		return { ok: true, data: text };
-	} catch {
+	} catch (e) {
+		if (e instanceof DOMException && e.name === 'AbortError') {
+			return { ok: false, error: 'Request aborted' };
+		}
 		return { ok: false, error: 'Unable to connect to the server' };
 	}
 }
 
-export async function downloadFile(capsuleId: string, path: string, filename: string): Promise<void> {
+export async function downloadFile(
+	capsuleId: string,
+	path: string,
+	filename: string,
+	signal?: AbortSignal,
+): Promise<void> {
 	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 	if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
 
@@ -108,6 +121,7 @@ export async function downloadFile(capsuleId: string, path: string, filename: st
 		method: 'POST',
 		headers,
 		body: JSON.stringify({ path }),
+		signal,
 	});
 
 	if (!res.ok) throw new Error('Download failed');
