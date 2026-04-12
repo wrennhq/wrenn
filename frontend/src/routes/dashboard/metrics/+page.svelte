@@ -29,6 +29,8 @@
 				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
 					Resource usage and performance across all capsules.
 				</p>
+
+				<div class="mt-6 border-b border-[var(--color-border)]"></div>
 			</div>
 
 			<StatsPanel

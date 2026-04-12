@@ -44,7 +44,7 @@
 				</div>
 			{:else}
 				<!-- Default list header -->
-				<div class="px-7 pt-8 pb-6">
+				<div class="px-7 pt-8">
 					<div class="flex items-center justify-between">
 						<div>
 							<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
@@ -70,6 +70,8 @@
 							</div>
 						</div>
 					</div>
+
+					<div class="mt-6 border-b border-[var(--color-border)]"></div>
 				</div>
 			{/if}
 

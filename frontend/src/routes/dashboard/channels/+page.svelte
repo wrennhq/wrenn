@@ -352,14 +352,19 @@
 		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
-				<div class="flex items-start justify-between">
-					<div class="flex items-baseline gap-4">
-						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
-							Channels
-						</h1>
-						{#if !loading && channels.length > 0}
-							<span class="font-serif text-[1.75rem] tracking-[-0.03em] text-[var(--color-text-muted)]">{channels.length}</span>
-						{/if}
+				<div class="flex items-center justify-between">
+					<div>
+						<div class="flex items-baseline gap-4">
+							<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+								Channels
+							</h1>
+							{#if !loading && channels.length > 0}
+								<span class="font-serif text-[1.75rem] tracking-[-0.03em] text-[var(--color-text-muted)]">{channels.length}</span>
+							{/if}
+						</div>
+						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+							Route capsule events to Discord, Slack, Telegram, and other destinations.
+						</p>
 					</div>
 
 					<button
@@ -372,11 +377,8 @@
 						New Channel
 					</button>
 				</div>
-				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-					Route capsule events to Discord, Slack, Telegram, and other destinations.
-				</p>
 
-				<div class="mt-5 border-b border-[var(--color-border)]"></div>
+				<div class="mt-6 border-b border-[var(--color-border)]"></div>
 			</div>
 
 			<!-- Content -->

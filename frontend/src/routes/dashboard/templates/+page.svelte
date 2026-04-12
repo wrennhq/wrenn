@@ -175,7 +175,7 @@
 				</div>
 
 				<!-- Page-level tabs -->
-				<div class="mt-5 flex gap-0 border-b border-[var(--color-border)]">
+				<div class="mt-6 flex gap-0 border-b border-[var(--color-border)]">
 					<!-- Snapshots tab (active) -->
 					<button
 						onclick={() => (pageTab = 'snapshots')}
