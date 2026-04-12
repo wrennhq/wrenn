@@ -269,6 +269,32 @@ func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	return data, nil
 }
 
+// PrepareSnapshot calls envd's POST /snapshot/prepare endpoint, which quiesces
+// continuous goroutines (port scanner, forwarder) and forces a GC cycle before
+// Firecracker takes a VM snapshot. This ensures the Go runtime's page allocator
+// is in a consistent state when vCPUs are frozen.
+//
+// Best-effort: the caller should log a warning on error but not abort the pause.
+func (c *Client) PrepareSnapshot(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/snapshot/prepare", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("prepare snapshot: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("prepare snapshot: status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
 // PostInit calls envd's POST /init endpoint, which triggers a re-read of
 // Firecracker MMDS metadata. This updates WRENN_SANDBOX_ID, WRENN_TEMPLATE_ID
 // env vars and the corresponding files under /run/wrenn/ inside the guest.

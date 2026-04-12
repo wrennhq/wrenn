@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
 
 package port
 
 import (
+	"context"
+
 	"github.com/rs/zerolog"
 )
 
@@ -33,19 +36,26 @@ func (ss *ScannerSubscriber) Destroy() {
 	close(ss.Messages)
 }
 
-func (ss *ScannerSubscriber) Signal(conns []ConnStat) {
-	// Filter isn't specified. Accept everything.
+// Signal sends the (filtered) connection list to the subscriber. It respects
+// ctx cancellation so the scanner goroutine is never stuck waiting for a
+// consumer that has already exited.
+func (ss *ScannerSubscriber) Signal(ctx context.Context, conns []ConnStat) {
+	var payload []ConnStat
+
 	if ss.filter == nil {
-		ss.Messages <- conns
+		payload = conns
 	} else {
 		filtered := []ConnStat{}
 		for i := range conns {
-			// We need to access the list directly otherwise there will be implicit memory aliasing
-			// If the filter matched a connection, we will send it to a channel.
 			if ss.filter.Match(&conns[i]) {
 				filtered = append(filtered, conns[i])
 			}
 		}
-		ss.Messages <- filtered
+		payload = filtered
+	}
+
+	select {
+	case ss.Messages <- payload:
+	case <-ctx.Done():
 	}
 }

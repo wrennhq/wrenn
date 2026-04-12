@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
 
 package api
 
@@ -12,6 +13,7 @@ import (
 
 	"git.omukk.dev/wrenn/sandbox/envd/internal/execcontext"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/host"
+	publicport "git.omukk.dev/wrenn/sandbox/envd/internal/port"
 	"git.omukk.dev/wrenn/sandbox/envd/internal/utils"
 )
 
@@ -39,17 +41,24 @@ type API struct {
 
 	lastSetTime *utils.AtomicMax
 	initLock    sync.Mutex
+
+	// rootCtx is the parent context from main(), used to restart
+	// long-lived goroutines after snapshot restore.
+	rootCtx       context.Context
+	portSubsystem *publicport.PortSubsystem
 }
 
-func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool) *API {
+func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, rootCtx context.Context, portSubsystem *publicport.PortSubsystem) *API {
 	return &API{
-		logger:      l,
-		defaults:    defaults,
-		mmdsChan:    mmdsChan,
-		isNotFC:     isNotFC,
-		mmdsClient:  &DefaultMMDSClient{},
-		lastSetTime: utils.NewAtomicMax(),
-		accessToken: &SecureToken{},
+		logger:        l,
+		defaults:      defaults,
+		mmdsChan:      mmdsChan,
+		isNotFC:       isNotFC,
+		mmdsClient:    &DefaultMMDSClient{},
+		lastSetTime:   utils.NewAtomicMax(),
+		accessToken:   &SecureToken{},
+		rootCtx:       rootCtx,
+		portSubsystem: portSubsystem,
 	}
 }
 

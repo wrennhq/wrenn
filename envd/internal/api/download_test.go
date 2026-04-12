@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
 
 package api
 
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -97,7 +99,7 @@ func TestGetFilesContentDisposition(t *testing.T) {
 				EnvVars: utils.NewMap[string, string](),
 				User:    currentUser.Username,
 			}
-			api := New(&logger, defaults, nil, false)
+			api := New(&logger, defaults, nil, false, context.Background(), nil)
 
 			// Create request and response recorder
 			req := httptest.NewRequest(http.MethodGet, "/files?path="+url.QueryEscape(tempFile), nil)
@@ -146,7 +148,7 @@ func TestGetFilesContentDispositionWithNestedPath(t *testing.T) {
 		EnvVars: utils.NewMap[string, string](),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false)
+	api := New(&logger, defaults, nil, false, context.Background(), nil)
 
 	// Create request and response recorder
 	req := httptest.NewRequest(http.MethodGet, "/files?path="+url.QueryEscape(tempFile), nil)
@@ -189,7 +191,7 @@ func TestGetFiles_GzipEncoding_ExplicitIdentityOffWithRange(t *testing.T) {
 		EnvVars: utils.NewMap[string, string](),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false)
+	api := New(&logger, defaults, nil, false, context.Background(), nil)
 
 	// Create request and response recorder
 	req := httptest.NewRequest(http.MethodGet, "/files?path="+url.QueryEscape(tempFile), nil)
@@ -230,7 +232,7 @@ func TestGetFiles_GzipDownload(t *testing.T) {
 		EnvVars: utils.NewMap[string, string](),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false)
+	api := New(&logger, defaults, nil, false, context.Background(), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/files?path="+url.QueryEscape(tempFile), nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -295,7 +297,7 @@ func TestPostFiles_GzipUpload(t *testing.T) {
 		EnvVars: utils.NewMap[string, string](),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false)
+	api := New(&logger, defaults, nil, false, context.Background(), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/files?path="+url.QueryEscape(destPath), &gzBuf)
 	req.Header.Set("Content-Type", mpWriter.FormDataContentType())
@@ -355,7 +357,7 @@ func TestGzipUploadThenGzipDownload(t *testing.T) {
 		EnvVars: utils.NewMap[string, string](),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false)
+	api := New(&logger, defaults, nil, false, context.Background(), nil)
 
 	uploadReq := httptest.NewRequest(http.MethodPost, "/files?path="+url.QueryEscape(destPath), &gzBuf)
 	uploadReq.Header.Set("Content-Type", mpWriter.FormDataContentType())

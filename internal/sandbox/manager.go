@@ -327,6 +327,20 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	sb.connTracker.Drain(2 * time.Second)
 	slog.Debug("pause: proxy connections drained", "id", sandboxID)
 
+	// Step 0b: Signal envd to quiesce continuous goroutines (port scanner,
+	// forwarder) and run GC before freezing vCPUs. This prevents Go runtime
+	// page allocator corruption ("bad summary data") on snapshot restore.
+	// Best-effort: a failure is logged but does not abort the pause.
+	func() {
+		prepCtx, prepCancel := context.WithTimeout(ctx, 3*time.Second)
+		defer prepCancel()
+		if err := sb.client.PrepareSnapshot(prepCtx); err != nil {
+			slog.Warn("pause: pre-snapshot quiesce failed (best-effort)", "id", sandboxID, "error", err)
+		} else {
+			slog.Debug("pause: envd goroutines quiesced", "id", sandboxID)
+		}
+	}()
+
 	pauseStart := time.Now()
 
 	// Step 1: Pause the VM (freeze vCPUs).

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
 
 package api
 
@@ -30,6 +31,7 @@ var authExcludedPaths = []string{
 	"GET/files",
 	"POST/files",
 	"POST/init",
+	"POST/snapshot/prepare",
 }
 
 func (a *API) WithAuthorization(handler http.Handler) http.Handler {
