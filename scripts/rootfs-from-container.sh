@@ -86,7 +86,7 @@ sudo mkfs.ext4 -F "${OUTPUT_FILE}"
 # Step 4: Mount and populate.
 echo "==> Mounting image at ${MOUNT_DIR}..."
 mkdir -p "${MOUNT_DIR}"
-sudo mount -o loop "${OUTPUT_FILE}" "${MOUNT_DIR}"
+sudo mount -o loop,rw "${OUTPUT_FILE}" "${MOUNT_DIR}"
 
 echo "==> Extracting container filesystem..."
 sudo tar xf "${TAR_FILE}" -C "${MOUNT_DIR}"

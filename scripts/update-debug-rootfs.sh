@@ -45,7 +45,7 @@ fi
 # Step 2: Mount the rootfs.
 echo "==> Mounting rootfs at ${MOUNT_DIR}..."
 mkdir -p "${MOUNT_DIR}"
-sudo mount -o loop "${ROOTFS}" "${MOUNT_DIR}"
+sudo mount -o loop,rw "${ROOTFS}" "${MOUNT_DIR}"
 
 cleanup() {
     echo "==> Unmounting rootfs..."
