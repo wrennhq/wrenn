@@ -14,9 +14,14 @@
 	type Props = {
 		capsuleId: string;
 		isRunning: boolean;
+		apiBasePath?: string;
+		/** Hide the file preview pane when no file is selected */
+		compact?: boolean;
+		/** Show only the file tree, completely removing the preview panel */
+		treeOnly?: boolean;
 	};
 
-	let { capsuleId, isRunning }: Props = $props();
+	let { capsuleId, isRunning, apiBasePath = '/api/v1/capsules', compact = false, treeOnly = false }: Props = $props();
 
 	// Directory navigation state
 	let currentPath = $state('~');
@@ -95,6 +100,9 @@
 	// may point to devices, sockets, or directories that can't be read as a file.
 	const isDownloadable = $derived(selectedFile?.type === 'file');
 
+	// Device files, pipes, sockets, etc. — can't be read or downloaded.
+	const isSpecialFile = $derived(selectedFile?.type === 'unknown');
+
 	async function navigateTo(path: string) {
 		// Abort any in-flight file read and invalidate stale generation so the
 		// abort error isn't surfaced in the UI.
@@ -141,7 +149,7 @@
 		dirLoading = true;
 		dirError = null;
 		const gen = ++dirGeneration;
-		const result = await listDir(capsuleId, currentPath);
+		const result = await listDir(capsuleId, currentPath, 1, apiBasePath);
 		if (gen !== dirGeneration) return; // stale response
 		if (result.ok) {
 			entries = result.data.entries ?? [];
@@ -171,6 +179,11 @@
 		fileError = null;
 		highlightedTokens = null;
 
+		// Non-regular files (devices, pipes, sockets) — nothing to read
+		if (entry.type === 'unknown') {
+			return;
+		}
+
 		// Check if we should preview or prompt download
 		if (isBinaryFile(entry.name) || isFileTooLarge(entry.size)) {
 			// Don't load content — the preview pane will show download prompt
@@ -182,7 +195,7 @@
 		const controller = new AbortController();
 		fileAbort = controller;
 		try {
-			const result = await readFile(capsuleId, entry.path, controller.signal);
+			const result = await readFile(capsuleId, entry.path, controller.signal, apiBasePath);
 			if (gen !== fileGeneration) return; // stale response — user clicked another file
 			if (result.ok) {
 				if (looksLikeBinary(result.data)) {
@@ -222,7 +235,7 @@
 		if (!selectedFile || downloading || selectedFile.type !== 'file') return;
 		downloading = true;
 		try {
-			await downloadFile(capsuleId, selectedFile.path, selectedFile.name);
+			await downloadFile(capsuleId, selectedFile.path, selectedFile.name, undefined, apiBasePath);
 		} catch {
 			fileError = 'Download failed';
 		}
@@ -239,7 +252,7 @@
 
 	async function navigateOrOpenFile(path: string) {
 		// First try as directory
-		const dirResult = await listDir(capsuleId, path);
+		const dirResult = await listDir(capsuleId, path, 1, apiBasePath);
 		if (dirResult.ok) {
 			// Resolve actual path from entries (handles ~ expansion by envd)
 			const resolvedEntries = dirResult.data.entries ?? [];
@@ -270,7 +283,7 @@
 		// Navigate to parent directory
 		currentPath = parentPath;
 		pathInput = parentPath;
-		const parentResult = await listDir(capsuleId, parentPath);
+		const parentResult = await listDir(capsuleId, parentPath, 1, apiBasePath);
 		if (parentResult.ok) {
 			entries = parentResult.data.entries ?? [];
 			// Find the file in parent listing
@@ -295,6 +308,7 @@
 	function fileIcon(entry: FileEntry): string {
 		if (entry.type === 'directory') return 'dir';
 		if (entry.type === 'symlink') return 'link';
+		if (entry.type === 'unknown') return 'special';
 		return 'file';
 	}
 
@@ -448,7 +462,8 @@
 	<div class="flex flex-1 min-h-0">
 
 		<!-- Left panel: File tree -->
-		<div class="flex w-[380px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-2)]">
+		<div class="flex shrink-0 flex-col bg-[var(--color-bg-2)] {(treeOnly || (compact && !selectedFile)) ? 'flex-1' : 'w-[380px] border-r border-[var(--color-border)]'}"
+		>
 
 			<!-- Path input -->
 			<form onsubmit={handlePathSubmit} class="border-b border-[var(--color-border)] px-4 py-3">
@@ -575,6 +590,11 @@
 									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
 									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
 								</svg>
+							{:else if fileIcon(entry) === 'special'}
+								<svg class="shrink-0 text-[var(--color-text-muted)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<circle cx="12" cy="12" r="10" />
+									<line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+								</svg>
 							{:else}
 								<svg class="shrink-0" style="color: {extColor(entry.name)}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 									<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -636,6 +656,7 @@
 		</div>
 
 		<!-- Right panel: File preview -->
+		{#if !treeOnly && (!compact || selectedFile)}
 		<div class="flex flex-1 flex-col min-w-0 bg-[var(--color-bg-1)]">
 			{#if !selectedFile}
 				<!-- Empty state -->
@@ -720,8 +741,30 @@
 								<span class="text-meta text-[var(--color-red)]">{fileError}</span>
 							</div>
 						</div>
+					{:else if isSpecialFile}
+						<!-- Device file, pipe, socket, etc. — can't read or download -->
+						<div class="flex flex-1 items-center justify-center py-20">
+							<div class="flex flex-col items-center gap-5 text-center" style="animation: fadeUp 0.25s ease both">
+								<div class="flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]">
+									<svg class="text-[var(--color-text-muted)]" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+										<circle cx="12" cy="12" r="10" />
+										<line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+									</svg>
+								</div>
+								<div class="flex flex-col gap-1.5">
+									<span class="text-ui font-medium text-[var(--color-text-primary)]">Special file</span>
+									<span class="text-meta text-[var(--color-text-tertiary)]">
+										<code class="rounded bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-[var(--color-text-secondary)]">{selectedFile.name}</code>
+										is a device, socket, or pipe
+									</span>
+									<span class="mt-1 text-meta text-[var(--color-text-muted)]">
+										Special files can't be previewed or downloaded.
+									</span>
+								</div>
+							</div>
+						</div>
 					{:else if !isDownloadable}
-						<!-- Non-regular file (symlink, etc.) — no preview or download -->
+						<!-- Symlink — no preview or download -->
 						<div class="flex flex-1 items-center justify-center py-20">
 							<div class="flex flex-col items-center gap-5 text-center" style="animation: fadeUp 0.25s ease both">
 								<div class="flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]">
@@ -807,6 +850,7 @@
 				</div>
 			{/if}
 		</div>
+		{/if}
 
 	</div>
 {/if}

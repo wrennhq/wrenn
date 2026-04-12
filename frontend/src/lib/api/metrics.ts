@@ -15,8 +15,8 @@ export type MetricsResponse = {
 	points: MetricPoint[];
 };
 
-export async function fetchCapsuleMetrics(id: string, range: MetricRange): Promise<ApiResult<MetricsResponse>> {
-	return apiFetch('GET', `/api/v1/capsules/${id}/metrics?range=${range}`);
+export async function fetchCapsuleMetrics(id: string, range: MetricRange, basePath = '/api/v1/capsules'): Promise<ApiResult<MetricsResponse>> {
+	return apiFetch('GET', `${basePath}/${id}/metrics?range=${range}`);
 }
 
 export const METRIC_RANGES: MetricRange[] = ['5m', '10m', '1h', '6h', '24h'];

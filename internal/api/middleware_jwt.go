@@ -8,18 +8,21 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/id"
 )
 
-// requireJWT validates the Authorization: Bearer <token> header, verifies the JWT
-// signature and expiry, and stamps UserID + TeamID + Email into the request context.
+// requireJWT validates a JWT from the Authorization: Bearer header or the
+// ?token= query parameter (for WebSocket connections that cannot send headers).
 func requireJWT(secret []byte) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			header := r.Header.Get("Authorization")
-			if !strings.HasPrefix(header, "Bearer ") {
+			var tokenStr string
+			if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
+				tokenStr = strings.TrimPrefix(header, "Bearer ")
+			} else if t := r.URL.Query().Get("token"); t != "" {
+				tokenStr = t
+			}
+			if tokenStr == "" {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "Authorization: Bearer <token> required")
 				return
 			}
-
-			tokenStr := strings.TrimPrefix(header, "Bearer ")
 			claims, err := auth.VerifyJWT(secret, tokenStr)
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")

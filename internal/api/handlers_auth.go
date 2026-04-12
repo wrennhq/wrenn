@@ -126,6 +126,14 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 
 	qtx := h.db.WithTx(tx)
 
+	// The first user to sign up becomes a platform admin.
+	userCount, err := qtx.CountUsers(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to check user count")
+		return
+	}
+	isFirstUser := userCount == 0
+
 	userID := id.NewUserID()
 	_, err = qtx.InsertUser(ctx, db.InsertUserParams{
 		ID:           userID,
@@ -141,6 +149,13 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to create user")
 		return
+	}
+
+	if isFirstUser {
+		if err := qtx.SetUserAdmin(ctx, db.SetUserAdminParams{ID: userID, IsAdmin: true}); err != nil {
+			writeError(w, http.StatusInternalServerError, "db_error", "failed to set admin status")
+			return
+		}
 	}
 
 	// Create default team.
@@ -169,7 +184,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, req.Email, req.Name, "owner", false)
+	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, req.Email, req.Name, "owner", isFirstUser)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return

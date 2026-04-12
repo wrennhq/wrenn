@@ -74,6 +74,7 @@ func New(
 	buildH := newBuildHandler(buildSvc, queries, pool)
 	channelH := newChannelHandler(channelSvc, al)
 	ptyH := newPtyHandler(queries, pool)
+	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -207,6 +208,23 @@ func New(
 		r.Get("/builds", buildH.List)
 		r.Get("/builds/{id}", buildH.Get)
 		r.Post("/builds/{id}/cancel", buildH.Cancel)
+		r.Post("/capsules", adminCapsules.Create)
+		r.Get("/capsules", adminCapsules.List)
+		r.Route("/capsules/{id}", func(r chi.Router) {
+			r.Use(injectPlatformTeam())
+			r.Get("/", adminCapsules.Get)
+			r.Delete("/", adminCapsules.Destroy)
+			r.Post("/snapshot", adminCapsules.Snapshot)
+			r.Post("/exec", exec.Exec)
+			r.Get("/exec/stream", execStream.ExecStream)
+			r.Post("/files/write", files.Upload)
+			r.Post("/files/read", files.Download)
+			r.Post("/files/list", fsH.ListDir)
+			r.Post("/files/mkdir", fsH.MakeDir)
+			r.Post("/files/remove", fsH.Remove)
+			r.Get("/metrics", metricsH.GetMetrics)
+			r.Get("/pty", ptyH.PtySession)
+		})
 	})
 
 	return &Server{router: r, BuildSvc: buildSvc}
