@@ -195,6 +195,15 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	qtx := h.db.WithTx(tx)
 
+	// The first user to sign up becomes a platform admin.
+	userCount, err := qtx.CountUsers(ctx)
+	if err != nil {
+		slog.Error("oauth: failed to count users", "error", err)
+		redirectWithError(w, r, redirectBase, "db_error")
+		return
+	}
+	isFirstUser := userCount == 0
+
 	userID := id.NewUserID()
 	_, err = qtx.InsertUserOAuth(ctx, db.InsertUserOAuthParams{
 		ID:    userID,
@@ -238,6 +247,14 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isFirstUser {
+		if err := qtx.SetUserAdmin(ctx, db.SetUserAdminParams{ID: userID, IsAdmin: true}); err != nil {
+			slog.Error("oauth: failed to set admin status", "error", err)
+			redirectWithError(w, r, redirectBase, "db_error")
+			return
+		}
+	}
+
 	if err := qtx.InsertOAuthProvider(ctx, db.InsertOAuthProviderParams{
 		Provider:   provider,
 		ProviderID: profile.ProviderID,
@@ -255,7 +272,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, profile.Name, "owner", false)
+	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, profile.Name, "owner", isFirstUser)
 	if err != nil {
 		slog.Error("oauth: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
