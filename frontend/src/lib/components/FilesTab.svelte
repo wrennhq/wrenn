@@ -91,6 +91,10 @@
 
 	const canGoUp = $derived(currentPath !== '/' && currentPath.startsWith('/'));
 
+	// Only regular files can be downloaded — symlinks and other non-regular types
+	// may point to devices, sockets, or directories that can't be read as a file.
+	const isDownloadable = $derived(selectedFile?.type === 'file');
+
 	async function navigateTo(path: string) {
 		// Abort any in-flight file read and invalidate stale generation so the
 		// abort error isn't surfaced in the UI.
@@ -215,7 +219,7 @@
 	}
 
 	async function handleDownload() {
-		if (!selectedFile || downloading) return;
+		if (!selectedFile || downloading || selectedFile.type !== 'file') return;
 		downloading = true;
 		try {
 			await downloadFile(capsuleId, selectedFile.path, selectedFile.name);
@@ -678,7 +682,8 @@
 						<span class="font-mono text-badge text-[var(--color-text-muted)]">{formatFileSize(selectedFile.size)}</span>
 						<button
 							onclick={handleDownload}
-							disabled={downloading}
+							disabled={downloading || !isDownloadable}
+							title={isDownloadable ? undefined : 'Only regular files can be downloaded'}
 							class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.05em] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
 						>
 							{#if downloading}
@@ -715,6 +720,29 @@
 								<span class="text-meta text-[var(--color-red)]">{fileError}</span>
 							</div>
 						</div>
+					{:else if !isDownloadable}
+						<!-- Non-regular file (symlink, etc.) — no preview or download -->
+						<div class="flex flex-1 items-center justify-center py-20">
+							<div class="flex flex-col items-center gap-5 text-center" style="animation: fadeUp 0.25s ease both">
+								<div class="flex h-14 w-14 items-center justify-center rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-3)]">
+									<svg class="text-[var(--color-blue)]" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+										<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+									</svg>
+								</div>
+								<div class="flex flex-col gap-1.5">
+									<span class="text-ui font-medium text-[var(--color-text-primary)]">Symlink</span>
+									{#if selectedFile.symlink_target}
+										<span class="text-meta text-[var(--color-text-tertiary)]">
+											Points to <code class="rounded bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-[var(--color-text-secondary)]">{selectedFile.symlink_target}</code>
+										</span>
+									{/if}
+									<span class="mt-1 text-meta text-[var(--color-text-muted)]">
+										Symlinks can't be downloaded directly. Navigate to the target file instead.
+									</span>
+								</div>
+							</div>
+						</div>
 					{:else if isBinaryFile(selectedFile.name) || isFileTooLarge(selectedFile.size) || (selectedFile && fileContent === null && !fileLoading)}
 						<!-- Binary / too large / unreadable — download prompt -->
 						<div class="flex flex-1 items-center justify-center py-20">
@@ -742,7 +770,7 @@
 									{:else}
 										<span class="text-ui font-medium text-[var(--color-text-primary)]">Binary file</span>
 										<span class="text-meta text-[var(--color-text-tertiary)]">
-											Cannot display as text — download to view
+											Can't display as text — download to view
 										</span>
 									{/if}
 								</div>
