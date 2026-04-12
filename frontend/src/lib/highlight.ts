@@ -17,7 +17,7 @@ let loadingPromise: Promise<HighlighterGeneric<any, any>> | null = null;
 const THEME = 'vesper';
 
 // Extensions → shiki language IDs.
-// Only map what we expect users to encounter in sandboxes.
+// Only map what we expect users to encounter in capsules.
 const EXT_TO_LANG: Record<string, string> = {
 	// Go
 	go: 'go', mod: 'go', sum: 'go',

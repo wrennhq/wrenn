@@ -116,8 +116,8 @@ func New(
 	// JWT-authenticated: user search (for add-member UI).
 	r.With(requireJWT(jwtSecret)).Get("/v1/users/search", usersH.Search)
 
-	// Sandbox lifecycle: accepts API key or JWT bearer token.
-	r.Route("/v1/sandboxes", func(r chi.Router) {
+	// Capsule lifecycle: accepts API key or JWT bearer token.
+	r.Route("/v1/capsules", func(r chi.Router) {
 		r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
 		r.Post("/", sandbox.Create)
 		r.Get("/", sandbox.List)
@@ -229,7 +229,7 @@ func serveDocs(w http.ResponseWriter, r *http.Request) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wrenn Sandbox API</title>
+  <title>Wrenn API</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui.css" integrity="sha384-rcbEi6xgdPk0iWkAQzT2F3FeBJXdG+ydrawGlfHAFIZG7wU6aKbQaRewysYpmrlW" crossorigin="anonymous">
   <style>
     body { margin: 0; background: #fafafa; }

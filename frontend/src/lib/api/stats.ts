@@ -24,7 +24,7 @@ export type StatsResponse = {
 };
 
 export async function fetchStats(range: TimeRange): Promise<ApiResult<StatsResponse>> {
-	return apiFetch('GET', `/api/v1/sandboxes/stats?range=${range}`);
+	return apiFetch('GET', `/api/v1/capsules/stats?range=${range}`);
 }
 
 export const POLL_INTERVALS: Record<TimeRange, number> = {

@@ -11,11 +11,11 @@
 	import { tokenize, type ThemedToken } from '$lib/highlight';
 
 	type Props = {
-		sandboxId: string;
+		capsuleId: string;
 		isRunning: boolean;
 	};
 
-	let { sandboxId, isRunning }: Props = $props();
+	let { capsuleId, isRunning }: Props = $props();
 
 	// Directory navigation state
 	let currentPath = $state('~');
@@ -124,7 +124,7 @@
 		dirLoading = true;
 		dirError = null;
 		const gen = ++dirGeneration;
-		const result = await listDir(sandboxId, currentPath);
+		const result = await listDir(capsuleId, currentPath);
 		if (gen !== dirGeneration) return; // stale response
 		if (result.ok) {
 			entries = result.data.entries ?? [];
@@ -159,7 +159,7 @@
 
 		fileLoading = true;
 		const gen = ++fileGeneration;
-		const result = await readFile(sandboxId, entry.path);
+		const result = await readFile(capsuleId, entry.path);
 		if (gen !== fileGeneration) return; // stale response — user clicked another file
 		if (result.ok) {
 			if (looksLikeBinary(result.data)) {
@@ -197,7 +197,7 @@
 		if (!selectedFile || downloading) return;
 		downloading = true;
 		try {
-			await downloadFile(sandboxId, selectedFile.path, selectedFile.name);
+			await downloadFile(capsuleId, selectedFile.path, selectedFile.name);
 		} catch {
 			fileError = 'Download failed';
 		}
@@ -214,7 +214,7 @@
 
 	async function navigateOrOpenFile(path: string) {
 		// First try as directory
-		const dirResult = await listDir(sandboxId, path);
+		const dirResult = await listDir(capsuleId, path);
 		if (dirResult.ok) {
 			// Resolve actual path from entries (handles ~ expansion by envd)
 			const resolvedEntries = dirResult.data.entries ?? [];
@@ -245,7 +245,7 @@
 		// Navigate to parent directory
 		currentPath = parentPath;
 		pathInput = parentPath;
-		const parentResult = await listDir(sandboxId, parentPath);
+		const parentResult = await listDir(capsuleId, parentPath);
 		if (parentResult.ok) {
 			entries = parentResult.data.entries ?? [];
 			// Find the file in parent listing

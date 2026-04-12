@@ -38,7 +38,7 @@ type metricsResponse struct {
 	Points    []metricPointResponse `json:"points"`
 }
 
-// GetMetrics handles GET /v1/sandboxes/{id}/metrics?range=10m|2h|24h.
+// GetMetrics handles GET /v1/capsules/{id}/metrics?range=10m|2h|24h.
 func (h *sandboxMetricsHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()

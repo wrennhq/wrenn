@@ -53,12 +53,12 @@ export function formatFileSize(bytes: number): string {
 	return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`;
 }
 
-export async function listDir(sandboxId: string, path: string, depth = 1): Promise<ApiResult<ListDirResponse>> {
+export async function listDir(capsuleId: string, path: string, depth = 1): Promise<ApiResult<ListDirResponse>> {
 	try {
 		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 		if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
 
-		const res = await fetch(`/api/v1/sandboxes/${sandboxId}/files/list`, {
+		const res = await fetch(`/api/v1/capsules/${capsuleId}/files/list`, {
 			method: 'POST',
 			headers,
 			body: JSON.stringify({ path, depth }),
@@ -72,12 +72,12 @@ export async function listDir(sandboxId: string, path: string, depth = 1): Promi
 	}
 }
 
-export async function readFile(sandboxId: string, path: string): Promise<ApiResult<string>> {
+export async function readFile(capsuleId: string, path: string): Promise<ApiResult<string>> {
 	try {
 		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 		if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
 
-		const res = await fetch(`/api/v1/sandboxes/${sandboxId}/files/read`, {
+		const res = await fetch(`/api/v1/capsules/${capsuleId}/files/read`, {
 			method: 'POST',
 			headers,
 			body: JSON.stringify({ path }),
@@ -100,11 +100,11 @@ export async function readFile(sandboxId: string, path: string): Promise<ApiResu
 	}
 }
 
-export async function downloadFile(sandboxId: string, path: string, filename: string): Promise<void> {
+export async function downloadFile(capsuleId: string, path: string, filename: string): Promise<void> {
 	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 	if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
 
-	const res = await fetch(`/api/v1/sandboxes/${sandboxId}/files/read`, {
+	const res = await fetch(`/api/v1/capsules/${capsuleId}/files/read`, {
 		method: 'POST',
 		headers,
 		body: JSON.stringify({ path }),

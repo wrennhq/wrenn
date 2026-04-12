@@ -77,7 +77,7 @@
 
 	// Delete confirmation
 	let deleteTarget = $state<Host | null>(null);
-	let deletePreviewSandboxes = $state<string[]>([]);
+	let deletePreviewCapsules = $state<string[]>([]);
 	let deletePreviewLoading = $state(false);
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
@@ -124,12 +124,12 @@
 	async function openDeleteConfirm(host: Host) {
 		deleteTarget = host;
 		deleteError = null;
-		deletePreviewSandboxes = [];
+		deletePreviewCapsules = [];
 		deletePreviewLoading = true;
 		const preview = await getDeletePreview(host.id);
 		deletePreviewLoading = false;
 		if (preview.ok) {
-			deletePreviewSandboxes = preview.data.sandbox_ids;
+			deletePreviewCapsules = preview.data.sandbox_ids;
 		}
 	}
 
@@ -137,7 +137,7 @@
 		if (!deleteTarget) return;
 		deleting = true;
 		deleteError = null;
-		const result = await deleteHost(deleteTarget.id, deletePreviewSandboxes.length > 0);
+		const result = await deleteHost(deleteTarget.id, deletePreviewCapsules.length > 0);
 		if (result.ok) {
 			allHosts = allHosts.filter((h) => h.id !== deleteTarget!.id);
 			deleteTarget = null;
@@ -627,10 +627,10 @@
 					<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
 					Checking active capsules…
 				</div>
-			{:else if deletePreviewSandboxes.length > 0}
+			{:else if deletePreviewCapsules.length > 0}
 				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-amber)]/30 bg-[var(--color-amber)]/6 px-3 py-2.5">
 					<p class="text-meta font-semibold text-[var(--color-amber)]">
-						{deletePreviewSandboxes.length} active capsule{deletePreviewSandboxes.length === 1 ? '' : 's'} will be destroyed.
+						{deletePreviewCapsules.length} active capsule{deletePreviewCapsules.length === 1 ? '' : 's'} will be destroyed.
 					</p>
 					<p class="mt-0.5 text-meta text-[var(--color-amber)]/70">
 						All running workloads on this host will be terminated immediately.
@@ -661,7 +661,7 @@
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
 						Deleting…
 					{:else}
-						{deletePreviewSandboxes.length > 0 ? 'Force Delete' : 'Delete'}
+						{deletePreviewCapsules.length > 0 ? 'Force Delete' : 'Delete'}
 					{/if}
 				</button>
 			</div>

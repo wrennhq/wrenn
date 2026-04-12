@@ -45,7 +45,7 @@ type execResponse struct {
 	Encoding string `json:"encoding"`
 }
 
-// Exec handles POST /v1/sandboxes/{id}/exec.
+// Exec handles POST /v1/capsules/{id}/exec.
 func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()

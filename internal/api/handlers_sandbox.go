@@ -73,7 +73,7 @@ func sandboxToResponse(sb db.Sandbox) sandboxResponse {
 	return resp
 }
 
-// Create handles POST /v1/sandboxes.
+// Create handles POST /v1/capsules.
 func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createSandboxRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -104,7 +104,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, sandboxToResponse(sb))
 }
 
-// List handles GET /v1/sandboxes.
+// List handles GET /v1/capsules.
 func (h *sandboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 	sandboxes, err := h.svc.List(r.Context(), ac.TeamID)
@@ -121,7 +121,7 @@ func (h *sandboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// Get handles GET /v1/sandboxes/{id}.
+// Get handles GET /v1/capsules/{id}.
 func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
@@ -141,7 +141,7 @@ func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
 }
 
-// Pause handles POST /v1/sandboxes/{id}/pause.
+// Pause handles POST /v1/capsules/{id}/pause.
 func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
@@ -163,7 +163,7 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
 }
 
-// Resume handles POST /v1/sandboxes/{id}/resume.
+// Resume handles POST /v1/capsules/{id}/resume.
 func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
@@ -185,7 +185,7 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
 }
 
-// Ping handles POST /v1/sandboxes/{id}/ping.
+// Ping handles POST /v1/capsules/{id}/ping.
 func (h *sandboxHandler) Ping(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
@@ -205,7 +205,7 @@ func (h *sandboxHandler) Ping(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Destroy handles DELETE /v1/sandboxes/{id}.
+// Destroy handles DELETE /v1/capsules/{id}.
 func (h *sandboxHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())

@@ -43,7 +43,7 @@ type statsResponse struct {
 	Series  statsSeriesResponse  `json:"series"`
 }
 
-// GetStats handles GET /v1/sandboxes/stats?range=5m|1h|6h|24h|30d
+// GetStats handles GET /v1/capsules/stats?range=5m|1h|6h|24h|30d
 func (h *statsHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 

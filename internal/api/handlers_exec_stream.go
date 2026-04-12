@@ -47,7 +47,7 @@ type wsOutMsg struct {
 	ExitCode *int32 `json:"exit_code,omitempty"` // only for "exit"
 }
 
-// ExecStream handles WS /v1/sandboxes/{id}/exec/stream.
+// ExecStream handles WS /v1/capsules/{id}/exec/stream.
 func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()

@@ -3,12 +3,12 @@
 	import { auth } from '$lib/auth.svelte';
 
 	type Props = {
-		sandboxId: string;
+		capsuleId: string;
 		isRunning: boolean;
 		visible?: boolean;
 	};
 
-	let { sandboxId, isRunning, visible = true }: Props = $props();
+	let { capsuleId, isRunning, visible = true }: Props = $props();
 
 	type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -93,7 +93,7 @@
 	function getWsUrl(): string {
 		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 		const token = auth.token ? `?token=${encodeURIComponent(auth.token)}` : '';
-		return `${proto}//${window.location.host}/api/v1/sandboxes/${sandboxId}/pty${token}`;
+		return `${proto}//${window.location.host}/api/v1/capsules/${capsuleId}/pty${token}`;
 	}
 
 	function wsSend(ws: WebSocket | null, data: string) {

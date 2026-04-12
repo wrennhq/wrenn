@@ -56,7 +56,7 @@ type removeRequest struct {
 	Path string `json:"path"`
 }
 
-// ListDir handles POST /v1/sandboxes/{id}/files/list.
+// ListDir handles POST /v1/capsules/{id}/files/list.
 func (h *fsHandler) ListDir(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
@@ -113,7 +113,7 @@ func (h *fsHandler) ListDir(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, listDirResponse{Entries: entries})
 }
 
-// MakeDir handles POST /v1/sandboxes/{id}/files/mkdir.
+// MakeDir handles POST /v1/capsules/{id}/files/mkdir.
 func (h *fsHandler) MakeDir(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
@@ -164,7 +164,7 @@ func (h *fsHandler) MakeDir(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, makeDirResponse{Entry: fileEntryFromPB(resp.Msg.Entry)})
 }
 
-// Remove handles POST /v1/sandboxes/{id}/files/remove.
+// Remove handles POST /v1/capsules/{id}/files/remove.
 func (h *fsHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()

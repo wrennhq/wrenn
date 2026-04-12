@@ -9,14 +9,14 @@
 	import FilesTab from '$lib/components/FilesTab.svelte';
 	import TerminalTab from '$lib/components/TerminalTab.svelte';
 	import {
-		fetchSandboxMetrics,
+		fetchCapsuleMetrics,
 		METRIC_RANGES,
 		METRIC_POLL_INTERVALS,
 		type MetricRange,
 		type MetricPoint
 	} from '$lib/api/metrics';
 
-	const sandboxId: string = $page.params.id ?? '';
+	const capsuleId: string = $page.params.id ?? '';
 
 	let capsule = $state<Capsule | null>(null);
 	let capsuleLoading = $state(true);
@@ -96,7 +96,7 @@
 	);
 
 	async function loadCapsule() {
-		const result = await getCapsule(sandboxId);
+		const result = await getCapsule(capsuleId);
 		if (result.ok) {
 			capsule = result.data;
 			capsuleError = null;
@@ -108,7 +108,7 @@
 
 	async function loadMetrics() {
 		if (!metricsAvailable) return;
-		const result = await fetchSandboxMetrics(sandboxId, range);
+		const result = await fetchCapsuleMetrics(capsuleId, range);
 		if (result.ok) {
 			points = result.data.points;
 			metricsError = null;
@@ -441,7 +441,7 @@
 </script>
 
 <svelte:head>
-	<title>Wrenn — {sandboxId}</title>
+	<title>Wrenn — {capsuleId}</title>
 </svelte:head>
 
 <style>
@@ -575,11 +575,11 @@
 	<!-- Tab content -->
 	<!-- Terminal stays mounted so sessions survive tab switches -->
 	<div class="flex flex-1 min-h-0" style:display={activeTab === 'terminal' ? 'flex' : 'none'}>
-		<TerminalTab sandboxId={sandboxId} isRunning={capsule.status === 'running'} visible={activeTab === 'terminal'} />
+		<TerminalTab capsuleId={capsuleId} isRunning={capsule.status === 'running'} visible={activeTab === 'terminal'} />
 	</div>
 	{#if activeTab === 'files'}
 		<div class="anim-in flex flex-1 min-h-0" style="animation-delay: 0.05s">
-			<FilesTab sandboxId={sandboxId} isRunning={capsule.status === 'running'} />
+			<FilesTab capsuleId={capsuleId} isRunning={capsule.status === 'running'} />
 		</div>
 	{:else if activeTab === 'metrics'}
 		<div
@@ -757,14 +757,14 @@
 
 <SnapshotDialog
 	open={showSnapshot}
-	capsuleId={sandboxId}
+	capsuleId={capsuleId}
 	onclose={() => { showSnapshot = false; }}
 	onsnapshot={() => { goto('/dashboard/capsules'); }}
 />
 
 <DestroyDialog
 	open={showDestroy}
-	capsuleId={sandboxId}
+	capsuleId={capsuleId}
 	onclose={() => { showDestroy = false; }}
 	ondestroyed={() => { goto('/dashboard/capsules'); }}
 />

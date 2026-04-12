@@ -25,7 +25,7 @@ func newFilesHandler(db *db.Queries, pool *lifecycle.HostClientPool) *filesHandl
 	return &filesHandler{db: db, pool: pool}
 }
 
-// Upload handles POST /v1/sandboxes/{id}/files/write.
+// Upload handles POST /v1/capsules/{id}/files/write.
 // Expects multipart/form-data with:
 //   - "path" text field: absolute destination path inside the sandbox
 //   - "file" file field: binary content to write
@@ -105,7 +105,7 @@ type readFileRequest struct {
 	Path string `json:"path"`
 }
 
-// Download handles POST /v1/sandboxes/{id}/files/read.
+// Download handles POST /v1/capsules/{id}/files/read.
 // Accepts JSON body with path, returns raw file content with Content-Disposition.
 func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")

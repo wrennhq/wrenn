@@ -79,7 +79,7 @@ func (w *wsWriter) writeJSON(v any) {
 	}
 }
 
-// PtySession handles WS /v1/sandboxes/{id}/pty.
+// PtySession handles WS /v1/capsules/{id}/pty.
 func (h *ptyHandler) PtySession(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
