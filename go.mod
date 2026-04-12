@@ -14,9 +14,9 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/vishvananda/netlink v1.1.1-0.20210330154013-f5de75959ad5
 	github.com/vishvananda/netns v0.0.0-20210104183010-2eb08e3e575f
-	golang.org/x/crypto v0.49.0
+	golang.org/x/crypto v0.50.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sys v0.42.0
+	golang.org/x/sys v0.43.0
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -31,5 +31,5 @@ require (
 	github.com/mattn/go-isatty v0.0.17 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 )
