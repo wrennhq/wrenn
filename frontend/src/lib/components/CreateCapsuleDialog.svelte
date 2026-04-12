@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { createCapsule, listSnapshots, type Capsule, type CreateCapsuleParams, type Snapshot } from '$lib/api/capsules';
+	import { createAdminCapsule, listPlatformTemplates } from '$lib/api/admin-capsules';
 
 	type Props = {
 		open: boolean;
 		onclose: () => void;
 		oncreated?: (capsule: Capsule) => void;
+		/** 'team' = user-scoped templates (default), 'platform' = admin platform templates only */
+		templateSource?: 'team' | 'platform';
 	};
-	let { open, onclose, oncreated }: Props = $props();
+	let { open, onclose, oncreated, templateSource = 'team' }: Props = $props();
 
 	let createForm = $state<CreateCapsuleParams>({ template: 'minimal', vcpus: 1, memory_mb: 512, timeout_sec: 0 });
 	let creating = $state(false);
@@ -37,7 +40,8 @@
 	$effect(() => {
 		if (open && templates.length === 0 && !templatesLoading) {
 			templatesLoading = true;
-			listSnapshots().then((result) => {
+			const fetcher = templateSource === 'platform' ? listPlatformTemplates : listSnapshots;
+			fetcher().then((result) => {
 				if (result.ok) templates = result.data;
 				templatesLoading = false;
 			});
@@ -112,7 +116,8 @@
 	async function handleCreate() {
 		creating = true;
 		createError = null;
-		const result = await createCapsule(createForm);
+		const creator = templateSource === 'platform' ? createAdminCapsule : createCapsule;
+		const result = await creator(createForm);
 		if (result.ok) {
 			createForm = { template: 'minimal', vcpus: 1, memory_mb: 512, timeout_sec: 0 };
 			templateQuery = 'minimal';

@@ -38,8 +38,8 @@ func newSnapshotHandler(svc *service.TemplateService, db *db.Queries, pool *life
 // deleteSnapshotBroadcast attempts to delete snapshot files on all online hosts.
 // Snapshots aren't currently host-tracked in the DB, so we broadcast to all hosts
 // and ignore NotFound errors.
-func (h *snapshotHandler) deleteSnapshotBroadcast(ctx context.Context, teamID, templateID pgtype.UUID) error {
-	hosts, err := h.db.ListActiveHosts(ctx)
+func deleteSnapshotBroadcast(ctx context.Context, queries *db.Queries, pool *lifecycle.HostClientPool, teamID, templateID pgtype.UUID) error {
+	hosts, err := queries.ListActiveHosts(ctx)
 	if err != nil {
 		return fmt.Errorf("list hosts: %w", err)
 	}
@@ -47,7 +47,7 @@ func (h *snapshotHandler) deleteSnapshotBroadcast(ctx context.Context, teamID, t
 		if host.Status != "online" {
 			continue
 		}
-		agent, err := h.pool.GetForHost(host)
+		agent, err := pool.GetForHost(host)
 		if err != nil {
 			continue
 		}
@@ -141,7 +141,7 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Delete old snapshot files from all hosts before removing the DB record.
-		if err := h.deleteSnapshotBroadcast(ctx, existing.TeamID, existing.ID); err != nil {
+		if err := deleteSnapshotBroadcast(ctx, h.db, h.pool, existing.TeamID, existing.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete existing snapshot files")
 			return
 		}
@@ -279,7 +279,7 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.deleteSnapshotBroadcast(ctx, tmpl.TeamID, tmpl.ID); err != nil {
+	if err := deleteSnapshotBroadcast(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete snapshot files")
 		return
 	}

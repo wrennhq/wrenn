@@ -3,7 +3,8 @@
 	import { auth } from '$lib/auth.svelte';
 	import {
 		IconServer,
-		IconTemplate,
+		IconBox,
+		IconMonitor,
 		IconSettings,
 		IconLogout,
 		IconSidebar,
@@ -22,7 +23,8 @@
 	};
 
 	const managementItems: NavItem[] = [
-		{ label: 'Templates', icon: IconTemplate, href: '/admin/templates' },
+		{ label: 'Templates', icon: IconBox, href: '/admin/templates' },
+		{ label: 'Capsules', icon: IconMonitor, href: '/admin/capsules' },
 		{ label: 'Hosts', icon: IconServer, href: '/admin/hosts' }
 	];
 

@@ -4,7 +4,7 @@ import { type ApiResult } from '$lib/api/client';
 export type FileEntry = {
 	name: string;
 	path: string;
-	type: 'file' | 'directory' | 'symlink';
+	type: 'file' | 'directory' | 'symlink' | 'unknown';
 	size: number;
 	mode: number;
 	permissions: string;
@@ -53,12 +53,12 @@ export function formatFileSize(bytes: number): string {
 	return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`;
 }
 
-export async function listDir(capsuleId: string, path: string, depth = 1): Promise<ApiResult<ListDirResponse>> {
+export async function listDir(capsuleId: string, path: string, depth = 1, basePath = '/api/v1/capsules'): Promise<ApiResult<ListDirResponse>> {
 	try {
 		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 		if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
 
-		const res = await fetch(`/api/v1/capsules/${capsuleId}/files/list`, {
+		const res = await fetch(`${basePath}/${capsuleId}/files/list`, {
 			method: 'POST',
 			headers,
 			body: JSON.stringify({ path, depth }),
@@ -76,12 +76,13 @@ export async function readFile(
 	capsuleId: string,
 	path: string,
 	signal?: AbortSignal,
+	basePath = '/api/v1/capsules',
 ): Promise<ApiResult<string>> {
 	try {
 		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 		if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
 
-		const res = await fetch(`/api/v1/capsules/${capsuleId}/files/read`, {
+		const res = await fetch(`${basePath}/${capsuleId}/files/read`, {
 			method: 'POST',
 			headers,
 			body: JSON.stringify({ path }),
@@ -113,11 +114,12 @@ export async function downloadFile(
 	path: string,
 	filename: string,
 	signal?: AbortSignal,
+	basePath = '/api/v1/capsules',
 ): Promise<void> {
 	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 	if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
 
-	const res = await fetch(`/api/v1/capsules/${capsuleId}/files/read`, {
+	const res = await fetch(`${basePath}/${capsuleId}/files/read`, {
 		method: 'POST',
 		headers,
 		body: JSON.stringify({ path }),

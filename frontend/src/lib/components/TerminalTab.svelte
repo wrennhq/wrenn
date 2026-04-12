@@ -6,9 +6,10 @@
 		capsuleId: string;
 		isRunning: boolean;
 		visible?: boolean;
+		apiBasePath?: string;
 	};
 
-	let { capsuleId, isRunning, visible = true }: Props = $props();
+	let { capsuleId, isRunning, visible = true, apiBasePath = '/api/v1/capsules' }: Props = $props();
 
 	type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -93,7 +94,7 @@
 	function getWsUrl(): string {
 		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 		const token = auth.token ? `?token=${encodeURIComponent(auth.token)}` : '';
-		return `${proto}//${window.location.host}/api/v1/capsules/${capsuleId}/pty${token}`;
+		return `${proto}//${window.location.host}${apiBasePath}/${capsuleId}/pty${token}`;
 	}
 
 	function wsSend(ws: WebSocket | null, data: string) {

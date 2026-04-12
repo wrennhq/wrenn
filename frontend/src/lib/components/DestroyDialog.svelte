@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { destroyCapsule } from '$lib/api/capsules';
+	import type { ApiResult } from '$lib/api/client';
 
 	type Props = {
 		open: boolean;
 		capsuleId: string;
 		onclose: () => void;
 		ondestroyed?: () => void;
+		destroyFn?: (id: string) => Promise<ApiResult<void>>;
 	};
-	let { open, capsuleId, onclose, ondestroyed }: Props = $props();
+	let { open, capsuleId, onclose, ondestroyed, destroyFn }: Props = $props();
 
 	let destroying = $state(false);
 	let error = $state<string | null>(null);
@@ -15,7 +17,8 @@
 	async function handleDestroy() {
 		destroying = true;
 		error = null;
-		const result = await destroyCapsule(capsuleId);
+		const destroy = destroyFn ?? destroyCapsule;
+		const result = await destroy(capsuleId);
 		if (result.ok) {
 			error = null;
 			ondestroyed?.();
