@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
 
 package api
 
@@ -100,6 +101,17 @@ func (a *API) GetFiles(w http.ResponseWriter, r *http.Request, params GetFilesPa
 
 	if stat.IsDir() {
 		errMsg = fmt.Errorf("path '%s' is a directory", resolvedPath)
+		errorCode = http.StatusBadRequest
+		jsonError(w, errorCode, errMsg)
+
+		return
+	}
+
+	// Reject anything that isn't a regular file (devices, pipes, sockets, etc.).
+	// Reading device files like /dev/zero or /dev/urandom produces infinite data
+	// and will exhaust memory on all layers of the stack.
+	if !stat.Mode().IsRegular() {
+		errMsg = fmt.Errorf("path '%s' is not a regular file", resolvedPath)
 		errorCode = http.StatusBadRequest
 		jsonError(w, errorCode, errMsg)
 

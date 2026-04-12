@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import {
 		listDir,
 		readFile,
@@ -36,6 +37,14 @@
 	// Request generation counters — discard stale responses from rapid clicks
 	let dirGeneration = 0;
 	let fileGeneration = 0;
+
+	// AbortController for in-flight file reads — aborted when the user
+	// selects a different file or the component is torn down.
+	let fileAbort: AbortController | null = null;
+
+	onDestroy(() => {
+		fileAbort?.abort();
+	});
 
 	const MAX_PREVIEW_LINES = 5000;
 	const MAX_HIGHLIGHT_LINES = 2000; // Don't tokenize huge files — diminishing returns
@@ -83,6 +92,10 @@
 	const canGoUp = $derived(currentPath !== '/' && currentPath.startsWith('/'));
 
 	async function navigateTo(path: string) {
+		// Abort any in-flight file read and invalidate stale generation so the
+		// abort error isn't surfaced in the UI.
+		fileAbort?.abort();
+		++fileGeneration;
 		currentPath = normalizePath(path);
 		pathInput = currentPath;
 		selectedFile = null;
@@ -146,6 +159,9 @@
 			return;
 		}
 
+		// Abort any in-flight file read before starting a new one.
+		fileAbort?.abort();
+
 		selectedFile = entry;
 		fileContent = null;
 		fileError = null;
@@ -159,26 +175,31 @@
 
 		fileLoading = true;
 		const gen = ++fileGeneration;
-		const result = await readFile(capsuleId, entry.path);
-		if (gen !== fileGeneration) return; // stale response — user clicked another file
-		if (result.ok) {
-			if (looksLikeBinary(result.data)) {
-				fileContent = null;
-			} else {
-				fileContent = result.data;
-				// Kick off highlighting in the background — preview shows plain text immediately.
-				// Only tokenize up to MAX_HIGHLIGHT_LINES to avoid freezing on large files.
-				const linesToHighlight = result.data.split('\n').length > MAX_HIGHLIGHT_LINES
-					? result.data.split('\n').slice(0, MAX_HIGHLIGHT_LINES).join('\n')
-					: result.data;
-				tokenize(linesToHighlight, entry.name).then((tokens) => {
-					if (gen === fileGeneration) highlightedTokens = tokens;
-				});
+		const controller = new AbortController();
+		fileAbort = controller;
+		try {
+			const result = await readFile(capsuleId, entry.path, controller.signal);
+			if (gen !== fileGeneration) return; // stale response — user clicked another file
+			if (result.ok) {
+				if (looksLikeBinary(result.data)) {
+					fileContent = null;
+				} else {
+					fileContent = result.data;
+					// Kick off highlighting in the background — preview shows plain text immediately.
+					// Only tokenize up to MAX_HIGHLIGHT_LINES to avoid freezing on large files.
+					const linesToHighlight = result.data.split('\n').length > MAX_HIGHLIGHT_LINES
+						? result.data.split('\n').slice(0, MAX_HIGHLIGHT_LINES).join('\n')
+						: result.data;
+					tokenize(linesToHighlight, entry.name).then((tokens) => {
+						if (gen === fileGeneration) highlightedTokens = tokens;
+					});
+				}
+			} else if (result.error !== 'Request aborted') {
+				fileError = result.error;
 			}
-		} else {
-			fileError = result.error;
+		} finally {
+			if (gen === fileGeneration) fileLoading = false;
 		}
-		fileLoading = false;
 	}
 
 	function looksLikeBinary(text: string): boolean {
