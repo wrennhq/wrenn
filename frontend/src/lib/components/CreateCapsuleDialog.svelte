@@ -21,10 +21,11 @@
 	let inputEl = $state<HTMLInputElement | undefined>(undefined);
 	let listEl = $state<HTMLUListElement | undefined>(undefined);
 
-	// Snapshots have fixed CPU/RAM from the snapshot state — users cannot override.
-	let selectedIsSnapshot = $derived(
-		templates.find((t) => t.name === createForm.template)?.type === 'snapshot'
+	// Resolve selected template for type indicator + snapshot locking
+	let selectedTemplate = $derived(
+		templates.find((t) => t.name === createForm.template)
 	);
+	let selectedIsSnapshot = $derived(selectedTemplate?.type === 'snapshot');
 
 	let filtered = $derived.by(() => {
 		const q = templateQuery.toLowerCase();
@@ -133,7 +134,8 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !creating) onclose(); }}
 		></div>
 
-		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
+		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
+			<div class="p-6">
 			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Configure resources and launch. The VM will be ready in under a second.</p>
 
@@ -148,6 +150,9 @@
 				<div class="relative">
 					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="create-template">Template</label>
 					<div class="relative">
+						{#if selectedTemplate}
+							<span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-1.5 w-1.5 rounded-full {selectedTemplate.type === 'snapshot' ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-blue)]'}"></span>
+						{/if}
 						<input
 							bind:this={inputEl}
 							id="create-template"
@@ -162,7 +167,7 @@
 							onblur={handleInputBlur}
 							onkeydown={handleInputKeydown}
 							disabled={creating}
-							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] py-2 pl-3 pr-8 font-mono text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)] disabled:opacity-60"
+							class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] py-2 pr-8 font-mono text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)] disabled:opacity-60 {selectedTemplate ? 'pl-7' : 'pl-3'}"
 							placeholder="Search templates..."
 						/>
 						<!-- Chevron -->
@@ -303,6 +308,7 @@
 						Launch
 					{/if}
 				</button>
+			</div>
 			</div>
 		</div>
 	</div>

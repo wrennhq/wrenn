@@ -521,11 +521,9 @@
 		></div>
 
 		<div
-			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-dialog"
-			style="animation: fadeUp 0.18s cubic-bezier(0.25,1,0.5,1) both"
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
-			<!-- Danger accent edge -->
-			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-red)] to-transparent"></div>
 
 			<div class="p-6">
 			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">Delete snapshot</h2>
@@ -563,7 +561,7 @@
 				<button
 					onclick={handleDelete}
 					disabled={deleting}
-					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2.5 text-ui font-semibold text-white transition-all duration-200 hover:shadow-[0_0_16px_rgba(207,129,114,0.25)] hover:brightness-110 disabled:opacity-50"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-110 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
 				>
 					{#if deleting}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -591,16 +589,14 @@
 		></div>
 
 		<div
-			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-dialog"
-			style="animation: fadeUp 0.18s cubic-bezier(0.25,1,0.5,1) both"
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
-			<!-- Top accent edge -->
-			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-accent)] to-transparent"></div>
 
 			<div class="p-6">
-			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
-			<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
-				Configure resources and launch a new capsule from this snapshot.
+			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
+			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
+				Configure resources and launch a new capsule from this template.
 			</p>
 
 			{#if launchError}
@@ -695,7 +691,7 @@
 				<button
 					onclick={handleLaunch}
 					disabled={launching}
-					class="group flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white transition-all duration-200 hover:shadow-[0_0_20px_var(--color-accent-glow-mid)] hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none"
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
 				>
 					{#if launching}
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
