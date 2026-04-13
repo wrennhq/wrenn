@@ -699,11 +699,17 @@ paths:
               $ref: "#/components/schemas/ExecRequest"
       responses:
         "200":
-          description: Command output
+          description: Command output (foreground exec)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExecResponse"
+        "202":
+          description: Background process started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackgroundExecResponse"
         "404":
           description: Capsule not found
           content:
@@ -716,6 +722,122 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/processes:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: List running processes
+      operationId: listProcesses
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Returns all running processes inside the capsule, including background
+        processes and any processes started by templates or init scripts.
+      responses:
+        "200":
+          description: Process list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessListResponse"
+        "404":
+          description: Capsule not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/processes/{selector}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: selector
+        in: path
+        required: true
+        description: Process PID (numeric) or tag (string)
+        schema:
+          type: string
+
+    delete:
+      summary: Kill a process
+      operationId: killProcess
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: signal
+          in: query
+          required: false
+          description: Signal to send (SIGKILL or SIGTERM, default SIGKILL)
+          schema:
+            type: string
+            enum: [SIGKILL, SIGTERM]
+            default: SIGKILL
+      responses:
+        "204":
+          description: Process killed
+        "404":
+          description: Capsule or process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/processes/{selector}/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: selector
+        in: path
+        required: true
+        description: Process PID (numeric) or tag (string)
+        schema:
+          type: string
+
+    get:
+      summary: Stream process output via WebSocket
+      operationId: connectProcess
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Opens a WebSocket connection to stream stdout/stderr from a running
+        background process. The selector can be a numeric PID or a string tag.
+
+        Server sends JSON messages:
+        - `{"type": "start", "pid": 42}` — connected to process
+        - `{"type": "stdout", "data": "..."}` — stdout output
+        - `{"type": "stderr", "data": "..."}` — stderr output
+        - `{"type": "exit", "exit_code": 0}` — process exited
+        - `{"type": "error", "data": "..."}` — error message
+      responses:
+        "101":
+          description: WebSocket upgrade
 
   /v1/capsules/{id}/ping:
     parameters:
@@ -2153,6 +2275,56 @@ components:
         timeout_sec:
           type: integer
           default: 30
+          description: Timeout in seconds (foreground exec only, default 30)
+        background:
+          type: boolean
+          default: false
+          description: If true, starts the process in the background and returns immediately with a PID and tag (HTTP 202)
+        tag:
+          type: string
+          description: Optional user-chosen tag for the background process. Auto-generated if omitted. Only used when background is true.
+        envs:
+          type: object
+          additionalProperties:
+            type: string
+          description: Environment variables for the process (background exec only)
+        cwd:
+          type: string
+          description: Working directory for the process (background exec only)
+
+    BackgroundExecResponse:
+      type: object
+      properties:
+        sandbox_id:
+          type: string
+        cmd:
+          type: string
+        pid:
+          type: integer
+        tag:
+          type: string
+
+    ProcessEntry:
+      type: object
+      properties:
+        pid:
+          type: integer
+        tag:
+          type: string
+        cmd:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+
+    ProcessListResponse:
+      type: object
+      properties:
+        processes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessEntry"
 
     ExecResponse:
       type: object

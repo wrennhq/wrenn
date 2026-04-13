@@ -3461,6 +3461,623 @@ func (*PtyKillResponse) Descriptor() ([]byte, []int) {
 	return file_hostagent_proto_rawDescGZIP(), []int{59}
 }
 
+type StartBackgroundRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	Cmd       string                 `protobuf:"bytes,2,opt,name=cmd,proto3" json:"cmd,omitempty"`
+	Args      []string               `protobuf:"bytes,3,rep,name=args,proto3" json:"args,omitempty"`
+	// User-chosen tag for the process. If empty, the host agent generates one.
+	Tag           string            `protobuf:"bytes,4,opt,name=tag,proto3" json:"tag,omitempty"`
+	Envs          map[string]string `protobuf:"bytes,5,rep,name=envs,proto3" json:"envs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Cwd           string            `protobuf:"bytes,6,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartBackgroundRequest) Reset() {
+	*x = StartBackgroundRequest{}
+	mi := &file_hostagent_proto_msgTypes[60]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartBackgroundRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartBackgroundRequest) ProtoMessage() {}
+
+func (x *StartBackgroundRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[60]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartBackgroundRequest.ProtoReflect.Descriptor instead.
+func (*StartBackgroundRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *StartBackgroundRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *StartBackgroundRequest) GetCmd() string {
+	if x != nil {
+		return x.Cmd
+	}
+	return ""
+}
+
+func (x *StartBackgroundRequest) GetArgs() []string {
+	if x != nil {
+		return x.Args
+	}
+	return nil
+}
+
+func (x *StartBackgroundRequest) GetTag() string {
+	if x != nil {
+		return x.Tag
+	}
+	return ""
+}
+
+func (x *StartBackgroundRequest) GetEnvs() map[string]string {
+	if x != nil {
+		return x.Envs
+	}
+	return nil
+}
+
+func (x *StartBackgroundRequest) GetCwd() string {
+	if x != nil {
+		return x.Cwd
+	}
+	return ""
+}
+
+type StartBackgroundResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pid           uint32                 `protobuf:"varint,1,opt,name=pid,proto3" json:"pid,omitempty"`
+	Tag           string                 `protobuf:"bytes,2,opt,name=tag,proto3" json:"tag,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartBackgroundResponse) Reset() {
+	*x = StartBackgroundResponse{}
+	mi := &file_hostagent_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartBackgroundResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartBackgroundResponse) ProtoMessage() {}
+
+func (x *StartBackgroundResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartBackgroundResponse.ProtoReflect.Descriptor instead.
+func (*StartBackgroundResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{61}
+}
+
+func (x *StartBackgroundResponse) GetPid() uint32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *StartBackgroundResponse) GetTag() string {
+	if x != nil {
+		return x.Tag
+	}
+	return ""
+}
+
+type ListProcessesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListProcessesRequest) Reset() {
+	*x = ListProcessesRequest{}
+	mi := &file_hostagent_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListProcessesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListProcessesRequest) ProtoMessage() {}
+
+func (x *ListProcessesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListProcessesRequest.ProtoReflect.Descriptor instead.
+func (*ListProcessesRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{62}
+}
+
+func (x *ListProcessesRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+type ProcessEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pid           uint32                 `protobuf:"varint,1,opt,name=pid,proto3" json:"pid,omitempty"`
+	Tag           string                 `protobuf:"bytes,2,opt,name=tag,proto3" json:"tag,omitempty"`
+	Cmd           string                 `protobuf:"bytes,3,opt,name=cmd,proto3" json:"cmd,omitempty"`
+	Args          []string               `protobuf:"bytes,4,rep,name=args,proto3" json:"args,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProcessEntry) Reset() {
+	*x = ProcessEntry{}
+	mi := &file_hostagent_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProcessEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProcessEntry) ProtoMessage() {}
+
+func (x *ProcessEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProcessEntry.ProtoReflect.Descriptor instead.
+func (*ProcessEntry) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{63}
+}
+
+func (x *ProcessEntry) GetPid() uint32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *ProcessEntry) GetTag() string {
+	if x != nil {
+		return x.Tag
+	}
+	return ""
+}
+
+func (x *ProcessEntry) GetCmd() string {
+	if x != nil {
+		return x.Cmd
+	}
+	return ""
+}
+
+func (x *ProcessEntry) GetArgs() []string {
+	if x != nil {
+		return x.Args
+	}
+	return nil
+}
+
+type ListProcessesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Processes     []*ProcessEntry        `protobuf:"bytes,1,rep,name=processes,proto3" json:"processes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListProcessesResponse) Reset() {
+	*x = ListProcessesResponse{}
+	mi := &file_hostagent_proto_msgTypes[64]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListProcessesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListProcessesResponse) ProtoMessage() {}
+
+func (x *ListProcessesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[64]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListProcessesResponse.ProtoReflect.Descriptor instead.
+func (*ListProcessesResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{64}
+}
+
+func (x *ListProcessesResponse) GetProcesses() []*ProcessEntry {
+	if x != nil {
+		return x.Processes
+	}
+	return nil
+}
+
+type KillProcessRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	// Types that are valid to be assigned to Selector:
+	//
+	//	*KillProcessRequest_Pid
+	//	*KillProcessRequest_Tag
+	Selector isKillProcessRequest_Selector `protobuf_oneof:"selector"`
+	// Signal to send: "SIGTERM" or "SIGKILL" (default: "SIGKILL").
+	Signal        string `protobuf:"bytes,4,opt,name=signal,proto3" json:"signal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KillProcessRequest) Reset() {
+	*x = KillProcessRequest{}
+	mi := &file_hostagent_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KillProcessRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KillProcessRequest) ProtoMessage() {}
+
+func (x *KillProcessRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KillProcessRequest.ProtoReflect.Descriptor instead.
+func (*KillProcessRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *KillProcessRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *KillProcessRequest) GetSelector() isKillProcessRequest_Selector {
+	if x != nil {
+		return x.Selector
+	}
+	return nil
+}
+
+func (x *KillProcessRequest) GetPid() uint32 {
+	if x != nil {
+		if x, ok := x.Selector.(*KillProcessRequest_Pid); ok {
+			return x.Pid
+		}
+	}
+	return 0
+}
+
+func (x *KillProcessRequest) GetTag() string {
+	if x != nil {
+		if x, ok := x.Selector.(*KillProcessRequest_Tag); ok {
+			return x.Tag
+		}
+	}
+	return ""
+}
+
+func (x *KillProcessRequest) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+type isKillProcessRequest_Selector interface {
+	isKillProcessRequest_Selector()
+}
+
+type KillProcessRequest_Pid struct {
+	Pid uint32 `protobuf:"varint,2,opt,name=pid,proto3,oneof"`
+}
+
+type KillProcessRequest_Tag struct {
+	Tag string `protobuf:"bytes,3,opt,name=tag,proto3,oneof"`
+}
+
+func (*KillProcessRequest_Pid) isKillProcessRequest_Selector() {}
+
+func (*KillProcessRequest_Tag) isKillProcessRequest_Selector() {}
+
+type KillProcessResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KillProcessResponse) Reset() {
+	*x = KillProcessResponse{}
+	mi := &file_hostagent_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KillProcessResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KillProcessResponse) ProtoMessage() {}
+
+func (x *KillProcessResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KillProcessResponse.ProtoReflect.Descriptor instead.
+func (*KillProcessResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{66}
+}
+
+type ConnectProcessRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	// Types that are valid to be assigned to Selector:
+	//
+	//	*ConnectProcessRequest_Pid
+	//	*ConnectProcessRequest_Tag
+	Selector      isConnectProcessRequest_Selector `protobuf_oneof:"selector"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConnectProcessRequest) Reset() {
+	*x = ConnectProcessRequest{}
+	mi := &file_hostagent_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConnectProcessRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConnectProcessRequest) ProtoMessage() {}
+
+func (x *ConnectProcessRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConnectProcessRequest.ProtoReflect.Descriptor instead.
+func (*ConnectProcessRequest) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *ConnectProcessRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *ConnectProcessRequest) GetSelector() isConnectProcessRequest_Selector {
+	if x != nil {
+		return x.Selector
+	}
+	return nil
+}
+
+func (x *ConnectProcessRequest) GetPid() uint32 {
+	if x != nil {
+		if x, ok := x.Selector.(*ConnectProcessRequest_Pid); ok {
+			return x.Pid
+		}
+	}
+	return 0
+}
+
+func (x *ConnectProcessRequest) GetTag() string {
+	if x != nil {
+		if x, ok := x.Selector.(*ConnectProcessRequest_Tag); ok {
+			return x.Tag
+		}
+	}
+	return ""
+}
+
+type isConnectProcessRequest_Selector interface {
+	isConnectProcessRequest_Selector()
+}
+
+type ConnectProcessRequest_Pid struct {
+	Pid uint32 `protobuf:"varint,2,opt,name=pid,proto3,oneof"`
+}
+
+type ConnectProcessRequest_Tag struct {
+	Tag string `protobuf:"bytes,3,opt,name=tag,proto3,oneof"`
+}
+
+func (*ConnectProcessRequest_Pid) isConnectProcessRequest_Selector() {}
+
+func (*ConnectProcessRequest_Tag) isConnectProcessRequest_Selector() {}
+
+// Reuses ExecStream event types for symmetry.
+type ConnectProcessResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Event:
+	//
+	//	*ConnectProcessResponse_Start
+	//	*ConnectProcessResponse_Data
+	//	*ConnectProcessResponse_End
+	Event         isConnectProcessResponse_Event `protobuf_oneof:"event"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConnectProcessResponse) Reset() {
+	*x = ConnectProcessResponse{}
+	mi := &file_hostagent_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConnectProcessResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConnectProcessResponse) ProtoMessage() {}
+
+func (x *ConnectProcessResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hostagent_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConnectProcessResponse.ProtoReflect.Descriptor instead.
+func (*ConnectProcessResponse) Descriptor() ([]byte, []int) {
+	return file_hostagent_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *ConnectProcessResponse) GetEvent() isConnectProcessResponse_Event {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *ConnectProcessResponse) GetStart() *ExecStreamStart {
+	if x != nil {
+		if x, ok := x.Event.(*ConnectProcessResponse_Start); ok {
+			return x.Start
+		}
+	}
+	return nil
+}
+
+func (x *ConnectProcessResponse) GetData() *ExecStreamData {
+	if x != nil {
+		if x, ok := x.Event.(*ConnectProcessResponse_Data); ok {
+			return x.Data
+		}
+	}
+	return nil
+}
+
+func (x *ConnectProcessResponse) GetEnd() *ExecStreamEnd {
+	if x != nil {
+		if x, ok := x.Event.(*ConnectProcessResponse_End); ok {
+			return x.End
+		}
+	}
+	return nil
+}
+
+type isConnectProcessResponse_Event interface {
+	isConnectProcessResponse_Event()
+}
+
+type ConnectProcessResponse_Start struct {
+	Start *ExecStreamStart `protobuf:"bytes,1,opt,name=start,proto3,oneof"`
+}
+
+type ConnectProcessResponse_Data struct {
+	Data *ExecStreamData `protobuf:"bytes,2,opt,name=data,proto3,oneof"`
+}
+
+type ConnectProcessResponse_End struct {
+	End *ExecStreamEnd `protobuf:"bytes,3,opt,name=end,proto3,oneof"`
+}
+
+func (*ConnectProcessResponse_Start) isConnectProcessResponse_Event() {}
+
+func (*ConnectProcessResponse_Data) isConnectProcessResponse_Event() {}
+
+func (*ConnectProcessResponse_End) isConnectProcessResponse_Event() {}
+
 var File_hostagent_proto protoreflect.FileDescriptor
 
 const file_hostagent_proto_rawDesc = "" +
@@ -3725,7 +4342,52 @@ const file_hostagent_proto_rawDesc = "" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x10\n" +
 	"\x03tag\x18\x02 \x01(\tR\x03tag\"\x11\n" +
-	"\x0fPtyKillResponse2\xe6\x10\n" +
+	"\x0fPtyKillResponse\"\xfe\x01\n" +
+	"\x16StartBackgroundRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x10\n" +
+	"\x03cmd\x18\x02 \x01(\tR\x03cmd\x12\x12\n" +
+	"\x04args\x18\x03 \x03(\tR\x04args\x12\x10\n" +
+	"\x03tag\x18\x04 \x01(\tR\x03tag\x12B\n" +
+	"\x04envs\x18\x05 \x03(\v2..hostagent.v1.StartBackgroundRequest.EnvsEntryR\x04envs\x12\x10\n" +
+	"\x03cwd\x18\x06 \x01(\tR\x03cwd\x1a7\n" +
+	"\tEnvsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"=\n" +
+	"\x17StartBackgroundResponse\x12\x10\n" +
+	"\x03pid\x18\x01 \x01(\rR\x03pid\x12\x10\n" +
+	"\x03tag\x18\x02 \x01(\tR\x03tag\"5\n" +
+	"\x14ListProcessesRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"X\n" +
+	"\fProcessEntry\x12\x10\n" +
+	"\x03pid\x18\x01 \x01(\rR\x03pid\x12\x10\n" +
+	"\x03tag\x18\x02 \x01(\tR\x03tag\x12\x10\n" +
+	"\x03cmd\x18\x03 \x01(\tR\x03cmd\x12\x12\n" +
+	"\x04args\x18\x04 \x03(\tR\x04args\"Q\n" +
+	"\x15ListProcessesResponse\x128\n" +
+	"\tprocesses\x18\x01 \x03(\v2\x1a.hostagent.v1.ProcessEntryR\tprocesses\"\x7f\n" +
+	"\x12KillProcessRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
+	"\x03pid\x18\x02 \x01(\rH\x00R\x03pid\x12\x12\n" +
+	"\x03tag\x18\x03 \x01(\tH\x00R\x03tag\x12\x16\n" +
+	"\x06signal\x18\x04 \x01(\tR\x06signalB\n" +
+	"\n" +
+	"\bselector\"\x15\n" +
+	"\x13KillProcessResponse\"j\n" +
+	"\x15ConnectProcessRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
+	"\x03pid\x18\x02 \x01(\rH\x00R\x03pid\x12\x12\n" +
+	"\x03tag\x18\x03 \x01(\tH\x00R\x03tagB\n" +
+	"\n" +
+	"\bselector\"\xbd\x01\n" +
+	"\x16ConnectProcessResponse\x125\n" +
+	"\x05start\x18\x01 \x01(\v2\x1d.hostagent.v1.ExecStreamStartH\x00R\x05start\x122\n" +
+	"\x04data\x18\x02 \x01(\v2\x1c.hostagent.v1.ExecStreamDataH\x00R\x04data\x12/\n" +
+	"\x03end\x18\x03 \x01(\v2\x1b.hostagent.v1.ExecStreamEndH\x00R\x03endB\a\n" +
+	"\x05event2\xd3\x13\n" +
 	"\x10HostAgentService\x12X\n" +
 	"\rCreateSandbox\x12\".hostagent.v1.CreateSandboxRequest\x1a#.hostagent.v1.CreateSandboxResponse\x12[\n" +
 	"\x0eDestroySandbox\x12#.hostagent.v1.DestroySandboxRequest\x1a$.hostagent.v1.DestroySandboxResponse\x12U\n" +
@@ -3753,7 +4415,11 @@ const file_hostagent_proto_rawDesc = "" +
 	"\tPtyAttach\x12\x1e.hostagent.v1.PtyAttachRequest\x1a\x1f.hostagent.v1.PtyAttachResponse0\x01\x12U\n" +
 	"\fPtySendInput\x12!.hostagent.v1.PtySendInputRequest\x1a\".hostagent.v1.PtySendInputResponse\x12L\n" +
 	"\tPtyResize\x12\x1e.hostagent.v1.PtyResizeRequest\x1a\x1f.hostagent.v1.PtyResizeResponse\x12F\n" +
-	"\aPtyKill\x12\x1c.hostagent.v1.PtyKillRequest\x1a\x1d.hostagent.v1.PtyKillResponseB\xae\x01\n" +
+	"\aPtyKill\x12\x1c.hostagent.v1.PtyKillRequest\x1a\x1d.hostagent.v1.PtyKillResponse\x12^\n" +
+	"\x0fStartBackground\x12$.hostagent.v1.StartBackgroundRequest\x1a%.hostagent.v1.StartBackgroundResponse\x12X\n" +
+	"\rListProcesses\x12\".hostagent.v1.ListProcessesRequest\x1a#.hostagent.v1.ListProcessesResponse\x12R\n" +
+	"\vKillProcess\x12 .hostagent.v1.KillProcessRequest\x1a!.hostagent.v1.KillProcessResponse\x12]\n" +
+	"\x0eConnectProcess\x12#.hostagent.v1.ConnectProcessRequest\x1a$.hostagent.v1.ConnectProcessResponse0\x01B\xae\x01\n" +
 	"\x10com.hostagent.v1B\x0eHostagentProtoP\x01Z9git.omukk.dev/wrenn/wrenn/proto/hostagent/gen;hostagentv1\xa2\x02\x03HXX\xaa\x02\fHostagent.V1\xca\x02\fHostagent\\V1\xe2\x02\x18Hostagent\\V1\\GPBMetadata\xea\x02\rHostagent::V1b\x06proto3"
 
 var (
@@ -3768,7 +4434,7 @@ func file_hostagent_proto_rawDescGZIP() []byte {
 	return file_hostagent_proto_rawDescData
 }
 
-var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 63)
+var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 73)
 var file_hostagent_proto_goTypes = []any{
 	(*CreateSandboxRequest)(nil),        // 0: hostagent.v1.CreateSandboxRequest
 	(*CreateSandboxResponse)(nil),       // 1: hostagent.v1.CreateSandboxResponse
@@ -3830,13 +4496,23 @@ var file_hostagent_proto_goTypes = []any{
 	(*PtyResizeResponse)(nil),           // 57: hostagent.v1.PtyResizeResponse
 	(*PtyKillRequest)(nil),              // 58: hostagent.v1.PtyKillRequest
 	(*PtyKillResponse)(nil),             // 59: hostagent.v1.PtyKillResponse
-	nil,                                 // 60: hostagent.v1.CreateSandboxRequest.DefaultEnvEntry
-	nil,                                 // 61: hostagent.v1.ResumeSandboxRequest.DefaultEnvEntry
-	nil,                                 // 62: hostagent.v1.PtyAttachRequest.EnvsEntry
+	(*StartBackgroundRequest)(nil),      // 60: hostagent.v1.StartBackgroundRequest
+	(*StartBackgroundResponse)(nil),     // 61: hostagent.v1.StartBackgroundResponse
+	(*ListProcessesRequest)(nil),        // 62: hostagent.v1.ListProcessesRequest
+	(*ProcessEntry)(nil),                // 63: hostagent.v1.ProcessEntry
+	(*ListProcessesResponse)(nil),       // 64: hostagent.v1.ListProcessesResponse
+	(*KillProcessRequest)(nil),          // 65: hostagent.v1.KillProcessRequest
+	(*KillProcessResponse)(nil),         // 66: hostagent.v1.KillProcessResponse
+	(*ConnectProcessRequest)(nil),       // 67: hostagent.v1.ConnectProcessRequest
+	(*ConnectProcessResponse)(nil),      // 68: hostagent.v1.ConnectProcessResponse
+	nil,                                 // 69: hostagent.v1.CreateSandboxRequest.DefaultEnvEntry
+	nil,                                 // 70: hostagent.v1.ResumeSandboxRequest.DefaultEnvEntry
+	nil,                                 // 71: hostagent.v1.PtyAttachRequest.EnvsEntry
+	nil,                                 // 72: hostagent.v1.StartBackgroundRequest.EnvsEntry
 }
 var file_hostagent_proto_depIdxs = []int32{
-	60, // 0: hostagent.v1.CreateSandboxRequest.default_env:type_name -> hostagent.v1.CreateSandboxRequest.DefaultEnvEntry
-	61, // 1: hostagent.v1.ResumeSandboxRequest.default_env:type_name -> hostagent.v1.ResumeSandboxRequest.DefaultEnvEntry
+	69, // 0: hostagent.v1.CreateSandboxRequest.default_env:type_name -> hostagent.v1.CreateSandboxRequest.DefaultEnvEntry
+	70, // 1: hostagent.v1.ResumeSandboxRequest.default_env:type_name -> hostagent.v1.ResumeSandboxRequest.DefaultEnvEntry
 	16, // 2: hostagent.v1.ListSandboxesResponse.sandboxes:type_name -> hostagent.v1.SandboxInfo
 	23, // 3: hostagent.v1.ExecStreamResponse.start:type_name -> hostagent.v1.ExecStreamStart
 	24, // 4: hostagent.v1.ExecStreamResponse.data:type_name -> hostagent.v1.ExecStreamData
@@ -3848,65 +4524,78 @@ var file_hostagent_proto_depIdxs = []int32{
 	42, // 10: hostagent.v1.FlushSandboxMetricsResponse.points_10m:type_name -> hostagent.v1.MetricPoint
 	42, // 11: hostagent.v1.FlushSandboxMetricsResponse.points_2h:type_name -> hostagent.v1.MetricPoint
 	42, // 12: hostagent.v1.FlushSandboxMetricsResponse.points_24h:type_name -> hostagent.v1.MetricPoint
-	62, // 13: hostagent.v1.PtyAttachRequest.envs:type_name -> hostagent.v1.PtyAttachRequest.EnvsEntry
+	71, // 13: hostagent.v1.PtyAttachRequest.envs:type_name -> hostagent.v1.PtyAttachRequest.EnvsEntry
 	51, // 14: hostagent.v1.PtyAttachResponse.started:type_name -> hostagent.v1.PtyStarted
 	52, // 15: hostagent.v1.PtyAttachResponse.output:type_name -> hostagent.v1.PtyOutput
 	53, // 16: hostagent.v1.PtyAttachResponse.exited:type_name -> hostagent.v1.PtyExited
-	0,  // 17: hostagent.v1.HostAgentService.CreateSandbox:input_type -> hostagent.v1.CreateSandboxRequest
-	2,  // 18: hostagent.v1.HostAgentService.DestroySandbox:input_type -> hostagent.v1.DestroySandboxRequest
-	4,  // 19: hostagent.v1.HostAgentService.PauseSandbox:input_type -> hostagent.v1.PauseSandboxRequest
-	6,  // 20: hostagent.v1.HostAgentService.ResumeSandbox:input_type -> hostagent.v1.ResumeSandboxRequest
-	12, // 21: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
-	14, // 22: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
-	17, // 23: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
-	19, // 24: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
-	31, // 25: hostagent.v1.HostAgentService.ListDir:input_type -> hostagent.v1.ListDirRequest
-	34, // 26: hostagent.v1.HostAgentService.MakeDir:input_type -> hostagent.v1.MakeDirRequest
-	36, // 27: hostagent.v1.HostAgentService.RemovePath:input_type -> hostagent.v1.RemovePathRequest
-	8,  // 28: hostagent.v1.HostAgentService.CreateSnapshot:input_type -> hostagent.v1.CreateSnapshotRequest
-	10, // 29: hostagent.v1.HostAgentService.DeleteSnapshot:input_type -> hostagent.v1.DeleteSnapshotRequest
-	21, // 30: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
-	26, // 31: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
-	29, // 32: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
-	38, // 33: hostagent.v1.HostAgentService.PingSandbox:input_type -> hostagent.v1.PingSandboxRequest
-	40, // 34: hostagent.v1.HostAgentService.Terminate:input_type -> hostagent.v1.TerminateRequest
-	43, // 35: hostagent.v1.HostAgentService.GetSandboxMetrics:input_type -> hostagent.v1.GetSandboxMetricsRequest
-	45, // 36: hostagent.v1.HostAgentService.FlushSandboxMetrics:input_type -> hostagent.v1.FlushSandboxMetricsRequest
-	47, // 37: hostagent.v1.HostAgentService.FlattenRootfs:input_type -> hostagent.v1.FlattenRootfsRequest
-	49, // 38: hostagent.v1.HostAgentService.PtyAttach:input_type -> hostagent.v1.PtyAttachRequest
-	54, // 39: hostagent.v1.HostAgentService.PtySendInput:input_type -> hostagent.v1.PtySendInputRequest
-	56, // 40: hostagent.v1.HostAgentService.PtyResize:input_type -> hostagent.v1.PtyResizeRequest
-	58, // 41: hostagent.v1.HostAgentService.PtyKill:input_type -> hostagent.v1.PtyKillRequest
-	1,  // 42: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
-	3,  // 43: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
-	5,  // 44: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
-	7,  // 45: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
-	13, // 46: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
-	15, // 47: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
-	18, // 48: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
-	20, // 49: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
-	32, // 50: hostagent.v1.HostAgentService.ListDir:output_type -> hostagent.v1.ListDirResponse
-	35, // 51: hostagent.v1.HostAgentService.MakeDir:output_type -> hostagent.v1.MakeDirResponse
-	37, // 52: hostagent.v1.HostAgentService.RemovePath:output_type -> hostagent.v1.RemovePathResponse
-	9,  // 53: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
-	11, // 54: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
-	22, // 55: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
-	28, // 56: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
-	30, // 57: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
-	39, // 58: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
-	41, // 59: hostagent.v1.HostAgentService.Terminate:output_type -> hostagent.v1.TerminateResponse
-	44, // 60: hostagent.v1.HostAgentService.GetSandboxMetrics:output_type -> hostagent.v1.GetSandboxMetricsResponse
-	46, // 61: hostagent.v1.HostAgentService.FlushSandboxMetrics:output_type -> hostagent.v1.FlushSandboxMetricsResponse
-	48, // 62: hostagent.v1.HostAgentService.FlattenRootfs:output_type -> hostagent.v1.FlattenRootfsResponse
-	50, // 63: hostagent.v1.HostAgentService.PtyAttach:output_type -> hostagent.v1.PtyAttachResponse
-	55, // 64: hostagent.v1.HostAgentService.PtySendInput:output_type -> hostagent.v1.PtySendInputResponse
-	57, // 65: hostagent.v1.HostAgentService.PtyResize:output_type -> hostagent.v1.PtyResizeResponse
-	59, // 66: hostagent.v1.HostAgentService.PtyKill:output_type -> hostagent.v1.PtyKillResponse
-	42, // [42:67] is the sub-list for method output_type
-	17, // [17:42] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	72, // 17: hostagent.v1.StartBackgroundRequest.envs:type_name -> hostagent.v1.StartBackgroundRequest.EnvsEntry
+	63, // 18: hostagent.v1.ListProcessesResponse.processes:type_name -> hostagent.v1.ProcessEntry
+	23, // 19: hostagent.v1.ConnectProcessResponse.start:type_name -> hostagent.v1.ExecStreamStart
+	24, // 20: hostagent.v1.ConnectProcessResponse.data:type_name -> hostagent.v1.ExecStreamData
+	25, // 21: hostagent.v1.ConnectProcessResponse.end:type_name -> hostagent.v1.ExecStreamEnd
+	0,  // 22: hostagent.v1.HostAgentService.CreateSandbox:input_type -> hostagent.v1.CreateSandboxRequest
+	2,  // 23: hostagent.v1.HostAgentService.DestroySandbox:input_type -> hostagent.v1.DestroySandboxRequest
+	4,  // 24: hostagent.v1.HostAgentService.PauseSandbox:input_type -> hostagent.v1.PauseSandboxRequest
+	6,  // 25: hostagent.v1.HostAgentService.ResumeSandbox:input_type -> hostagent.v1.ResumeSandboxRequest
+	12, // 26: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
+	14, // 27: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
+	17, // 28: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
+	19, // 29: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
+	31, // 30: hostagent.v1.HostAgentService.ListDir:input_type -> hostagent.v1.ListDirRequest
+	34, // 31: hostagent.v1.HostAgentService.MakeDir:input_type -> hostagent.v1.MakeDirRequest
+	36, // 32: hostagent.v1.HostAgentService.RemovePath:input_type -> hostagent.v1.RemovePathRequest
+	8,  // 33: hostagent.v1.HostAgentService.CreateSnapshot:input_type -> hostagent.v1.CreateSnapshotRequest
+	10, // 34: hostagent.v1.HostAgentService.DeleteSnapshot:input_type -> hostagent.v1.DeleteSnapshotRequest
+	21, // 35: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
+	26, // 36: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
+	29, // 37: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
+	38, // 38: hostagent.v1.HostAgentService.PingSandbox:input_type -> hostagent.v1.PingSandboxRequest
+	40, // 39: hostagent.v1.HostAgentService.Terminate:input_type -> hostagent.v1.TerminateRequest
+	43, // 40: hostagent.v1.HostAgentService.GetSandboxMetrics:input_type -> hostagent.v1.GetSandboxMetricsRequest
+	45, // 41: hostagent.v1.HostAgentService.FlushSandboxMetrics:input_type -> hostagent.v1.FlushSandboxMetricsRequest
+	47, // 42: hostagent.v1.HostAgentService.FlattenRootfs:input_type -> hostagent.v1.FlattenRootfsRequest
+	49, // 43: hostagent.v1.HostAgentService.PtyAttach:input_type -> hostagent.v1.PtyAttachRequest
+	54, // 44: hostagent.v1.HostAgentService.PtySendInput:input_type -> hostagent.v1.PtySendInputRequest
+	56, // 45: hostagent.v1.HostAgentService.PtyResize:input_type -> hostagent.v1.PtyResizeRequest
+	58, // 46: hostagent.v1.HostAgentService.PtyKill:input_type -> hostagent.v1.PtyKillRequest
+	60, // 47: hostagent.v1.HostAgentService.StartBackground:input_type -> hostagent.v1.StartBackgroundRequest
+	62, // 48: hostagent.v1.HostAgentService.ListProcesses:input_type -> hostagent.v1.ListProcessesRequest
+	65, // 49: hostagent.v1.HostAgentService.KillProcess:input_type -> hostagent.v1.KillProcessRequest
+	67, // 50: hostagent.v1.HostAgentService.ConnectProcess:input_type -> hostagent.v1.ConnectProcessRequest
+	1,  // 51: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
+	3,  // 52: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
+	5,  // 53: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
+	7,  // 54: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
+	13, // 55: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
+	15, // 56: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
+	18, // 57: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
+	20, // 58: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
+	32, // 59: hostagent.v1.HostAgentService.ListDir:output_type -> hostagent.v1.ListDirResponse
+	35, // 60: hostagent.v1.HostAgentService.MakeDir:output_type -> hostagent.v1.MakeDirResponse
+	37, // 61: hostagent.v1.HostAgentService.RemovePath:output_type -> hostagent.v1.RemovePathResponse
+	9,  // 62: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
+	11, // 63: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
+	22, // 64: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
+	28, // 65: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
+	30, // 66: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
+	39, // 67: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
+	41, // 68: hostagent.v1.HostAgentService.Terminate:output_type -> hostagent.v1.TerminateResponse
+	44, // 69: hostagent.v1.HostAgentService.GetSandboxMetrics:output_type -> hostagent.v1.GetSandboxMetricsResponse
+	46, // 70: hostagent.v1.HostAgentService.FlushSandboxMetrics:output_type -> hostagent.v1.FlushSandboxMetricsResponse
+	48, // 71: hostagent.v1.HostAgentService.FlattenRootfs:output_type -> hostagent.v1.FlattenRootfsResponse
+	50, // 72: hostagent.v1.HostAgentService.PtyAttach:output_type -> hostagent.v1.PtyAttachResponse
+	55, // 73: hostagent.v1.HostAgentService.PtySendInput:output_type -> hostagent.v1.PtySendInputResponse
+	57, // 74: hostagent.v1.HostAgentService.PtyResize:output_type -> hostagent.v1.PtyResizeResponse
+	59, // 75: hostagent.v1.HostAgentService.PtyKill:output_type -> hostagent.v1.PtyKillResponse
+	61, // 76: hostagent.v1.HostAgentService.StartBackground:output_type -> hostagent.v1.StartBackgroundResponse
+	64, // 77: hostagent.v1.HostAgentService.ListProcesses:output_type -> hostagent.v1.ListProcessesResponse
+	66, // 78: hostagent.v1.HostAgentService.KillProcess:output_type -> hostagent.v1.KillProcessResponse
+	68, // 79: hostagent.v1.HostAgentService.ConnectProcess:output_type -> hostagent.v1.ConnectProcessResponse
+	51, // [51:80] is the sub-list for method output_type
+	22, // [22:51] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_hostagent_proto_init() }
@@ -3933,13 +4622,26 @@ func file_hostagent_proto_init() {
 		(*PtyAttachResponse_Output)(nil),
 		(*PtyAttachResponse_Exited)(nil),
 	}
+	file_hostagent_proto_msgTypes[65].OneofWrappers = []any{
+		(*KillProcessRequest_Pid)(nil),
+		(*KillProcessRequest_Tag)(nil),
+	}
+	file_hostagent_proto_msgTypes[67].OneofWrappers = []any{
+		(*ConnectProcessRequest_Pid)(nil),
+		(*ConnectProcessRequest_Tag)(nil),
+	}
+	file_hostagent_proto_msgTypes[68].OneofWrappers = []any{
+		(*ConnectProcessResponse_Start)(nil),
+		(*ConnectProcessResponse_Data)(nil),
+		(*ConnectProcessResponse_End)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hostagent_proto_rawDesc), len(file_hostagent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   63,
+			NumMessages:   73,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

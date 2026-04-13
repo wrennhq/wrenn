@@ -752,3 +752,152 @@ func entryInfoToPB(e *envdpb.EntryInfo) *pb.FileEntry {
 
 	return entry
 }
+
+// ── Background Processes ────────────────────────────────────────────
+
+func (s *Server) StartBackground(
+	ctx context.Context,
+	req *connect.Request[pb.StartBackgroundRequest],
+) (*connect.Response[pb.StartBackgroundResponse], error) {
+	msg := req.Msg
+
+	pid, err := s.mgr.StartBackground(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Envs, msg.Cwd)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("start background: %w", err))
+	}
+
+	return connect.NewResponse(&pb.StartBackgroundResponse{
+		Pid: pid,
+		Tag: msg.Tag,
+	}), nil
+}
+
+func (s *Server) ListProcesses(
+	ctx context.Context,
+	req *connect.Request[pb.ListProcessesRequest],
+) (*connect.Response[pb.ListProcessesResponse], error) {
+	procs, err := s.mgr.ListProcesses(ctx, req.Msg.SandboxId)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list processes: %w", err))
+	}
+
+	entries := make([]*pb.ProcessEntry, 0, len(procs))
+	for _, p := range procs {
+		entries = append(entries, &pb.ProcessEntry{
+			Pid:  p.PID,
+			Tag:  p.Tag,
+			Cmd:  p.Cmd,
+			Args: p.Args,
+		})
+	}
+
+	return connect.NewResponse(&pb.ListProcessesResponse{
+		Processes: entries,
+	}), nil
+}
+
+func (s *Server) KillProcess(
+	ctx context.Context,
+	req *connect.Request[pb.KillProcessRequest],
+) (*connect.Response[pb.KillProcessResponse], error) {
+	msg := req.Msg
+
+	// Resolve PID/tag selector.
+	var pid uint32
+	var tag string
+	switch sel := msg.Selector.(type) {
+	case *pb.KillProcessRequest_Pid:
+		pid = sel.Pid
+	case *pb.KillProcessRequest_Tag:
+		tag = sel.Tag
+	default:
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("pid or tag is required"))
+	}
+
+	// Map signal string to envd enum.
+	var signal envdpb.Signal
+	switch msg.Signal {
+	case "", "SIGKILL":
+		signal = envdpb.Signal_SIGNAL_SIGKILL
+	case "SIGTERM":
+		signal = envdpb.Signal_SIGNAL_SIGTERM
+	default:
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unsupported signal: %s (use SIGKILL or SIGTERM)", msg.Signal))
+	}
+
+	if err := s.mgr.KillProcess(ctx, msg.SandboxId, pid, tag, signal); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("kill process: %w", err))
+	}
+
+	return connect.NewResponse(&pb.KillProcessResponse{}), nil
+}
+
+func (s *Server) ConnectProcess(
+	ctx context.Context,
+	req *connect.Request[pb.ConnectProcessRequest],
+	stream *connect.ServerStream[pb.ConnectProcessResponse],
+) error {
+	msg := req.Msg
+
+	var pid uint32
+	var tag string
+	switch sel := msg.Selector.(type) {
+	case *pb.ConnectProcessRequest_Pid:
+		pid = sel.Pid
+	case *pb.ConnectProcessRequest_Tag:
+		tag = sel.Tag
+	default:
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("pid or tag is required"))
+	}
+
+	events, err := s.mgr.ConnectProcess(ctx, msg.SandboxId, pid, tag)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return connect.NewError(connect.CodeNotFound, err)
+		}
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("connect process: %w", err))
+	}
+
+	for ev := range events {
+		var resp pb.ConnectProcessResponse
+		switch ev.Type {
+		case "start":
+			resp.Event = &pb.ConnectProcessResponse_Start{
+				Start: &pb.ExecStreamStart{Pid: ev.PID},
+			}
+		case "stdout":
+			resp.Event = &pb.ConnectProcessResponse_Data{
+				Data: &pb.ExecStreamData{
+					Output: &pb.ExecStreamData_Stdout{Stdout: ev.Data},
+				},
+			}
+		case "stderr":
+			resp.Event = &pb.ConnectProcessResponse_Data{
+				Data: &pb.ExecStreamData{
+					Output: &pb.ExecStreamData_Stderr{Stderr: ev.Data},
+				},
+			}
+		case "end":
+			resp.Event = &pb.ConnectProcessResponse_End{
+				End: &pb.ExecStreamEnd{
+					ExitCode: ev.ExitCode,
+					Error:    ev.Error,
+				},
+			}
+		}
+		if err := stream.Send(&resp); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

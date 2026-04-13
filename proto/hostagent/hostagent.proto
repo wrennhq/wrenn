@@ -91,6 +91,19 @@ service HostAgentService {
   // PtyKill sends a signal to a PTY process.
   rpc PtyKill(PtyKillRequest) returns (PtyKillResponse);
 
+  // StartBackground starts a process in the background and returns immediately
+  // with the PID and tag. The process survives RPC disconnection.
+  rpc StartBackground(StartBackgroundRequest) returns (StartBackgroundResponse);
+
+  // ListProcesses returns all running processes inside a sandbox.
+  rpc ListProcesses(ListProcessesRequest) returns (ListProcessesResponse);
+
+  // KillProcess sends a signal to a process identified by PID or tag.
+  rpc KillProcess(KillProcessRequest) returns (KillProcessResponse);
+
+  // ConnectProcess re-attaches to a running process and streams its output.
+  rpc ConnectProcess(ConnectProcessRequest) returns (stream ConnectProcessResponse);
+
 }
 
 message CreateSandboxRequest {
@@ -476,3 +489,64 @@ message PtyKillRequest {
 }
 
 message PtyKillResponse {}
+
+// ── Background Processes ───────────────────────────────────────────
+
+message StartBackgroundRequest {
+  string sandbox_id = 1;
+  string cmd = 2;
+  repeated string args = 3;
+  // User-chosen tag for the process. If empty, the host agent generates one.
+  string tag = 4;
+  map<string, string> envs = 5;
+  string cwd = 6;
+}
+
+message StartBackgroundResponse {
+  uint32 pid = 1;
+  string tag = 2;
+}
+
+message ListProcessesRequest {
+  string sandbox_id = 1;
+}
+
+message ProcessEntry {
+  uint32 pid = 1;
+  string tag = 2;
+  string cmd = 3;
+  repeated string args = 4;
+}
+
+message ListProcessesResponse {
+  repeated ProcessEntry processes = 1;
+}
+
+message KillProcessRequest {
+  string sandbox_id = 1;
+  oneof selector {
+    uint32 pid = 2;
+    string tag = 3;
+  }
+  // Signal to send: "SIGTERM" or "SIGKILL" (default: "SIGKILL").
+  string signal = 4;
+}
+
+message KillProcessResponse {}
+
+message ConnectProcessRequest {
+  string sandbox_id = 1;
+  oneof selector {
+    uint32 pid = 2;
+    string tag = 3;
+  }
+}
+
+// Reuses ExecStream event types for symmetry.
+message ConnectProcessResponse {
+  oneof event {
+    ExecStreamStart start = 1;
+    ExecStreamData data = 2;
+    ExecStreamEnd end = 3;
+  }
+}

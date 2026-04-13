@@ -24,12 +24,13 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
 	"git.omukk.dev/wrenn/wrenn/internal/uffd"
 	"git.omukk.dev/wrenn/wrenn/internal/vm"
+	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 )
 
 // Config holds the paths and defaults for the sandbox manager.
 type Config struct {
-	WrennDir           string // root directory (e.g. /var/lib/wrenn); all sub-paths derived via layout package
-	EnvdTimeout        time.Duration
+	WrennDir            string // root directory (e.g. /var/lib/wrenn); all sub-paths derived via layout package
+	EnvdTimeout         time.Duration
 	DefaultRootfsSizeMB int // target size for template rootfs images; 0 → DefaultDiskSizeMB
 }
 
@@ -1326,6 +1327,74 @@ func (m *Manager) PtyKill(ctx context.Context, sandboxID, tag string) error {
 	}
 
 	return sb.client.PtyKill(ctx, tag)
+}
+
+// StartBackground starts a background process inside a sandbox.
+func (m *Manager) StartBackground(ctx context.Context, sandboxID, tag, cmd string, args []string, envs map[string]string, cwd string) (uint32, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return 0, err
+	}
+	if sb.Status != models.StatusRunning {
+		return 0, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.StartBackground(ctx, tag, cmd, args, envs, cwd)
+}
+
+// ConnectProcess re-attaches to a running process inside a sandbox.
+func (m *Manager) ConnectProcess(ctx context.Context, sandboxID string, pid uint32, tag string) (<-chan envdclient.ExecStreamEvent, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if sb.Status != models.StatusRunning {
+		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.ConnectProcess(ctx, pid, tag)
+}
+
+// ListProcesses returns all running processes inside a sandbox.
+func (m *Manager) ListProcesses(ctx context.Context, sandboxID string) ([]envdclient.ProcessInfo, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if sb.Status != models.StatusRunning {
+		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.ListProcesses(ctx)
+}
+
+// KillProcess sends a signal to a process inside a sandbox.
+func (m *Manager) KillProcess(ctx context.Context, sandboxID string, pid uint32, tag string, signal envdpb.Signal) error {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.KillProcess(ctx, pid, tag, signal)
 }
 
 // AcquireProxyConn atomically looks up a sandbox by ID and registers an

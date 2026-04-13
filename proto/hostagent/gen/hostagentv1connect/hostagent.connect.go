@@ -107,6 +107,18 @@ const (
 	// HostAgentServicePtyKillProcedure is the fully-qualified name of the HostAgentService's PtyKill
 	// RPC.
 	HostAgentServicePtyKillProcedure = "/hostagent.v1.HostAgentService/PtyKill"
+	// HostAgentServiceStartBackgroundProcedure is the fully-qualified name of the HostAgentService's
+	// StartBackground RPC.
+	HostAgentServiceStartBackgroundProcedure = "/hostagent.v1.HostAgentService/StartBackground"
+	// HostAgentServiceListProcessesProcedure is the fully-qualified name of the HostAgentService's
+	// ListProcesses RPC.
+	HostAgentServiceListProcessesProcedure = "/hostagent.v1.HostAgentService/ListProcesses"
+	// HostAgentServiceKillProcessProcedure is the fully-qualified name of the HostAgentService's
+	// KillProcess RPC.
+	HostAgentServiceKillProcessProcedure = "/hostagent.v1.HostAgentService/KillProcess"
+	// HostAgentServiceConnectProcessProcedure is the fully-qualified name of the HostAgentService's
+	// ConnectProcess RPC.
+	HostAgentServiceConnectProcessProcedure = "/hostagent.v1.HostAgentService/ConnectProcess"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -172,6 +184,15 @@ type HostAgentServiceClient interface {
 	PtyResize(context.Context, *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error)
 	// PtyKill sends a signal to a PTY process.
 	PtyKill(context.Context, *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error)
+	// StartBackground starts a process in the background and returns immediately
+	// with the PID and tag. The process survives RPC disconnection.
+	StartBackground(context.Context, *connect.Request[gen.StartBackgroundRequest]) (*connect.Response[gen.StartBackgroundResponse], error)
+	// ListProcesses returns all running processes inside a sandbox.
+	ListProcesses(context.Context, *connect.Request[gen.ListProcessesRequest]) (*connect.Response[gen.ListProcessesResponse], error)
+	// KillProcess sends a signal to a process identified by PID or tag.
+	KillProcess(context.Context, *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error)
+	// ConnectProcess re-attaches to a running process and streams its output.
+	ConnectProcess(context.Context, *connect.Request[gen.ConnectProcessRequest]) (*connect.ServerStreamForClient[gen.ConnectProcessResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -335,6 +356,30 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("PtyKill")),
 			connect.WithClientOptions(opts...),
 		),
+		startBackground: connect.NewClient[gen.StartBackgroundRequest, gen.StartBackgroundResponse](
+			httpClient,
+			baseURL+HostAgentServiceStartBackgroundProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("StartBackground")),
+			connect.WithClientOptions(opts...),
+		),
+		listProcesses: connect.NewClient[gen.ListProcessesRequest, gen.ListProcessesResponse](
+			httpClient,
+			baseURL+HostAgentServiceListProcessesProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("ListProcesses")),
+			connect.WithClientOptions(opts...),
+		),
+		killProcess: connect.NewClient[gen.KillProcessRequest, gen.KillProcessResponse](
+			httpClient,
+			baseURL+HostAgentServiceKillProcessProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("KillProcess")),
+			connect.WithClientOptions(opts...),
+		),
+		connectProcess: connect.NewClient[gen.ConnectProcessRequest, gen.ConnectProcessResponse](
+			httpClient,
+			baseURL+HostAgentServiceConnectProcessProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("ConnectProcess")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -365,6 +410,10 @@ type hostAgentServiceClient struct {
 	ptySendInput        *connect.Client[gen.PtySendInputRequest, gen.PtySendInputResponse]
 	ptyResize           *connect.Client[gen.PtyResizeRequest, gen.PtyResizeResponse]
 	ptyKill             *connect.Client[gen.PtyKillRequest, gen.PtyKillResponse]
+	startBackground     *connect.Client[gen.StartBackgroundRequest, gen.StartBackgroundResponse]
+	listProcesses       *connect.Client[gen.ListProcessesRequest, gen.ListProcessesResponse]
+	killProcess         *connect.Client[gen.KillProcessRequest, gen.KillProcessResponse]
+	connectProcess      *connect.Client[gen.ConnectProcessRequest, gen.ConnectProcessResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -492,6 +541,26 @@ func (c *hostAgentServiceClient) PtyKill(ctx context.Context, req *connect.Reque
 	return c.ptyKill.CallUnary(ctx, req)
 }
 
+// StartBackground calls hostagent.v1.HostAgentService.StartBackground.
+func (c *hostAgentServiceClient) StartBackground(ctx context.Context, req *connect.Request[gen.StartBackgroundRequest]) (*connect.Response[gen.StartBackgroundResponse], error) {
+	return c.startBackground.CallUnary(ctx, req)
+}
+
+// ListProcesses calls hostagent.v1.HostAgentService.ListProcesses.
+func (c *hostAgentServiceClient) ListProcesses(ctx context.Context, req *connect.Request[gen.ListProcessesRequest]) (*connect.Response[gen.ListProcessesResponse], error) {
+	return c.listProcesses.CallUnary(ctx, req)
+}
+
+// KillProcess calls hostagent.v1.HostAgentService.KillProcess.
+func (c *hostAgentServiceClient) KillProcess(ctx context.Context, req *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error) {
+	return c.killProcess.CallUnary(ctx, req)
+}
+
+// ConnectProcess calls hostagent.v1.HostAgentService.ConnectProcess.
+func (c *hostAgentServiceClient) ConnectProcess(ctx context.Context, req *connect.Request[gen.ConnectProcessRequest]) (*connect.ServerStreamForClient[gen.ConnectProcessResponse], error) {
+	return c.connectProcess.CallServerStream(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -555,6 +624,15 @@ type HostAgentServiceHandler interface {
 	PtyResize(context.Context, *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error)
 	// PtyKill sends a signal to a PTY process.
 	PtyKill(context.Context, *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error)
+	// StartBackground starts a process in the background and returns immediately
+	// with the PID and tag. The process survives RPC disconnection.
+	StartBackground(context.Context, *connect.Request[gen.StartBackgroundRequest]) (*connect.Response[gen.StartBackgroundResponse], error)
+	// ListProcesses returns all running processes inside a sandbox.
+	ListProcesses(context.Context, *connect.Request[gen.ListProcessesRequest]) (*connect.Response[gen.ListProcessesResponse], error)
+	// KillProcess sends a signal to a process identified by PID or tag.
+	KillProcess(context.Context, *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error)
+	// ConnectProcess re-attaches to a running process and streams its output.
+	ConnectProcess(context.Context, *connect.Request[gen.ConnectProcessRequest], *connect.ServerStream[gen.ConnectProcessResponse]) error
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -714,6 +792,30 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("PtyKill")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServiceStartBackgroundHandler := connect.NewUnaryHandler(
+		HostAgentServiceStartBackgroundProcedure,
+		svc.StartBackground,
+		connect.WithSchema(hostAgentServiceMethods.ByName("StartBackground")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceListProcessesHandler := connect.NewUnaryHandler(
+		HostAgentServiceListProcessesProcedure,
+		svc.ListProcesses,
+		connect.WithSchema(hostAgentServiceMethods.ByName("ListProcesses")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceKillProcessHandler := connect.NewUnaryHandler(
+		HostAgentServiceKillProcessProcedure,
+		svc.KillProcess,
+		connect.WithSchema(hostAgentServiceMethods.ByName("KillProcess")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceConnectProcessHandler := connect.NewServerStreamHandler(
+		HostAgentServiceConnectProcessProcedure,
+		svc.ConnectProcess,
+		connect.WithSchema(hostAgentServiceMethods.ByName("ConnectProcess")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -766,6 +868,14 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServicePtyResizeHandler.ServeHTTP(w, r)
 		case HostAgentServicePtyKillProcedure:
 			hostAgentServicePtyKillHandler.ServeHTTP(w, r)
+		case HostAgentServiceStartBackgroundProcedure:
+			hostAgentServiceStartBackgroundHandler.ServeHTTP(w, r)
+		case HostAgentServiceListProcessesProcedure:
+			hostAgentServiceListProcessesHandler.ServeHTTP(w, r)
+		case HostAgentServiceKillProcessProcedure:
+			hostAgentServiceKillProcessHandler.ServeHTTP(w, r)
+		case HostAgentServiceConnectProcessProcedure:
+			hostAgentServiceConnectProcessHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -873,4 +983,20 @@ func (UnimplementedHostAgentServiceHandler) PtyResize(context.Context, *connect.
 
 func (UnimplementedHostAgentServiceHandler) PtyKill(context.Context, *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PtyKill is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) StartBackground(context.Context, *connect.Request[gen.StartBackgroundRequest]) (*connect.Response[gen.StartBackgroundResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.StartBackground is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) ListProcesses(context.Context, *connect.Request[gen.ListProcessesRequest]) (*connect.Response[gen.ListProcessesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ListProcesses is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) KillProcess(context.Context, *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.KillProcess is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) ConnectProcess(context.Context, *connect.Request[gen.ConnectProcessRequest], *connect.ServerStream[gen.ConnectProcessResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ConnectProcess is not implemented"))
 }

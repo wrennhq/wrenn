@@ -74,6 +74,7 @@ func New(
 	buildH := newBuildHandler(buildSvc, queries, pool)
 	channelH := newChannelHandler(channelSvc, al)
 	ptyH := newPtyHandler(queries, pool)
+	processH := newProcessHandler(queries, pool)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
 
 	// OpenAPI spec and docs.
@@ -141,6 +142,9 @@ func New(
 			r.Post("/files/remove", fsH.Remove)
 			r.Get("/metrics", metricsH.GetMetrics)
 			r.Get("/pty", ptyH.PtySession)
+			r.Get("/processes", processH.ListProcesses)
+			r.Delete("/processes/{selector}", processH.KillProcess)
+			r.Get("/processes/{selector}/stream", processH.ConnectProcess)
 		})
 	})
 
@@ -224,6 +228,9 @@ func New(
 			r.Post("/files/remove", fsH.Remove)
 			r.Get("/metrics", metricsH.GetMetrics)
 			r.Get("/pty", ptyH.PtySession)
+			r.Get("/processes", processH.ListProcesses)
+			r.Delete("/processes/{selector}", processH.KillProcess)
+			r.Get("/processes/{selector}/stream", processH.ConnectProcess)
 		})
 	})
 
