@@ -35,7 +35,7 @@
 	let targetY = 50;
 	let rafId: number | null = null;
 
-	const LERP_FACTOR = 0.04; // lower = more drag
+	const LERP_FACTOR = 0.04;
 
 	function lerpLoop() {
 		const dx = targetX - glowX;
@@ -58,7 +58,6 @@
 		const normX = (e.clientX - rect.left) / rect.width;
 		const normY = (e.clientY - rect.top) / rect.height;
 
-		// Invert: mouse goes right → glow goes left
 		targetX = 55 - normX * 10;
 		targetY = 55 - normY * 10;
 
