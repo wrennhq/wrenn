@@ -441,3 +441,109 @@ func (s *TeamService) SetBYOC(ctx context.Context, teamID pgtype.UUID, enabled b
 	}
 	return nil
 }
+
+// AdminTeamRow is the shape returned by AdminListTeams.
+type AdminTeamRow struct {
+	ID                 pgtype.UUID
+	Name               string
+	Slug               string
+	IsByoc             bool
+	CreatedAt          time.Time
+	DeletedAt          *time.Time
+	MemberCount        int32
+	OwnerName          string
+	OwnerEmail         string
+	ActiveSandboxCount int32
+	ChannelCount       int32
+}
+
+// AdminListTeams returns a paginated list of all teams (excluding the platform
+// team) with member counts, owner info, and active sandbox counts.
+// Admin-only — caller must verify admin status.
+func (s *TeamService) AdminListTeams(ctx context.Context, limit, offset int32) ([]AdminTeamRow, int32, error) {
+	teams, err := s.DB.ListTeamsAdmin(ctx, db.ListTeamsAdminParams{
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("list teams: %w", err)
+	}
+
+	total, err := s.DB.CountTeamsAdmin(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count teams: %w", err)
+	}
+
+	rows := make([]AdminTeamRow, len(teams))
+	for i, t := range teams {
+		row := AdminTeamRow{
+			ID:                 t.ID,
+			Name:               t.Name,
+			Slug:               t.Slug,
+			IsByoc:             t.IsByoc,
+			CreatedAt:          t.CreatedAt.Time,
+			MemberCount:        t.MemberCount,
+			OwnerName:          t.OwnerName,
+			OwnerEmail:         t.OwnerEmail,
+			ActiveSandboxCount: t.ActiveSandboxCount,
+			ChannelCount:       t.ChannelCount,
+		}
+		if t.DeletedAt.Valid {
+			deletedAt := t.DeletedAt.Time
+			row.DeletedAt = &deletedAt
+		}
+		rows[i] = row
+	}
+	return rows, total, nil
+}
+
+// AdminDeleteTeam soft-deletes a team and destroys all its active sandboxes.
+// Unlike DeleteTeam, this does not require the caller to be the team owner —
+// it is admin-only (caller must verify admin status).
+func (s *TeamService) AdminDeleteTeam(ctx context.Context, teamID pgtype.UUID) error {
+	team, err := s.DB.GetTeam(ctx, teamID)
+	if err != nil {
+		return fmt.Errorf("team not found: %w", err)
+	}
+	if team.DeletedAt.Valid {
+		return fmt.Errorf("team not found")
+	}
+
+	// Destroy active sandboxes (same logic as DeleteTeam).
+	sandboxes, err := s.DB.ListActiveSandboxesByTeam(ctx, teamID)
+	if err != nil {
+		return fmt.Errorf("list active sandboxes: %w", err)
+	}
+
+	var stopIDs []pgtype.UUID
+	for _, sb := range sandboxes {
+		host, hostErr := s.DB.GetHost(ctx, sb.HostID)
+		if hostErr == nil {
+			agent, agentErr := s.HostPool.GetForHost(host)
+			if agentErr == nil {
+				if _, err := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
+					SandboxId: id.FormatSandboxID(sb.ID),
+				})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
+					slog.Warn("admin team delete: failed to destroy sandbox", "sandbox_id", id.FormatSandboxID(sb.ID), "error", err)
+				}
+			}
+		}
+		stopIDs = append(stopIDs, sb.ID)
+	}
+
+	if len(stopIDs) > 0 {
+		if err := s.DB.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
+			Column1: stopIDs,
+			Status:  "stopped",
+		}); err != nil {
+			return fmt.Errorf("update sandbox statuses: %w", err)
+		}
+	}
+
+	go s.cleanupTeamTemplates(context.Background(), teamID)
+
+	if err := s.DB.SoftDeleteTeam(ctx, teamID); err != nil {
+		return fmt.Errorf("soft delete team: %w", err)
+	}
+	return nil
+}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -381,6 +382,90 @@ func (h *teamHandler) SetBYOC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.SetBYOC(r.Context(), teamID, req.Enabled); err != nil {
+		status, code, msg := serviceErrToHTTP(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdminListTeams handles GET /v1/admin/teams?page=1
+// Returns a paginated list of all teams with member counts, owner info, and active sandbox counts.
+func (h *teamHandler) AdminListTeams(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if _, err := fmt.Sscanf(p, "%d", &page); err != nil || page < 1 {
+			page = 1
+		}
+	}
+	const perPage = 100
+	offset := int32((page - 1) * perPage)
+
+	teams, total, err := h.svc.AdminListTeams(r.Context(), perPage, offset)
+	if err != nil {
+		status, code, msg := serviceErrToHTTP(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	type adminTeamResponse struct {
+		ID                 string  `json:"id"`
+		Name               string  `json:"name"`
+		Slug               string  `json:"slug"`
+		IsByoc             bool    `json:"is_byoc"`
+		CreatedAt          string  `json:"created_at"`
+		DeletedAt          *string `json:"deleted_at"`
+		MemberCount        int32   `json:"member_count"`
+		OwnerName          string  `json:"owner_name"`
+		OwnerEmail         string  `json:"owner_email"`
+		ActiveSandboxCount int32   `json:"active_sandbox_count"`
+		ChannelCount       int32   `json:"channel_count"`
+	}
+
+	resp := make([]adminTeamResponse, len(teams))
+	for i, t := range teams {
+		r := adminTeamResponse{
+			ID:                 id.FormatTeamID(t.ID),
+			Name:               t.Name,
+			Slug:               t.Slug,
+			IsByoc:             t.IsByoc,
+			CreatedAt:          t.CreatedAt.Format(time.RFC3339),
+			MemberCount:        t.MemberCount,
+			OwnerName:          t.OwnerName,
+			OwnerEmail:         t.OwnerEmail,
+			ActiveSandboxCount: t.ActiveSandboxCount,
+			ChannelCount:       t.ChannelCount,
+		}
+		if t.DeletedAt != nil {
+			s := t.DeletedAt.Format(time.RFC3339)
+			r.DeletedAt = &s
+		}
+		resp[i] = r
+	}
+
+	totalPages := (total + perPage - 1) / perPage
+	writeJSON(w, http.StatusOK, map[string]any{
+		"teams":       resp,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
+		"total_pages": totalPages,
+	})
+}
+
+// AdminDeleteTeam handles DELETE /v1/admin/teams/{id}
+// Soft-deletes a team and destroys all its active sandboxes.
+func (h *teamHandler) AdminDeleteTeam(w http.ResponseWriter, r *http.Request) {
+	teamIDStr := chi.URLParam(r, "id")
+
+	teamID, err := id.ParseTeamID(teamIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid team ID")
+		return
+	}
+
+	if err := h.svc.AdminDeleteTeam(r.Context(), teamID); err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return

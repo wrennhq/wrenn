@@ -51,6 +51,7 @@ func New(
 	templateSvc := &service.TemplateService{DB: queries}
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
+	userSvc := &service.UserService{DB: queries}
 	auditSvc := &service.AuditService{DB: queries}
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
@@ -67,7 +68,7 @@ func New(
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
 	hostH := newHostHandler(hostSvc, queries, al)
 	teamH := newTeamHandler(teamSvc, al)
-	usersH := newUsersHandler(queries)
+	usersH := newUsersHandler(queries, userSvc)
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
@@ -88,11 +89,11 @@ func New(
 	r.Get("/auth/oauth/{provider}/callback", oauthH.Callback)
 
 	// JWT-authenticated: switch active team.
-	r.With(requireJWT(jwtSecret)).Post("/v1/auth/switch-team", authH.SwitchTeam)
+	r.With(requireJWT(jwtSecret, queries)).Post("/v1/auth/switch-team", authH.SwitchTeam)
 
 	// JWT-authenticated: API key management.
 	r.Route("/v1/api-keys", func(r chi.Router) {
-		r.Use(requireJWT(jwtSecret))
+		r.Use(requireJWT(jwtSecret, queries))
 		r.Post("/", apiKeys.Create)
 		r.Get("/", apiKeys.List)
 		r.Delete("/{id}", apiKeys.Delete)
@@ -100,7 +101,7 @@ func New(
 
 	// JWT-authenticated: team management.
 	r.Route("/v1/teams", func(r chi.Router) {
-		r.Use(requireJWT(jwtSecret))
+		r.Use(requireJWT(jwtSecret, queries))
 		r.Get("/", teamH.List)
 		r.Post("/", teamH.Create)
 		r.Route("/{id}", func(r chi.Router) {
@@ -116,7 +117,7 @@ func New(
 	})
 
 	// JWT-authenticated: user search (for add-member UI).
-	r.With(requireJWT(jwtSecret)).Get("/v1/users/search", usersH.Search)
+	r.With(requireJWT(jwtSecret, queries)).Get("/v1/users/search", usersH.Search)
 
 	// Capsule lifecycle: accepts API key or JWT bearer token.
 	r.Route("/v1/capsules", func(r chi.Router) {
@@ -169,7 +170,7 @@ func New(
 
 		// JWT-authenticated: host CRUD and tags.
 		r.Group(func(r chi.Router) {
-			r.Use(requireJWT(jwtSecret))
+			r.Use(requireJWT(jwtSecret, queries))
 			r.Post("/", hostH.Create)
 			r.Get("/", hostH.List)
 			r.Route("/{id}", func(r chi.Router) {
@@ -186,7 +187,7 @@ func New(
 
 	// JWT-authenticated: notification channels.
 	r.Route("/v1/channels", func(r chi.Router) {
-		r.Use(requireJWT(jwtSecret))
+		r.Use(requireJWT(jwtSecret, queries))
 		r.Post("/", channelH.Create)
 		r.Get("/", channelH.List)
 		r.Post("/test", channelH.Test)
@@ -199,13 +200,17 @@ func New(
 	})
 
 	// JWT-authenticated: audit log.
-	r.With(requireJWT(jwtSecret)).Get("/v1/audit-logs", auditH.List)
+	r.With(requireJWT(jwtSecret, queries)).Get("/v1/audit-logs", auditH.List)
 
 	// Platform admin routes — require JWT + DB-validated admin status.
 	r.Route("/v1/admin", func(r chi.Router) {
-		r.Use(requireJWT(jwtSecret))
+		r.Use(requireJWT(jwtSecret, queries))
 		r.Use(requireAdmin(queries))
+		r.Get("/teams", teamH.AdminListTeams)
 		r.Put("/teams/{id}/byoc", teamH.SetBYOC)
+		r.Delete("/teams/{id}", teamH.AdminDeleteTeam)
+		r.Get("/users", usersH.AdminListUsers)
+		r.Put("/users/{id}/active", usersH.SetUserActive)
 		r.Get("/templates", buildH.ListTemplates)
 		r.Delete("/templates/{name}", buildH.DeleteTemplate)
 		r.Post("/builds", buildH.Create)

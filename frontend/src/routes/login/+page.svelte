@@ -22,10 +22,20 @@
 	let error = $state('');
 	let loading = $state(false);
 
+	const oauthErrorMessages: Record<string, string> = {
+		account_deactivated: 'Your account has been deactivated — contact your administrator to regain access',
+		access_denied: 'Access was denied by the provider',
+		email_taken: 'An account with this email already exists',
+		exchange_failed: 'Authentication failed — please try again',
+	};
+
 	// Read OAuth error forwarded from /auth/github/callback
 	onMount(() => {
 		const urlErr = $page.url.searchParams.get('error');
-		if (urlErr) error = decodeURIComponent(urlErr);
+		if (urlErr) {
+			const decoded = decodeURIComponent(urlErr);
+			error = oauthErrorMessages[decoded] ?? decoded;
+		}
 	});
 
 	// Mouse-reactive glow — moves opposite to cursor with viscous drag
