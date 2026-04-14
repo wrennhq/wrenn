@@ -118,7 +118,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	}
 
 	// Pick a host for this sandbox.
-	host, err := s.Scheduler.SelectHost(ctx, p.TeamID, team.IsByoc)
+	host, err := s.Scheduler.SelectHost(ctx, p.TeamID, team.IsByoc, p.MemoryMB, p.DiskSizeMB)
 	if err != nil {
 		return db.Sandbox{}, fmt.Errorf("select host: %w", err)
 	}

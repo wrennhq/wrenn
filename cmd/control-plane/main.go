@@ -109,8 +109,8 @@ func main() {
 	hostPool := lifecycle.NewHostClientPoolTLS(auth.CPClientTLSConfig(ca, cpCertStore))
 	slog.Info("host client pool: mTLS enabled")
 
-	// Scheduler — picks a host for each new sandbox (round-robin for now).
-	hostScheduler := scheduler.NewRoundRobinScheduler(queries)
+	// Scheduler — picks a host for each new sandbox (least-loaded, bottleneck-first).
+	hostScheduler := scheduler.NewLeastLoadedScheduler(queries)
 
 	// OAuth provider registry.
 	oauthRegistry := oauth.NewRegistry()

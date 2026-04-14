@@ -283,7 +283,7 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 	}
 
 	// Pick a platform host and create a sandbox.
-	host, err := s.Scheduler.SelectHost(buildCtx, id.PlatformTeamID, false)
+	host, err := s.Scheduler.SelectHost(buildCtx, id.PlatformTeamID, false, build.MemoryMb, 5120)
 	if err != nil {
 		s.failBuild(buildCtx, buildID, fmt.Sprintf("no host available: %v", err))
 		return
