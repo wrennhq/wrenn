@@ -81,6 +81,41 @@ SELECT * FROM hosts WHERE id = $1 AND team_id = $2;
 -- Returns all hosts that have completed registration (not pending/offline).
 SELECT * FROM hosts WHERE status NOT IN ('pending', 'offline') ORDER BY created_at;
 
+-- name: GetHostsWithLoad :many
+-- Returns all online hosts with raw per-host sandbox resource consumption.
+-- Separates running and paused sandbox totals so the caller can apply its own formulas.
+SELECT
+    h.id,
+    h.type,
+    h.team_id,
+    h.provider,
+    h.availability_zone,
+    h.arch,
+    h.cpu_cores,
+    h.memory_mb,
+    h.disk_gb,
+    h.address,
+    h.status,
+    h.last_heartbeat_at,
+    h.metadata,
+    h.created_by,
+    h.created_at,
+    h.updated_at,
+    h.cert_fingerprint,
+    h.cert_expires_at,
+    COALESCE(SUM(s.vcpus)       FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_vcpus,
+    COALESCE(SUM(s.memory_mb)   FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_memory_mb,
+    COALESCE(SUM(s.disk_size_mb) FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_disk_mb,
+    COALESCE(SUM(s.memory_mb)   FILTER (WHERE s.status = 'paused'), 0)::int AS paused_memory_mb,
+    COALESCE(SUM(s.disk_size_mb) FILTER (WHERE s.status = 'paused'), 0)::int AS paused_disk_mb
+FROM hosts h
+LEFT JOIN sandboxes s ON s.host_id = h.id
+    AND s.status IN ('running', 'paused', 'starting', 'pending')
+WHERE h.status = 'online'
+  AND h.address != ''
+GROUP BY h.id
+ORDER BY h.created_at;
+
 -- name: UpdateHostHeartbeatAndStatus :execrows
 -- Updates last_heartbeat_at and transitions unreachable hosts back to online.
 -- Returns 0 if no host was found (deleted), which the caller treats as 404.

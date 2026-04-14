@@ -16,8 +16,11 @@ type HostScheduler interface {
 	// SelectHost returns a host that can accept a new sandbox.
 	// For BYOC teams (isByoc=true), only online BYOC hosts belonging to teamID
 	// are considered. For non-BYOC teams, only online regular (platform) hosts
-	// are considered. Returns an error if no suitable host is available.
-	SelectHost(ctx context.Context, teamID pgtype.UUID, isByoc bool) (db.Host, error)
+	// are considered.
+	// memoryMb and diskSizeMb describe the sandbox's resource requirements so
+	// the scheduler can perform admission control (reject when no host has
+	// enough RAM or disk). Pass 0 to skip admission checks.
+	SelectHost(ctx context.Context, teamID pgtype.UUID, isByoc bool, memoryMb, diskSizeMb int32) (db.Host, error)
 }
 
 // RoundRobinScheduler cycles through eligible online hosts in round-robin order.
@@ -34,7 +37,9 @@ func NewRoundRobinScheduler(queries *db.Queries) *RoundRobinScheduler {
 }
 
 // SelectHost returns the next eligible online host in round-robin order.
-func (s *RoundRobinScheduler) SelectHost(ctx context.Context, teamID pgtype.UUID, isByoc bool) (db.Host, error) {
+// The memoryMb and diskSizeMb parameters are ignored — round-robin performs
+// no admission control.
+func (s *RoundRobinScheduler) SelectHost(ctx context.Context, teamID pgtype.UUID, isByoc bool, _, _ int32) (db.Host, error) {
 	hosts, err := s.db.ListActiveHosts(ctx)
 	if err != nil {
 		return db.Host{}, fmt.Errorf("list hosts: %w", err)
