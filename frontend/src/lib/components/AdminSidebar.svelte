@@ -11,7 +11,8 @@
 		IconBell,
 		IconDocs,
 		IconChevron,
-		IconShield
+		IconShield,
+		IconMembers
 	} from './icons';
 
 	let { collapsed = $bindable(false) }: { collapsed: boolean } = $props();
@@ -25,7 +26,8 @@
 	const managementItems: NavItem[] = [
 		{ label: 'Templates', icon: IconBox, href: '/admin/templates' },
 		{ label: 'Capsules', icon: IconMonitor, href: '/admin/capsules' },
-		{ label: 'Hosts', icon: IconServer, href: '/admin/hosts' }
+		{ label: 'Hosts', icon: IconServer, href: '/admin/hosts' },
+		{ label: 'Teams', icon: IconMembers, href: '/admin/teams' }
 	];
 
 	function isActive(href: string): boolean {

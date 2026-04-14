@@ -205,7 +205,9 @@ func New(
 	r.Route("/v1/admin", func(r chi.Router) {
 		r.Use(requireJWT(jwtSecret))
 		r.Use(requireAdmin(queries))
+		r.Get("/teams", teamH.AdminListTeams)
 		r.Put("/teams/{id}/byoc", teamH.SetBYOC)
+		r.Delete("/teams/{id}", teamH.AdminDeleteTeam)
 		r.Get("/templates", buildH.ListTemplates)
 		r.Delete("/templates/{name}", buildH.DeleteTemplate)
 		r.Post("/builds", buildH.Create)

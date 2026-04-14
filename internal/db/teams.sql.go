@@ -11,6 +11,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countTeamsAdmin = `-- name: CountTeamsAdmin :one
+SELECT COUNT(*)::int AS total
+FROM teams
+WHERE id != '00000000-0000-0000-0000-000000000000'
+`
+
+func (q *Queries) CountTeamsAdmin(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countTeamsAdmin)
+	var total int32
+	err := row.Scan(&total)
+	return total, err
+}
+
 const deleteTeamMember = `-- name: DeleteTeamMember :exec
 DELETE FROM users_teams WHERE team_id = $1 AND user_id = $2
 `
@@ -269,6 +282,78 @@ func (q *Queries) InsertTeamMember(ctx context.Context, arg InsertTeamMemberPara
 		arg.Role,
 	)
 	return err
+}
+
+const listTeamsAdmin = `-- name: ListTeamsAdmin :many
+SELECT
+    t.id,
+    t.name,
+    t.slug,
+    t.is_byoc,
+    t.created_at,
+    t.deleted_at,
+    (SELECT COUNT(*) FROM users_teams ut WHERE ut.team_id = t.id)::int AS member_count,
+    COALESCE(owner_u.name, '') AS owner_name,
+    COALESCE(owner_u.email, '') AS owner_email,
+    (SELECT COUNT(*) FROM sandboxes s WHERE s.team_id = t.id AND s.status IN ('running', 'paused', 'starting'))::int AS active_sandbox_count,
+    (SELECT COUNT(*) FROM channels c WHERE c.team_id = t.id)::int AS channel_count
+FROM teams t
+LEFT JOIN users_teams owner_ut ON owner_ut.team_id = t.id AND owner_ut.role = 'owner'
+LEFT JOIN users owner_u ON owner_u.id = owner_ut.user_id
+WHERE t.id != '00000000-0000-0000-0000-000000000000'
+ORDER BY t.deleted_at ASC NULLS FIRST, t.created_at DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListTeamsAdminParams struct {
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
+}
+
+type ListTeamsAdminRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	Name               string             `json:"name"`
+	Slug               string             `json:"slug"`
+	IsByoc             bool               `json:"is_byoc"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	MemberCount        int32              `json:"member_count"`
+	OwnerName          string             `json:"owner_name"`
+	OwnerEmail         string             `json:"owner_email"`
+	ActiveSandboxCount int32              `json:"active_sandbox_count"`
+	ChannelCount       int32              `json:"channel_count"`
+}
+
+func (q *Queries) ListTeamsAdmin(ctx context.Context, arg ListTeamsAdminParams) ([]ListTeamsAdminRow, error) {
+	rows, err := q.db.Query(ctx, listTeamsAdmin, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamsAdminRow
+	for rows.Next() {
+		var i ListTeamsAdminRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Slug,
+			&i.IsByoc,
+			&i.CreatedAt,
+			&i.DeletedAt,
+			&i.MemberCount,
+			&i.OwnerName,
+			&i.OwnerEmail,
+			&i.ActiveSandboxCount,
+			&i.ChannelCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setTeamBYOC = `-- name: SetTeamBYOC :exec
