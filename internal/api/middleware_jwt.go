@@ -1,16 +1,19 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"git.omukk.dev/wrenn/wrenn/internal/auth"
+	"git.omukk.dev/wrenn/wrenn/internal/db"
 	"git.omukk.dev/wrenn/wrenn/internal/id"
 )
 
 // requireJWT validates a JWT from the Authorization: Bearer header or the
 // ?token= query parameter (for WebSocket connections that cannot send headers).
-func requireJWT(secret []byte) func(http.Handler) http.Handler {
+// It also verifies the user is still active in the database.
+func requireJWT(secret []byte, queries *db.Queries) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var tokenStr string
@@ -37,6 +40,18 @@ func requireJWT(secret []byte) func(http.Handler) http.Handler {
 			userID, err := id.ParseUserID(claims.Subject)
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "invalid user ID in token")
+				return
+			}
+
+			// Verify user is still active in the database.
+			user, err := queries.GetUserByID(r.Context(), userID)
+			if err != nil {
+				slog.Warn("jwt auth: failed to look up user", "user_id", claims.Subject, "error", err)
+				writeError(w, http.StatusUnauthorized, "unauthorized", "user not found")
+				return
+			}
+			if !user.IsActive {
+				writeError(w, http.StatusForbidden, "account_deactivated", "your account has been deactivated — contact your administrator to regain access")
 				return
 			}
 

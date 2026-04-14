@@ -237,6 +237,12 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !user.IsActive {
+		slog.Warn("login failed: account deactivated", "email", req.Email, "ip", r.RemoteAddr)
+		writeError(w, http.StatusForbidden, "account_deactivated", "your account has been deactivated — contact your administrator to regain access")
+		return
+	}
+
 	team, role, err := loginTeam(ctx, h.db, user.ID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -64,6 +64,18 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 					return
 				}
 
+				// Verify user is still active in the database.
+				user, err := queries.GetUserByID(r.Context(), userID)
+				if err != nil {
+					slog.Warn("jwt auth: failed to look up user", "user_id", claims.Subject, "error", err)
+					writeError(w, http.StatusUnauthorized, "unauthorized", "user not found")
+					return
+				}
+				if !user.IsActive {
+					writeError(w, http.StatusForbidden, "account_deactivated", "your account has been deactivated — contact your administrator to regain access")
+					return
+				}
+
 				ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{
 					TeamID: teamID,
 					UserID: userID,

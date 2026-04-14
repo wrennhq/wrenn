@@ -150,6 +150,11 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, redirectBase, "db_error")
 			return
 		}
+		if !user.IsActive {
+			slog.Warn("oauth login: account deactivated", "email", user.Email)
+			redirectWithError(w, r, redirectBase, "account_deactivated")
+			return
+		}
 		team, role, err := loginTeam(ctx, h.db, user.ID)
 		if err != nil {
 			slog.Error("oauth login: failed to get team", "error", err)
@@ -299,6 +304,11 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 	if err != nil {
 		slog.Error("oauth: retry login: failed to get user", "error", err)
 		redirectWithError(w, r, redirectBase, "db_error")
+		return
+	}
+	if !user.IsActive {
+		slog.Warn("oauth: retry login: account deactivated", "email", user.Email)
+		redirectWithError(w, r, redirectBase, "account_deactivated")
 		return
 	}
 	team, role, err := loginTeam(ctx, h.db, user.ID)

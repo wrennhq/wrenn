@@ -12,7 +12,8 @@
 		IconDocs,
 		IconChevron,
 		IconShield,
-		IconMembers
+		IconMembers,
+		IconUser
 	} from './icons';
 
 	let { collapsed = $bindable(false) }: { collapsed: boolean } = $props();
@@ -24,10 +25,14 @@
 	};
 
 	const managementItems: NavItem[] = [
+		{ label: 'Users', icon: IconUser, href: '/admin/users' },
+		{ label: 'Teams', icon: IconMembers, href: '/admin/teams' }
+	];
+
+	const platformItems: NavItem[] = [
 		{ label: 'Templates', icon: IconBox, href: '/admin/templates' },
 		{ label: 'Capsules', icon: IconMonitor, href: '/admin/capsules' },
-		{ label: 'Hosts', icon: IconServer, href: '/admin/hosts' },
-		{ label: 'Teams', icon: IconMembers, href: '/admin/teams' }
+		{ label: 'Hosts', icon: IconServer, href: '/admin/hosts' }
 	];
 
 	function isActive(href: string): boolean {
@@ -100,43 +105,8 @@
 
 	<!-- Navigation -->
 	<nav class="flex-1 overflow-y-auto px-3 {collapsed ? 'px-1.5' : ''}">
-		<div class="mb-3">
-			{#if !collapsed}
-				<div class="mb-1 px-2.5 py-1.5 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">
-					Management
-				</div>
-			{:else}
-				<div class="mx-1 my-2 h-px bg-[var(--color-border)]"></div>
-			{/if}
-			{#each managementItems as item}
-				{#if isActive(item.href)}
-					<a
-						href={item.href}
-						class="group relative flex items-center rounded-[var(--radius-input)] bg-[var(--color-accent-glow-mid)] px-2.5 py-2.5 transition-colors duration-150 {collapsed ? 'justify-center px-2' : 'gap-3'}"
-						title={collapsed ? item.label : undefined}
-					>
-						{#if !collapsed}
-							<div class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--color-accent)]"></div>
-						{/if}
-						<item.icon size={16} class="shrink-0 text-[var(--color-accent-bright)]" />
-						{#if !collapsed}
-							<span class="text-ui font-medium text-[var(--color-accent-bright)]">{item.label}</span>
-						{/if}
-					</a>
-				{:else}
-					<a
-						href={item.href}
-						class="group flex items-center rounded-[var(--radius-input)] px-2.5 py-2.5 transition-colors duration-150 hover:bg-[var(--color-bg-3)] {collapsed ? 'justify-center px-2' : 'gap-3'}"
-						title={collapsed ? item.label : undefined}
-					>
-						<item.icon size={16} class="shrink-0 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
-						{#if !collapsed}
-							<span class="text-ui text-[var(--color-text-primary)] transition-colors duration-150 group-hover:text-[var(--color-text-bright)]">{item.label}</span>
-						{/if}
-					</a>
-				{/if}
-			{/each}
-		</div>
+		{@render navSection('Platform', platformItems)}
+		{@render navSection('Management', managementItems)}
 	</nav>
 
 	<!-- Bottom links -->
@@ -188,3 +158,43 @@
 		</button>
 	</div>
 </aside>
+
+{#snippet navSection(title: string, items: NavItem[])}
+	<div class="mb-3">
+		{#if !collapsed}
+			<div class="mb-1 px-2.5 py-1.5 text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">
+				{title}
+			</div>
+		{:else}
+			<div class="mx-1 my-2 h-px bg-[var(--color-border)]"></div>
+		{/if}
+		{#each items as item}
+			{#if isActive(item.href)}
+				<a
+					href={item.href}
+					class="group relative flex items-center rounded-[var(--radius-input)] bg-[var(--color-accent-glow-mid)] px-2.5 py-2.5 transition-colors duration-150 {collapsed ? 'justify-center px-2' : 'gap-3'}"
+					title={collapsed ? item.label : undefined}
+				>
+					{#if !collapsed}
+						<div class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--color-accent)]"></div>
+					{/if}
+					<item.icon size={16} class="shrink-0 text-[var(--color-accent-bright)]" />
+					{#if !collapsed}
+						<span class="text-ui font-medium text-[var(--color-accent-bright)]">{item.label}</span>
+					{/if}
+				</a>
+			{:else}
+				<a
+					href={item.href}
+					class="group flex items-center rounded-[var(--radius-input)] px-2.5 py-2.5 transition-colors duration-150 hover:bg-[var(--color-bg-3)] {collapsed ? 'justify-center px-2' : 'gap-3'}"
+					title={collapsed ? item.label : undefined}
+				>
+					<item.icon size={16} class="shrink-0 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
+					{#if !collapsed}
+						<span class="text-ui text-[var(--color-text-primary)] transition-colors duration-150 group-hover:text-[var(--color-text-bright)]">{item.label}</span>
+					{/if}
+				</a>
+			{/if}
+		{/each}
+	</div>
+{/snippet}

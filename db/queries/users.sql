@@ -43,3 +43,26 @@ SELECT id, email FROM users WHERE email LIKE $1 || '%' ORDER BY email LIMIT 10;
 
 -- name: UpdateUserName :exec
 UPDATE users SET name = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: ListUsersAdmin :many
+SELECT
+    u.id,
+    u.email,
+    u.name,
+    u.is_admin,
+    u.is_active,
+    u.created_at,
+    (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id)::int AS teams_joined,
+    (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id AND ut.role = 'owner')::int AS teams_owned
+FROM users u
+WHERE u.deleted_at IS NULL
+ORDER BY u.created_at DESC
+LIMIT $1 OFFSET $2;
+
+-- name: CountUsersAdmin :one
+SELECT COUNT(*)::int AS total
+FROM users
+WHERE deleted_at IS NULL;
+
+-- name: SetUserActive :exec
+UPDATE users SET is_active = $2, updated_at = NOW() WHERE id = $1;
