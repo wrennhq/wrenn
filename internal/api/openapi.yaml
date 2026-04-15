@@ -1386,7 +1386,6 @@ paths:
         PTY data (input and output) is base64-encoded because it contains raw
         terminal bytes (escape sequences, control codes) that are not valid UTF-8.
 
-        Sessions have a 120-second inactivity timeout (reset on input/resize).
         Sessions persist across WebSocket disconnections — the process keeps
         running in the capsule. Use the `tag` from the "started" response to
         reconnect later.

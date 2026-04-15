@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	ptyInactivityTimeout = 120 * time.Second
 	ptyKeepaliveInterval = 30 * time.Second
 	ptyDefaultCmd        = "/bin/bash"
 	ptyDefaultCols       = 80
@@ -246,10 +245,6 @@ func runPtyLoop(
 ) {
 	var wg sync.WaitGroup
 
-	// Inactivity timer — reset on input/resize, fires kill after timeout.
-	timer := time.NewTimer(ptyInactivityTimeout)
-	defer timer.Stop()
-
 	// Output pump: read from Connect stream, write to WebSocket.
 	wg.Add(1)
 	go func() {
@@ -317,7 +312,6 @@ func runPtyLoop(
 				})); err != nil {
 					slog.Debug("pty send input error", "error", err)
 				}
-				resetTimer(timer, ptyInactivityTimeout)
 
 			case "resize":
 				cols := msg.Cols
@@ -331,7 +325,6 @@ func runPtyLoop(
 					})); err != nil {
 						slog.Debug("pty resize error", "error", err)
 					}
-					resetTimer(timer, ptyInactivityTimeout)
 				}
 
 			case "kill":
@@ -364,42 +357,10 @@ func runPtyLoop(
 		}
 	}()
 
-	// Inactivity timeout goroutine.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		select {
-		case <-timer.C:
-			slog.Info("pty session timed out", "sandbox_id", sandboxID, "tag", tag)
-			rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if _, err := agent.PtyKill(rpcCtx, connect.NewRequest(&pb.PtyKillRequest{
-				SandboxId: sandboxID,
-				Tag:       tag,
-			})); err != nil {
-				slog.Debug("pty timeout kill error", "error", err)
-			}
-			rpcCancel()
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-
 	wg.Wait()
 }
 
 // newPtyTag returns a PTY session tag: "pty-" + 8 random hex chars.
 func newPtyTag() string {
 	return "pty-" + id.NewPtyTag()
-}
-
-// resetTimer safely resets a timer by stopping it and draining the channel
-// before resetting, avoiding the race documented in time.Timer.Reset.
-func resetTimer(t *time.Timer, d time.Duration) {
-	if !t.Stop() {
-		select {
-		case <-t.C:
-		default:
-		}
-	}
-	t.Reset(d)
 }
