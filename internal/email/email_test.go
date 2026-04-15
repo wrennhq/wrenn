@@ -112,7 +112,7 @@ func TestTemplateRenderText(t *testing.T) {
 			data: EmailData{
 				Message: "Done.",
 			},
-			want: []string{"Done."},
+			want: []string{"Hello,", "Done."},
 		},
 	}
 

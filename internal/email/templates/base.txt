@@ -1,6 +1,6 @@
-{{if .RecipientName}}Hello {{.RecipientName}},
+Hello{{if .RecipientName}} {{.RecipientName}}{{end}},
 
-{{end}}{{.Message}}
+{{.Message}}
 {{if .Button}}
 
 {{.Button.Text}}: {{.Button.URL}}
