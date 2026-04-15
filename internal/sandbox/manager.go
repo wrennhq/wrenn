@@ -901,6 +901,18 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 		return 0, fmt.Errorf("sandbox %s not found", sandboxID)
 	}
 
+	// Flush guest page cache to disk before stopping the VM. Without this,
+	// files written by the build (e.g. pip-installed packages) may exist in the
+	// guest's page cache but not yet on the dm block device — flatten would then
+	// capture 0-byte files.
+	func() {
+		syncCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if _, err := sb.client.Exec(syncCtx, "/bin/sync"); err != nil {
+			slog.Warn("flatten: guest sync failed (non-fatal)", "id", sb.ID, "error", err)
+		}
+	}()
+
 	// Stop the VM but keep the dm device alive for flattening.
 	m.stopSampler(sb)
 	if err := m.vm.Destroy(ctx, sb.ID); err != nil {

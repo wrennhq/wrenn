@@ -115,8 +115,11 @@ func expandEnv(s string, vars map[string]string) string {
 	})
 }
 
-// shellescape wraps s in single quotes, escaping any embedded single quotes.
+// Shellescape wraps s in single quotes, escaping any embedded single quotes.
 // This is POSIX-safe for paths, env values, and shell commands.
-func shellescape(s string) string {
+func Shellescape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
+
+// shellescape is the package-internal alias for Shellescape.
+func shellescape(s string) string { return Shellescape(s) }

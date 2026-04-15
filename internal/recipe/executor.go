@@ -193,6 +193,15 @@ func execUser(
 	entry := execRawShell(ctx, st.Raw, sandboxID, phase, step, 30*time.Second, execFn, script)
 	if entry.Ok {
 		bctx.User = username
+		// Update HOME so ~ expands correctly in subsequent RUN/WORKDIR steps.
+		if bctx.EnvVars == nil {
+			bctx.EnvVars = make(map[string]string)
+		}
+		if username == "root" {
+			bctx.EnvVars["HOME"] = "/root"
+		} else {
+			bctx.EnvVars["HOME"] = "/home/" + username
+		}
 	}
 	return entry, entry.Ok
 }
