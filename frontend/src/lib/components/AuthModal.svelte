@@ -61,7 +61,7 @@
 				<!-- Header -->
 				<div class="mb-7">
 					<Dialog.Title
-						class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]"
+						class="font-serif text-page text-[var(--color-text-bright)]"
 					>
 						{title}
 					</Dialog.Title>

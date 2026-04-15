@@ -59,7 +59,7 @@
 					</svg>
 				</div>
 				<div>
-					<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Capture snapshot</h2>
+					<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Capture snapshot</h2>
 					<p class="mt-0.5 text-meta text-[var(--color-text-muted)] font-mono">{capsuleId}</p>
 				</div>
 			</div>

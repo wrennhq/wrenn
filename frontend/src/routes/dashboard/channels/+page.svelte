@@ -355,11 +355,11 @@
 				<div class="flex items-center justify-between">
 					<div>
 						<div class="flex items-baseline gap-4">
-							<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+							<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 								Channels
 							</h1>
 							{#if !loading && channels.length > 0}
-								<span class="font-serif text-[1.75rem] tracking-[-0.03em] text-[var(--color-text-muted)]">{channels.length}</span>
+								<span class="font-serif text-[1.75rem] text-[var(--color-text-muted)]">{channels.length}</span>
 							{/if}
 						</div>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -439,7 +439,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No channels yet</p>
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">No channels yet</p>
 						<p class="mt-1.5 max-w-[340px] text-center text-ui text-[var(--color-text-tertiary)]">Channels deliver capsule events to your team's tools. Connect Discord, Slack, or a custom webhook.</p>
 						<button
 							onclick={() => { showCreate = true; resetCreateForm(); }}
@@ -653,7 +653,7 @@
 
 			{#if createStep === 1}
 				<!-- Step 1: Connection -->
-				<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">New Channel</h2>
+				<h2 class="font-serif text-heading text-[var(--color-text-bright)]">New Channel</h2>
 				<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Name the channel, pick a provider, and enter its connection details.</p>
 
 				<!-- Name -->
@@ -803,7 +803,7 @@
 
 			{:else}
 				<!-- Step 2: Events -->
-				<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Choose Events</h2>
+				<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Choose Events</h2>
 				<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 					Pick the events that trigger a notification to
 					<span class="font-medium text-[var(--color-text-secondary)]">{createName}</span>
@@ -928,7 +928,7 @@
 				<span class="text-meta font-semibold text-[var(--color-accent-mid)]" style="animation: fadeUp 0.3s 0.15s ease both">Channel created</span>
 			</div>
 
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">{revealChannel.name}</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">{revealChannel.name}</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Copy the webhook signing secret now — it won't be shown again.
 			</p>
@@ -999,7 +999,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[480px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Edit Channel</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Edit Channel</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Update the name or subscribed events. To change the provider, delete this channel and create a new one.
 			</p>
@@ -1114,7 +1114,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Delete Channel</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Delete Channel</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Permanently delete <span class="font-medium text-[var(--color-text-secondary)]">{deleteTarget.name}</span>?
 				Events will stop being delivered to this destination immediately.
@@ -1168,7 +1168,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[460px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">
 				{rotateTarget.provider === 'webhook' ? 'Rotate Signing Secret' : 'Rotate Credentials'}
 			</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">

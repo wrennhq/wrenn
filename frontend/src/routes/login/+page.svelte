@@ -147,7 +147,7 @@
 		>
 			<img src="/logo.svg" alt="Wrenn" class="h-20 w-20 rounded-[var(--radius-card)]" />
 			<span
-				class="mt-5 font-brand text-[3.143rem] tracking-[-0.01em] text-[var(--color-text-bright)]"
+				class="mt-5 font-brand text-[3.143rem] text-[var(--color-text-bright)]"
 			>
 				Wrenn
 			</span>
@@ -185,7 +185,7 @@
 		>
 			<img src="/logo.svg" alt="Wrenn" class="h-12 w-12 rounded-[var(--radius-card)]" />
 			<span
-				class="mt-2 font-brand text-page tracking-[-0.01em] text-[var(--color-text-bright)]"
+				class="mt-2 font-brand text-page text-[var(--color-text-bright)]"
 			>
 				Wrenn
 			</span>
@@ -195,7 +195,7 @@
 			<!-- Header -->
 			<div class="mb-8">
 				<h2
-					class="font-serif text-display tracking-[-0.02em] text-[var(--color-text-bright)]"
+					class="font-serif text-display tracking-[0.01em] text-[var(--color-text-bright)]"
 				>
 					{title}
 				</h2>

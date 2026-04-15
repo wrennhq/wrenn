@@ -29,7 +29,7 @@
 					<div class="flex items-center gap-2.5">
 						<a
 							href="/dashboard/capsules"
-							class="font-serif text-page leading-none tracking-[-0.02em] text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-text-bright)]"
+							class="font-serif text-page leading-none text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-text-bright)]"
 						>
 							Capsules
 						</a>
@@ -47,7 +47,7 @@
 				<div class="px-7 pt-8">
 					<div class="flex items-center justify-between">
 						<div>
-							<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+							<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 								Capsules
 							</h1>
 							<p class="mt-2 text-ui text-[var(--color-text-secondary)]">

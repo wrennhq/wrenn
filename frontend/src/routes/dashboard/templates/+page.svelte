@@ -165,7 +165,7 @@
 			<div class="px-8 pt-8">
 				<div class="flex items-start justify-between">
 					<div>
-						<h1 class="font-serif text-page tracking-[-0.03em] text-[var(--color-text-bright)]">
+						<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 							Templates
 						</h1>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -526,7 +526,7 @@
 		>
 
 			<div class="p-6">
-			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">Delete snapshot</h2>
+			<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">Delete snapshot</h2>
 			<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
 				Permanently delete <code class="rounded bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-[0.8rem] text-[var(--color-text-primary)]">{deleteTarget.name}</code>.
 				Running capsules won't be affected, but you won't be able to launch new ones from it.
@@ -594,7 +594,7 @@
 		>
 
 			<div class="p-6">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Launch Capsule</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Launch Capsule</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Configure resources and launch a new capsule from this template.
 			</p>

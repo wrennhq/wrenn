@@ -291,7 +291,7 @@
 			<!-- Header -->
 			<div class="px-7 pt-8">
 				<div>
-					<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+					<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 						Audit Logs
 					</h1>
 					<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -456,7 +456,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">
 							{activeFilterCount > 0 ? 'No matching events' : 'No activity yet'}
 						</p>
 						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">

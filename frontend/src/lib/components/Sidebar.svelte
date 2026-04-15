@@ -402,7 +402,7 @@
 			class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
 			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">
 				Create Team
 			</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">

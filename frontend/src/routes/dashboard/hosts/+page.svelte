@@ -165,7 +165,7 @@
 			<div class="px-7 pt-8">
 				<div class="flex items-center justify-between">
 					<div>
-						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 							Hosts
 						</h1>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -378,7 +378,7 @@
 			</div>
 		</div>
 		{#if canManage}
-			<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No hosts yet</p>
+			<p class="font-serif text-heading text-[var(--color-text-bright)]">No hosts yet</p>
 			<p class="mt-1.5 max-w-[340px] text-center text-ui text-[var(--color-text-tertiary)]">
 				Register a server and Wrenn will schedule capsules on your own infrastructure.
 			</p>
@@ -392,7 +392,7 @@
 				</svg>
 			</button>
 		{:else}
-			<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No hosts registered</p>
+			<p class="font-serif text-heading text-[var(--color-text-bright)]">No hosts registered</p>
 			<p class="mt-1.5 max-w-[320px] text-center text-ui text-[var(--color-text-tertiary)]">
 				Ask a team owner or admin to register a host for your team.
 			</p>
@@ -411,7 +411,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Register Host</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Register Host</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Add a server to your team's host pool. You'll receive a one-time registration token.
 			</p>
@@ -501,7 +501,7 @@
 				<span class="text-meta font-semibold text-[var(--color-accent-mid)]" style="animation: fadeUp 0.3s 0.15s ease both">Host registered successfully</span>
 			</div>
 
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Registration Token</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Registration Token</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Pass this token to the host agent to complete registration. It expires in
 				<strong class="font-semibold text-[var(--color-amber)]">1 hour</strong> and is single-use.
@@ -573,7 +573,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Delete Host</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Delete Host</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Remove <span class="inline-flex items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-text-primary)]">{deleteTarget.id}</span> from your host pool.
 			</p>

@@ -54,7 +54,7 @@
 		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
-				<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+				<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 					Usage
 				</h1>
 				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -97,7 +97,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">
 							Cloud Feature
 						</p>
 						<p class="mt-2 max-w-sm text-center text-ui leading-relaxed text-[var(--color-text-tertiary)]">
