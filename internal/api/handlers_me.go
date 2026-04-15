@@ -524,6 +524,10 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := h.db.DeleteAPIKeysByCreator(ctx, ac.UserID); err != nil {
+		slog.Warn("account delete: failed to delete user's API keys", "error", err)
+	}
+
 	if err := h.db.SoftDeleteUser(ctx, ac.UserID); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete account")
 		return

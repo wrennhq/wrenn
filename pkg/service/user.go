@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -65,6 +66,11 @@ func (s *UserService) SetUserStatus(ctx context.Context, userID pgtype.UUID, sta
 		Status: status,
 	}); err != nil {
 		return fmt.Errorf("set user status: %w", err)
+	}
+	if status == "disabled" || status == "deleted" {
+		if err := s.DB.DeleteAPIKeysByCreator(ctx, userID); err != nil {
+			slog.Warn("failed to delete API keys for deactivated user", "user_id", userID, "error", err)
+		}
 	}
 	return nil
 }
