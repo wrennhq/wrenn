@@ -180,6 +180,11 @@ body {
 	50%       { transform: translateY(-6px); }
 }
 
+/* CSS containment — isolate layout/paint for independent UI regions */
+main {
+	contain: layout style;
+}
+
 /* Respect user motion preferences — covers both CSS class animations and inline style animations */
 @media (prefers-reduced-motion: reduce) {
 	*,

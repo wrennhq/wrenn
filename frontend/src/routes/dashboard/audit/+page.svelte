@@ -1,13 +1,6 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount } from 'svelte';
 	import { listAuditLogs, type AuditLog } from '$lib/api/audit';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	// ─── Data state ───────────────────────────────────────────────────────────
 
@@ -282,11 +275,7 @@
 	<title>Wrenn — Audit Logs</title>
 </svelte:head>
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 
 			<!-- Header -->
 			<div class="px-7 pt-8">
@@ -551,9 +540,7 @@
 			</div>
 		</main>
 
-		<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
-	</div>
-</div>
+<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
 
 <style>
 	/* fadeUp and iconFloat are defined globally in app.css — no need to redeclare them here */

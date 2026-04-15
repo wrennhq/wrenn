@@ -1,5 +1,4 @@
 <script lang="ts">
-	import AdminSidebar from '$lib/components/AdminSidebar.svelte';
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { toast } from '$lib/toast.svelte';
@@ -14,12 +13,6 @@
 		type BuildLogEntry,
 		type AdminTemplate
 	} from '$lib/api/builds';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	let activeTab = $state<'templates' | 'builds'>('templates');
 
@@ -265,12 +258,9 @@
 	});
 </script>
 
-<div class="flex h-screen overflow-hidden bg-[var(--color-bg-0)]">
-	<AdminSidebar bind:collapsed />
-
-	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
-		<!-- Header -->
-		<header class="relative shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-1)]">
+<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+	<!-- Header -->
+	<header class="relative shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-1)]">
 			<!-- Subtle gradient wash behind header for depth -->
 			<div class="absolute inset-0 bg-gradient-to-b from-[var(--color-accent)]/[0.02] to-transparent pointer-events-none"></div>
 
@@ -373,8 +363,7 @@
 				{/if}
 			{/if}
 		</div>
-	</main>
-</div>
+</main>
 
 <!-- ── Snippets ─────────────────────────────────────────────────────── -->
 

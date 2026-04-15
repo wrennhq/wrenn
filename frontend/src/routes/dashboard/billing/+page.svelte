@@ -1,13 +1,6 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount } from 'svelte';
 	import { auth } from '$lib/auth.svelte';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	type EndpointStatus = 'loading' | 'available' | 'not_available' | 'error';
 	let status = $state<EndpointStatus>('loading');
@@ -47,11 +40,7 @@
 	<title>Wrenn — Billing</title>
 </svelte:head>
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
 				<h1 class="font-serif text-page text-[var(--color-text-bright)]">
@@ -124,8 +113,6 @@
 					</div>
 				{/if}
 			</div>
-		</main>
+	</main>
 
-		<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
-	</div>
-</div>
+<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>

@@ -1,15 +1,8 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount } from 'svelte';
 	import { listKeys, createKey, revokeKey, type APIKey } from '$lib/api/keys';
 	import { toast } from '$lib/toast.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	// List state
 	let keys = $state<APIKey[]>([]);
@@ -108,11 +101,7 @@
 	<title>Wrenn — API Keys</title>
 </svelte:head>
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
 				<div class="flex items-center justify-between">
@@ -246,11 +235,9 @@
 					</p>
 				{/if}
 			</div>
-		</main>
+	</main>
 
-		<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
-	</div>
-</div>
+<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
 
 <!-- Create Key Dialog -->
 {#if showCreate}

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import AdminSidebar from '$lib/components/AdminSidebar.svelte';
 	import { onMount } from 'svelte';
 	import { toast } from '$lib/toast.svelte';
 	import { formatDate } from '$lib/utils/format';
@@ -8,12 +7,6 @@
 		setUserActive,
 		type AdminUser,
 	} from '$lib/api/admin-users';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	// Data state
 	let users = $state<AdminUser[]>([]);
@@ -112,12 +105,9 @@
 	}
 </style>
 
-<div class="flex h-screen overflow-hidden bg-[var(--color-bg-0)]">
-	<AdminSidebar bind:collapsed />
-
-	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
-		<!-- Header -->
-		<header class="relative shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-1)]">
+<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+	<!-- Header -->
+	<header class="relative shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-1)]">
 			<div class="absolute inset-0 bg-gradient-to-b from-[var(--color-accent)]/[0.02] to-transparent pointer-events-none"></div>
 
 			<div class="relative flex items-start justify-between px-8 pt-7 pb-5">
@@ -301,5 +291,4 @@
 				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
-	</main>
-</div>
+</main>

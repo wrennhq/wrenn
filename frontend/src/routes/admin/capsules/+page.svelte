@@ -1,5 +1,4 @@
 <script lang="ts">
-	import AdminSidebar from '$lib/components/AdminSidebar.svelte';
 	import CreateCapsuleDialog from '$lib/components/CreateCapsuleDialog.svelte';
 	import DestroyDialog from '$lib/components/DestroyDialog.svelte';
 	import CopyButton from '$lib/components/CopyButton.svelte';
@@ -14,12 +13,6 @@
 
 	const REFRESH_INTERVAL = 15;
 	const SPIN_DURATION = 600;
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	let capsules = $state<Capsule[]>([]);
 	let loading = $state(true);
@@ -243,11 +236,8 @@
 	}
 </style>
 
-<div class="flex h-screen overflow-hidden bg-[var(--color-bg-0)]">
-	<AdminSidebar bind:collapsed />
-
-	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
-		<!-- Header -->
+<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+	<!-- Header -->
 		<div class="shrink-0 px-8 pt-8 pb-6">
 			<div class="flex items-center justify-between">
 				<div>
@@ -521,8 +511,7 @@
 				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
-	</main>
-</div>
+</main>
 
 <CreateCapsuleDialog
 	open={showCreateDialog}

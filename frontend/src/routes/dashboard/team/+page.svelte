@@ -1,6 +1,5 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -22,12 +21,6 @@
 		type UserSearchResult
 	} from '$lib/api/team';
 	import { teams as teamsStore } from '$lib/teams.svelte';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	// Page data
 	let team = $state<TeamInfo | null>(null);
@@ -284,6 +277,10 @@
 	}
 
 	onMount(fetchTeam);
+
+	onDestroy(() => {
+		if (searchTimeout) clearTimeout(searchTimeout);
+	});
 </script>
 
 <svelte:head>
@@ -318,11 +315,7 @@
 	}}
 />
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
 				<h1 class="font-serif text-page text-[var(--color-text-bright)]">
@@ -811,9 +804,7 @@
 			</div>
 		</main>
 
-		<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
-	</div>
-</div>
+	<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
 
 <!-- Split button dropdown -->
 {#if openDropdownId}

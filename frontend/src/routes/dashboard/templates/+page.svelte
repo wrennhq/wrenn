@@ -1,5 +1,4 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
@@ -12,12 +11,6 @@
 		type Snapshot
 	} from '$lib/api/capsules';
 	import { formatDate, timeAgo } from '$lib/utils/format';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	// Page tab — Images is disabled/future
 	let pageTab = $state<'snapshots' | 'images'>('snapshots');
@@ -156,11 +149,7 @@
 	}}
 />
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+	<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-8 pt-8">
 				<div class="flex items-start justify-between">
@@ -479,8 +468,6 @@
 				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
-	</div>
-</div>
 
 <!-- Split button dropdown -->
 {#if openDropdownName}

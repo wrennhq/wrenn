@@ -1,6 +1,5 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/auth.svelte';
@@ -15,12 +14,6 @@
 		deleteAccount,
 		type MeResponse
 	} from '$lib/api/me';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	let me = $state<MeResponse | null>(null);
 	let loadError = $state<string | null>(null);
@@ -189,17 +182,18 @@
 			toast.error(connectErrors[connectErr] ?? 'Failed to connect account.');
 		}
 	});
+
+	onDestroy(() => {
+		if (nameSavedTimer) clearTimeout(nameSavedTimer);
+		if (passwordSavedTimer) clearTimeout(passwordSavedTimer);
+	});
 </script>
 
 <svelte:head>
 	<title>Wrenn — Settings</title>
 </svelte:head>
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
 				<div>
@@ -504,9 +498,7 @@
 				{/if}
 			</div>
 		</main>
-		<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
-	</div>
-</div>
+<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
 
 <!-- Disconnect GitHub dialog -->
 {#if showDisconnectConfirm}

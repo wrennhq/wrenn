@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/auth.svelte';
 	import { teams } from '$lib/teams.svelte';
@@ -82,6 +82,10 @@
 			rafId = requestAnimationFrame(lerpLoop);
 		}
 	}
+
+	onDestroy(() => {
+		if (rafId !== null) cancelAnimationFrame(rafId);
+	});
 
 	const title = $derived(mode === 'signin' ? 'Welcome back' : 'Create account');
 	const subtitle = $derived(
