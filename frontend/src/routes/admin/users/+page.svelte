@@ -52,10 +52,10 @@
 
 	async function handleToggleActive(user: AdminUser) {
 		togglingId = user.id;
-		const newActive = !user.is_active;
+		const newActive = user.status !== 'active';
 		const result = await setUserActive(user.id, newActive);
 		if (result.ok) {
-			user.is_active = newActive;
+			user.status = newActive ? 'active' : 'disabled';
 			toast.success(`${user.email} ${newActive ? 'activated' : 'deactivated'}`);
 		} else {
 			toast.error(result.error);
@@ -195,11 +195,11 @@
 				{:else}
 					{#each users as user, i (user.id)}
 						<div
-							class="user-row user-grid relative items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 last:border-b-0 {!user.is_active ? 'opacity-50' : 'hover:bg-[var(--color-bg-3)]'}"
+							class="user-row user-grid relative items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 last:border-b-0 {user.status !== 'active' ? 'opacity-50' : 'hover:bg-[var(--color-bg-3)]'}"
 							style={initialAnimationDone ? '' : `animation: fadeUp 0.35s ease both; animation-delay: ${i * 30}ms`}
 						>
 							<!-- Left accent stripe -->
-							{#if user.is_active}
+							{#if user.status === 'active'}
 								<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-0.5 bg-[var(--color-accent)]"></div>
 							{/if}
 
@@ -247,14 +247,14 @@
 									onclick={() => handleToggleActive(user)}
 									disabled={togglingId === user.id}
 									class="rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-medium transition-all duration-150 disabled:opacity-50
-										{user.is_active
+										{user.status === 'active'
 											? 'border-[var(--color-accent)]/30 bg-[var(--color-accent)]/8 text-[var(--color-accent-bright)] hover:bg-[var(--color-accent)]/15 hover:border-[var(--color-accent)]/50'
 											: 'border-[var(--color-red)]/30 bg-[var(--color-red)]/8 text-[var(--color-red)] hover:bg-[var(--color-red)]/15 hover:border-[var(--color-red)]/50'}"
 								>
 									{#if togglingId === user.id}
 										<svg class="inline animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
 									{:else}
-										{user.is_active ? 'Active' : 'Inactive'}
+										{user.status === 'active' ? 'Active' : user.status.charAt(0).toUpperCase() + user.status.slice(1)}
 									{/if}
 								</button>
 							</div>

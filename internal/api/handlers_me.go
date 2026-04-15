@@ -276,7 +276,7 @@ func (h *meHandler) RequestPasswordReset(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !user.IsActive || user.DeletedAt.Valid {
+	if user.Status != "active" {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

@@ -14,6 +14,11 @@ INSERT INTO users (id, email, name)
 VALUES ($1, $2, $3)
 RETURNING *;
 
+-- name: InsertUserInactive :one
+INSERT INTO users (id, email, password_hash, name, status)
+VALUES ($1, $2, $3, $4, 'inactive')
+RETURNING *;
+
 -- name: SetUserAdmin :exec
 UPDATE users SET is_admin = $2, updated_at = NOW() WHERE id = $1;
 
@@ -38,6 +43,9 @@ SELECT EXISTS(
 -- name: CountUsers :one
 SELECT COUNT(*) FROM users;
 
+-- name: CountActiveUsers :one
+SELECT COUNT(*) FROM users WHERE status = 'active';
+
 -- name: SearchUsersByEmailPrefix :many
 SELECT id, email FROM users WHERE email LIKE $1 || '%' ORDER BY email LIMIT 10;
 
@@ -50,7 +58,7 @@ SELECT
     u.email,
     u.name,
     u.is_admin,
-    u.is_active,
+    u.status,
     u.created_at,
     (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id)::int AS teams_joined,
     (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id AND ut.role = 'owner')::int AS teams_owned
@@ -64,14 +72,14 @@ SELECT COUNT(*)::int AS total
 FROM users
 WHERE deleted_at IS NULL;
 
--- name: SetUserActive :exec
-UPDATE users SET is_active = $2, updated_at = NOW() WHERE id = $1;
+-- name: SetUserStatus :exec
+UPDATE users SET status = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: UpdateUserPassword :exec
 UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: SoftDeleteUser :exec
-UPDATE users SET deleted_at = NOW(), is_active = false, updated_at = NOW() WHERE id = $1;
+UPDATE users SET deleted_at = NOW(), status = 'deleted', updated_at = NOW() WHERE id = $1;
 
 -- name: CountUserOwnedTeamsWithOtherMembers :one
 SELECT COUNT(DISTINCT ut.team_id)::int
@@ -85,3 +93,6 @@ WHERE ut.user_id = $1
 
 -- name: HardDeleteExpiredUsers :exec
 DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days';
+
+-- name: HardDeleteUser :exec
+DELETE FROM users WHERE id = $1;

@@ -80,7 +80,7 @@ func (h *usersHandler) AdminListUsers(w http.ResponseWriter, r *http.Request) {
 		Email       string `json:"email"`
 		Name        string `json:"name"`
 		IsAdmin     bool   `json:"is_admin"`
-		IsActive    bool   `json:"is_active"`
+		Status      string `json:"status"`
 		CreatedAt   string `json:"created_at"`
 		TeamsJoined int32  `json:"teams_joined"`
 		TeamsOwned  int32  `json:"teams_owned"`
@@ -93,7 +93,7 @@ func (h *usersHandler) AdminListUsers(w http.ResponseWriter, r *http.Request) {
 			Email:       u.Email,
 			Name:        u.Name,
 			IsAdmin:     u.IsAdmin,
-			IsActive:    u.IsActive,
+			Status:      u.Status,
 			CreatedAt:   u.CreatedAt.Format(time.RFC3339),
 			TeamsJoined: u.TeamsJoined,
 			TeamsOwned:  u.TeamsOwned,
@@ -135,9 +135,14 @@ func (h *usersHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.SetUserActive(r.Context(), userID, req.Active); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+	newStatus := "active"
+	if !req.Active {
+		newStatus = "disabled"
+	}
+
+	if err := h.svc.SetUserStatus(r.Context(), userID, newStatus); err != nil {
+		httpStatus, code, msg := serviceErrToHTTP(err)
+		writeError(w, httpStatus, code, msg)
 		return
 	}
 

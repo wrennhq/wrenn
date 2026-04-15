@@ -217,8 +217,8 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, redirectBase, "db_error")
 			return
 		}
-		if !user.IsActive {
-			slog.Warn("oauth login: account deactivated", "email", user.Email)
+		if user.Status != "active" {
+			slog.Warn("oauth login: account not active", "email", user.Email, "status", user.Status)
 			redirectWithError(w, r, redirectBase, "account_deactivated")
 			return
 		}
@@ -244,13 +244,21 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// New OAuth identity — check for email collision.
-	_, err = h.db.GetUserByEmail(ctx, email)
+	existingUser, err := h.db.GetUserByEmail(ctx, email)
 	if err == nil {
-		// Email already taken by another account.
-		redirectWithError(w, r, redirectBase, "email_taken")
-		return
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+		if existingUser.Status == "inactive" {
+			// Unactivated email signup — delete and let OAuth take over.
+			if delErr := h.db.HardDeleteUser(ctx, existingUser.ID); delErr != nil {
+				slog.Error("oauth: failed to delete inactive user", "error", delErr)
+				redirectWithError(w, r, redirectBase, "db_error")
+				return
+			}
+		} else {
+			// Email already taken by an active/disabled/deleted account.
+			redirectWithError(w, r, redirectBase, "email_taken")
+			return
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		slog.Error("oauth: email check failed", "error", err)
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
@@ -373,8 +381,8 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
 	}
-	if !user.IsActive {
-		slog.Warn("oauth: retry login: account deactivated", "email", user.Email)
+	if user.Status != "active" {
+		slog.Warn("oauth: retry login: account not active", "email", user.Email, "status", user.Status)
 		redirectWithError(w, r, redirectBase, "account_deactivated")
 		return
 	}

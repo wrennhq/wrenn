@@ -70,7 +70,7 @@ func New(
 	filesStream := newFilesStreamHandler(queries, pool)
 	fsH := newFSHandler(queries, pool)
 	snapshots := newSnapshotHandler(templateSvc, queries, pool, al)
-	authH := newAuthHandler(queries, pgPool, jwtSecret, mailer)
+	authH := newAuthHandler(queries, pgPool, jwtSecret, mailer, rdb, oauthRedirectURL)
 	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, oauthRegistry, oauthRedirectURL)
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
 	hostH := newHostHandler(hostSvc, queries, al)
@@ -93,6 +93,7 @@ func New(
 	// Unauthenticated auth endpoints.
 	r.Post("/v1/auth/signup", authH.Signup)
 	r.Post("/v1/auth/login", authH.Login)
+	r.Post("/v1/auth/activate", authH.Activate)
 	r.Get("/auth/oauth/{provider}", oauthH.Redirect)
 	r.Get("/auth/oauth/{provider}/callback", oauthH.Callback)
 

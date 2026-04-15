@@ -21,7 +21,7 @@ type AdminUserRow struct {
 	Email       string
 	Name        string
 	IsAdmin     bool
-	IsActive    bool
+	Status      string
 	CreatedAt   time.Time
 	TeamsJoined int32
 	TeamsOwned  int32
@@ -49,7 +49,7 @@ func (s *UserService) AdminListUsers(ctx context.Context, limit, offset int32) (
 			Email:       u.Email,
 			Name:        u.Name,
 			IsAdmin:     u.IsAdmin,
-			IsActive:    u.IsActive,
+			Status:      u.Status,
 			CreatedAt:   u.CreatedAt.Time,
 			TeamsJoined: u.TeamsJoined,
 			TeamsOwned:  u.TeamsOwned,
@@ -58,13 +58,13 @@ func (s *UserService) AdminListUsers(ctx context.Context, limit, offset int32) (
 	return rows, total, nil
 }
 
-// SetUserActive enables or disables a user account.
-func (s *UserService) SetUserActive(ctx context.Context, userID pgtype.UUID, active bool) error {
-	if err := s.DB.SetUserActive(ctx, db.SetUserActiveParams{
-		ID:       userID,
-		IsActive: active,
+// SetUserStatus sets the status of a user account.
+func (s *UserService) SetUserStatus(ctx context.Context, userID pgtype.UUID, status string) error {
+	if err := s.DB.SetUserStatus(ctx, db.SetUserStatusParams{
+		ID:     userID,
+		Status: status,
 	}); err != nil {
-		return fmt.Errorf("set user active: %w", err)
+		return fmt.Errorf("set user status: %w", err)
 	}
 	return nil
 }

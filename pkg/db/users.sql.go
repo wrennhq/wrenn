@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countActiveUsers = `-- name: CountActiveUsers :one
+SELECT COUNT(*) FROM users WHERE status = 'active'
+`
+
+func (q *Queries) CountActiveUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUserOwnedTeamsWithOtherMembers = `-- name: CountUserOwnedTeamsWithOtherMembers :one
 SELECT COUNT(DISTINCT ut.team_id)::int
 FROM users_teams ut
@@ -97,7 +108,7 @@ func (q *Queries) GetAdminPermissions(ctx context.Context, userID pgtype.UUID) (
 }
 
 const getAdminUsers = `-- name: GetAdminUsers :many
-SELECT id, email, password_hash, name, is_admin, created_at, updated_at, is_active, deleted_at FROM users WHERE is_admin = TRUE ORDER BY created_at
+SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE is_admin = TRUE ORDER BY created_at
 `
 
 func (q *Queries) GetAdminUsers(ctx context.Context) ([]User, error) {
@@ -117,8 +128,8 @@ func (q *Queries) GetAdminUsers(ctx context.Context) ([]User, error) {
 			&i.IsAdmin,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.IsActive,
 			&i.DeletedAt,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}
@@ -131,7 +142,7 @@ func (q *Queries) GetAdminUsers(ctx context.Context) ([]User, error) {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, name, is_admin, created_at, updated_at, is_active, deleted_at FROM users WHERE email = $1
+SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -145,14 +156,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.IsAdmin,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.IsActive,
 		&i.DeletedAt,
+		&i.Status,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, name, is_admin, created_at, updated_at, is_active, deleted_at FROM users WHERE id = $1
+SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -166,8 +177,8 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.IsAdmin,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.IsActive,
 		&i.DeletedAt,
+		&i.Status,
 	)
 	return i, err
 }
@@ -178,6 +189,15 @@ DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL
 
 func (q *Queries) HardDeleteExpiredUsers(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, hardDeleteExpiredUsers)
+	return err
+}
+
+const hardDeleteUser = `-- name: HardDeleteUser :exec
+DELETE FROM users WHERE id = $1
+`
+
+func (q *Queries) HardDeleteUser(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, hardDeleteUser, id)
 	return err
 }
 
@@ -218,7 +238,7 @@ func (q *Queries) InsertAdminPermission(ctx context.Context, arg InsertAdminPerm
 const insertUser = `-- name: InsertUser :one
 INSERT INTO users (id, email, password_hash, name)
 VALUES ($1, $2, $3, $4)
-RETURNING id, email, password_hash, name, is_admin, created_at, updated_at, is_active, deleted_at
+RETURNING id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status
 `
 
 type InsertUserParams struct {
@@ -244,8 +264,43 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, e
 		&i.IsAdmin,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.IsActive,
 		&i.DeletedAt,
+		&i.Status,
+	)
+	return i, err
+}
+
+const insertUserInactive = `-- name: InsertUserInactive :one
+INSERT INTO users (id, email, password_hash, name, status)
+VALUES ($1, $2, $3, $4, 'inactive')
+RETURNING id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status
+`
+
+type InsertUserInactiveParams struct {
+	ID           pgtype.UUID `json:"id"`
+	Email        string      `json:"email"`
+	PasswordHash pgtype.Text `json:"password_hash"`
+	Name         string      `json:"name"`
+}
+
+func (q *Queries) InsertUserInactive(ctx context.Context, arg InsertUserInactiveParams) (User, error) {
+	row := q.db.QueryRow(ctx, insertUserInactive,
+		arg.ID,
+		arg.Email,
+		arg.PasswordHash,
+		arg.Name,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Name,
+		&i.IsAdmin,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Status,
 	)
 	return i, err
 }
@@ -253,7 +308,7 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, e
 const insertUserOAuth = `-- name: InsertUserOAuth :one
 INSERT INTO users (id, email, name)
 VALUES ($1, $2, $3)
-RETURNING id, email, password_hash, name, is_admin, created_at, updated_at, is_active, deleted_at
+RETURNING id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status
 `
 
 type InsertUserOAuthParams struct {
@@ -273,8 +328,8 @@ func (q *Queries) InsertUserOAuth(ctx context.Context, arg InsertUserOAuthParams
 		&i.IsAdmin,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.IsActive,
 		&i.DeletedAt,
+		&i.Status,
 	)
 	return i, err
 }
@@ -285,7 +340,7 @@ SELECT
     u.email,
     u.name,
     u.is_admin,
-    u.is_active,
+    u.status,
     u.created_at,
     (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id)::int AS teams_joined,
     (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id AND ut.role = 'owner')::int AS teams_owned
@@ -305,7 +360,7 @@ type ListUsersAdminRow struct {
 	Email       string             `json:"email"`
 	Name        string             `json:"name"`
 	IsAdmin     bool               `json:"is_admin"`
-	IsActive    bool               `json:"is_active"`
+	Status      string             `json:"status"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	TeamsJoined int32              `json:"teams_joined"`
 	TeamsOwned  int32              `json:"teams_owned"`
@@ -325,7 +380,7 @@ func (q *Queries) ListUsersAdmin(ctx context.Context, arg ListUsersAdminParams) 
 			&i.Email,
 			&i.Name,
 			&i.IsAdmin,
-			&i.IsActive,
+			&i.Status,
 			&i.CreatedAt,
 			&i.TeamsJoined,
 			&i.TeamsOwned,
@@ -369,20 +424,6 @@ func (q *Queries) SearchUsersByEmailPrefix(ctx context.Context, dollar_1 pgtype.
 	return items, nil
 }
 
-const setUserActive = `-- name: SetUserActive :exec
-UPDATE users SET is_active = $2, updated_at = NOW() WHERE id = $1
-`
-
-type SetUserActiveParams struct {
-	ID       pgtype.UUID `json:"id"`
-	IsActive bool        `json:"is_active"`
-}
-
-func (q *Queries) SetUserActive(ctx context.Context, arg SetUserActiveParams) error {
-	_, err := q.db.Exec(ctx, setUserActive, arg.ID, arg.IsActive)
-	return err
-}
-
 const setUserAdmin = `-- name: SetUserAdmin :exec
 UPDATE users SET is_admin = $2, updated_at = NOW() WHERE id = $1
 `
@@ -397,8 +438,22 @@ func (q *Queries) SetUserAdmin(ctx context.Context, arg SetUserAdminParams) erro
 	return err
 }
 
+const setUserStatus = `-- name: SetUserStatus :exec
+UPDATE users SET status = $2, updated_at = NOW() WHERE id = $1
+`
+
+type SetUserStatusParams struct {
+	ID     pgtype.UUID `json:"id"`
+	Status string      `json:"status"`
+}
+
+func (q *Queries) SetUserStatus(ctx context.Context, arg SetUserStatusParams) error {
+	_, err := q.db.Exec(ctx, setUserStatus, arg.ID, arg.Status)
+	return err
+}
+
 const softDeleteUser = `-- name: SoftDeleteUser :exec
-UPDATE users SET deleted_at = NOW(), is_active = false, updated_at = NOW() WHERE id = $1
+UPDATE users SET deleted_at = NOW(), status = 'deleted', updated_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) SoftDeleteUser(ctx context.Context, id pgtype.UUID) error {
