@@ -444,7 +444,7 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 			return
 		}
 		log.Info("running healthcheck", "cmd", hc.Cmd, "interval", hc.Interval, "timeout", hc.Timeout, "start_period", hc.StartPeriod, "retries", hc.Retries)
-		if err := s.waitForHealthcheck(buildCtx, agent, sandboxIDStr, hc); err != nil {
+		if err := s.waitForHealthcheck(buildCtx, agent, sandboxIDStr, hc, templateDefaultUser); err != nil {
 			s.destroySandbox(buildCtx, agent, sandboxIDStr)
 			if buildCtx.Err() != nil {
 				return
@@ -544,7 +544,14 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 // During the start period, failures are not counted toward the retry budget.
 // Returns nil on the first successful check, or an error if retries are
 // exhausted, the deadline passes, or the context is cancelled.
-func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentClient, sandboxIDStr string, hc recipe.HealthcheckConfig) error {
+func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentClient, sandboxIDStr string, hc recipe.HealthcheckConfig, user string) error {
+	// Wrap the healthcheck command with su when a non-root user is set, so that
+	// ~ expands to the correct home directory and the process runs with the
+	// right UID (matching the template's default user).
+	cmd := hc.Cmd
+	if user != "" && user != "root" {
+		cmd = "su " + recipe.Shellescape(user) + " -s /bin/sh -c " + recipe.Shellescape(hc.Cmd)
+	}
 	ticker := time.NewTicker(hc.Interval)
 	defer ticker.Stop()
 
@@ -571,7 +578,7 @@ func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentC
 			resp, err := agent.Exec(execCtx, connect.NewRequest(&pb.ExecRequest{
 				SandboxId:  sandboxIDStr,
 				Cmd:        "/bin/sh",
-				Args:       []string{"-c", hc.Cmd},
+				Args:       []string{"-c", cmd},
 				TimeoutSec: int32(hc.Timeout.Seconds()),
 			}))
 			cancel()
