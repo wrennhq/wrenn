@@ -84,7 +84,7 @@ func New(
 	ptyH := newPtyHandler(queries, pool)
 	processH := newProcessHandler(queries, pool)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
-	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, mailer, oauthRegistry, oauthRedirectURL)
+	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, mailer, oauthRegistry, oauthRedirectURL, teamSvc)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)

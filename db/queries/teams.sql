@@ -74,6 +74,18 @@ WHERE t.id != '00000000-0000-0000-0000-000000000000'
 ORDER BY t.deleted_at ASC NULLS FIRST, t.created_at DESC
 LIMIT $1 OFFSET $2;
 
+-- name: ListSoleOwnedTeams :many
+-- Returns teams where the user is the owner and no other members exist.
+SELECT t.id FROM teams t
+JOIN users_teams ut ON ut.team_id = t.id
+WHERE ut.user_id = $1
+  AND ut.role = 'owner'
+  AND t.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM users_teams ut2
+      WHERE ut2.team_id = t.id AND ut2.user_id <> $1
+  );
+
 -- name: CountTeamsAdmin :one
 SELECT COUNT(*)::int AS total
 FROM teams

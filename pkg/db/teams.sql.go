@@ -284,6 +284,39 @@ func (q *Queries) InsertTeamMember(ctx context.Context, arg InsertTeamMemberPara
 	return err
 }
 
+const listSoleOwnedTeams = `-- name: ListSoleOwnedTeams :many
+SELECT t.id FROM teams t
+JOIN users_teams ut ON ut.team_id = t.id
+WHERE ut.user_id = $1
+  AND ut.role = 'owner'
+  AND t.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM users_teams ut2
+      WHERE ut2.team_id = t.id AND ut2.user_id <> $1
+  )
+`
+
+// Returns teams where the user is the owner and no other members exist.
+func (q *Queries) ListSoleOwnedTeams(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listSoleOwnedTeams, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTeamsAdmin = `-- name: ListTeamsAdmin :many
 SELECT
     t.id,

@@ -190,7 +190,7 @@ func (q *Queries) InsertSandbox(ctx context.Context, arg InsertSandboxParams) (S
 
 const listActiveSandboxesByTeam = `-- name: ListActiveSandboxesByTeam :many
 SELECT id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id, metadata FROM sandboxes
-WHERE team_id = $1 AND status IN ('running', 'paused', 'starting')
+WHERE team_id = $1 AND status IN ('running', 'paused', 'starting', 'hibernated')
 ORDER BY created_at DESC
 `
 

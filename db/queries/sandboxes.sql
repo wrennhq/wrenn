@@ -62,7 +62,7 @@ WHERE id = ANY($1::uuid[]);
 
 -- name: ListActiveSandboxesByTeam :many
 SELECT * FROM sandboxes
-WHERE team_id = $1 AND status IN ('running', 'paused', 'starting')
+WHERE team_id = $1 AND status IN ('running', 'paused', 'starting', 'hibernated')
 ORDER BY created_at DESC;
 
 -- name: MarkSandboxesMissingByHost :exec

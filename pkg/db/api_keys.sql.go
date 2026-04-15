@@ -25,6 +25,15 @@ func (q *Queries) DeleteAPIKey(ctx context.Context, arg DeleteAPIKeyParams) erro
 	return err
 }
 
+const deleteAPIKeysByTeam = `-- name: DeleteAPIKeysByTeam :exec
+DELETE FROM team_api_keys WHERE team_id = $1
+`
+
+func (q *Queries) DeleteAPIKeysByTeam(ctx context.Context, teamID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAPIKeysByTeam, teamID)
+	return err
+}
+
 const getAPIKeyByHash = `-- name: GetAPIKeyByHash :one
 SELECT id, team_id, name, key_hash, key_prefix, created_by, created_at, last_used FROM team_api_keys WHERE key_hash = $1
 `
@@ -120,7 +129,7 @@ const listAPIKeysByTeamWithCreator = `-- name: ListAPIKeysByTeamWithCreator :man
 SELECT k.id, k.team_id, k.name, k.key_hash, k.key_prefix, k.created_by, k.created_at, k.last_used,
        u.email AS creator_email
 FROM team_api_keys k
-JOIN users u ON u.id = k.created_by
+LEFT JOIN users u ON u.id = k.created_by
 WHERE k.team_id = $1
 ORDER BY k.created_at DESC
 `
@@ -134,7 +143,7 @@ type ListAPIKeysByTeamWithCreatorRow struct {
 	CreatedBy    pgtype.UUID        `json:"created_by"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	LastUsed     pgtype.Timestamptz `json:"last_used"`
-	CreatorEmail string             `json:"creator_email"`
+	CreatorEmail pgtype.Text        `json:"creator_email"`
 }
 
 func (q *Queries) ListAPIKeysByTeamWithCreator(ctx context.Context, teamID pgtype.UUID) ([]ListAPIKeysByTeamWithCreatorRow, error) {

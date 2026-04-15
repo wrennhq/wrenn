@@ -22,6 +22,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 const (
@@ -37,6 +38,7 @@ type meHandler struct {
 	mailer        email.Mailer
 	oauthRegistry *oauth.Registry
 	redirectURL   string
+	teamSvc       *service.TeamService
 }
 
 func newMeHandler(
@@ -47,6 +49,7 @@ func newMeHandler(
 	mailer email.Mailer,
 	registry *oauth.Registry,
 	redirectURL string,
+	teamSvc *service.TeamService,
 ) *meHandler {
 	return &meHandler{
 		db:            db,
@@ -56,6 +59,7 @@ func newMeHandler(
 		mailer:        mailer,
 		oauthRegistry: registry,
 		redirectURL:   strings.TrimRight(redirectURL, "/"),
+		teamSvc:       teamSvc,
 	}
 }
 
@@ -505,6 +509,19 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "owns_team_with_members",
 			fmt.Sprintf("you own %d team(s) with other members — transfer ownership or remove members before deleting your account", teamsBlocking))
 		return
+	}
+
+	// Delete all teams the user solely owns (no other members).
+	soleTeams, err := h.db.ListSoleOwnedTeams(ctx, ac.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to list owned teams")
+		return
+	}
+	for _, teamID := range soleTeams {
+		if err := h.teamSvc.DeleteTeamInternal(ctx, teamID); err != nil {
+			slog.Warn("account delete: failed to delete sole-owned team",
+				"team_id", id.FormatTeamID(teamID), "error", err)
+		}
 	}
 
 	if err := h.db.SoftDeleteUser(ctx, ac.UserID); err != nil {
