@@ -66,3 +66,22 @@ WHERE deleted_at IS NULL;
 
 -- name: SetUserActive :exec
 UPDATE users SET is_active = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: SoftDeleteUser :exec
+UPDATE users SET deleted_at = NOW(), is_active = false, updated_at = NOW() WHERE id = $1;
+
+-- name: CountUserOwnedTeamsWithOtherMembers :one
+SELECT COUNT(DISTINCT ut.team_id)::int
+FROM users_teams ut
+WHERE ut.user_id = $1
+  AND ut.role = 'owner'
+  AND EXISTS (
+      SELECT 1 FROM users_teams ut2
+      WHERE ut2.team_id = ut.team_id AND ut2.user_id <> $1
+  );
+
+-- name: HardDeleteExpiredUsers :exec
+DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days';

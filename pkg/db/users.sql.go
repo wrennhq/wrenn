@@ -11,6 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countUserOwnedTeamsWithOtherMembers = `-- name: CountUserOwnedTeamsWithOtherMembers :one
+SELECT COUNT(DISTINCT ut.team_id)::int
+FROM users_teams ut
+WHERE ut.user_id = $1
+  AND ut.role = 'owner'
+  AND EXISTS (
+      SELECT 1 FROM users_teams ut2
+      WHERE ut2.team_id = ut.team_id AND ut2.user_id <> $1
+  )
+`
+
+func (q *Queries) CountUserOwnedTeamsWithOtherMembers(ctx context.Context, userID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, countUserOwnedTeamsWithOtherMembers, userID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countUsers = `-- name: CountUsers :one
 SELECT COUNT(*) FROM users
 `
@@ -152,6 +170,15 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const hardDeleteExpiredUsers = `-- name: HardDeleteExpiredUsers :exec
+DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days'
+`
+
+func (q *Queries) HardDeleteExpiredUsers(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, hardDeleteExpiredUsers)
+	return err
 }
 
 const hasAdminPermission = `-- name: HasAdminPermission :one
@@ -370,6 +397,15 @@ func (q *Queries) SetUserAdmin(ctx context.Context, arg SetUserAdminParams) erro
 	return err
 }
 
+const softDeleteUser = `-- name: SoftDeleteUser :exec
+UPDATE users SET deleted_at = NOW(), is_active = false, updated_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) SoftDeleteUser(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, softDeleteUser, id)
+	return err
+}
+
 const updateUserName = `-- name: UpdateUserName :exec
 UPDATE users SET name = $2, updated_at = NOW() WHERE id = $1
 `
@@ -381,5 +417,19 @@ type UpdateUserNameParams struct {
 
 func (q *Queries) UpdateUserName(ctx context.Context, arg UpdateUserNameParams) error {
 	_, err := q.db.Exec(ctx, updateUserName, arg.ID, arg.Name)
+	return err
+}
+
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1
+`
+
+type UpdateUserPasswordParams struct {
+	ID           pgtype.UUID `json:"id"`
+	PasswordHash pgtype.Text `json:"password_hash"`
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, arg.ID, arg.PasswordHash)
 	return err
 }

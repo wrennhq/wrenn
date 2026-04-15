@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteOAuthProvider = `-- name: DeleteOAuthProvider :exec
+DELETE FROM oauth_providers WHERE user_id = $1 AND provider = $2
+`
+
+type DeleteOAuthProviderParams struct {
+	UserID   pgtype.UUID `json:"user_id"`
+	Provider string      `json:"provider"`
+}
+
+func (q *Queries) DeleteOAuthProvider(ctx context.Context, arg DeleteOAuthProviderParams) error {
+	_, err := q.db.Exec(ctx, deleteOAuthProvider, arg.UserID, arg.Provider)
+	return err
+}
+
 const getOAuthProvider = `-- name: GetOAuthProvider :one
 SELECT provider, provider_id, user_id, email, created_at FROM oauth_providers
 WHERE provider = $1 AND provider_id = $2
@@ -32,6 +46,36 @@ func (q *Queries) GetOAuthProvider(ctx context.Context, arg GetOAuthProviderPara
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getOAuthProvidersByUserID = `-- name: GetOAuthProvidersByUserID :many
+SELECT provider, provider_id, user_id, email, created_at FROM oauth_providers WHERE user_id = $1
+`
+
+func (q *Queries) GetOAuthProvidersByUserID(ctx context.Context, userID pgtype.UUID) ([]OauthProvider, error) {
+	rows, err := q.db.Query(ctx, getOAuthProvidersByUserID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OauthProvider
+	for rows.Next() {
+		var i OauthProvider
+		if err := rows.Scan(
+			&i.Provider,
+			&i.ProviderID,
+			&i.UserID,
+			&i.Email,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const insertOAuthProvider = `-- name: InsertOAuthProvider :exec
