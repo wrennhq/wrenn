@@ -150,10 +150,13 @@ func (x *CreateSandboxRequest) GetDefaultEnv() map[string]string {
 }
 
 type CreateSandboxResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	HostIp        string                 `protobuf:"bytes,3,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	Status    string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	HostIp    string                 `protobuf:"bytes,3,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
+	// Runtime metadata collected during sandbox creation (e.g. envd_version,
+	// kernel_version, firecracker_version, agent_version).
+	Metadata      map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -207,6 +210,13 @@ func (x *CreateSandboxResponse) GetHostIp() string {
 		return x.HostIp
 	}
 	return ""
+}
+
+func (x *CreateSandboxResponse) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
 }
 
 type DestroySandboxRequest struct {
@@ -378,7 +388,10 @@ type ResumeSandboxRequest struct {
 	// Default unix user for the sandbox (set in envd via PostInit on resume).
 	DefaultUser string `protobuf:"bytes,3,opt,name=default_user,json=defaultUser,proto3" json:"default_user,omitempty"`
 	// Default environment variables (set in envd via PostInit on resume).
-	DefaultEnv    map[string]string `protobuf:"bytes,4,rep,name=default_env,json=defaultEnv,proto3" json:"default_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	DefaultEnv map[string]string `protobuf:"bytes,4,rep,name=default_env,json=defaultEnv,proto3" json:"default_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Kernel version hint from the DB — the agent tries to use the exact version,
+	// falling back to latest if not found on disk.
+	KernelVersion string `protobuf:"bytes,5,opt,name=kernel_version,json=kernelVersion,proto3" json:"kernel_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -441,11 +454,21 @@ func (x *ResumeSandboxRequest) GetDefaultEnv() map[string]string {
 	return nil
 }
 
+func (x *ResumeSandboxRequest) GetKernelVersion() string {
+	if x != nil {
+		return x.KernelVersion
+	}
+	return ""
+}
+
 type ResumeSandboxResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	HostIp        string                 `protobuf:"bytes,3,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	Status    string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	HostIp    string                 `protobuf:"bytes,3,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
+	// Actual runtime metadata after resume (versions may differ from hint if
+	// the exact kernel was not available).
+	Metadata      map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -499,6 +522,13 @@ func (x *ResumeSandboxResponse) GetHostIp() string {
 		return x.HostIp
 	}
 	return ""
+}
+
+func (x *ResumeSandboxResponse) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
 }
 
 type CreateSnapshotRequest struct {
@@ -956,8 +986,10 @@ type SandboxInfo struct {
 	TimeoutSec       int32  `protobuf:"varint,9,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
 	TeamId           string `protobuf:"bytes,10,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
 	TemplateId       string `protobuf:"bytes,11,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Runtime metadata (envd_version, kernel_version, etc.).
+	Metadata      map[string]string `protobuf:"bytes,12,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxInfo) Reset() {
@@ -1065,6 +1097,13 @@ func (x *SandboxInfo) GetTemplateId() string {
 		return x.TemplateId
 	}
 	return ""
+}
+
+func (x *SandboxInfo) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
 }
 
 type WriteFileRequest struct {
@@ -4102,12 +4141,16 @@ const file_hostagent_proto_rawDesc = "" +
 	"defaultEnv\x1a=\n" +
 	"\x0fDefaultEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"g\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf3\x01\n" +
 	"\x15CreateSandboxResponse\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x17\n" +
-	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\"6\n" +
+	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\x12M\n" +
+	"\bmetadata\x18\x04 \x03(\v21.hostagent.v1.CreateSandboxResponse.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
 	"\x15DestroySandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"\x18\n" +
@@ -4115,7 +4158,7 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x13PauseSandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\"\x16\n" +
-	"\x14PauseSandboxResponse\"\x8d\x02\n" +
+	"\x14PauseSandboxResponse\"\xb4\x02\n" +
 	"\x14ResumeSandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1f\n" +
@@ -4123,15 +4166,20 @@ const file_hostagent_proto_rawDesc = "" +
 	"timeoutSec\x12!\n" +
 	"\fdefault_user\x18\x03 \x01(\tR\vdefaultUser\x12S\n" +
 	"\vdefault_env\x18\x04 \x03(\v22.hostagent.v1.ResumeSandboxRequest.DefaultEnvEntryR\n" +
-	"defaultEnv\x1a=\n" +
+	"defaultEnv\x12%\n" +
+	"\x0ekernel_version\x18\x05 \x01(\tR\rkernelVersion\x1a=\n" +
 	"\x0fDefaultEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"g\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf3\x01\n" +
 	"\x15ResumeSandboxResponse\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x17\n" +
-	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\"\x84\x01\n" +
+	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\x12M\n" +
+	"\bmetadata\x18\x04 \x03(\v21.hostagent.v1.ResumeSandboxResponse.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x84\x01\n" +
 	"\x15CreateSnapshotRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
@@ -4163,7 +4211,7 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x14ListSandboxesRequest\"\x87\x01\n" +
 	"\x15ListSandboxesResponse\x127\n" +
 	"\tsandboxes\x18\x01 \x03(\v2\x19.hostagent.v1.SandboxInfoR\tsandboxes\x125\n" +
-	"\x17auto_paused_sandbox_ids\x18\x02 \x03(\tR\x14autoPausedSandboxIds\"\xde\x02\n" +
+	"\x17auto_paused_sandbox_ids\x18\x02 \x03(\tR\x14autoPausedSandboxIds\"\xe0\x03\n" +
 	"\vSandboxInfo\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
@@ -4179,7 +4227,11 @@ const file_hostagent_proto_rawDesc = "" +
 	"\ateam_id\x18\n" +
 	" \x01(\tR\x06teamId\x12\x1f\n" +
 	"\vtemplate_id\x18\v \x01(\tR\n" +
-	"templateId\"_\n" +
+	"templateId\x12C\n" +
+	"\bmetadata\x18\f \x03(\v2'.hostagent.v1.SandboxInfo.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"_\n" +
 	"\x10WriteFileRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x12\n" +
@@ -4434,7 +4486,7 @@ func file_hostagent_proto_rawDescGZIP() []byte {
 	return file_hostagent_proto_rawDescData
 }
 
-var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 73)
+var file_hostagent_proto_msgTypes = make([]protoimpl.MessageInfo, 76)
 var file_hostagent_proto_goTypes = []any{
 	(*CreateSandboxRequest)(nil),        // 0: hostagent.v1.CreateSandboxRequest
 	(*CreateSandboxResponse)(nil),       // 1: hostagent.v1.CreateSandboxResponse
@@ -4506,96 +4558,102 @@ var file_hostagent_proto_goTypes = []any{
 	(*ConnectProcessRequest)(nil),       // 67: hostagent.v1.ConnectProcessRequest
 	(*ConnectProcessResponse)(nil),      // 68: hostagent.v1.ConnectProcessResponse
 	nil,                                 // 69: hostagent.v1.CreateSandboxRequest.DefaultEnvEntry
-	nil,                                 // 70: hostagent.v1.ResumeSandboxRequest.DefaultEnvEntry
-	nil,                                 // 71: hostagent.v1.PtyAttachRequest.EnvsEntry
-	nil,                                 // 72: hostagent.v1.StartBackgroundRequest.EnvsEntry
+	nil,                                 // 70: hostagent.v1.CreateSandboxResponse.MetadataEntry
+	nil,                                 // 71: hostagent.v1.ResumeSandboxRequest.DefaultEnvEntry
+	nil,                                 // 72: hostagent.v1.ResumeSandboxResponse.MetadataEntry
+	nil,                                 // 73: hostagent.v1.SandboxInfo.MetadataEntry
+	nil,                                 // 74: hostagent.v1.PtyAttachRequest.EnvsEntry
+	nil,                                 // 75: hostagent.v1.StartBackgroundRequest.EnvsEntry
 }
 var file_hostagent_proto_depIdxs = []int32{
 	69, // 0: hostagent.v1.CreateSandboxRequest.default_env:type_name -> hostagent.v1.CreateSandboxRequest.DefaultEnvEntry
-	70, // 1: hostagent.v1.ResumeSandboxRequest.default_env:type_name -> hostagent.v1.ResumeSandboxRequest.DefaultEnvEntry
-	16, // 2: hostagent.v1.ListSandboxesResponse.sandboxes:type_name -> hostagent.v1.SandboxInfo
-	23, // 3: hostagent.v1.ExecStreamResponse.start:type_name -> hostagent.v1.ExecStreamStart
-	24, // 4: hostagent.v1.ExecStreamResponse.data:type_name -> hostagent.v1.ExecStreamData
-	25, // 5: hostagent.v1.ExecStreamResponse.end:type_name -> hostagent.v1.ExecStreamEnd
-	27, // 6: hostagent.v1.WriteFileStreamRequest.meta:type_name -> hostagent.v1.WriteFileStreamMeta
-	33, // 7: hostagent.v1.ListDirResponse.entries:type_name -> hostagent.v1.FileEntry
-	33, // 8: hostagent.v1.MakeDirResponse.entry:type_name -> hostagent.v1.FileEntry
-	42, // 9: hostagent.v1.GetSandboxMetricsResponse.points:type_name -> hostagent.v1.MetricPoint
-	42, // 10: hostagent.v1.FlushSandboxMetricsResponse.points_10m:type_name -> hostagent.v1.MetricPoint
-	42, // 11: hostagent.v1.FlushSandboxMetricsResponse.points_2h:type_name -> hostagent.v1.MetricPoint
-	42, // 12: hostagent.v1.FlushSandboxMetricsResponse.points_24h:type_name -> hostagent.v1.MetricPoint
-	71, // 13: hostagent.v1.PtyAttachRequest.envs:type_name -> hostagent.v1.PtyAttachRequest.EnvsEntry
-	51, // 14: hostagent.v1.PtyAttachResponse.started:type_name -> hostagent.v1.PtyStarted
-	52, // 15: hostagent.v1.PtyAttachResponse.output:type_name -> hostagent.v1.PtyOutput
-	53, // 16: hostagent.v1.PtyAttachResponse.exited:type_name -> hostagent.v1.PtyExited
-	72, // 17: hostagent.v1.StartBackgroundRequest.envs:type_name -> hostagent.v1.StartBackgroundRequest.EnvsEntry
-	63, // 18: hostagent.v1.ListProcessesResponse.processes:type_name -> hostagent.v1.ProcessEntry
-	23, // 19: hostagent.v1.ConnectProcessResponse.start:type_name -> hostagent.v1.ExecStreamStart
-	24, // 20: hostagent.v1.ConnectProcessResponse.data:type_name -> hostagent.v1.ExecStreamData
-	25, // 21: hostagent.v1.ConnectProcessResponse.end:type_name -> hostagent.v1.ExecStreamEnd
-	0,  // 22: hostagent.v1.HostAgentService.CreateSandbox:input_type -> hostagent.v1.CreateSandboxRequest
-	2,  // 23: hostagent.v1.HostAgentService.DestroySandbox:input_type -> hostagent.v1.DestroySandboxRequest
-	4,  // 24: hostagent.v1.HostAgentService.PauseSandbox:input_type -> hostagent.v1.PauseSandboxRequest
-	6,  // 25: hostagent.v1.HostAgentService.ResumeSandbox:input_type -> hostagent.v1.ResumeSandboxRequest
-	12, // 26: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
-	14, // 27: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
-	17, // 28: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
-	19, // 29: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
-	31, // 30: hostagent.v1.HostAgentService.ListDir:input_type -> hostagent.v1.ListDirRequest
-	34, // 31: hostagent.v1.HostAgentService.MakeDir:input_type -> hostagent.v1.MakeDirRequest
-	36, // 32: hostagent.v1.HostAgentService.RemovePath:input_type -> hostagent.v1.RemovePathRequest
-	8,  // 33: hostagent.v1.HostAgentService.CreateSnapshot:input_type -> hostagent.v1.CreateSnapshotRequest
-	10, // 34: hostagent.v1.HostAgentService.DeleteSnapshot:input_type -> hostagent.v1.DeleteSnapshotRequest
-	21, // 35: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
-	26, // 36: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
-	29, // 37: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
-	38, // 38: hostagent.v1.HostAgentService.PingSandbox:input_type -> hostagent.v1.PingSandboxRequest
-	40, // 39: hostagent.v1.HostAgentService.Terminate:input_type -> hostagent.v1.TerminateRequest
-	43, // 40: hostagent.v1.HostAgentService.GetSandboxMetrics:input_type -> hostagent.v1.GetSandboxMetricsRequest
-	45, // 41: hostagent.v1.HostAgentService.FlushSandboxMetrics:input_type -> hostagent.v1.FlushSandboxMetricsRequest
-	47, // 42: hostagent.v1.HostAgentService.FlattenRootfs:input_type -> hostagent.v1.FlattenRootfsRequest
-	49, // 43: hostagent.v1.HostAgentService.PtyAttach:input_type -> hostagent.v1.PtyAttachRequest
-	54, // 44: hostagent.v1.HostAgentService.PtySendInput:input_type -> hostagent.v1.PtySendInputRequest
-	56, // 45: hostagent.v1.HostAgentService.PtyResize:input_type -> hostagent.v1.PtyResizeRequest
-	58, // 46: hostagent.v1.HostAgentService.PtyKill:input_type -> hostagent.v1.PtyKillRequest
-	60, // 47: hostagent.v1.HostAgentService.StartBackground:input_type -> hostagent.v1.StartBackgroundRequest
-	62, // 48: hostagent.v1.HostAgentService.ListProcesses:input_type -> hostagent.v1.ListProcessesRequest
-	65, // 49: hostagent.v1.HostAgentService.KillProcess:input_type -> hostagent.v1.KillProcessRequest
-	67, // 50: hostagent.v1.HostAgentService.ConnectProcess:input_type -> hostagent.v1.ConnectProcessRequest
-	1,  // 51: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
-	3,  // 52: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
-	5,  // 53: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
-	7,  // 54: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
-	13, // 55: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
-	15, // 56: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
-	18, // 57: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
-	20, // 58: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
-	32, // 59: hostagent.v1.HostAgentService.ListDir:output_type -> hostagent.v1.ListDirResponse
-	35, // 60: hostagent.v1.HostAgentService.MakeDir:output_type -> hostagent.v1.MakeDirResponse
-	37, // 61: hostagent.v1.HostAgentService.RemovePath:output_type -> hostagent.v1.RemovePathResponse
-	9,  // 62: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
-	11, // 63: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
-	22, // 64: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
-	28, // 65: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
-	30, // 66: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
-	39, // 67: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
-	41, // 68: hostagent.v1.HostAgentService.Terminate:output_type -> hostagent.v1.TerminateResponse
-	44, // 69: hostagent.v1.HostAgentService.GetSandboxMetrics:output_type -> hostagent.v1.GetSandboxMetricsResponse
-	46, // 70: hostagent.v1.HostAgentService.FlushSandboxMetrics:output_type -> hostagent.v1.FlushSandboxMetricsResponse
-	48, // 71: hostagent.v1.HostAgentService.FlattenRootfs:output_type -> hostagent.v1.FlattenRootfsResponse
-	50, // 72: hostagent.v1.HostAgentService.PtyAttach:output_type -> hostagent.v1.PtyAttachResponse
-	55, // 73: hostagent.v1.HostAgentService.PtySendInput:output_type -> hostagent.v1.PtySendInputResponse
-	57, // 74: hostagent.v1.HostAgentService.PtyResize:output_type -> hostagent.v1.PtyResizeResponse
-	59, // 75: hostagent.v1.HostAgentService.PtyKill:output_type -> hostagent.v1.PtyKillResponse
-	61, // 76: hostagent.v1.HostAgentService.StartBackground:output_type -> hostagent.v1.StartBackgroundResponse
-	64, // 77: hostagent.v1.HostAgentService.ListProcesses:output_type -> hostagent.v1.ListProcessesResponse
-	66, // 78: hostagent.v1.HostAgentService.KillProcess:output_type -> hostagent.v1.KillProcessResponse
-	68, // 79: hostagent.v1.HostAgentService.ConnectProcess:output_type -> hostagent.v1.ConnectProcessResponse
-	51, // [51:80] is the sub-list for method output_type
-	22, // [22:51] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	70, // 1: hostagent.v1.CreateSandboxResponse.metadata:type_name -> hostagent.v1.CreateSandboxResponse.MetadataEntry
+	71, // 2: hostagent.v1.ResumeSandboxRequest.default_env:type_name -> hostagent.v1.ResumeSandboxRequest.DefaultEnvEntry
+	72, // 3: hostagent.v1.ResumeSandboxResponse.metadata:type_name -> hostagent.v1.ResumeSandboxResponse.MetadataEntry
+	16, // 4: hostagent.v1.ListSandboxesResponse.sandboxes:type_name -> hostagent.v1.SandboxInfo
+	73, // 5: hostagent.v1.SandboxInfo.metadata:type_name -> hostagent.v1.SandboxInfo.MetadataEntry
+	23, // 6: hostagent.v1.ExecStreamResponse.start:type_name -> hostagent.v1.ExecStreamStart
+	24, // 7: hostagent.v1.ExecStreamResponse.data:type_name -> hostagent.v1.ExecStreamData
+	25, // 8: hostagent.v1.ExecStreamResponse.end:type_name -> hostagent.v1.ExecStreamEnd
+	27, // 9: hostagent.v1.WriteFileStreamRequest.meta:type_name -> hostagent.v1.WriteFileStreamMeta
+	33, // 10: hostagent.v1.ListDirResponse.entries:type_name -> hostagent.v1.FileEntry
+	33, // 11: hostagent.v1.MakeDirResponse.entry:type_name -> hostagent.v1.FileEntry
+	42, // 12: hostagent.v1.GetSandboxMetricsResponse.points:type_name -> hostagent.v1.MetricPoint
+	42, // 13: hostagent.v1.FlushSandboxMetricsResponse.points_10m:type_name -> hostagent.v1.MetricPoint
+	42, // 14: hostagent.v1.FlushSandboxMetricsResponse.points_2h:type_name -> hostagent.v1.MetricPoint
+	42, // 15: hostagent.v1.FlushSandboxMetricsResponse.points_24h:type_name -> hostagent.v1.MetricPoint
+	74, // 16: hostagent.v1.PtyAttachRequest.envs:type_name -> hostagent.v1.PtyAttachRequest.EnvsEntry
+	51, // 17: hostagent.v1.PtyAttachResponse.started:type_name -> hostagent.v1.PtyStarted
+	52, // 18: hostagent.v1.PtyAttachResponse.output:type_name -> hostagent.v1.PtyOutput
+	53, // 19: hostagent.v1.PtyAttachResponse.exited:type_name -> hostagent.v1.PtyExited
+	75, // 20: hostagent.v1.StartBackgroundRequest.envs:type_name -> hostagent.v1.StartBackgroundRequest.EnvsEntry
+	63, // 21: hostagent.v1.ListProcessesResponse.processes:type_name -> hostagent.v1.ProcessEntry
+	23, // 22: hostagent.v1.ConnectProcessResponse.start:type_name -> hostagent.v1.ExecStreamStart
+	24, // 23: hostagent.v1.ConnectProcessResponse.data:type_name -> hostagent.v1.ExecStreamData
+	25, // 24: hostagent.v1.ConnectProcessResponse.end:type_name -> hostagent.v1.ExecStreamEnd
+	0,  // 25: hostagent.v1.HostAgentService.CreateSandbox:input_type -> hostagent.v1.CreateSandboxRequest
+	2,  // 26: hostagent.v1.HostAgentService.DestroySandbox:input_type -> hostagent.v1.DestroySandboxRequest
+	4,  // 27: hostagent.v1.HostAgentService.PauseSandbox:input_type -> hostagent.v1.PauseSandboxRequest
+	6,  // 28: hostagent.v1.HostAgentService.ResumeSandbox:input_type -> hostagent.v1.ResumeSandboxRequest
+	12, // 29: hostagent.v1.HostAgentService.Exec:input_type -> hostagent.v1.ExecRequest
+	14, // 30: hostagent.v1.HostAgentService.ListSandboxes:input_type -> hostagent.v1.ListSandboxesRequest
+	17, // 31: hostagent.v1.HostAgentService.WriteFile:input_type -> hostagent.v1.WriteFileRequest
+	19, // 32: hostagent.v1.HostAgentService.ReadFile:input_type -> hostagent.v1.ReadFileRequest
+	31, // 33: hostagent.v1.HostAgentService.ListDir:input_type -> hostagent.v1.ListDirRequest
+	34, // 34: hostagent.v1.HostAgentService.MakeDir:input_type -> hostagent.v1.MakeDirRequest
+	36, // 35: hostagent.v1.HostAgentService.RemovePath:input_type -> hostagent.v1.RemovePathRequest
+	8,  // 36: hostagent.v1.HostAgentService.CreateSnapshot:input_type -> hostagent.v1.CreateSnapshotRequest
+	10, // 37: hostagent.v1.HostAgentService.DeleteSnapshot:input_type -> hostagent.v1.DeleteSnapshotRequest
+	21, // 38: hostagent.v1.HostAgentService.ExecStream:input_type -> hostagent.v1.ExecStreamRequest
+	26, // 39: hostagent.v1.HostAgentService.WriteFileStream:input_type -> hostagent.v1.WriteFileStreamRequest
+	29, // 40: hostagent.v1.HostAgentService.ReadFileStream:input_type -> hostagent.v1.ReadFileStreamRequest
+	38, // 41: hostagent.v1.HostAgentService.PingSandbox:input_type -> hostagent.v1.PingSandboxRequest
+	40, // 42: hostagent.v1.HostAgentService.Terminate:input_type -> hostagent.v1.TerminateRequest
+	43, // 43: hostagent.v1.HostAgentService.GetSandboxMetrics:input_type -> hostagent.v1.GetSandboxMetricsRequest
+	45, // 44: hostagent.v1.HostAgentService.FlushSandboxMetrics:input_type -> hostagent.v1.FlushSandboxMetricsRequest
+	47, // 45: hostagent.v1.HostAgentService.FlattenRootfs:input_type -> hostagent.v1.FlattenRootfsRequest
+	49, // 46: hostagent.v1.HostAgentService.PtyAttach:input_type -> hostagent.v1.PtyAttachRequest
+	54, // 47: hostagent.v1.HostAgentService.PtySendInput:input_type -> hostagent.v1.PtySendInputRequest
+	56, // 48: hostagent.v1.HostAgentService.PtyResize:input_type -> hostagent.v1.PtyResizeRequest
+	58, // 49: hostagent.v1.HostAgentService.PtyKill:input_type -> hostagent.v1.PtyKillRequest
+	60, // 50: hostagent.v1.HostAgentService.StartBackground:input_type -> hostagent.v1.StartBackgroundRequest
+	62, // 51: hostagent.v1.HostAgentService.ListProcesses:input_type -> hostagent.v1.ListProcessesRequest
+	65, // 52: hostagent.v1.HostAgentService.KillProcess:input_type -> hostagent.v1.KillProcessRequest
+	67, // 53: hostagent.v1.HostAgentService.ConnectProcess:input_type -> hostagent.v1.ConnectProcessRequest
+	1,  // 54: hostagent.v1.HostAgentService.CreateSandbox:output_type -> hostagent.v1.CreateSandboxResponse
+	3,  // 55: hostagent.v1.HostAgentService.DestroySandbox:output_type -> hostagent.v1.DestroySandboxResponse
+	5,  // 56: hostagent.v1.HostAgentService.PauseSandbox:output_type -> hostagent.v1.PauseSandboxResponse
+	7,  // 57: hostagent.v1.HostAgentService.ResumeSandbox:output_type -> hostagent.v1.ResumeSandboxResponse
+	13, // 58: hostagent.v1.HostAgentService.Exec:output_type -> hostagent.v1.ExecResponse
+	15, // 59: hostagent.v1.HostAgentService.ListSandboxes:output_type -> hostagent.v1.ListSandboxesResponse
+	18, // 60: hostagent.v1.HostAgentService.WriteFile:output_type -> hostagent.v1.WriteFileResponse
+	20, // 61: hostagent.v1.HostAgentService.ReadFile:output_type -> hostagent.v1.ReadFileResponse
+	32, // 62: hostagent.v1.HostAgentService.ListDir:output_type -> hostagent.v1.ListDirResponse
+	35, // 63: hostagent.v1.HostAgentService.MakeDir:output_type -> hostagent.v1.MakeDirResponse
+	37, // 64: hostagent.v1.HostAgentService.RemovePath:output_type -> hostagent.v1.RemovePathResponse
+	9,  // 65: hostagent.v1.HostAgentService.CreateSnapshot:output_type -> hostagent.v1.CreateSnapshotResponse
+	11, // 66: hostagent.v1.HostAgentService.DeleteSnapshot:output_type -> hostagent.v1.DeleteSnapshotResponse
+	22, // 67: hostagent.v1.HostAgentService.ExecStream:output_type -> hostagent.v1.ExecStreamResponse
+	28, // 68: hostagent.v1.HostAgentService.WriteFileStream:output_type -> hostagent.v1.WriteFileStreamResponse
+	30, // 69: hostagent.v1.HostAgentService.ReadFileStream:output_type -> hostagent.v1.ReadFileStreamResponse
+	39, // 70: hostagent.v1.HostAgentService.PingSandbox:output_type -> hostagent.v1.PingSandboxResponse
+	41, // 71: hostagent.v1.HostAgentService.Terminate:output_type -> hostagent.v1.TerminateResponse
+	44, // 72: hostagent.v1.HostAgentService.GetSandboxMetrics:output_type -> hostagent.v1.GetSandboxMetricsResponse
+	46, // 73: hostagent.v1.HostAgentService.FlushSandboxMetrics:output_type -> hostagent.v1.FlushSandboxMetricsResponse
+	48, // 74: hostagent.v1.HostAgentService.FlattenRootfs:output_type -> hostagent.v1.FlattenRootfsResponse
+	50, // 75: hostagent.v1.HostAgentService.PtyAttach:output_type -> hostagent.v1.PtyAttachResponse
+	55, // 76: hostagent.v1.HostAgentService.PtySendInput:output_type -> hostagent.v1.PtySendInputResponse
+	57, // 77: hostagent.v1.HostAgentService.PtyResize:output_type -> hostagent.v1.PtyResizeResponse
+	59, // 78: hostagent.v1.HostAgentService.PtyKill:output_type -> hostagent.v1.PtyKillResponse
+	61, // 79: hostagent.v1.HostAgentService.StartBackground:output_type -> hostagent.v1.StartBackgroundResponse
+	64, // 80: hostagent.v1.HostAgentService.ListProcesses:output_type -> hostagent.v1.ListProcessesResponse
+	66, // 81: hostagent.v1.HostAgentService.KillProcess:output_type -> hostagent.v1.KillProcessResponse
+	68, // 82: hostagent.v1.HostAgentService.ConnectProcess:output_type -> hostagent.v1.ConnectProcessResponse
+	54, // [54:83] is the sub-list for method output_type
+	25, // [25:54] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_hostagent_proto_init() }
@@ -4641,7 +4699,7 @@ func file_hostagent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hostagent_proto_rawDesc), len(file_hostagent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   73,
+			NumMessages:   76,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

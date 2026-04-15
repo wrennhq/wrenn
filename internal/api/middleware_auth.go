@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
 // requireAPIKeyOrJWT accepts either X-API-Key header or Authorization: Bearer JWT.

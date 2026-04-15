@@ -34,5 +34,5 @@ WHERE id = $1;
 
 -- name: UpdateBuildDefaults :exec
 UPDATE template_builds
-SET default_user = $2, default_env = $3
+SET default_user = $2, default_env = $3, metadata = $4
 WHERE id = $1;

@@ -80,6 +80,7 @@ func (s *Server) CreateSandbox(
 		SandboxId: sb.ID,
 		Status:    string(sb.Status),
 		HostIp:    sb.HostIP.String(),
+		Metadata:  sb.Metadata,
 	}), nil
 }
 
@@ -108,7 +109,7 @@ func (s *Server) ResumeSandbox(
 	req *connect.Request[pb.ResumeSandboxRequest],
 ) (*connect.Response[pb.ResumeSandboxResponse], error) {
 	msg := req.Msg
-	sb, err := s.mgr.Resume(ctx, msg.SandboxId, int(msg.TimeoutSec))
+	sb, err := s.mgr.Resume(ctx, msg.SandboxId, int(msg.TimeoutSec), msg.KernelVersion)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -124,6 +125,7 @@ func (s *Server) ResumeSandbox(
 		SandboxId: sb.ID,
 		Status:    string(sb.Status),
 		HostIp:    sb.HostIP.String(),
+		Metadata:  sb.Metadata,
 	}), nil
 }
 
@@ -564,6 +566,7 @@ func (s *Server) ListSandboxes(
 			CreatedAtUnix:    sb.CreatedAt.Unix(),
 			LastActiveAtUnix: sb.LastActiveAt.Unix(),
 			TimeoutSec:       int32(sb.TimeoutSec),
+			Metadata:         sb.Metadata,
 		}
 	}
 

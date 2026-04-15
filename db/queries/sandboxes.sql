@@ -1,6 +1,6 @@
 -- name: InsertSandbox :one
-INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, template_id, template_team_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, template_id, template_team_id, metadata)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING *;
 
 -- name: GetSandbox :one
@@ -73,6 +73,12 @@ UPDATE sandboxes
 SET status       = 'missing',
     last_updated = NOW()
 WHERE host_id = $1 AND status IN ('running', 'starting', 'pending');
+
+-- name: UpdateSandboxMetadata :exec
+UPDATE sandboxes
+SET metadata = $2,
+    last_updated = NOW()
+WHERE id = $1;
 
 -- name: BulkRestoreRunning :exec
 -- Called by the reconciler when a host comes back online and its sandboxes are

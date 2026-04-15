@@ -17,13 +17,13 @@ import (
 
 	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
 	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/internal/models"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
 	"git.omukk.dev/wrenn/wrenn/internal/uffd"
 	"git.omukk.dev/wrenn/wrenn/internal/vm"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 )
 
@@ -32,6 +32,13 @@ type Config struct {
 	WrennDir            string // root directory (e.g. /var/lib/wrenn); all sub-paths derived via layout package
 	EnvdTimeout         time.Duration
 	DefaultRootfsSizeMB int // target size for template rootfs images; 0 → DefaultDiskSizeMB
+
+	// Resolved at startup by the host agent.
+	KernelPath         string // path to the latest vmlinux-x.y.z
+	KernelVersion      string // semver extracted from filename
+	FirecrackerBin     string // path to the firecracker binary
+	FirecrackerVersion string // semver from firecracker --version
+	AgentVersion       string // host agent version (injected via ldflags)
 }
 
 // Manager orchestrates sandbox lifecycle: VM, network, filesystem, envd.
@@ -85,6 +92,35 @@ type snapshotParent struct {
 // A Full snapshot resets the generation counter and produces a clean base,
 // preventing the crash.
 const maxDiffGenerations = 8
+
+// buildMetadata constructs the metadata map with version information.
+func (m *Manager) buildMetadata(envdVersion string) map[string]string {
+	meta := map[string]string{
+		"kernel_version":      m.cfg.KernelVersion,
+		"firecracker_version": m.cfg.FirecrackerVersion,
+		"agent_version":       m.cfg.AgentVersion,
+	}
+	if envdVersion != "" {
+		meta["envd_version"] = envdVersion
+	}
+	return meta
+}
+
+// resolveKernelPath returns the kernel path for the given version hint.
+// If the exact version exists on disk, it is used. Otherwise, falls back to
+// the latest kernel (m.cfg.KernelPath).
+func (m *Manager) resolveKernelPath(versionHint string) string {
+	if versionHint == "" {
+		return m.cfg.KernelPath
+	}
+	exact := layout.KernelPathVersioned(m.cfg.WrennDir, versionHint)
+	if _, err := os.Stat(exact); err == nil {
+		return exact
+	}
+	slog.Warn("requested kernel version not found, using latest",
+		"requested", versionHint, "latest", m.cfg.KernelVersion)
+	return m.cfg.KernelPath
+}
 
 // New creates a new sandbox manager.
 func New(cfg Config) *Manager {
@@ -175,7 +211,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
 		TemplateID:       id.UUIDString(templateID),
-		KernelPath:       layout.KernelPath(m.cfg.WrennDir),
+		KernelPath:       m.cfg.KernelPath,
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            vcpus,
 		MemoryMB:         memoryMB,
@@ -185,6 +221,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 		GuestIP:          slot.GuestIP,
 		GatewayIP:        slot.TapIP,
 		NetMask:          slot.GuestNetMask,
+		FirecrackerBin:   m.cfg.FirecrackerBin,
 	}
 
 	if _, err := m.vm.Create(ctx, vmCfg); err != nil {
@@ -211,6 +248,9 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
+	// Fetch envd version (best-effort).
+	envdVersion, _ := client.FetchVersion(ctx)
+
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -226,6 +266,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 			RootfsPath:     dmDev.DevicePath,
 			CreatedAt:      now,
 			LastActiveAt:   now,
+			Metadata:       m.buildMetadata(envdVersion),
 		},
 		slot:          slot,
 		client:        client,
@@ -558,7 +599,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 // Resume restores a paused sandbox from its snapshot using UFFD for
 // lazy memory loading. The sandbox gets a new network slot.
-func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) (*models.Sandbox, error) {
+func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, kernelVersion string) (*models.Sandbox, error) {
 	pauseDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sandboxID)
 	if _, err := os.Stat(pauseDir); err != nil {
 		return nil, fmt.Errorf("no snapshot found for sandbox %s", sandboxID)
@@ -672,7 +713,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 	// Restore VM from snapshot.
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
-		KernelPath:       layout.KernelPath(m.cfg.WrennDir),
+		KernelPath:       m.resolveKernelPath(kernelVersion),
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            1,                                         // Placeholder; overridden by snapshot.
 		MemoryMB:         int(header.Metadata.Size / (1024 * 1024)), // Placeholder; overridden by snapshot.
@@ -682,6 +723,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 		GuestIP:          slot.GuestIP,
 		GatewayIP:        slot.TapIP,
 		NetMask:          slot.GuestNetMask,
+		FirecrackerBin:   m.cfg.FirecrackerBin,
 	}
 
 	resumeSnapPath := filepath.Join(pauseDir, snapshot.SnapFileName)
@@ -718,6 +760,9 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 		slog.Warn("post-init failed after resume, metadata files may be stale", "sandbox", sandboxID, "error", err)
 	}
 
+	// Fetch envd version (best-effort).
+	envdVersion, _ := client.FetchVersion(ctx)
+
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -731,6 +776,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 			RootfsPath:   dmDev.DevicePath,
 			CreatedAt:    now,
 			LastActiveAt: now,
+			Metadata:     m.buildMetadata(envdVersion),
 		},
 		slot:           slot,
 		client:         client,
@@ -1099,7 +1145,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
 		TemplateID:       id.UUIDString(templateID),
-		KernelPath:       layout.KernelPath(m.cfg.WrennDir),
+		KernelPath:       m.cfg.KernelPath,
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            vcpus,
 		MemoryMB:         memoryMB,
@@ -1109,6 +1155,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		GuestIP:          slot.GuestIP,
 		GatewayIP:        slot.TapIP,
 		NetMask:          slot.GuestNetMask,
+		FirecrackerBin:   m.cfg.FirecrackerBin,
 	}
 
 	snapPath := filepath.Join(tmplDir, snapshot.SnapFileName)
@@ -1145,6 +1192,9 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		slog.Warn("post-init failed after template restore, metadata files may be stale", "sandbox", sandboxID, "error", err)
 	}
 
+	// Fetch envd version (best-effort).
+	envdVersion, _ := client.FetchVersion(ctx)
+
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -1160,6 +1210,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 			RootfsPath:     dmDev.DevicePath,
 			CreatedAt:      now,
 			LastActiveAt:   now,
+			Metadata:       m.buildMetadata(envdVersion),
 		},
 		slot:           slot,
 		client:         client,

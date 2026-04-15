@@ -15,12 +15,19 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
 	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
 	"git.omukk.dev/wrenn/wrenn/internal/hostagent"
+	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
+)
+
+// Set via -ldflags at build time.
+var (
+	version = "dev"
+	commit  = "unknown"
 )
 
 func main() {
@@ -82,9 +89,31 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Resolve latest kernel version.
+	kernelPath, kernelVersion, err := layout.LatestKernel(rootDir)
+	if err != nil {
+		slog.Error("failed to find kernel", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("resolved kernel", "version", kernelVersion, "path", kernelPath)
+
+	// Detect firecracker version.
+	fcBin := envOrDefault("WRENN_FIRECRACKER_BIN", "/usr/local/bin/firecracker")
+	fcVersion, err := sandbox.DetectFirecrackerVersion(fcBin)
+	if err != nil {
+		slog.Error("failed to detect firecracker version", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("resolved firecracker", "version", fcVersion, "path", fcBin)
+
 	cfg := sandbox.Config{
 		WrennDir:            rootDir,
 		DefaultRootfsSizeMB: defaultRootfsSizeMB,
+		KernelPath:          kernelPath,
+		KernelVersion:       kernelVersion,
+		FirecrackerBin:      fcBin,
+		FirecrackerVersion:  fcVersion,
+		AgentVersion:        version,
 	}
 
 	mgr := sandbox.New(cfg)
@@ -193,7 +222,7 @@ func main() {
 		doShutdown("signal: " + sig.String())
 	}()
 
-	slog.Info("host agent starting", "addr", listenAddr, "host_id", creds.HostID)
+	slog.Info("host agent starting", "addr", listenAddr, "host_id", creds.HostID, "version", version, "commit", commit)
 	// TLSConfig is always set (mTLS is mandatory). Create the TLS listener
 	// manually because ListenAndServeTLS requires on-disk cert/key paths
 	// but we use GetCertificate callback for hot-swap support.

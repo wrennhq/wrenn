@@ -79,7 +79,7 @@ func newTestAPI(accessToken *SecureToken, mmdsClient MMDSClient) *API {
 	defaults := &execcontext.Defaults{
 		EnvVars: utils.NewMap[string, string](),
 	}
-	api := New(&logger, defaults, nil, false, context.Background(), nil)
+	api := New(&logger, defaults, nil, false, context.Background(), nil, "test")
 	if accessToken != nil {
 		api.accessToken.TakeFrom(accessToken)
 	}

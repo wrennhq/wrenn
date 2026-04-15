@@ -12,12 +12,12 @@ import (
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
-	"git.omukk.dev/wrenn/wrenn/internal/service"
-	"git.omukk.dev/wrenn/wrenn/internal/validate"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 

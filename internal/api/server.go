@@ -9,14 +9,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"git.omukk.dev/wrenn/wrenn/internal/audit"
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/auth/oauth"
-	"git.omukk.dev/wrenn/wrenn/internal/channels"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
-	"git.omukk.dev/wrenn/wrenn/internal/scheduler"
-	"git.omukk.dev/wrenn/wrenn/internal/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
+	"git.omukk.dev/wrenn/wrenn/pkg/channels"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/scheduler"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 //go:embed openapi.yaml
@@ -29,6 +30,8 @@ type Server struct {
 }
 
 // New constructs the chi router and registers all routes.
+// Extensions are called after core routes are registered, allowing enterprise
+// or third-party code to add routes and middleware.
 func New(
 	queries *db.Queries,
 	pool *lifecycle.HostClientPool,
@@ -41,6 +44,8 @@ func New(
 	ca *auth.CA,
 	al *audit.AuditLogger,
 	channelSvc *channels.Service,
+	extensions []cpextension.Extension,
+	sctx cpextension.ServerContext,
 ) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
@@ -239,11 +244,21 @@ func New(
 		})
 	})
 
+	// Let extensions register their routes after all core routes.
+	for _, ext := range extensions {
+		ext.RegisterRoutes(r, sctx)
+	}
+
 	return &Server{router: r, BuildSvc: buildSvc}
 }
 
 // Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
+	return s.router
+}
+
+// Router returns the underlying chi.Router for direct access.
+func (s *Server) Router() chi.Router {
 	return s.router
 }
 
