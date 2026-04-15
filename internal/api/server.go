@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
@@ -44,6 +45,7 @@ func New(
 	ca *auth.CA,
 	al *audit.AuditLogger,
 	channelSvc *channels.Service,
+	mailer email.Mailer,
 	extensions []cpextension.Extension,
 	sctx cpextension.ServerContext,
 ) *Server {
@@ -68,11 +70,11 @@ func New(
 	filesStream := newFilesStreamHandler(queries, pool)
 	fsH := newFSHandler(queries, pool)
 	snapshots := newSnapshotHandler(templateSvc, queries, pool, al)
-	authH := newAuthHandler(queries, pgPool, jwtSecret)
+	authH := newAuthHandler(queries, pgPool, jwtSecret, mailer)
 	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, oauthRegistry, oauthRedirectURL)
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
 	hostH := newHostHandler(hostSvc, queries, al)
-	teamH := newTeamHandler(teamSvc, al)
+	teamH := newTeamHandler(teamSvc, al, mailer)
 	usersH := newUsersHandler(queries, userSvc)
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)

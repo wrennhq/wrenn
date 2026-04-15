@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/wrenn/internal/api"
+	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
@@ -150,6 +151,15 @@ func Run(opts ...Option) {
 	// Shared audit logger with event publishing.
 	al := audit.NewWithPublisher(queries, channelPub)
 
+	// Transactional email (no-op if SMTP_HOST is not set).
+	mailer := email.New(email.Config{
+		Host:      cfg.SMTPHost,
+		Port:      cfg.SMTPPort,
+		Username:  cfg.SMTPUsername,
+		Password:  cfg.SMTPPassword,
+		FromEmail: cfg.SMTPFromEmail,
+	})
+
 	// Build the server context that extensions receive.
 	sctx := ServerContext{
 		Queries:   queries,
@@ -159,12 +169,13 @@ func Run(opts ...Option) {
 		Scheduler: hostScheduler,
 		CA:        ca,
 		Audit:     al,
+		Mailer:    mailer,
 		JWTSecret: []byte(cfg.JWTSecret),
 		Config:    cfg,
 	}
 
 	// API server.
-	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelSvc, o.extensions, sctx)
+	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelSvc, mailer, o.extensions, sctx)
 
 	// Start template build workers (2 concurrent).
 	stopBuildWorkers := srv.BuildSvc.StartWorkers(ctx, 2)
