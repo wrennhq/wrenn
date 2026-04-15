@@ -84,6 +84,7 @@ func New(
 	ptyH := newPtyHandler(queries, pool)
 	processH := newProcessHandler(queries, pool)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
+	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, mailer, oauthRegistry, oauthRedirectURL)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -94,6 +95,21 @@ func New(
 	r.Post("/v1/auth/login", authH.Login)
 	r.Get("/auth/oauth/{provider}", oauthH.Redirect)
 	r.Get("/auth/oauth/{provider}/callback", oauthH.Callback)
+
+	// Unauthenticated: password reset request and confirmation.
+	r.Post("/v1/me/password/reset", meH.RequestPasswordReset)
+	r.Post("/v1/me/password/reset/confirm", meH.ConfirmPasswordReset)
+
+	// JWT-authenticated: self-service account management.
+	r.Route("/v1/me", func(r chi.Router) {
+		r.Use(requireJWT(jwtSecret, queries))
+		r.Get("/", meH.GetMe)
+		r.Patch("/", meH.UpdateName)
+		r.Post("/password", meH.ChangePassword)
+		r.Get("/providers/{provider}/connect", meH.ConnectProvider)
+		r.Delete("/providers/{provider}", meH.DisconnectProvider)
+		r.Delete("/", meH.DeleteAccount)
+	})
 
 	// JWT-authenticated: switch active team.
 	r.With(requireJWT(jwtSecret, queries)).Post("/v1/auth/switch-team", authH.SwitchTeam)

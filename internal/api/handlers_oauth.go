@@ -137,6 +137,73 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	email := strings.TrimSpace(strings.ToLower(profile.Email))
 
+	// Check for a link operation initiated from the settings page.
+	if linkCookie, err := r.Cookie("oauth_link_user_id"); err == nil && linkCookie.Value != "" {
+		// Clear the link cookie immediately.
+		http.SetCookie(w, &http.Cookie{
+			Name:     "oauth_link_user_id",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   isSecure(r),
+		})
+
+		settingsBase := h.redirectURL + "/dashboard/settings"
+
+		// Verify the HMAC to prevent cookie forgery.
+		linkParts := strings.SplitN(linkCookie.Value, ":", 2)
+		if len(linkParts) != 2 || !hmac.Equal([]byte(computeHMAC(h.jwtSecret, linkParts[0])), []byte(linkParts[1])) {
+			slog.Warn("oauth link: invalid or tampered link cookie")
+			http.Redirect(w, r, settingsBase+"?connect_error=invalid_state", http.StatusFound)
+			return
+		}
+
+		userID, parseErr := id.ParseUserID(linkParts[0])
+		if parseErr != nil {
+			slog.Error("oauth link: invalid user ID in cookie", "error", parseErr)
+			http.Redirect(w, r, settingsBase+"?connect_error=invalid_state", http.StatusFound)
+			return
+		}
+
+		// Ensure the GitHub account isn't already linked to a different user.
+		existing, lookupErr := h.db.GetOAuthProvider(ctx, db.GetOAuthProviderParams{
+			Provider:   provider,
+			ProviderID: profile.ProviderID,
+		})
+		if lookupErr == nil && existing.UserID != userID {
+			slog.Warn("oauth link: provider already linked to another account", "provider", provider)
+			http.Redirect(w, r, settingsBase+"?connect_error=already_linked", http.StatusFound)
+			return
+		}
+		if lookupErr == nil && existing.UserID == userID {
+			// Already linked to this user — treat as success.
+			http.Redirect(w, r, settingsBase+"?connected="+provider, http.StatusFound)
+			return
+		}
+		if !errors.Is(lookupErr, pgx.ErrNoRows) {
+			slog.Error("oauth link: db lookup failed", "error", lookupErr)
+			http.Redirect(w, r, settingsBase+"?connect_error=db_error", http.StatusFound)
+			return
+		}
+
+		if insertErr := h.db.InsertOAuthProvider(ctx, db.InsertOAuthProviderParams{
+			Provider:   provider,
+			ProviderID: profile.ProviderID,
+			UserID:     userID,
+			Email:      email,
+		}); insertErr != nil {
+			slog.Error("oauth link: failed to insert provider", "error", insertErr)
+			http.Redirect(w, r, settingsBase+"?connect_error=db_error", http.StatusFound)
+			return
+		}
+
+		slog.Info("oauth link: provider linked", "provider", provider, "user_id", id.FormatUserID(userID))
+		http.Redirect(w, r, settingsBase+"?connected="+provider, http.StatusFound)
+		return
+	}
+
 	// Check if this OAuth identity already exists.
 	existing, err := h.db.GetOAuthProvider(ctx, db.GetOAuthProviderParams{
 		Provider:   provider,
