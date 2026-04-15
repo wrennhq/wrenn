@@ -64,7 +64,7 @@ envd is a **completely independent Go module**. It is never imported by the main
 
 ### Control Plane
 
-**Internal packages:** `internal/api/`, `internal/dashboard/`
+**Internal packages:** `internal/api/`, `internal/dashboard/`, `internal/email/`
 
 **Public packages (importable by cloud repo):** `pkg/config/`, `pkg/db/`, `pkg/auth/`, `pkg/auth/oauth/`, `pkg/scheduler/`, `pkg/lifecycle/`, `pkg/channels/`, `pkg/audit/`, `pkg/service/`, `pkg/events/`, `pkg/id/`, `pkg/validate/`
 
