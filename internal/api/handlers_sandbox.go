@@ -7,11 +7,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"git.omukk.dev/wrenn/wrenn/internal/audit"
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
-	"git.omukk.dev/wrenn/wrenn/internal/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 type sandboxHandler struct {
@@ -31,18 +31,19 @@ type createSandboxRequest struct {
 }
 
 type sandboxResponse struct {
-	ID           string  `json:"id"`
-	Status       string  `json:"status"`
-	Template     string  `json:"template"`
-	VCPUs        int32   `json:"vcpus"`
-	MemoryMB     int32   `json:"memory_mb"`
-	TimeoutSec   int32   `json:"timeout_sec"`
-	GuestIP      string  `json:"guest_ip,omitempty"`
-	HostIP       string  `json:"host_ip,omitempty"`
-	CreatedAt    string  `json:"created_at"`
-	StartedAt    *string `json:"started_at,omitempty"`
-	LastActiveAt *string `json:"last_active_at,omitempty"`
-	LastUpdated  string  `json:"last_updated"`
+	ID           string            `json:"id"`
+	Status       string            `json:"status"`
+	Template     string            `json:"template"`
+	VCPUs        int32             `json:"vcpus"`
+	MemoryMB     int32             `json:"memory_mb"`
+	TimeoutSec   int32             `json:"timeout_sec"`
+	GuestIP      string            `json:"guest_ip,omitempty"`
+	HostIP       string            `json:"host_ip,omitempty"`
+	CreatedAt    string            `json:"created_at"`
+	StartedAt    *string           `json:"started_at,omitempty"`
+	LastActiveAt *string           `json:"last_active_at,omitempty"`
+	LastUpdated  string            `json:"last_updated"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 func sandboxToResponse(sb db.Sandbox) sandboxResponse {
@@ -55,6 +56,12 @@ func sandboxToResponse(sb db.Sandbox) sandboxResponse {
 		TimeoutSec: sb.TimeoutSec,
 		GuestIP:    sb.GuestIp,
 		HostIP:     sb.HostIp,
+	}
+	if len(sb.Metadata) > 0 {
+		var meta map[string]string
+		if err := json.Unmarshal(sb.Metadata, &meta); err == nil && len(meta) > 0 {
+			resp.Metadata = meta
+		}
 	}
 	if sb.CreatedAt.Valid {
 		resp.CreatedAt = sb.CreatedAt.Time.Format(time.RFC3339)

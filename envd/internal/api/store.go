@@ -34,6 +34,7 @@ type API struct {
 	logger      *zerolog.Logger
 	accessToken *SecureToken
 	defaults    *execcontext.Defaults
+	version     string
 
 	mmdsChan      chan *host.MMDSOpts
 	hyperloopLock sync.Mutex
@@ -48,7 +49,7 @@ type API struct {
 	portSubsystem *publicport.PortSubsystem
 }
 
-func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, rootCtx context.Context, portSubsystem *publicport.PortSubsystem) *API {
+func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, rootCtx context.Context, portSubsystem *publicport.PortSubsystem, version string) *API {
 	return &API{
 		logger:        l,
 		defaults:      defaults,
@@ -59,6 +60,7 @@ func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.
 		accessToken:   &SecureToken{},
 		rootCtx:       rootCtx,
 		portSubsystem: portSubsystem,
+		version:       version,
 	}
 }
 
@@ -68,9 +70,11 @@ func (a *API) GetHealth(w http.ResponseWriter, r *http.Request) {
 	a.logger.Trace().Msg("Health check")
 
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "")
+	w.Header().Set("Content-Type", "application/json")
 
-	w.WriteHeader(http.StatusNoContent)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"version": a.version,
+	})
 }
 
 func (a *API) GetMetrics(w http.ResponseWriter, r *http.Request) {

@@ -11,13 +11,13 @@ import (
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 
-	"git.omukk.dev/wrenn/wrenn/internal/audit"
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
-	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
-	"git.omukk.dev/wrenn/wrenn/internal/service"
-	"git.omukk.dev/wrenn/wrenn/internal/validate"
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
@@ -224,6 +224,7 @@ func (h *adminCapsuleHandler) Snapshot(w http.ResponseWriter, r *http.Request) {
 		TeamID:      id.PlatformTeamID,
 		DefaultUser: "root",
 		DefaultEnv:  []byte("{}"),
+		Metadata:    sb.Metadata,
 	})
 	if err != nil {
 		slog.Error("failed to insert template record", "name", req.Name, "error", err)

@@ -4,6 +4,10 @@
 DATABASE_URL   ?= postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable
 GOBIN          := $(shell pwd)/builds
 ENVD_DIR       := envd
+COMMIT         := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION_CP     := $(shell cat VERSION_CP 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
+VERSION_AGENT  := $(shell cat VERSION_AGENT 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
+VERSION_ENVD   := $(shell cat envd/VERSION 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
 LDFLAGS        := -s -w
 
 # ═══════════════════════════════════════════════════
@@ -17,14 +21,14 @@ build-frontend:
 	cd frontend && pnpm install --frozen-lockfile && pnpm build
 
 build-cp:
-	go build -v -ldflags="$(LDFLAGS)" -o $(GOBIN)/wrenn-cp ./cmd/control-plane
+	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_CP) -X main.commit=$(COMMIT)" -o $(GOBIN)/wrenn-cp ./cmd/control-plane
 
 build-agent:
-	go build -v -ldflags="$(LDFLAGS)" -o $(GOBIN)/wrenn-agent ./cmd/host-agent
+	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_AGENT) -X main.commit=$(COMMIT)" -o $(GOBIN)/wrenn-agent ./cmd/host-agent
 
 build-envd:
 	cd $(ENVD_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS)" -o $(GOBIN)/envd .
+		go build -ldflags="$(LDFLAGS) -X main.Version=$(VERSION_ENVD) -X main.commitSHA=$(COMMIT)" -o $(GOBIN)/envd .
 	@file $(GOBIN)/envd | grep -q "statically linked" || \
 		(echo "ERROR: envd is not statically linked!" && exit 1)
 

@@ -144,6 +144,10 @@ message CreateSandboxResponse {
   string sandbox_id = 1;
   string status = 2;
   string host_ip = 3;
+
+  // Runtime metadata collected during sandbox creation (e.g. envd_version,
+  // kernel_version, firecracker_version, agent_version).
+  map<string, string> metadata = 4;
 }
 
 message DestroySandboxRequest {
@@ -170,12 +174,20 @@ message ResumeSandboxRequest {
 
   // Default environment variables (set in envd via PostInit on resume).
   map<string, string> default_env = 4;
+
+  // Kernel version hint from the DB — the agent tries to use the exact version,
+  // falling back to latest if not found on disk.
+  string kernel_version = 5;
 }
 
 message ResumeSandboxResponse {
   string sandbox_id = 1;
   string status = 2;
   string host_ip = 3;
+
+  // Actual runtime metadata after resume (versions may differ from hint if
+  // the exact kernel was not available).
+  map<string, string> metadata = 4;
 }
 
 message CreateSnapshotRequest {
@@ -241,6 +253,9 @@ message SandboxInfo {
   int32 timeout_sec = 9;
   string team_id = 10;
   string template_id = 11;
+
+  // Runtime metadata (envd_version, kernel_version, etc.).
+  map<string, string> metadata = 12;
 }
 
 message WriteFileRequest {

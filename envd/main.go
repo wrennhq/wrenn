@@ -50,7 +50,7 @@ const (
 )
 
 var (
-	Version = "0.5.4"
+	Version = "0.1.0"
 
 	commitSHA string
 
@@ -197,7 +197,7 @@ func main() {
 	portSubsystem.Start(ctx)
 	defer portSubsystem.Stop()
 
-	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, ctx, portSubsystem)
+	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, ctx, portSubsystem, Version)
 	handler := api.HandlerFromMux(service, m)
 	middleware := authn.NewMiddleware(permissions.AuthenticateUsername)
 

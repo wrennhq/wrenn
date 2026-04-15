@@ -13,14 +13,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/audit"
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
-	"git.omukk.dev/wrenn/wrenn/internal/service"
-	"git.omukk.dev/wrenn/wrenn/internal/validate"
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
@@ -69,13 +69,14 @@ type createSnapshotRequest struct {
 }
 
 type snapshotResponse struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	VCPUs     *int32 `json:"vcpus,omitempty"`
-	MemoryMB  *int32 `json:"memory_mb,omitempty"`
-	SizeBytes int64  `json:"size_bytes"`
-	CreatedAt string `json:"created_at"`
-	Platform  bool   `json:"platform"`
+	Name      string            `json:"name"`
+	Type      string            `json:"type"`
+	VCPUs     *int32            `json:"vcpus,omitempty"`
+	MemoryMB  *int32            `json:"memory_mb,omitempty"`
+	SizeBytes int64             `json:"size_bytes"`
+	CreatedAt string            `json:"created_at"`
+	Platform  bool              `json:"platform"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 func templateToResponse(t db.Template) snapshotResponse {
@@ -93,6 +94,12 @@ func templateToResponse(t db.Template) snapshotResponse {
 	}
 	if t.CreatedAt.Valid {
 		resp.CreatedAt = t.CreatedAt.Time.Format(time.RFC3339)
+	}
+	if len(t.Metadata) > 0 {
+		var meta map[string]string
+		if err := json.Unmarshal(t.Metadata, &meta); err == nil && len(meta) > 0 {
+			resp.Metadata = meta
+		}
 	}
 	return resp
 }
@@ -219,6 +226,7 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TeamID:      ac.TeamID,
 		DefaultUser: "root",
 		DefaultEnv:  []byte("{}"),
+		Metadata:    sb.Metadata,
 	})
 	if err != nil {
 		slog.Error("failed to insert template record", "name", req.Name, "error", err)

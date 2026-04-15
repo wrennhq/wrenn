@@ -30,4 +30,5 @@ type Sandbox struct {
 	RootfsPath     string
 	CreatedAt      time.Time
 	LastActiveAt   time.Time
+	Metadata       map[string]string
 }

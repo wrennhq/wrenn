@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"git.omukk.dev/wrenn/wrenn/internal/id"
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
 // DefaultDiskSizeMB is the standard disk size for base images. Images smaller
