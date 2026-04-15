@@ -33,6 +33,11 @@
 
 	// Read OAuth error forwarded from /auth/github/callback
 	onMount(() => {
+		if (auth.isAuthenticated) {
+			goto('/dashboard');
+			return;
+		}
+
 		const urlErr = $page.url.searchParams.get('error');
 		if (urlErr) {
 			const decoded = decodeURIComponent(urlErr);
