@@ -64,7 +64,7 @@ envd is a **completely independent Go module**. It is never imported by the main
 
 ### Control Plane
 
-**Internal packages:** `internal/api/`, `internal/dashboard/`
+**Internal packages:** `internal/api/`, `internal/dashboard/`, `internal/email/`
 
 **Public packages (importable by cloud repo):** `pkg/config/`, `pkg/db/`, `pkg/auth/`, `pkg/auth/oauth/`, `pkg/scheduler/`, `pkg/lifecycle/`, `pkg/channels/`, `pkg/audit/`, `pkg/service/`, `pkg/events/`, `pkg/id/`, `pkg/validate/`
 
@@ -241,7 +241,9 @@ The main module (`go.mod`) and envd (`envd/go.mod`) are fully independent. `make
 ## Design Context
 
 ### Users
-Developers across the full spectrum — solo engineers building side projects, startup teams integrating sandboxed execution into products, and platform/infra engineers at larger organizations. The interface must feel at home for all three: approachable enough not to intimidate a hacker, precise enough to earn the trust of a production ops team. Never condescend, never oversimplify. Trust the user to understand what they're looking at.
+Developers across the full spectrum — solo engineers building side projects, startup teams integrating sandboxed execution into products, and platform/infra engineers at larger organizations running production workloads on Firecracker microVMs. They arrive with context: they know what a process is, what a rootfs is, what a TTY means. The interface must feel at home for all three: approachable enough not to intimidate a hacker, precise enough to earn the trust of a production ops team. Never condescend, never oversimplify. Trust the user to understand what they're looking at.
+
+**Primary job to be done:** Understand what's running, act on it confidently, and get back to code.
 
 ### Brand Personality
 **Precise. Warm. Uncompromising.**
@@ -251,9 +253,9 @@ Wrenn is an engineer's favorite tool — built with visible care, not assembled 
 Emotional goal: **in control.** Users leave a session with full confidence in what's running, what happened, and what comes next. Nothing is hidden, nothing is ambiguous.
 
 ### Aesthetic Direction
-**Dark-first, industrial-warm, data-forward.**
+**Dark-only (permanently), industrial-warm, data-forward.**
 
-The near-black-green background palette (`#0a0c0b` through `#2a302d`) reads as "black with intention" — not pitch black (cold) and not charcoal (dated). The sage green accent (`#5e8c58`) is muted and organic, a meaningful departure from the startup-green neon that saturates the developer tool space.
+No light mode planned. All design decisions should optimize for dark. The near-black-green background palette (`#0a0c0b` through `#2a302d`) reads as "black with intention" — not pitch black (cold) and not charcoal (dated). The sage green accent (`#5e8c58`) is muted and organic, a meaningful departure from the startup-green neon that saturates the developer tool space.
 
 **Anti-references:**
 - **Supabase**: avoid the friendly, approachable startup-green energy — too generic, too eager to please
@@ -267,12 +269,12 @@ The near-black-green background palette (`#0a0c0b` through `#2a302d`) reads as "
 ### Type System
 Four fonts with strict roles — this is the design system's strongest personality trait and must be respected:
 
-| Font | Role | When to use |
-|------|------|-------------|
-| **Manrope** (variable, sans) | UI workhorse | All body copy, nav, labels, buttons, form text |
-| **Instrument Serif** | Display / editorial | Page titles (h1), dialog headings, metric values, hero moments |
-| **JetBrains Mono** (variable) | Data / code | IDs, timestamps, key prefixes, file paths, terminal output, metrics |
-| **Alice** | Brand wordmark | "Wrenn" in sidebar and login only — nowhere else |
+| Font | CSS Class | Role | When to use |
+|------|-----------|------|-------------|
+| **Manrope** (variable, sans) | `font-sans` | UI workhorse | All body copy, nav, labels, buttons, form text |
+| **Instrument Serif** | `font-serif` | Display / editorial | Page titles (h1), dialog headings, metric values, hero moments |
+| **JetBrains Mono** (variable) | `font-mono` | Data / code | IDs, timestamps, key prefixes, file paths, terminal output, metrics |
+| **Alice** | brand wordmark only | Brand wordmark | "Wrenn" in sidebar and login only — nowhere else |
 
 Instrument Serif at scale creates the signature editorial moments. Mono provides the precision signal for technical data. Never swap these roles.
 
@@ -280,21 +282,82 @@ Instrument Serif at scale creates the signature editorial moments. Mono provides
 - `.font-serif` — `letter-spacing: 0.015em` (positive tracking; Instrument Serif reads less condensed at display sizes)
 - `.font-mono` — `font-variant-numeric: tabular-nums` (numbers align in tables and metric displays)
 
+**Type scale (root: 87.5% = 14px base):**
+| Token | Value | Use |
+|---|---|---|
+| `--text-display` | 2.571rem (~36px) | Auth section headings |
+| `--text-page` | 2rem (~28px) | Page h1 titles |
+| `--text-heading` | 1.429rem (~20px) | Dialog headings, empty states |
+| `--text-body` | 1rem (~14px) | Primary body, buttons, inputs |
+| `--text-ui` | 0.929rem (~13px) | Nav labels, table cells |
+| `--text-meta` | 0.857rem (~12px) | Key prefixes, minor info |
+| `--text-label` | 0.786rem (~11px) | Uppercase section labels |
+| `--text-badge` | 0.714rem (~10px) | Live badges, tiny indicators |
+
 ### Color System
-```
-Backgrounds: bg-0 (#0a0c0b) through bg-5 (#2a302d) — 6 steps
-Text:        bright > primary > secondary > tertiary > muted — 5 levels
-Accent:      accent (#5e8c58) / accent-mid / accent-bright / glow / glow-mid
-Status:      amber (#d4a73c) / red (#cf8172) / blue (#5a9fd4)
-```
 
-Use accent sparingly. It should feel earned — reserved for live/active state indicators, primary CTAs, focus rings, and active nav. When accent appears, it should register.
+All values are CSS custom properties in `frontend/src/app.css`.
 
-### Upcoming Surfaces (design must accommodate)
-- **Terminal / shell output**: streaming exec output, TTY sessions. Needs strong mono treatment, high contrast for long sessions.
-- **File browser**: filesystem tree inside capsule. Density matters — breadcrumbs, file icons, permission bits.
-- **SDK / docs embedding**: code samples, quickstart flows inline in dashboard. Code blocks must feel premium, not afterthought.
-- **Billing / usage charts**: pool consumption, cost curves, usage over time. Instrument Serif at large scale for metrics; chart containers should feel like instruments, not dashboards.
+**Backgrounds (6-step near-black-green scale):**
+| Token | Value | Use |
+|---|---|---|
+| `--color-bg-0` | `#0a0c0b` | Page base, sidebar deepest layer |
+| `--color-bg-1` | `#0f1211` | Sidebar surface |
+| `--color-bg-2` | `#141817` | Card backgrounds |
+| `--color-bg-3` | `#1a1e1c` | Table headers, elevated surfaces |
+| `--color-bg-4` | `#212624` | Hover states, inputs |
+| `--color-bg-5` | `#2a302d` | Highlighted items, selected rows |
+
+**Text (5-level hierarchy):**
+| Token | Value | Use |
+|---|---|---|
+| `--color-text-bright` | `#eae7e2` | H1s, dialog headings |
+| `--color-text-primary` | `#d0cdc6` | Body copy, primary labels |
+| `--color-text-secondary` | `#9b9790` | Secondary labels, descriptions |
+| `--color-text-tertiary` | `#6b6862` | Hints, placeholders |
+| `--color-text-muted` | `#454340` | Dividers as text, ultra-subtle |
+
+**Accent (sage green — use sparingly, must feel earned):**
+| Token | Value | Use |
+|---|---|---|
+| `--color-accent` | `#5e8c58` | Primary CTA, live indicators, focus rings, active nav |
+| `--color-accent-mid` | `#89a785` | Hover accent text |
+| `--color-accent-bright` | `#a4c89f` | Accent on dark backgrounds |
+| `--color-accent-glow` | `rgba(94,140,88,0.07)` | Subtle tinted backgrounds |
+| `--color-accent-glow-mid` | `rgba(94,140,88,0.14)` | Hover tint on accent items |
+
+**Status semantics:**
+| Token | Value | Use |
+|---|---|---|
+| `--color-amber` | `#d4a73c` | Warning, paused state |
+| `--color-red` | `#cf8172` | Error, destructive actions |
+| `--color-blue` | `#5a9fd4` | Info, neutral system states |
+
+**Borders:** `--color-border` (`#1f2321`) default; `--color-border-mid` (`#2a2f2c`) for inputs/hover.
+
+### Component Patterns
+
+**Buttons:**
+- Primary: solid sage green (`--color-accent`), hover brightness boost + micro-lift (`-translate-y-px`)
+- Secondary: bordered (`--color-border-mid`), text transitions to accent on hover
+- Danger: red text + subtle red background on hover
+- All: `transition-all duration-150`
+
+**Inputs:**
+- Border `--color-border`, background `--color-bg-2`; focus transitions border and icon to accent
+- Group focus pattern: `group` wrapper + `group-focus-within:text-[var(--color-accent)]` on icon
+
+**Tables / data lists:**
+- Grid layout; header `bg-3` + uppercase `--text-label`; row hover `hover:bg-[var(--color-bg-3)]`
+- Status stripe: left border color matches sandbox state
+
+**Status indicators:** Running = animated ping + sage green dot; Paused = amber dot; Stopped = muted gray. Color is never the sole differentiator.
+
+**Modals & dialogs:** Border + shadow only — no accent gradient bars/strips. `fadeUp` 0.35s entrance.
+
+**Empty states:** Large icon with glow, Instrument Serif heading, secondary body text, CTA below, `iconFloat` 4s animation.
+
+**Animations (always respect `prefers-reduced-motion`):** `fadeUp` (entrance), `status-ping` (live indicator), `iconFloat` (empty states), `spin-once` (refresh), staggered `animation-delay` on lists.
 
 ### Design Principles
 

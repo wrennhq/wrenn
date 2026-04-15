@@ -50,7 +50,7 @@ func requireJWT(secret []byte, queries *db.Queries) func(http.Handler) http.Hand
 				writeError(w, http.StatusUnauthorized, "unauthorized", "user not found")
 				return
 			}
-			if !user.IsActive {
+			if user.Status != "active" {
 				writeError(w, http.StatusForbidden, "account_deactivated", "your account has been deactivated — contact your administrator to regain access")
 				return
 			}

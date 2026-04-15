@@ -169,6 +169,12 @@ func (s *TeamService) DeleteTeam(ctx context.Context, teamID, callerUserID pgtyp
 		return fmt.Errorf("forbidden: only the owner can delete a team")
 	}
 
+	return s.deleteTeamCore(ctx, teamID)
+}
+
+// deleteTeamCore contains the shared team deletion logic:
+// destroy active sandboxes, clean up templates, soft-delete the team.
+func (s *TeamService) deleteTeamCore(ctx context.Context, teamID pgtype.UUID) error {
 	// Collect active sandboxes and stop them.
 	sandboxes, err := s.DB.ListActiveSandboxesByTeam(ctx, teamID)
 	if err != nil {
@@ -200,6 +206,24 @@ func (s *TeamService) DeleteTeam(ctx context.Context, teamID, callerUserID pgtyp
 			// as that would leave orphaned "running" records for a deleted team.
 			return fmt.Errorf("update sandbox statuses: %w", err)
 		}
+	}
+
+	// Delete sandbox metrics for this team.
+	if err := s.DB.DeleteMetricPointsByTeam(ctx, teamID); err != nil {
+		slog.Warn("team delete: failed to delete metric points", "team_id", id.FormatTeamID(teamID), "error", err)
+	}
+	if err := s.DB.DeleteMetricsSnapshotsByTeam(ctx, teamID); err != nil {
+		slog.Warn("team delete: failed to delete metrics snapshots", "team_id", id.FormatTeamID(teamID), "error", err)
+	}
+
+	// Delete all API keys for this team.
+	if err := s.DB.DeleteAPIKeysByTeam(ctx, teamID); err != nil {
+		slog.Warn("team delete: failed to delete API keys", "team_id", id.FormatTeamID(teamID), "error", err)
+	}
+
+	// Delete all channels for this team.
+	if err := s.DB.DeleteAllChannelsByTeam(ctx, teamID); err != nil {
+		slog.Warn("team delete: failed to delete channels", "team_id", id.FormatTeamID(teamID), "error", err)
 	}
 
 	// Clean up team-owned templates from all hosts in the background.
@@ -497,6 +521,13 @@ func (s *TeamService) AdminListTeams(ctx context.Context, limit, offset int32) (
 	return rows, total, nil
 }
 
+// DeleteTeamInternal soft-deletes a team and destroys all its active sandboxes.
+// Used for system-initiated deletions (e.g. cascading from user account deletion)
+// where no caller role check is needed.
+func (s *TeamService) DeleteTeamInternal(ctx context.Context, teamID pgtype.UUID) error {
+	return s.deleteTeamCore(ctx, teamID)
+}
+
 // AdminDeleteTeam soft-deletes a team and destroys all its active sandboxes.
 // Unlike DeleteTeam, this does not require the caller to be the team owner —
 // it is admin-only (caller must verify admin status).
@@ -509,41 +540,5 @@ func (s *TeamService) AdminDeleteTeam(ctx context.Context, teamID pgtype.UUID) e
 		return fmt.Errorf("team not found")
 	}
 
-	// Destroy active sandboxes (same logic as DeleteTeam).
-	sandboxes, err := s.DB.ListActiveSandboxesByTeam(ctx, teamID)
-	if err != nil {
-		return fmt.Errorf("list active sandboxes: %w", err)
-	}
-
-	var stopIDs []pgtype.UUID
-	for _, sb := range sandboxes {
-		host, hostErr := s.DB.GetHost(ctx, sb.HostID)
-		if hostErr == nil {
-			agent, agentErr := s.HostPool.GetForHost(host)
-			if agentErr == nil {
-				if _, err := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
-					SandboxId: id.FormatSandboxID(sb.ID),
-				})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
-					slog.Warn("admin team delete: failed to destroy sandbox", "sandbox_id", id.FormatSandboxID(sb.ID), "error", err)
-				}
-			}
-		}
-		stopIDs = append(stopIDs, sb.ID)
-	}
-
-	if len(stopIDs) > 0 {
-		if err := s.DB.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
-			Column1: stopIDs,
-			Status:  "stopped",
-		}); err != nil {
-			return fmt.Errorf("update sandbox statuses: %w", err)
-		}
-	}
-
-	go s.cleanupTeamTemplates(context.Background(), teamID)
-
-	if err := s.DB.SoftDeleteTeam(ctx, teamID); err != nil {
-		return fmt.Errorf("soft delete team: %w", err)
-	}
-	return nil
+	return s.deleteTeamCore(ctx, teamID)
 }

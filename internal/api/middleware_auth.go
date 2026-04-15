@@ -71,7 +71,7 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 					writeError(w, http.StatusUnauthorized, "unauthorized", "user not found")
 					return
 				}
-				if !user.IsActive {
+				if user.Status != "active" {
 					writeError(w, http.StatusForbidden, "account_deactivated", "your account has been deactivated — contact your administrator to regain access")
 					return
 				}

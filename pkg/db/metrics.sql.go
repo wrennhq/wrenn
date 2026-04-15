@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteMetricPointsByTeam = `-- name: DeleteMetricPointsByTeam :exec
+DELETE FROM sandbox_metric_points
+WHERE sandbox_id IN (SELECT id FROM sandboxes WHERE team_id = $1)
+`
+
+func (q *Queries) DeleteMetricPointsByTeam(ctx context.Context, teamID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteMetricPointsByTeam, teamID)
+	return err
+}
+
+const deleteMetricsSnapshotsByTeam = `-- name: DeleteMetricsSnapshotsByTeam :exec
+DELETE FROM sandbox_metrics_snapshots WHERE team_id = $1
+`
+
+func (q *Queries) DeleteMetricsSnapshotsByTeam(ctx context.Context, teamID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteMetricsSnapshotsByTeam, teamID)
+	return err
+}
+
 const deleteSandboxMetricPoints = `-- name: DeleteSandboxMetricPoints :exec
 DELETE FROM sandbox_metric_points
 WHERE sandbox_id = $1

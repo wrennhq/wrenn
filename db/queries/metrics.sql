@@ -51,6 +51,13 @@ WHERE sandbox_id = $1 AND tier = $2;
 DELETE FROM sandbox_metric_points
 WHERE ts < EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')::BIGINT;
 
+-- name: DeleteMetricsSnapshotsByTeam :exec
+DELETE FROM sandbox_metrics_snapshots WHERE team_id = $1;
+
+-- name: DeleteMetricPointsByTeam :exec
+DELETE FROM sandbox_metric_points
+WHERE sandbox_id IN (SELECT id FROM sandboxes WHERE team_id = $1);
+
 -- name: SampleSandboxMetrics :many
 -- Aggregates per-team resource usage from the live sandboxes table.
 -- Groups by all teams that have any sandbox row (including stopped) so that

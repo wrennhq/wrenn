@@ -22,6 +22,9 @@ RETURNING *;
 -- name: DeleteChannelByTeam :exec
 DELETE FROM channels WHERE id = $1 AND team_id = $2;
 
+-- name: DeleteAllChannelsByTeam :exec
+DELETE FROM channels WHERE team_id = $1;
+
 -- name: ListChannelsForEvent :many
 SELECT * FROM channels
 WHERE team_id = $1

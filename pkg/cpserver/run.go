@@ -188,6 +188,24 @@ func Run(opts ...Option) {
 	monitor := api.NewHostMonitor(queries, hostPool, al, 30*time.Second)
 	monitor.Start(ctx)
 
+	// Hard-delete accounts that have been soft-deleted for more than 15 days (runs every 24h).
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := queries.HardDeleteExpiredUsers(ctx); err != nil {
+					slog.Error("account cleanup: failed to hard-delete expired users", "error", err)
+				} else {
+					slog.Info("account cleanup: hard-deleted expired users")
+				}
+			}
+		}
+	}()
+
 	// Start metrics sampler (records per-team sandbox stats every 10s).
 	sampler := api.NewMetricsSampler(queries, 10*time.Second)
 	sampler.Start(ctx)

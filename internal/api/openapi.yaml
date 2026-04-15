@@ -16,6 +16,10 @@ paths:
       summary: Create a new account
       operationId: signup
       tags: [auth]
+      description: |
+        Creates an inactive user account and sends an activation email.
+        The user must activate their account within 30 minutes.
+        Does not return a JWT — the user must activate first, then sign in.
       requestBody:
         required: true
         content:
@@ -24,11 +28,11 @@ paths:
               $ref: "#/components/schemas/SignupRequest"
       responses:
         "201":
-          description: Account created
+          description: Account created, activation email sent
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: "#/components/schemas/SignupResponse"
         "400":
           description: Invalid request (bad email, short password)
           content:
@@ -36,7 +40,39 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Email already registered
+          description: Email already registered or signup cooldown active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/auth/activate:
+    post:
+      summary: Activate account via email token
+      operationId: activate
+      tags: [auth]
+      description: |
+        Consumes the activation token sent via email and activates the user account.
+        Creates a default team and returns a JWT to log the user in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: Account activated, JWT issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Invalid or expired token
           content:
             application/json:
               schema:
@@ -174,6 +210,252 @@ paths:
       responses:
         "302":
           description: Redirect to frontend with token or error
+
+  /v1/me:
+    get:
+      summary: Get current user profile
+      operationId: getMe
+      tags: [account]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+
+    patch:
+      summary: Update display name
+      operationId: updateName
+      tags: [account]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+      responses:
+        "200":
+          description: Name updated, new JWT issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Invalid name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Delete current account
+      operationId: deleteAccount
+      tags: [account]
+      security:
+        - bearerAuth: []
+      description: |
+        Soft-deletes the account (sets status=deleted, deleted_at=now).
+        The account is permanently removed after 15 days. Blocked if the user
+        owns any team that has other members.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation:
+                  type: string
+                  description: Must match the user's email address (case-insensitive)
+      responses:
+        "204":
+          description: Account scheduled for deletion
+        "400":
+          description: Confirmation does not match email
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: User owns teams with other members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/me/password:
+    post:
+      summary: Change or add password
+      operationId: changePassword
+      tags: [account]
+      security:
+        - bearerAuth: []
+      description: |
+        For users with an existing password: requires `current_password` and `new_password`.
+        For OAuth-only users adding a password: requires `new_password` and `confirm_password`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: Password updated
+        "400":
+          description: Invalid request (short password, mismatch, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Current password is incorrect
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/me/password/reset:
+    post:
+      summary: Request a password reset email
+      operationId: requestPasswordReset
+      tags: [account]
+      description: |
+        Sends a password reset link to the given email. Always returns 200
+        regardless of whether the email exists, to prevent account enumeration.
+        The reset token expires in 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "204":
+          description: Request accepted (email sent if account exists)
+
+  /v1/me/password/reset/confirm:
+    post:
+      summary: Confirm password reset
+      operationId: confirmPasswordReset
+      tags: [account]
+      description: |
+        Consumes a password reset token and sets a new password. The token is
+        single-use and expires after 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                  description: Raw reset token from the email link
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        "204":
+          description: Password reset successful
+        "400":
+          description: Invalid or expired token, or password too short
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/me/providers/{provider}/connect:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [github]
+        description: OAuth provider name
+
+    get:
+      summary: Initiate OAuth provider link
+      operationId: connectProvider
+      tags: [account]
+      security:
+        - bearerAuth: []
+      description: |
+        Sets OAuth state and link cookies, then returns the provider's
+        authorization URL. The frontend navigates to this URL to start the
+        OAuth flow. On callback, the provider is linked to the current account
+        (not a new registration).
+      responses:
+        "200":
+          description: Authorization URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth_url:
+                    type: string
+                    format: uri
+        "404":
+          description: Provider not found or not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/me/providers/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [github]
+        description: OAuth provider name
+
+    delete:
+      summary: Disconnect an OAuth provider
+      operationId: disconnectProvider
+      tags: [account]
+      security:
+        - bearerAuth: []
+      description: |
+        Unlinks the OAuth provider from the current account. Blocked if this
+        is the user's only login method (no password and no other providers).
+      responses:
+        "204":
+          description: Provider disconnected
+        "400":
+          description: Cannot disconnect last login method
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Provider not connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/api-keys:
     post:
@@ -2077,6 +2359,13 @@ components:
         password:
           type: string
 
+    SignupResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Confirmation message instructing user to check email
+
     AuthResponse:
       type: object
       properties:
@@ -2779,6 +3068,37 @@ components:
           type: string
           nullable: true
           description: Webhook secret. Only returned on creation, never again.
+
+    MeResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        has_password:
+          type: boolean
+          description: Whether the user has a password set (false for OAuth-only accounts)
+        providers:
+          type: array
+          items:
+            type: string
+          description: List of linked OAuth provider names (e.g. ["github"])
+
+    ChangePasswordRequest:
+      type: object
+      required: [new_password]
+      properties:
+        current_password:
+          type: string
+          description: Required when changing an existing password
+        new_password:
+          type: string
+          minLength: 8
+        confirm_password:
+          type: string
+          description: Required when adding a password to an OAuth-only account (must match new_password)
 
     Error:
       type: object

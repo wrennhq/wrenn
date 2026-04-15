@@ -11,6 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteAllChannelsByTeam = `-- name: DeleteAllChannelsByTeam :exec
+DELETE FROM channels WHERE team_id = $1
+`
+
+func (q *Queries) DeleteAllChannelsByTeam(ctx context.Context, teamID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAllChannelsByTeam, teamID)
+	return err
+}
+
 const deleteChannelByTeam = `-- name: DeleteChannelByTeam :exec
 DELETE FROM channels WHERE id = $1 AND team_id = $2
 `

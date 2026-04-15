@@ -70,7 +70,7 @@ func New(
 	filesStream := newFilesStreamHandler(queries, pool)
 	fsH := newFSHandler(queries, pool)
 	snapshots := newSnapshotHandler(templateSvc, queries, pool, al)
-	authH := newAuthHandler(queries, pgPool, jwtSecret, mailer)
+	authH := newAuthHandler(queries, pgPool, jwtSecret, mailer, rdb, oauthRedirectURL)
 	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, oauthRegistry, oauthRedirectURL)
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
 	hostH := newHostHandler(hostSvc, queries, al)
@@ -84,6 +84,7 @@ func New(
 	ptyH := newPtyHandler(queries, pool)
 	processH := newProcessHandler(queries, pool)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
+	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, mailer, oauthRegistry, oauthRedirectURL, teamSvc)
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -92,8 +93,24 @@ func New(
 	// Unauthenticated auth endpoints.
 	r.Post("/v1/auth/signup", authH.Signup)
 	r.Post("/v1/auth/login", authH.Login)
+	r.Post("/v1/auth/activate", authH.Activate)
 	r.Get("/auth/oauth/{provider}", oauthH.Redirect)
 	r.Get("/auth/oauth/{provider}/callback", oauthH.Callback)
+
+	// Unauthenticated: password reset request and confirmation.
+	r.Post("/v1/me/password/reset", meH.RequestPasswordReset)
+	r.Post("/v1/me/password/reset/confirm", meH.ConfirmPasswordReset)
+
+	// JWT-authenticated: self-service account management.
+	r.Route("/v1/me", func(r chi.Router) {
+		r.Use(requireJWT(jwtSecret, queries))
+		r.Get("/", meH.GetMe)
+		r.Patch("/", meH.UpdateName)
+		r.Post("/password", meH.ChangePassword)
+		r.Get("/providers/{provider}/connect", meH.ConnectProvider)
+		r.Delete("/providers/{provider}", meH.DisconnectProvider)
+		r.Delete("/", meH.DeleteAccount)
+	})
 
 	// JWT-authenticated: switch active team.
 	r.With(requireJWT(jwtSecret, queries)).Post("/v1/auth/switch-team", authH.SwitchTeam)

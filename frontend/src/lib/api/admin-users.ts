@@ -5,7 +5,7 @@ export type AdminUser = {
 	email: string;
 	name: string;
 	is_admin: boolean;
-	is_active: boolean;
+	status: string;
 	created_at: string;
 	teams_joined: number;
 	teams_owned: number;
