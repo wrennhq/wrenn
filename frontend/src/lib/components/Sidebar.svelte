@@ -280,13 +280,21 @@
 			<IconBell size={16} class="shrink-0" />
 			{#if !collapsed}<span class="text-ui">Notifications</span>{/if}
 		</div>
-		<div
-			class="flex cursor-not-allowed items-center rounded-[var(--radius-input)] px-2.5 py-2.5 opacity-35 {collapsed ? 'justify-center px-2' : 'gap-3'}"
-			title={collapsed ? 'Settings (coming soon)' : 'Coming soon'}
+		<a
+			href="/dashboard/settings"
+			class="group relative flex items-center rounded-[var(--radius-input)] px-2.5 py-2.5 transition-colors duration-150 hover:bg-[var(--color-bg-3)] {collapsed ? 'justify-center px-2' : 'gap-3'} {isActive('/dashboard/settings') ? (collapsed ? 'bg-[var(--color-accent-glow-mid)]' : 'bg-[var(--color-accent)]/[0.12]') : ''}"
+			title={collapsed ? 'Settings' : undefined}
 		>
-			<IconSettings size={16} class="shrink-0" />
-			{#if !collapsed}<span class="text-ui">Settings</span>{/if}
-		</div>
+			{#if isActive('/dashboard/settings') && !collapsed}
+				<div class="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-accent)]"></div>
+			{/if}
+			<IconSettings size={16} class="shrink-0 {isActive('/dashboard/settings') ? 'text-[var(--color-accent-bright)]' : 'opacity-50 transition-opacity duration-150 group-hover:opacity-100'}" />
+			{#if !collapsed}
+				<span class="text-ui transition-colors duration-150 {isActive('/dashboard/settings') ? 'font-semibold text-[var(--color-accent-bright)]' : 'text-[var(--color-text-primary)] group-hover:text-[var(--color-text-bright)]'}">
+					Settings
+				</span>
+			{/if}
+		</a>
 	</div>
 
 	<!-- User footer -->

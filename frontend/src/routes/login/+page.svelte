@@ -285,12 +285,12 @@
 
 				{#if mode === 'signin'}
 					<div class="flex justify-end">
-						<button
-							type="button"
+						<a
+							href="/forgot-password"
 							class="text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-accent-mid)]"
 						>
 							Forgot password?
-						</button>
+						</a>
 					</div>
 				{/if}
 
