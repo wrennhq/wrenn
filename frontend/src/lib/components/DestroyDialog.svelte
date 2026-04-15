@@ -47,7 +47,7 @@
 		></div>
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
 			<div class="p-6">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Destroy Capsule</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Destroy Capsule</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Terminate <span class="font-mono text-[var(--color-text-secondary)]">{capsuleId}</span> and destroy all data inside it. This cannot be undone.
 			</p>

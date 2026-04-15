@@ -117,7 +117,7 @@
 			<div class="px-7 pt-8">
 				<div class="flex items-center justify-between">
 					<div>
-						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 							API Keys
 						</h1>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -172,7 +172,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No API keys yet</p>
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">No API keys yet</p>
 						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">Nothing can call the API without a key. Create one to authenticate your SDK or HTTP requests.</p>
 						<button
 							onclick={() => { showCreate = true; createError = null; createName = ''; }}
@@ -263,7 +263,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">New API Key</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">New API Key</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Name it after its environment or purpose — production, staging, CI. You can't rename it later.</p>
 
 			{#if createError}
@@ -334,7 +334,7 @@
 				<span class="text-meta font-semibold text-[var(--color-accent-mid)]" style="animation: fadeUp 0.3s 0.15s ease both">Key created successfully</span>
 			</div>
 
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">{newKey.name || 'API Key'}</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">{newKey.name || 'API Key'}</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Copy this key now — it won't be shown again.
 			</p>
@@ -405,7 +405,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Revoke Key</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Revoke Key</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Permanently revoke <span class="font-medium text-[var(--color-text-secondary)]">{revokeTarget.name || revokeTarget.id}</span>.
 				Any request using this key will fail immediately.

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -18,12 +20,13 @@ import (
 )
 
 type teamHandler struct {
-	svc   *service.TeamService
-	audit *audit.AuditLogger
+	svc    *service.TeamService
+	audit  *audit.AuditLogger
+	mailer email.Mailer
 }
 
-func newTeamHandler(svc *service.TeamService, al *audit.AuditLogger) *teamHandler {
-	return &teamHandler{svc: svc, audit: al}
+func newTeamHandler(svc *service.TeamService, al *audit.AuditLogger, mailer email.Mailer) *teamHandler {
+	return &teamHandler{svc: svc, audit: al, mailer: mailer}
 }
 
 // teamResponse is the JSON shape for a team.
@@ -131,6 +134,15 @@ func (h *teamHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, code, msg)
 		return
 	}
+
+	go func() {
+		if err := h.mailer.Send(context.Background(), ac.Email, "Your team has been created", email.EmailData{
+			RecipientName: ac.Name,
+			Message:       fmt.Sprintf("Your team \"%s\" has been created on Wrenn. You can now invite members and start creating sandboxes under this team.", req.Name),
+		}); err != nil {
+			slog.Warn("failed to send team created email", "email", ac.Email, "error", err)
+		}
+	}()
 
 	writeJSON(w, http.StatusCreated, teamWithRoleResponse{
 		teamResponse: teamToResponse(team.Team),
@@ -280,6 +292,21 @@ func (h *teamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	if parseErr == nil {
 		h.audit.LogMemberAdd(r.Context(), ac, targetUserID, member.Email, member.Role)
 	}
+
+	go func() {
+		team, err := h.svc.GetTeam(context.Background(), teamID)
+		teamName := "a team"
+		if err == nil {
+			teamName = team.Name
+		}
+		if err := h.mailer.Send(context.Background(), member.Email, "You've been added to a team on Wrenn", email.EmailData{
+			RecipientName: member.Name,
+			Message:       fmt.Sprintf("%s has added you to the team \"%s\" on Wrenn.", ac.Name, teamName),
+		}); err != nil {
+			slog.Warn("failed to send team invitation email", "email", member.Email, "error", err)
+		}
+	}()
+
 	writeJSON(w, http.StatusCreated, memberInfoToResponse(member))
 }
 

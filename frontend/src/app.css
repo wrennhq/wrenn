@@ -92,6 +92,11 @@ body {
 	min-height: 100vh;
 }
 
+/* Instrument Serif reads less condensed with a touch of positive tracking */
+.font-serif {
+	letter-spacing: 0.015em;
+}
+
 /* Tabular figures on all mono text — numbers align in tables and metric displays */
 .font-mono {
 	font-variant-numeric: tabular-nums;

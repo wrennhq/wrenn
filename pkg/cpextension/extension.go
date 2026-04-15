@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/config"
@@ -29,6 +30,7 @@ type ServerContext struct {
 	Scheduler scheduler.HostScheduler
 	CA        *auth.CA
 	Audit     *audit.AuditLogger
+	Mailer    email.Mailer
 	JWTSecret []byte
 	Config    config.Config
 }

@@ -174,7 +174,7 @@
 
 			<div class="relative flex items-start justify-between px-8 pt-7 pb-5">
 				<div>
-					<h1 class="font-serif text-page leading-none tracking-[-0.03em] text-[var(--color-text-bright)]">
+					<h1 class="font-serif text-page leading-none text-[var(--color-text-bright)]">
 						Hosts
 					</h1>
 					<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
@@ -462,7 +462,7 @@
 			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-accent)] to-transparent"></div>
 
 			<div class="p-6">
-			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">
+			<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">
 				Add Platform Host
 			</h2>
 			<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
@@ -553,7 +553,7 @@
 				</svg>
 			</div>
 
-			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">
+			<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">
 				Host registered
 			</h2>
 			<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
@@ -615,7 +615,7 @@
 			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-red)] to-transparent"></div>
 
 			<div class="p-6">
-			<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">
+			<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">
 				Delete Host
 			</h2>
 			<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">

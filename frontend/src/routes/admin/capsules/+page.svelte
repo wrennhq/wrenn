@@ -251,7 +251,7 @@
 		<div class="shrink-0 px-8 pt-8 pb-6">
 			<div class="flex items-center justify-between">
 				<div>
-					<h1 class="font-serif text-page leading-none tracking-[-0.03em] text-[var(--color-text-bright)]">
+					<h1 class="font-serif text-page leading-none text-[var(--color-text-bright)]">
 						Capsules
 					</h1>
 					<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -387,7 +387,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">
 							No matching capsules
 						</p>
 						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
@@ -410,7 +410,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">
 							No capsules
 						</p>
 						<p class="mt-1.5 max-w-[340px] text-center text-ui text-[var(--color-text-tertiary)]">

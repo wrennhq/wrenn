@@ -23,7 +23,7 @@
 	<div class="flex flex-1 flex-col overflow-hidden">
 		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<div class="px-7 pt-8">
-				<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+				<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 					Metrics
 				</h1>
 				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">

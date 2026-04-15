@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -60,10 +61,11 @@ type authHandler struct {
 	db        *db.Queries
 	pool      *pgxpool.Pool
 	jwtSecret []byte
+	mailer    email.Mailer
 }
 
-func newAuthHandler(db *db.Queries, pool *pgxpool.Pool, jwtSecret []byte) *authHandler {
-	return &authHandler{db: db, pool: pool, jwtSecret: jwtSecret}
+func newAuthHandler(db *db.Queries, pool *pgxpool.Pool, jwtSecret []byte, mailer email.Mailer) *authHandler {
+	return &authHandler{db: db, pool: pool, jwtSecret: jwtSecret, mailer: mailer}
 }
 
 type signupRequest struct {
@@ -189,6 +191,16 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
 		return
 	}
+
+	go func() {
+		if err := h.mailer.Send(context.Background(), req.Email, "Welcome to Wrenn", email.EmailData{
+			RecipientName: req.Name,
+			Message:       "Welcome to Wrenn! Your account has been created and you're ready to start building with secure, isolated sandboxes.",
+			Closing:       "If you have any questions, feel free to reach out. We're glad to have you.",
+		}); err != nil {
+			slog.Warn("failed to send welcome email", "email", req.Email, "error", err)
+		}
+	}()
 
 	writeJSON(w, http.StatusCreated, authResponse{
 		Token:  token,

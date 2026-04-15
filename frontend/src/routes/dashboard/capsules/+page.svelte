@@ -402,7 +402,7 @@
 						</svg>
 					</div>
 				</div>
-				<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+				<p class="font-serif text-heading text-[var(--color-text-bright)]">
 					No matching capsules
 				</p>
 				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
@@ -428,7 +428,7 @@
 						</svg>
 					</div>
 				</div>
-				<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+				<p class="font-serif text-heading text-[var(--color-text-bright)]">
 					No capsules yet
 				</p>
 				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">

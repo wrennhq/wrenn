@@ -155,7 +155,7 @@
 				<div class="flex items-center gap-2.5">
 					<a
 						href="/admin/capsules"
-						class="font-serif text-page leading-none tracking-[-0.02em] text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-text-bright)]"
+						class="font-serif text-page leading-none text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-text-bright)]"
 					>
 						Capsules
 					</a>
@@ -259,7 +259,7 @@
 					</svg>
 				</div>
 				<div>
-					<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Snapshot as platform template</h2>
+					<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Snapshot as platform template</h2>
 					<p class="mt-0.5 text-meta text-[var(--color-text-muted)] font-mono">{capsuleId}</p>
 				</div>
 			</div>

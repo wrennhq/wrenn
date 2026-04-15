@@ -155,7 +155,7 @@
 
 			<div class="relative flex items-start justify-between px-8 pt-7 pb-5">
 				<div>
-					<h1 class="font-serif text-page leading-none tracking-[-0.03em] text-[var(--color-text-bright)]">
+					<h1 class="font-serif text-page leading-none text-[var(--color-text-bright)]">
 						Teams
 					</h1>
 					<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
@@ -235,7 +235,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">
 							No teams yet
 						</p>
 						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
@@ -396,7 +396,7 @@
 			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
 			<div class="p-6">
-				<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">
+				<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">
 					Enable BYOC
 				</h2>
 				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
@@ -458,7 +458,7 @@
 			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
 			<div class="p-6">
-				<h2 class="font-serif text-heading leading-tight tracking-[-0.02em] text-[var(--color-text-bright)]">
+				<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">
 					Delete Team
 				</h2>
 				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">

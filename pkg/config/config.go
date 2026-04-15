@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/hex"
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -27,6 +28,13 @@ type Config struct {
 	// Channels — encryption for channel secrets (AES-256-GCM).
 	EncryptionKeyHex string   // WRENN_ENCRYPTION_KEY raw hex string (for validation)
 	EncryptionKey    [32]byte // parsed 32-byte key
+
+	// SMTP — transactional email. All fields optional; omitting SMTPHost disables email.
+	SMTPHost      string // SMTP_HOST
+	SMTPPort      int    // SMTP_PORT (default 587)
+	SMTPUsername  string // SMTP_USERNAME
+	SMTPPassword  string // SMTP_PASSWORD
+	SMTPFromEmail string // SMTP_FROM_EMAIL
 }
 
 // Load reads configuration from a .env file (if present) and environment variables.
@@ -50,6 +58,12 @@ func Load() Config {
 		CPPublicURL:             os.Getenv("CP_PUBLIC_URL"),
 
 		EncryptionKeyHex: os.Getenv("WRENN_ENCRYPTION_KEY"),
+
+		SMTPHost:      os.Getenv("SMTP_HOST"),
+		SMTPPort:      envOrDefaultInt("SMTP_PORT", 587),
+		SMTPUsername:  os.Getenv("SMTP_USERNAME"),
+		SMTPPassword:  os.Getenv("SMTP_PASSWORD"),
+		SMTPFromEmail: envOrDefault("SMTP_FROM_EMAIL", "noreply@wrenn.dev"),
 	}
 
 	if cfg.EncryptionKeyHex != "" {
@@ -67,4 +81,16 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envOrDefaultInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }

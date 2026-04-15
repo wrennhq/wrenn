@@ -325,7 +325,7 @@
 		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
-				<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+				<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 					Team
 				</h1>
 				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -375,7 +375,7 @@
 								<path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
 							</svg>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No team yet</p>
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">No team yet</p>
 						<p class="mt-1.5 max-w-xs text-center text-ui text-[var(--color-text-tertiary)]">
 							Use the team switcher in the sidebar to create your first team.
 						</p>
@@ -569,7 +569,7 @@
 						<div class="mb-4 flex items-center justify-between">
 							<div>
 								<h2
-									class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]"
+									class="font-serif text-heading text-[var(--color-text-bright)]"
 								>
 									Members
 								</h2>
@@ -765,7 +765,7 @@
 						>
 							<div class="border-b border-[var(--color-red)]/15 px-5 py-4">
 								<h2
-									class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]"
+									class="font-serif text-heading text-[var(--color-text-bright)]"
 								>
 									Danger Zone
 								</h2>
@@ -896,7 +896,7 @@
 			style="animation: fadeUp 0.2s ease both"
 		>
 			<h2
-				class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]"
+				class="font-serif text-heading text-[var(--color-text-bright)]"
 			>
 				Add Member
 			</h2>
@@ -1033,7 +1033,7 @@
 			style="animation: fadeUp 0.2s ease both"
 		>
 			<h2
-				class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]"
+				class="font-serif text-heading text-[var(--color-text-bright)]"
 			>
 				Remove Member
 			</h2>
@@ -1108,7 +1108,7 @@
 		>
 			{#if myRole === 'owner'}
 				<h2
-					class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]"
+					class="font-serif text-heading text-[var(--color-text-bright)]"
 				>
 					Delete Team
 				</h2>
@@ -1119,7 +1119,7 @@
 				</p>
 			{:else}
 				<h2
-					class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]"
+					class="font-serif text-heading text-[var(--color-text-bright)]"
 				>
 					Leave Team
 				</h2>

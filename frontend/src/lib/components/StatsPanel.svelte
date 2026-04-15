@@ -335,7 +335,7 @@
 				</div>
 				<div class="bg-[var(--color-bg-2)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
 					<div class="text-label text-[var(--color-text-muted)]">Peak · 30d</div>
-					<div class="mt-2 font-serif text-[1.714rem] leading-none tracking-[-0.03em] text-[var(--color-text-secondary)]">
+					<div class="mt-2 font-serif text-[1.714rem] leading-none text-[var(--color-text-secondary)]">
 						{loading ? '—' : (stats?.peaks.running_count ?? 0)}
 					</div>
 				</div>
@@ -357,7 +357,7 @@
 				</div>
 				<div class="bg-[var(--color-bg-2)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
 					<div class="text-label text-[var(--color-text-muted)]">Peak · 30d</div>
-					<div class="mt-2 font-serif text-[1.714rem] leading-none tracking-[-0.03em] text-[var(--color-text-secondary)]">
+					<div class="mt-2 font-serif text-[1.714rem] leading-none text-[var(--color-text-secondary)]">
 						{loading ? '—' : (stats?.peaks.vcpus ?? 0)}
 					</div>
 				</div>
@@ -379,7 +379,7 @@
 				</div>
 				<div class="bg-[var(--color-bg-2)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
 					<div class="text-label text-[var(--color-text-muted)]">Peak · 30d</div>
-					<div class="mt-2 font-serif text-[1.714rem] leading-none tracking-[-0.03em] text-[var(--color-text-secondary)]">
+					<div class="mt-2 font-serif text-[1.714rem] leading-none text-[var(--color-text-secondary)]">
 						{loading ? '—' : fmtGB(stats?.peaks.memory_mb ?? 0)}
 					</div>
 				</div>

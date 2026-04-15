@@ -122,7 +122,7 @@
 
 			<div class="relative flex items-start justify-between px-8 pt-7 pb-5">
 				<div>
-					<h1 class="font-serif text-page leading-none tracking-[-0.03em] text-[var(--color-text-bright)]">
+					<h1 class="font-serif text-page leading-none text-[var(--color-text-bright)]">
 						Users
 					</h1>
 					<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
@@ -185,7 +185,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">
 							No users yet
 						</p>
 						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
