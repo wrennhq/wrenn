@@ -28,12 +28,21 @@
     <tr>
       <td align="center" style="padding: 40px 16px;">
 
-        <!-- Logo -->
+        <!-- Logo + Wordmark -->
         <table role="presentation" cellpadding="0" cellspacing="0" width="560" style="max-width: 560px;">
           <tr>
-            <td align="left" style="padding-bottom: 24px;">
+            <td align="left" style="padding-bottom: 32px;">
               <a href="https://wrenn.dev" style="text-decoration: none;">
-                <img src="https://wrenn.dev/logo.png" alt="Wrenn" width="36" height="36" style="display: block; border-radius: 6px;">
+                <table role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="vertical-align: middle;">
+                      <img src="https://wrenn.dev/logo.png" alt="Wrenn" width="36" height="36" style="display: block; border-radius: 6px;">
+                    </td>
+                    <td style="vertical-align: middle; padding-left: 10px;">
+                      <span style="font-family: 'Alice', Georgia, 'Times New Roman', serif; font-size: 22px; color: #1a1917; letter-spacing: 0.01em;">Wrenn</span>
+                    </td>
+                  </tr>
+                </table>
               </a>
             </td>
           </tr>
@@ -42,21 +51,21 @@
         <!-- Card -->
         <table role="presentation" cellpadding="0" cellspacing="0" width="560" style="max-width: 560px; background-color: #ffffff; border: 1px solid #e5e4e0; border-radius: 8px;">
           <tr>
-            <td style="padding: 40px 44px;">
+            <td style="padding: 44px 48px;">
 
               <!-- Greeting -->
-              <p style="margin: 0 0 20px 0; font-size: 15px; line-height: 1.6; color: #3a3835;">
+              <p style="margin: 0 0 8px 0; font-size: 15px; line-height: 1.6; color: #3a3835;">
                 Hello{{if .RecipientName}} {{.RecipientName}}{{end}},
               </p>
 
               <!-- Message -->
-              <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.7; color: #3a3835;">
+              <p style="margin: 0 0 36px 0; font-size: 15px; line-height: 1.7; color: #3a3835;">
                 {{.Message}}
               </p>
 
               <!-- Button -->
               {{if .Button}}
-              <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 28px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 0 0 36px 0;">
                 <tr>
                   <td align="center" style="background-color: #5e8c58; border-radius: 5px;">
                     <!--[if mso]>
@@ -66,7 +75,7 @@
                     </v:roundrect>
                     <![endif]-->
                     <!--[if !mso]><!-->
-                    <a href="{{.Button.URL}}" target="_blank" style="display: inline-block; padding: 12px 28px; font-size: 14px; font-weight: 600; color: #ffffff; text-decoration: none; border-radius: 5px; background-color: #5e8c58;">
+                    <a href="{{.Button.URL}}" target="_blank" style="display: inline-block; padding: 12px 32px; font-size: 14px; font-weight: 600; color: #ffffff; text-decoration: none; border-radius: 5px; background-color: #5e8c58;">
                       {{.Button.Text}}
                     </a>
                     <!--<![endif]-->
@@ -74,7 +83,7 @@
                 </tr>
               </table>
 
-              <p style="margin: 0 0 24px 0; font-size: 13px; line-height: 1.6; color: #9b9790;">
+              <p style="margin: 0 0 12px 0; font-size: 12px; line-height: 1.5; color: #b5b0a8;">
                 If the button doesn't work, copy and paste this URL into your browser:<br>
                 <a href="{{.Button.URL}}" style="color: #5e8c58; word-break: break-all;">{{.Button.URL}}</a>
               </p>
@@ -82,7 +91,7 @@
 
               <!-- Closing -->
               {{if .Closing}}
-              <p style="margin: 0; font-size: 15px; line-height: 1.7; color: #3a3835;">
+              <p style="margin: {{if .Button}}20px{{else}}0{{end}} 0 0 0; font-size: 15px; line-height: 1.7; color: #3a3835;">
                 {{.Closing}}
               </p>
               {{end}}
@@ -94,7 +103,7 @@
         <!-- Footer -->
         <table role="presentation" cellpadding="0" cellspacing="0" width="560" style="max-width: 560px;">
           <tr>
-            <td style="padding: 24px 0; text-align: center;">
+            <td style="padding: 32px 0 16px 0; text-align: center;">
               <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #9b9790;">
                 This is a transactional email from <a href="https://wrenn.dev" style="color: #5e8c58; text-decoration: none;">Wrenn</a>.
               </p>
