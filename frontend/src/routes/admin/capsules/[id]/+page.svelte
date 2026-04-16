@@ -2,7 +2,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import AdminSidebar from '$lib/components/AdminSidebar.svelte';
 	import TerminalTab from '$lib/components/TerminalTab.svelte';
 	import FilesTab from '$lib/components/FilesTab.svelte';
 	import MetricsPanel from '$lib/components/MetricsPanel.svelte';
@@ -18,12 +17,6 @@
 
 	const capsuleId: string = $page.params.id ?? '';
 	const API_BASE = '/api/v1/admin/capsules';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	let capsule = $state<Capsule | null>(null);
 	let capsuleLoading = $state(true);
@@ -129,10 +122,7 @@
 	<title>Wrenn Admin — {capsuleId}</title>
 </svelte:head>
 
-<div class="flex h-screen overflow-hidden bg-[var(--color-bg-0)]">
-	<AdminSidebar bind:collapsed />
-
-	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
 		{#if capsuleLoading}
 			<div class="flex flex-1 items-center justify-center">
 				<div class="flex items-center gap-3 text-ui text-[var(--color-text-secondary)]">
@@ -237,8 +227,7 @@
 				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
-	</main>
-</div>
+</main>
 
 <!-- Snapshot dialog -->
 {#if showSnapshot}

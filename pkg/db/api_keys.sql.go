@@ -25,6 +25,15 @@ func (q *Queries) DeleteAPIKey(ctx context.Context, arg DeleteAPIKeyParams) erro
 	return err
 }
 
+const deleteAPIKeysByCreator = `-- name: DeleteAPIKeysByCreator :exec
+DELETE FROM team_api_keys WHERE created_by = $1
+`
+
+func (q *Queries) DeleteAPIKeysByCreator(ctx context.Context, createdBy pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAPIKeysByCreator, createdBy)
+	return err
+}
+
 const deleteAPIKeysByTeam = `-- name: DeleteAPIKeysByTeam :exec
 DELETE FROM team_api_keys WHERE team_id = $1
 `

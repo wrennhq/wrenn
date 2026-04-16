@@ -133,7 +133,6 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
-	overwrite := r.URL.Query().Get("overwrite") == "true"
 
 	// Check for global name collision.
 	if _, err := h.db.GetPlatformTemplateByName(ctx, req.Name); err == nil {
@@ -142,20 +141,10 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if name already exists for this team.
-	if existing, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err == nil {
-		if !overwrite {
-			writeError(w, http.StatusConflict, "already_exists", "snapshot name already exists; use ?overwrite=true to replace")
-			return
-		}
-		// Delete old snapshot files from all hosts before removing the DB record.
-		if err := deleteSnapshotBroadcast(ctx, h.db, h.pool, existing.TeamID, existing.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete existing snapshot files")
-			return
-		}
-		if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err != nil {
-			writeError(w, http.StatusInternalServerError, "db_error", "failed to remove existing template record")
-			return
-		}
+	if _, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err == nil {
+		writeError(w, http.StatusConflict, "template_name_taken",
+			"snapshot name already exists; delete the existing snapshot first to reuse this name")
+		return
 	}
 
 	// Verify sandbox exists, belongs to team, and is running or paused.

@@ -90,6 +90,35 @@ func (q *Queries) GetDefaultTeamForUser(ctx context.Context, userID pgtype.UUID)
 	return i, err
 }
 
+const getOwnedTeamIDs = `-- name: GetOwnedTeamIDs :many
+SELECT t.id FROM teams t
+JOIN users_teams ut ON ut.team_id = t.id
+WHERE ut.user_id = $1
+  AND ut.role = 'owner'
+  AND t.deleted_at IS NULL
+`
+
+// Returns team IDs where the given user has the 'owner' role.
+func (q *Queries) GetOwnedTeamIDs(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, getOwnedTeamIDs, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTeam = `-- name: GetTeam :one
 SELECT id, name, slug, is_byoc, created_at, deleted_at FROM teams WHERE id = $1
 `

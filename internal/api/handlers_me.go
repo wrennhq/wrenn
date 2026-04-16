@@ -512,6 +512,9 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete all teams the user solely owns (no other members).
+	// Team deletion involves RPC calls (sandbox destruction) that cannot be
+	// transactional, so we do those first as best-effort, then wrap the
+	// DB-only cleanup in a transaction.
 	soleTeams, err := h.db.ListSoleOwnedTeams(ctx, ac.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list owned teams")
@@ -519,13 +522,33 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, teamID := range soleTeams {
 		if err := h.teamSvc.DeleteTeamInternal(ctx, teamID); err != nil {
-			slog.Warn("account delete: failed to delete sole-owned team",
-				"team_id", id.FormatTeamID(teamID), "error", err)
+			writeError(w, http.StatusInternalServerError, "db_error",
+				fmt.Sprintf("failed to delete sole-owned team %s", id.FormatTeamID(teamID)))
+			return
 		}
 	}
 
-	if err := h.db.SoftDeleteUser(ctx, ac.UserID); err != nil {
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := h.db.WithTx(tx)
+
+	if err := qtx.DeleteAPIKeysByCreator(ctx, ac.UserID); err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete user's API keys")
+		return
+	}
+
+	if err := qtx.SoftDeleteUser(ctx, ac.UserID); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete account")
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to commit account deletion")
 		return
 	}
 

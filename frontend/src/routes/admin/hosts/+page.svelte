@@ -1,5 +1,4 @@
 <script lang="ts">
-	import AdminSidebar from '$lib/components/AdminSidebar.svelte';
 	import { onMount } from 'svelte';
 	import { toast } from '$lib/toast.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
@@ -15,12 +14,6 @@
 	} from '$lib/api/hosts';
 
 	const PAGE_SIZE = 50;
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	let activeTab = $state<'platform' | 'byoc'>('platform');
 
@@ -163,19 +156,16 @@
 	onMount(fetchHosts);
 </script>
 
-<div class="flex h-screen overflow-hidden bg-[var(--color-bg-0)]">
-	<AdminSidebar bind:collapsed />
+<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+	<!-- Header -->
+	<header class="relative shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-1)]">
+		<!-- Subtle gradient wash behind header for depth -->
+		<div class="absolute inset-0 bg-gradient-to-b from-[var(--color-accent)]/[0.02] to-transparent pointer-events-none"></div>
 
-	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
-		<!-- Header -->
-		<header class="relative shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-1)]">
-			<!-- Subtle gradient wash behind header for depth -->
-			<div class="absolute inset-0 bg-gradient-to-b from-[var(--color-accent)]/[0.02] to-transparent pointer-events-none"></div>
-
-			<div class="relative flex items-start justify-between px-8 pt-7 pb-5">
-				<div>
-					<h1 class="font-serif text-page leading-none text-[var(--color-text-bright)]">
-						Hosts
+		<div class="relative flex items-start justify-between px-8 pt-7 pb-5">
+			<div>
+				<h1 class="font-serif text-page leading-none text-[var(--color-text-bright)]">
+					Hosts
 					</h1>
 					<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 						Platform and BYOC compute across all teams.
@@ -303,7 +293,16 @@
 			{/if}
 		</div>
 	</main>
-</div>
+
+	<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
+		<div class="flex items-center gap-1.5">
+			<span class="relative flex h-[5px] w-[5px]">
+				<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+				<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+			</span>
+			<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
+		</div>
+	</footer>
 
 {#snippet skeletonRows()}
 	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden shadow-sm">

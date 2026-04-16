@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/auth.svelte';
 	import { teams } from '$lib/teams.svelte';
@@ -25,7 +25,7 @@
 	let signupDone = $state(false);
 
 	const oauthErrorMessages: Record<string, string> = {
-		account_deactivated: 'Your account has been deactivated — contact your administrator to regain access',
+		account_deactivated: 'Your account has been deactivated — contact the administrator to regain access',
 		access_denied: 'Access was denied by the provider',
 		email_taken: 'An account with this email already exists',
 		exchange_failed: 'Authentication failed — please try again',
@@ -82,6 +82,10 @@
 			rafId = requestAnimationFrame(lerpLoop);
 		}
 	}
+
+	onDestroy(() => {
+		if (rafId !== null) cancelAnimationFrame(rafId);
+	});
 
 	const title = $derived(mode === 'signin' ? 'Welcome back' : 'Create account');
 	const subtitle = $derived(

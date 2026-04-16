@@ -1,5 +1,4 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
@@ -12,12 +11,6 @@
 		type Snapshot
 	} from '$lib/api/capsules';
 	import { formatDate, timeAgo } from '$lib/utils/format';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	// Page tab — Images is disabled/future
 	let pageTab = $state<'snapshots' | 'images'>('snapshots');
@@ -156,13 +149,9 @@
 	}}
 />
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+	<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
-			<div class="px-8 pt-8">
+			<div class="px-7 pt-8">
 				<div class="flex items-start justify-between">
 					<div>
 						<h1 class="font-serif text-page text-[var(--color-text-bright)]">
@@ -428,6 +417,7 @@
 												<div class="w-px shrink-0 bg-[var(--color-border-mid)]"></div>
 												<!-- Chevron / dropdown trigger -->
 												<button
+													aria-label="More actions"
 													disabled={snapshot.platform}
 													onclick={(e) => {
 														e.stopPropagation();
@@ -470,17 +460,15 @@
 		</main>
 
 		<!-- Status bar -->
-		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-8">
+		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
 			<div class="flex items-center gap-1.5">
-				<span
-					class="inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"
-					style="animation: wrenn-glow 2.4s ease-in-out infinite"
-				></span>
+				<span class="relative flex h-[5px] w-[5px]">
+					<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+					<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+				</span>
 				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
-	</div>
-</div>
 
 <!-- Split button dropdown -->
 {#if openDropdownName}
@@ -514,8 +502,10 @@
 <!-- Delete Confirmation Dialog -->
 {#if deleteTarget}
 	<div class="fixed inset-0 z-50 flex items-center justify-center">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="absolute inset-0 bg-black/60"
+			role="presentation"
 			onclick={() => { if (!deleting) deleteTarget = null; }}
 			onkeydown={(e) => { if (e.key === 'Escape' && !deleting) deleteTarget = null; }}
 		></div>
@@ -607,9 +597,9 @@
 
 			<!-- Template name (readonly) -->
 			<div class="mt-5">
-				<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
+				<span class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
 					Template
-				</label>
+				</span>
 				<div class="flex items-center gap-2 rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-0)] px-3 py-2">
 					{#if launchTarget.type === 'snapshot'}
 						<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]"></span>

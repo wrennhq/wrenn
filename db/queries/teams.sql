@@ -86,6 +86,14 @@ WHERE ut.user_id = $1
       WHERE ut2.team_id = t.id AND ut2.user_id <> $1
   );
 
+-- name: GetOwnedTeamIDs :many
+-- Returns team IDs where the given user has the 'owner' role.
+SELECT t.id FROM teams t
+JOIN users_teams ut ON ut.team_id = t.id
+WHERE ut.user_id = $1
+  AND ut.role = 'owner'
+  AND t.deleted_at IS NULL;
+
 -- name: CountTeamsAdmin :one
 SELECT COUNT(*)::int AS total
 FROM teams

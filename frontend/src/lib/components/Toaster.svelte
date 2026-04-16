@@ -13,6 +13,7 @@
 			<span class="flex-1 leading-relaxed">{t.message}</span>
 			<button
 				onclick={() => toast.dismiss(t.id)}
+				aria-label="Dismiss"
 				class="mt-0.5 shrink-0 opacity-50 transition-opacity hover:opacity-100"
 			>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

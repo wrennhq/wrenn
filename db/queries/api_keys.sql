@@ -25,3 +25,6 @@ UPDATE team_api_keys SET last_used = NOW() WHERE id = $1;
 
 -- name: DeleteAPIKeysByTeam :exec
 DELETE FROM team_api_keys WHERE team_id = $1;
+
+-- name: DeleteAPIKeysByCreator :exec
+DELETE FROM team_api_keys WHERE created_by = $1;
