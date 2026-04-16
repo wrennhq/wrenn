@@ -28,6 +28,7 @@ var openapiYAML []byte
 type Server struct {
 	router   chi.Router
 	BuildSvc *service.BuildService
+	version  string
 }
 
 // New constructs the chi router and registers all routes.
@@ -48,6 +49,7 @@ func New(
 	mailer email.Mailer,
 	extensions []cpextension.Extension,
 	sctx cpextension.ServerContext,
+	version string,
 ) *Server {
 	r := chi.NewRouter()
 	r.Use(requestLogger())
@@ -85,6 +87,12 @@ func New(
 	processH := newProcessHandler(queries, pool)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
 	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, mailer, oauthRegistry, oauthRedirectURL, teamSvc)
+
+	// Health check.
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","version":%q}`, version)
+	})
 
 	// OpenAPI spec and docs.
 	r.Get("/openapi.yaml", serveOpenAPI)
@@ -268,7 +276,7 @@ func New(
 		ext.RegisterRoutes(r, sctx)
 	}
 
-	return &Server{router: r, BuildSvc: buildSvc}
+	return &Server{router: r, BuildSvc: buildSvc, version: version}
 }
 
 // Handler returns the HTTP handler.
