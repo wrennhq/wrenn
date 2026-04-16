@@ -38,12 +38,10 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 				return
 			}
 
-			// Try JWT bearer token (header or query param for WebSocket).
+			// Try JWT bearer token from Authorization header.
 			tokenStr := ""
 			if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
 				tokenStr = strings.TrimPrefix(header, "Bearer ")
-			} else if t := r.URL.Query().Get("token"); t != "" {
-				tokenStr = t
 			}
 			if tokenStr != "" {
 				claims, err := auth.VerifyJWT(jwtSecret, tokenStr)
@@ -84,6 +82,14 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 					Role:   claims.Role,
 				})
 				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// WebSocket upgrade requests may not carry auth headers (browsers
+			// cannot set custom headers on WS connections). Pass through —
+			// the WS handler authenticates via the first message after upgrade.
+			if isWebSocketUpgrade(r) {
+				next.ServeHTTP(w, r)
 				return
 			}
 

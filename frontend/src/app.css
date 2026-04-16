@@ -180,6 +180,13 @@ body {
 	50%       { transform: translateY(-6px); }
 }
 
+/* CSS containment — isolate paint for independent UI regions.
+   Note: `contain: layout` is omitted because it creates a containing block
+   that breaks `position: fixed` popups rendered inside <main>. */
+main {
+	contain: style;
+}
+
 /* Respect user motion preferences — covers both CSS class animations and inline style animations */
 @media (prefers-reduced-motion: reduce) {
 	*,

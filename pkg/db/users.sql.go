@@ -54,7 +54,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const countUsersAdmin = `-- name: CountUsersAdmin :one
 SELECT COUNT(*)::int AS total
 FROM users
-WHERE deleted_at IS NULL
+WHERE status != 'deleted'
 `
 
 func (q *Queries) CountUsersAdmin(ctx context.Context) (int32, error) {
@@ -142,7 +142,7 @@ func (q *Queries) GetAdminUsers(ctx context.Context) ([]User, error) {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE email = $1
+SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE email = $1 AND status != 'deleted'
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -163,7 +163,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE id = $1
+SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE id = $1 AND status != 'deleted'
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -345,7 +345,7 @@ SELECT
     (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id)::int AS teams_joined,
     (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id AND ut.role = 'owner')::int AS teams_owned
 FROM users u
-WHERE u.deleted_at IS NULL
+WHERE u.status != 'deleted'
 ORDER BY u.created_at DESC
 LIMIT $1 OFFSET $2
 `

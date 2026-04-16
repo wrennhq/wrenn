@@ -14,6 +14,11 @@ import (
 func injectPlatformTeam() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := auth.FromContext(r.Context()); !ok {
+				// No auth context yet (WS upgrade); handler will inject platform team after WS auth.
+				next.ServeHTTP(w, r)
+				return
+			}
 			ac := auth.MustFromContext(r.Context())
 			ac.TeamID = id.PlatformTeamID
 			ctx := auth.WithAuthContext(r.Context(), ac)
@@ -26,11 +31,19 @@ func injectPlatformTeam() func(http.Handler) http.Handler {
 // Must run after requireJWT (depends on AuthContext being present).
 // Re-validates against the DB — the JWT is_admin claim is for UI only;
 // the DB is the source of truth for admin access.
+// WebSocket upgrade requests without auth context are passed through —
+// admin WS handlers verify admin status after upgrade via wsAuthenticateAdmin.
 func requireAdmin(queries *db.Queries) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ac, ok := auth.FromContext(r.Context())
 			if !ok {
+				if isWebSocketUpgrade(r) {
+					ctx := r.Context()
+					ctx = setAdminWSFlag(ctx)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 				writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 				return
 			}

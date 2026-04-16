@@ -20,8 +20,9 @@
 		layout?: 'full' | 'compact';
 	};
 
-	let { capsuleId, available, initialRange = '10m', apiBasePath = '/api/v1/capsules', layout = 'full' }: Props = $props();
+	let { capsuleId, available, initialRange = '10m' as MetricRange, apiBasePath = '/api/v1/capsules', layout = 'full' }: Props = $props();
 
+	// svelte-ignore state_referenced_locally
 	let range = $state<MetricRange>(initialRange);
 	let points = $state<MetricPoint[]>([]);
 	let metricsLoading = $state(true);

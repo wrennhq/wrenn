@@ -171,7 +171,7 @@ CREATE TABLE audit_logs (
     metadata      JSONB NOT NULL DEFAULT '{}',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_audit_logs_team_time ON audit_logs(team_id, created_at DESC);
+CREATE INDEX idx_audit_logs_team_time ON audit_logs(team_id, created_at DESC, id DESC);
 CREATE INDEX idx_audit_logs_team_resource ON audit_logs(team_id, resource_type, created_at DESC);
 
 -- sandbox_metrics_snapshots

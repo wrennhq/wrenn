@@ -1,6 +1,5 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -22,12 +21,6 @@
 		type UserSearchResult
 	} from '$lib/api/team';
 	import { teams as teamsStore } from '$lib/teams.svelte';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	// Page data
 	let team = $state<TeamInfo | null>(null);
@@ -284,6 +277,10 @@
 	}
 
 	onMount(fetchTeam);
+
+	onDestroy(() => {
+		if (searchTimeout) clearTimeout(searchTimeout);
+	});
 </script>
 
 <svelte:head>
@@ -318,11 +315,7 @@
 	}}
 />
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
 				<h1 class="font-serif text-page text-[var(--color-text-bright)]">
@@ -466,26 +459,18 @@
 											<p class="mt-1.5 text-meta text-[var(--color-red)]">{nameError}</p>
 										{/if}
 									{:else}
-										<!-- svelte-ignore a11y_click_events_have_key_events -->
-										<div
-											class="group flex items-center gap-2"
-											onclick={canManage ? startEditName : undefined}
-											role={canManage ? 'button' : undefined}
-											tabindex={canManage ? 0 : undefined}
-											onkeydown={canManage
-												? (e) => {
-														if (e.key === 'Enter' || e.key === ' ') startEditName();
-													}
-												: undefined}
-											class:cursor-pointer={canManage}
-											title={canManage ? 'Click to edit' : undefined}
-										>
-											<span
-												class="text-ui font-medium transition-colors duration-300 {nameSavedFlash ? 'text-[var(--color-accent-mid)]' : 'text-[var(--color-text-bright)]'} {canManage ? 'group-hover:text-[var(--color-text-bright)]' : ''}"
+										{#if canManage}
+											<button
+												type="button"
+												class="group flex items-center gap-2 cursor-pointer"
+												onclick={startEditName}
+												title="Click to edit"
 											>
-												{team.name}
-											</span>
-											{#if canManage}
+												<span
+													class="text-ui font-medium transition-colors duration-300 {nameSavedFlash ? 'text-[var(--color-accent-mid)]' : 'text-[var(--color-text-bright)]'} group-hover:text-[var(--color-text-bright)]"
+												>
+													{team.name}
+												</span>
 												<svg
 													width="12"
 													height="12"
@@ -502,8 +487,14 @@
 													/>
 													<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
 												</svg>
-											{/if}
-										</div>
+											</button>
+										{:else}
+											<span
+												class="text-ui font-medium text-[var(--color-text-bright)]"
+											>
+												{team.name}
+											</span>
+										{/if}
 									{/if}
 								</div>
 							</div>
@@ -717,6 +708,7 @@
 												<div class="w-px shrink-0 bg-[var(--color-border-mid)]"></div>
 												<!-- Chevron: Make Admin / Make Member -->
 												<button
+													aria-label="Role actions"
 													onclick={(e) => {
 														e.stopPropagation();
 														if (openDropdownId === member.user_id) {
@@ -811,9 +803,15 @@
 			</div>
 		</main>
 
-		<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
-	</div>
-</div>
+	<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
+		<div class="flex items-center gap-1.5">
+			<span class="relative flex h-[5px] w-[5px]">
+				<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+				<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+			</span>
+			<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
+		</div>
+	</footer>
 
 <!-- Split button dropdown -->
 {#if openDropdownId}
@@ -893,7 +891,7 @@
 
 		<div
 			class="relative w-full max-w-[400px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
-			style="animation: fadeUp 0.2s ease both"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
 			<h2
 				class="font-serif text-heading text-[var(--color-text-bright)]"
@@ -1030,7 +1028,7 @@
 
 		<div
 			class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
-			style="animation: fadeUp 0.2s ease both"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
 			<h2
 				class="font-serif text-heading text-[var(--color-text-bright)]"
@@ -1104,7 +1102,7 @@
 
 		<div
 			class="relative w-full max-w-[400px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
-			style="animation: fadeUp 0.2s ease both"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
 			{#if myRole === 'owner'}
 				<h2

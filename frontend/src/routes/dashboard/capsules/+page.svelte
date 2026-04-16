@@ -371,7 +371,7 @@
 	{/if}
 
 	<!-- Table -->
-	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] overflow-hidden">
+	<div class="min-w-0 rounded-[var(--radius-card)] border border-[var(--color-border)] overflow-hidden">
 		<!-- Table header -->
 		<div class="grid grid-cols-[1.6fr_0.8fr_0.5fr_0.5fr_0.6fr_1fr_0.9fr] rounded-t-[var(--radius-card)] border-b border-[var(--color-border)] bg-[var(--color-bg-3)]">
 			<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">ID</div>
@@ -380,7 +380,7 @@
 			{@render sortableHeader('Memory', 'memory_mb')}
 			{@render sortableHeader('Idle Timeout', 'timeout_sec')}
 			{@render sortableHeader('Started', 'started_at')}
-			{@render sortableHeader('Status', 'status')}
+			{@render sortableHeader('Status', 'status', 'right')}
 		</div>
 
 		{#if loading && capsules.length === 0}
@@ -456,7 +456,7 @@
 					<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-0.5 {stripeColor}"></div>
 
 					<!-- ID with status dot -->
-					<div class="flex items-center gap-2.5 px-5 py-4">
+					<div class="flex min-w-0 items-center gap-2.5 px-5 py-4">
 						{#if capsule.status === 'running'}
 							<span class="relative flex h-[6px] w-[6px] shrink-0">
 								<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
@@ -469,9 +469,9 @@
 						{/if}
 						{#if searchQuery && capsule.id.toLowerCase().includes(searchQuery.toLowerCase())}
 							{@const matchIdx = capsule.id.toLowerCase().indexOf(searchQuery.toLowerCase())}
-							<a href="/dashboard/capsules/{capsule.id}" class="font-mono text-ui text-[var(--color-text-bright)] hover:text-[var(--color-accent-bright)] transition-colors duration-150">{capsule.id.slice(0, matchIdx)}<mark class="rounded-[2px] bg-[var(--color-accent-glow-mid)] px-0.5 text-[var(--color-accent-bright)] not-italic">{capsule.id.slice(matchIdx, matchIdx + searchQuery.length)}</mark>{capsule.id.slice(matchIdx + searchQuery.length)}</a>
+							<a href="/dashboard/capsules/{capsule.id}" class="truncate font-mono text-ui text-[var(--color-text-bright)] hover:text-[var(--color-accent-bright)] transition-colors duration-150">{capsule.id.slice(0, matchIdx)}<mark class="rounded-[2px] bg-[var(--color-accent-glow-mid)] px-0.5 text-[var(--color-accent-bright)] not-italic">{capsule.id.slice(matchIdx, matchIdx + searchQuery.length)}</mark>{capsule.id.slice(matchIdx + searchQuery.length)}</a>
 						{:else}
-							<a href="/dashboard/capsules/{capsule.id}" class="font-mono text-ui text-[var(--color-text-bright)] hover:text-[var(--color-accent-bright)] transition-colors duration-150">{capsule.id}</a>
+							<a href="/dashboard/capsules/{capsule.id}" class="truncate font-mono text-ui text-[var(--color-text-bright)] hover:text-[var(--color-accent-bright)] transition-colors duration-150">{capsule.id}</a>
 						{/if}
 						<CopyButton value={capsule.id} />
 					</div>
@@ -505,7 +505,7 @@
 					</div>
 
 					<!-- Status button with popover -->
-					<div class="relative px-5 py-4 status-menu-container">
+					<div class="relative flex items-center justify-end px-5 py-4 status-menu-container">
 						{#if actionLoading === capsule.id}
 							<span class="inline-flex items-center gap-1.5 text-ui text-[var(--color-text-secondary)]">
 								<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -522,10 +522,13 @@
 										const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 										const menuW = 180;
 										const menuH = 140; // approximate max menu height
+										const vw = document.documentElement.clientWidth;
 										const top = rect.bottom + 4 + menuH > window.innerHeight
 											? rect.top - menuH - 4
 											: rect.bottom + 4;
-										const left = Math.max(8, Math.min(rect.right - menuW, window.innerWidth - menuW - 8));
+										// Anchor right edge of menu to right edge of button, clamped within viewport
+										const idealLeft = rect.right - menuW;
+										const left = Math.min(Math.max(8, idealLeft), vw - menuW - 8);
 										menuPos = { top, left };
 										openMenuId = capsule.id;
 									}
@@ -641,10 +644,10 @@
 	oncreated={handleCapsuleCreated}
 />
 
-{#snippet sortableHeader(label: string, key: SortKey)}
+{#snippet sortableHeader(label: string, key: SortKey, align: 'left' | 'right' = 'left')}
 	<button
 		onclick={() => toggleSort(key)}
-		class="flex items-center gap-1 px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] transition-colors duration-150 hover:text-[var(--color-text-secondary)]"
+		class="flex items-center gap-1 px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] transition-colors duration-150 hover:text-[var(--color-text-secondary)] {align === 'right' ? 'ml-auto' : ''}"
 	>
 		{label}
 		{#if sortKey === key}

@@ -139,14 +139,14 @@ func (s *BuildService) Create(ctx context.Context, p BuildCreateParams) (db.Temp
 		return db.TemplateBuild{}, fmt.Errorf("insert build: %w", err)
 	}
 
-	// Enqueue build ID (as formatted string) to Redis for workers to pick up.
-	if err := s.Redis.RPush(ctx, buildQueueKey, buildIDStr).Err(); err != nil {
-		return db.TemplateBuild{}, fmt.Errorf("enqueue build: %w", err)
-	}
-
-	// Store archive for the worker if provided.
+	// Store archive before enqueue so the worker never dequeues without files.
 	if len(p.Archive) > 0 {
 		s.storeArchive(buildIDStr, p.Archive)
+	}
+
+	if err := s.Redis.RPush(ctx, buildQueueKey, buildIDStr).Err(); err != nil {
+		s.takeArchive(buildIDStr) // clean up on enqueue failure
+		return db.TemplateBuild{}, fmt.Errorf("enqueue build: %w", err)
 	}
 
 	return build, nil

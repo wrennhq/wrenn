@@ -60,14 +60,14 @@ func New(
 	templateSvc := &service.TemplateService{DB: queries}
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
-	userSvc := &service.UserService{DB: queries}
+	userSvc := &service.UserService{DB: queries, SandboxSvc: sandboxSvc}
 	auditSvc := &service.AuditService{DB: queries}
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
 
 	sandbox := newSandboxHandler(sandboxSvc, al)
 	exec := newExecHandler(queries, pool)
-	execStream := newExecStreamHandler(queries, pool)
+	execStream := newExecStreamHandler(queries, pool, jwtSecret)
 	files := newFilesHandler(queries, pool)
 	filesStream := newFilesStreamHandler(queries, pool)
 	fsH := newFSHandler(queries, pool)
@@ -83,8 +83,8 @@ func New(
 	metricsH := newSandboxMetricsHandler(queries, pool)
 	buildH := newBuildHandler(buildSvc, queries, pool)
 	channelH := newChannelHandler(channelSvc, al)
-	ptyH := newPtyHandler(queries, pool)
-	processH := newProcessHandler(queries, pool)
+	ptyH := newPtyHandler(queries, pool, jwtSecret)
+	processH := newProcessHandler(queries, pool, jwtSecret)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
 	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, mailer, oauthRegistry, oauthRedirectURL, teamSvc)
 
@@ -152,6 +152,8 @@ func New(
 	r.With(requireJWT(jwtSecret, queries)).Get("/v1/users/search", usersH.Search)
 
 	// Capsule lifecycle: accepts API key or JWT bearer token.
+	// WebSocket upgrade requests without auth headers are passed through by
+	// requireAPIKeyOrJWT — the WS handlers authenticate via first message.
 	r.Route("/v1/capsules", func(r chi.Router) {
 		r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
 		r.Post("/", sandbox.Create)

@@ -30,12 +30,13 @@ const (
 )
 
 type ptyHandler struct {
-	db   *db.Queries
-	pool *lifecycle.HostClientPool
+	db        *db.Queries
+	pool      *lifecycle.HostClientPool
+	jwtSecret []byte
 }
 
-func newPtyHandler(db *db.Queries, pool *lifecycle.HostClientPool) *ptyHandler {
-	return &ptyHandler{db: db, pool: pool}
+func newPtyHandler(db *db.Queries, pool *lifecycle.HostClientPool, jwtSecret []byte) *ptyHandler {
+	return &ptyHandler{db: db, pool: pool, jwtSecret: jwtSecret}
 }
 
 // --- WebSocket message types ---
@@ -82,7 +83,6 @@ func (w *wsWriter) writeJSON(v any) {
 func (h *ptyHandler) PtySession(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
-	ac := auth.MustFromContext(ctx)
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
@@ -90,13 +90,34 @@ func (h *ptyHandler) PtySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running (status: "+sb.Status+")")
+	// API key auth is handled by middleware (sets context).
+	// For browser JWT auth, we authenticate after upgrade via first WS message.
+	ac, hasAuth := auth.FromContext(ctx)
+
+	if !hasAuth {
+		// No pre-upgrade auth — upgrade first, then authenticate via WS message.
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			slog.Error("pty websocket upgrade failed", "error", err)
+			return
+		}
+		defer conn.Close()
+
+		ws := &wsWriter{conn: conn}
+
+		var wsAC auth.AuthContext
+		if isAdminWSRoute(ctx) {
+			wsAC, err = wsAuthenticateAdmin(ctx, conn, h.jwtSecret, h.db)
+		} else {
+			wsAC, err = wsAuthenticate(ctx, conn, h.jwtSecret, h.db)
+		}
+		if err != nil {
+			ws.writeJSON(wsPtyOut{Type: "error", Data: "authentication failed", Fatal: true})
+			return
+		}
+		ac = wsAC
+
+		h.runPtySession(ctx, ws, conn, ac, sandboxID, sandboxIDStr)
 		return
 	}
 
@@ -108,6 +129,19 @@ func (h *ptyHandler) PtySession(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	ws := &wsWriter{conn: conn}
+	h.runPtySession(ctx, ws, conn, ac, sandboxID, sandboxIDStr)
+}
+
+func (h *ptyHandler) runPtySession(ctx context.Context, ws *wsWriter, conn *websocket.Conn, ac auth.AuthContext, sandboxID pgtype.UUID, sandboxIDStr string) {
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
+	if err != nil {
+		ws.writeJSON(wsPtyOut{Type: "error", Data: "sandbox not found", Fatal: true})
+		return
+	}
+	if sb.Status != "running" {
+		ws.writeJSON(wsPtyOut{Type: "error", Data: "sandbox is not running (status: " + sb.Status + ")", Fatal: true})
+		return
+	}
 
 	// Read the first message to determine start vs connect.
 	var firstMsg wsPtyIn

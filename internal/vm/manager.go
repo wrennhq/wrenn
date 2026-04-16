@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type VM struct {
 
 // Manager handles the lifecycle of Firecracker microVMs.
 type Manager struct {
+	mu sync.RWMutex
 	// vms tracks running VMs by sandbox ID.
 	vms map[string]*VM
 }
@@ -84,7 +86,9 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 		client:  client,
 	}
 
+	m.mu.Lock()
 	m.vms[cfg.SandboxID] = vm
+	m.mu.Unlock()
 
 	slog.Info("VM started successfully", "sandbox", cfg.SandboxID)
 
@@ -126,7 +130,9 @@ func configureVM(ctx context.Context, client *fcClient, cfg *VMConfig) error {
 
 // Pause pauses a running VM.
 func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
+	m.mu.RLock()
 	vm, ok := m.vms[sandboxID]
+	m.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("VM not found: %s", sandboxID)
 	}
@@ -141,7 +147,9 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 // Resume resumes a paused VM.
 func (m *Manager) Resume(ctx context.Context, sandboxID string) error {
+	m.mu.RLock()
 	vm, ok := m.vms[sandboxID]
+	m.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("VM not found: %s", sandboxID)
 	}
@@ -156,10 +164,14 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) error {
 
 // Destroy stops and cleans up a VM.
 func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
+	m.mu.Lock()
 	vm, ok := m.vms[sandboxID]
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("VM not found: %s", sandboxID)
 	}
+	delete(m.vms, sandboxID)
+	m.mu.Unlock()
 
 	slog.Info("destroying VM", "sandbox", sandboxID)
 
@@ -171,8 +183,6 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 	// Clean up the API socket.
 	os.Remove(vm.Config.SocketPath)
 
-	delete(m.vms, sandboxID)
-
 	slog.Info("VM destroyed", "sandbox", sandboxID)
 	return nil
 }
@@ -180,7 +190,9 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 // Snapshot creates a VM snapshot. The VM must already be paused.
 // snapshotType is "Full" (all memory) or "Diff" (only dirty pages since last resume).
 func (m *Manager) Snapshot(ctx context.Context, sandboxID, snapPath, memPath, snapshotType string) error {
+	m.mu.RLock()
 	vm, ok := m.vms[sandboxID]
+	m.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("VM not found: %s", sandboxID)
 	}
@@ -263,7 +275,9 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapPath
 		client:  client,
 	}
 
+	m.mu.Lock()
 	m.vms[cfg.SandboxID] = vm
+	m.mu.Unlock()
 
 	slog.Info("VM restored from snapshot", "sandbox", cfg.SandboxID)
 	return vm, nil
@@ -277,7 +291,9 @@ func (v *VM) PID() int {
 
 // Get returns a running VM by sandbox ID.
 func (m *Manager) Get(sandboxID string) (*VM, bool) {
+	m.mu.RLock()
 	vm, ok := m.vms[sandboxID]
+	m.mu.RUnlock()
 	return vm, ok
 }
 

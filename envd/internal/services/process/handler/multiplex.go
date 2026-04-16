@@ -35,26 +35,26 @@ func NewMultiplexedChannel[T any](buffer int) *MultiplexedChannel[T] {
 			c.mu.RUnlock()
 		}
 
+		c.mu.Lock()
 		c.exited.Store(true)
-
 		for _, cons := range c.channels {
 			close(cons)
 		}
+		c.mu.Unlock()
 	}()
 
 	return c
 }
 
 func (m *MultiplexedChannel[T]) Fork() (chan T, func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.exited.Load() {
 		ch := make(chan T)
 		close(ch)
-
 		return ch, func() {}
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	consumer := make(chan T, 4096)
 

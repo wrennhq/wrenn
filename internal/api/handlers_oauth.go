@@ -212,6 +212,11 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		// Existing OAuth user — log them in.
 		user, err := h.db.GetUserByID(ctx, existing.UserID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("oauth login: user no longer exists", "user_id", existing.UserID)
+			redirectWithError(w, r, redirectBase, "account_deactivated")
+			return
+		}
 		if err != nil {
 			slog.Error("oauth login: failed to get user", "error", err)
 			redirectWithError(w, r, redirectBase, "db_error")
@@ -222,13 +227,14 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, redirectBase, "account_deactivated")
 			return
 		}
-		team, role, err := loginTeam(ctx, h.db, user.ID)
+		team, role, isFirstUser, err := ensureDefaultTeam(ctx, h.db, h.pool, user.ID, user.Name)
 		if err != nil {
-			slog.Error("oauth login: failed to get team", "error", err)
+			slog.Error("oauth login: failed to ensure team", "error", err)
 			redirectWithError(w, r, redirectBase, "db_error")
 			return
 		}
-		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, user.IsAdmin)
+		isAdmin := user.IsAdmin || isFirstUser
+		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, isAdmin)
 		if err != nil {
 			slog.Error("oauth login: failed to sign jwt", "error", err)
 			redirectWithError(w, r, redirectBase, "internal_error")
@@ -376,6 +382,11 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 		return
 	}
 	user, err := h.db.GetUserByID(ctx, existing.UserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("oauth: retry login: user no longer exists", "user_id", existing.UserID)
+		redirectWithError(w, r, redirectBase, "account_deactivated")
+		return
+	}
 	if err != nil {
 		slog.Error("oauth: retry login: failed to get user", "error", err)
 		redirectWithError(w, r, redirectBase, "db_error")
@@ -386,13 +397,14 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 		redirectWithError(w, r, redirectBase, "account_deactivated")
 		return
 	}
-	team, role, err := loginTeam(ctx, h.db, user.ID)
+	team, role, isFirstUser, err := ensureDefaultTeam(ctx, h.db, h.pool, user.ID, user.Name)
 	if err != nil {
-		slog.Error("oauth: retry login: failed to get team", "error", err)
+		slog.Error("oauth: retry login: failed to ensure team", "error", err)
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
 	}
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, user.IsAdmin)
+	isAdmin := user.IsAdmin || isFirstUser
+	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, isAdmin)
 	if err != nil {
 		slog.Error("oauth: retry login: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
