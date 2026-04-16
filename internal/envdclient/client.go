@@ -3,6 +3,7 @@ package envdclient
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -268,6 +269,82 @@ func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	return data, nil
 }
 
+// PrepareSnapshot calls envd's POST /snapshot/prepare endpoint, which quiesces
+// continuous goroutines (port scanner, forwarder) and forces a GC cycle before
+// Firecracker takes a VM snapshot. This ensures the Go runtime's page allocator
+// is in a consistent state when vCPUs are frozen.
+//
+// Best-effort: the caller should log a warning on error but not abort the pause.
+func (c *Client) PrepareSnapshot(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/snapshot/prepare", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("prepare snapshot: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("prepare snapshot: status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// PostInit calls envd's POST /init endpoint, which triggers a re-read of
+// Firecracker MMDS metadata. This updates WRENN_SANDBOX_ID, WRENN_TEMPLATE_ID
+// env vars and the corresponding files under /run/wrenn/ inside the guest.
+// Must be called after snapshot restore so envd picks up the new sandbox's metadata.
+func (c *Client) PostInit(ctx context.Context) error {
+	return c.PostInitWithDefaults(ctx, "", nil)
+}
+
+// PostInitWithDefaults calls envd's POST /init endpoint with optional default
+// user and environment variables. These are applied to envd's defaults so all
+// subsequent process executions use them.
+func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, envVars map[string]string) error {
+	var body io.Reader
+	if defaultUser != "" || len(envVars) > 0 {
+		payload := make(map[string]any)
+		if defaultUser != "" {
+			payload["defaultUser"] = defaultUser
+		}
+		if len(envVars) > 0 {
+			payload["envVars"] = envVars
+		}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshal init body: %w", err)
+		}
+		body = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/init", body)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("post init: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("post init: status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
 // ListDir lists directory contents inside the sandbox.
 func (c *Client) ListDir(ctx context.Context, path string, depth uint32) (*envdpb.ListDirResponse, error) {
 	req := connect.NewRequest(&envdpb.ListDirRequest{
@@ -281,4 +358,31 @@ func (c *Client) ListDir(ctx context.Context, path string, depth uint32) (*envdp
 	}
 
 	return resp.Msg, nil
+}
+
+// MakeDir creates a directory inside the sandbox.
+func (c *Client) MakeDir(ctx context.Context, path string) (*envdpb.MakeDirResponse, error) {
+	req := connect.NewRequest(&envdpb.MakeDirRequest{
+		Path: path,
+	})
+
+	resp, err := c.filesystem.MakeDir(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("make dir: %w", err)
+	}
+
+	return resp.Msg, nil
+}
+
+// Remove removes a file or directory inside the sandbox.
+func (c *Client) Remove(ctx context.Context, path string) error {
+	req := connect.NewRequest(&envdpb.RemoveRequest{
+		Path: path,
+	})
+
+	if _, err := c.filesystem.Remove(ctx, req); err != nil {
+		return fmt.Errorf("remove: %w", err)
+	}
+
+	return nil
 }

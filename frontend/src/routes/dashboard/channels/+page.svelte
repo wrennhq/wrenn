@@ -1,5 +1,4 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { cubicIn, cubicOut } from 'svelte/easing';
@@ -16,12 +15,6 @@
 	} from '$lib/api/channels';
 	import { toast } from '$lib/toast.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	// List state
 	let channels = $state<Channel[]>([]);
@@ -92,6 +85,21 @@
 
 	function providerLabel(value: string): string {
 		return PROVIDERS.find((p) => p.value === value)?.label ?? value;
+	}
+
+	// Per-provider color palette — [text, bg, border, stripe]
+	const PROVIDER_COLORS: Record<string, { text: string; bg: string; border: string }> = {
+		discord:    { text: '#8b9cef', bg: 'rgba(88,101,242,0.12)', border: 'rgba(88,101,242,0.3)' },
+		slack:      { text: '#d4a0c0', bg: 'rgba(180,120,160,0.10)', border: 'rgba(180,120,160,0.3)' },
+		teams:      { text: '#a78bda', bg: 'rgba(120,90,200,0.10)', border: 'rgba(120,90,200,0.3)' },
+		googlechat: { text: '#6ec07a', bg: 'rgba(60,176,80,0.10)',  border: 'rgba(60,176,80,0.25)' },
+		telegram:   { text: '#6cb8d9', bg: 'rgba(42,171,226,0.10)', border: 'rgba(42,171,226,0.25)' },
+		matrix:     { text: '#6bccc4', bg: 'rgba(80,200,190,0.10)', border: 'rgba(80,200,190,0.25)' },
+		webhook:    { text: 'var(--color-text-secondary)', bg: 'rgba(255,255,255,0.04)', border: 'var(--color-border-mid)' },
+	};
+
+	function providerColor(provider: string): typeof PROVIDER_COLORS['discord'] {
+		return PROVIDER_COLORS[provider] ?? PROVIDER_COLORS['webhook'];
 	}
 
 	function fieldLabel(field: string): string {
@@ -286,39 +294,22 @@
 		return `${events.length} events`;
 	}
 
-	// Click-outside handlers for dropdowns
-	$effect(() => {
-		if (!providerDropdownOpen) return;
-		function handleMouseDown(e: MouseEvent) {
-			if (providerDropdownEl && !providerDropdownEl.contains(e.target as Node)) {
-				providerDropdownOpen = false;
+	// Click-outside handler — single listener covers all dropdowns
+	function useClickOutside(open: () => boolean, el: () => HTMLElement | null, close: () => void) {
+		$effect(() => {
+			if (!open()) return;
+			function onMouseDown(e: MouseEvent) {
+				const container = el();
+				if (container && !container.contains(e.target as Node)) close();
 			}
-		}
-		document.addEventListener('mousedown', handleMouseDown);
-		return () => document.removeEventListener('mousedown', handleMouseDown);
-	});
+			document.addEventListener('mousedown', onMouseDown);
+			return () => document.removeEventListener('mousedown', onMouseDown);
+		});
+	}
 
-	$effect(() => {
-		if (!eventsDropdownOpen) return;
-		function handleMouseDown(e: MouseEvent) {
-			if (eventsDropdownEl && !eventsDropdownEl.contains(e.target as Node)) {
-				eventsDropdownOpen = false;
-			}
-		}
-		document.addEventListener('mousedown', handleMouseDown);
-		return () => document.removeEventListener('mousedown', handleMouseDown);
-	});
-
-	$effect(() => {
-		if (!editEventsDropdownOpen) return;
-		function handleMouseDown(e: MouseEvent) {
-			if (editEventsDropdownEl && !editEventsDropdownEl.contains(e.target as Node)) {
-				editEventsDropdownOpen = false;
-			}
-		}
-		document.addEventListener('mousedown', handleMouseDown);
-		return () => document.removeEventListener('mousedown', handleMouseDown);
-	});
+	useClickOutside(() => providerDropdownOpen, () => providerDropdownEl, () => { providerDropdownOpen = false; });
+	useClickOutside(() => eventsDropdownOpen, () => eventsDropdownEl, () => { eventsDropdownOpen = false; });
+	useClickOutside(() => editEventsDropdownOpen, () => editEventsDropdownEl, () => { editEventsDropdownOpen = false; });
 
 	onMount(fetchChannels);
 </script>
@@ -347,18 +338,19 @@
 	}}
 />
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
-				<div class="flex items-start justify-between">
+				<div class="flex items-center justify-between">
 					<div>
-						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
-							Channels
-						</h1>
+						<div class="flex items-baseline gap-4">
+							<h1 class="font-serif text-page text-[var(--color-text-bright)]">
+								Channels
+							</h1>
+							{#if !loading && channels.length > 0}
+								<span class="font-serif text-[1.75rem] text-[var(--color-text-muted)]">{channels.length}</span>
+							{/if}
+						</div>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
 							Route capsule events to Discord, Slack, Telegram, and other destinations.
 						</p>
@@ -375,7 +367,7 @@
 					</button>
 				</div>
 
-				<div class="mt-5 border-b border-[var(--color-border)]"></div>
+				<div class="mt-6 border-b border-[var(--color-border)]"></div>
 			</div>
 
 			<!-- Content -->
@@ -436,7 +428,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No channels yet</p>
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">No channels yet</p>
 						<p class="mt-1.5 max-w-[340px] text-center text-ui text-[var(--color-text-tertiary)]">Channels deliver capsule events to your team's tools. Connect Discord, Slack, or a custom webhook.</p>
 						<button
 							onclick={() => { showCreate = true; resetCreateForm(); }}
@@ -449,13 +441,6 @@
 						</button>
 					</div>
 				{:else}
-					<!-- Count row -->
-					<div class="mb-4 flex items-center justify-end">
-						<span class="text-meta text-[var(--color-text-muted)]">
-							{channels.length} {channels.length === 1 ? 'channel' : 'channels'} total
-						</span>
-					</div>
-
 					<!-- Table -->
 					<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]">
 						<!-- Header -->
@@ -474,7 +459,7 @@
 								in:fly={{ y: 6, duration: 350, delay: i * 40, easing: cubicOut }}
 								out:fly={{ x: -12, duration: 180, easing: cubicIn }}
 							>
-								<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-[3px] bg-[var(--color-accent)]"></div>
+								<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-[3px]" style="background: {providerColor(ch.provider).text}"></div>
 
 								<!-- Name -->
 								<div class="min-w-0 px-5 py-4">
@@ -484,7 +469,10 @@
 
 								<!-- Provider -->
 								<div class="px-5 py-4">
-									<span class="inline-flex items-center gap-1.5 rounded-[3px] border border-[var(--color-accent)]/25 bg-[var(--color-accent)]/10 px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.04em] text-[var(--color-accent-mid)]">
+									<span
+										class="inline-flex items-center gap-1.5 rounded-[3px] border px-2.5 py-1 text-badge font-semibold uppercase tracking-[0.04em]"
+										style="color: {providerColor(ch.provider).text}; background: {providerColor(ch.provider).bg}; border-color: {providerColor(ch.provider).border}"
+									>
 										{@render providerIcon(ch.provider)}
 										{providerLabel(ch.provider)}
 									</span>
@@ -535,6 +523,7 @@
 													openDropdownId = ch.id;
 												}
 											}}
+											aria-label="More actions"
 											class="flex items-center px-2 py-1.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-bright)]"
 										>
 											<svg
@@ -556,15 +545,13 @@
 		<!-- Status bar -->
 		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
 			<div class="flex items-center gap-1.5">
-				<span
-					class="inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"
-					style="animation: wrenn-glow 2.4s ease-in-out infinite"
-				></span>
+				<span class="relative flex h-[5px] w-[5px]">
+					<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+					<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+				</span>
 				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
-	</div>
-</div>
 
 <!-- Split button dropdown -->
 {#if openDropdownId}
@@ -654,7 +641,7 @@
 
 			{#if createStep === 1}
 				<!-- Step 1: Connection -->
-				<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">New Channel</h2>
+				<h2 class="font-serif text-heading text-[var(--color-text-bright)]">New Channel</h2>
 				<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Name the channel, pick a provider, and enter its connection details.</p>
 
 				<!-- Name -->
@@ -674,11 +661,12 @@
 
 				<!-- Provider -->
 				<div class="mt-4">
-					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
+					<label for="provider-select" class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
 						Provider
 					</label>
 					<div class="relative" bind:this={providerDropdownEl}>
 						<button
+							id="provider-select"
 							onclick={() => { providerDropdownOpen = !providerDropdownOpen; }}
 							disabled={creating}
 							class="flex w-full items-center justify-between rounded-[var(--radius-input)] border px-3 py-2 text-ui transition-colors duration-150 disabled:opacity-60
@@ -704,9 +692,11 @@
 								style="animation: fadeUp 0.12s ease both"
 							>
 								{#each PROVIDERS as p}
+									{@const ppc = providerColor(p.value)}
 									<button
 										class="flex w-full items-center gap-2.5 px-3 py-2 text-ui transition-colors duration-100 hover:bg-[var(--color-bg-3)]
-											{createProvider === p.value ? 'bg-[var(--color-accent-glow)] text-[var(--color-accent-bright)] font-medium' : 'text-[var(--color-text-primary)]'}"
+											{createProvider === p.value ? 'font-medium' : 'text-[var(--color-text-primary)]'}"
+										style={createProvider === p.value ? `color: ${ppc.text}; background: ${ppc.bg}` : ''}
 										onclick={() => { createProvider = p.value; createConfig = {}; providerDropdownOpen = false; }}
 									>
 										{@render providerIcon(p.value)}
@@ -802,7 +792,7 @@
 
 			{:else}
 				<!-- Step 2: Events -->
-				<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Choose Events</h2>
+				<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Choose Events</h2>
 				<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 					Pick the events that trigger a notification to
 					<span class="font-medium text-[var(--color-text-secondary)]">{createName}</span>
@@ -811,11 +801,12 @@
 
 				<!-- Events dropdown -->
 				<div class="mt-5">
-					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
+					<label for="events-select" class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
 						Events
 					</label>
 					<div class="relative" bind:this={eventsDropdownEl}>
 						<button
+							id="events-select"
 							onclick={() => { eventsDropdownOpen = !eventsDropdownOpen; }}
 							disabled={creating}
 							class="flex w-full items-center justify-between rounded-[var(--radius-input)] border px-3 py-2 text-ui transition-colors duration-150 disabled:opacity-60
@@ -848,29 +839,7 @@
 								class="absolute left-0 top-full z-20 mt-1.5 w-full overflow-y-auto rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] py-1.5 shadow-xl"
 								style="max-height: 280px; animation: fadeUp 0.12s ease both"
 							>
-								{#each Object.entries(groupedEvents) as [group, events], gi}
-									<div class="px-3 py-1.5 text-badge font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">{group}</div>
-
-									{#each events as et}
-										{@const checked = createEvents.includes(et.value)}
-										<label class="flex cursor-pointer items-center gap-2.5 px-3 py-2 transition-colors duration-100 hover:bg-[var(--color-bg-3)]">
-											<span class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border transition-colors duration-100
-												{checked ? 'border-[var(--color-accent)] bg-[var(--color-accent)]' : 'border-[var(--color-border-mid)] bg-[var(--color-bg-4)]'}">
-												{#if checked}
-													<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
-														<polyline points="20 6 9 17 4 12" />
-													</svg>
-												{/if}
-											</span>
-											<input type="checkbox" class="sr-only" {checked} onchange={() => { createEvents = toggleEvent(createEvents, et.value); }} />
-											<span class="font-mono text-meta {checked ? 'text-[var(--color-text-bright)]' : 'text-[var(--color-text-secondary)]'}">{et.value}</span>
-										</label>
-									{/each}
-
-									{#if gi < Object.entries(groupedEvents).length - 1}
-										<div class="mx-3 my-1 border-t border-[var(--color-border)]"></div>
-									{/if}
-								{/each}
+								{@render eventsDropdownItems(createEvents, (v) => { createEvents = toggleEvent(createEvents, v); })}
 							</div>
 						{/if}
 					</div>
@@ -884,6 +853,7 @@
 								{ev}
 								<button
 									onclick={() => { createEvents = createEvents.filter((e) => e !== ev); }}
+									aria-label="Remove {ev}"
 									class="flex items-center justify-center text-[var(--color-accent)] opacity-60 transition-opacity duration-100 hover:opacity-100"
 								>
 									<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
@@ -949,7 +919,7 @@
 				<span class="text-meta font-semibold text-[var(--color-accent-mid)]" style="animation: fadeUp 0.3s 0.15s ease both">Channel created</span>
 			</div>
 
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">{revealChannel.name}</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">{revealChannel.name}</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Copy the webhook signing secret now — it won't be shown again.
 			</p>
@@ -1020,13 +990,13 @@
 		></div>
 
 		<div class="relative w-full max-w-[480px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Edit Channel</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Edit Channel</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Update the name or subscribed events. To change the provider, delete this channel and create a new one.
 			</p>
 
 			<div class="mt-2">
-				<span class="inline-flex items-center gap-1.5 rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-2 py-0.5 text-meta text-[var(--color-text-secondary)]">
+				<span class="inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-meta font-medium" style="color: {providerColor(editTarget.provider).text}; background: {providerColor(editTarget.provider).bg}; border-color: {providerColor(editTarget.provider).border}">
 					{@render providerIcon(editTarget.provider)}
 					{providerLabel(editTarget.provider)}
 				</span>
@@ -1054,11 +1024,12 @@
 
 			<!-- Events -->
 			<div class="mt-5">
-				<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
+				<label for="edit-events-select" class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
 					Events
 				</label>
 				<div class="relative" bind:this={editEventsDropdownEl}>
 					<button
+						id="edit-events-select"
 						onclick={() => { editEventsDropdownOpen = !editEventsDropdownOpen; }}
 						disabled={editing}
 						class="flex w-full items-center justify-between rounded-[var(--radius-input)] border px-3 py-2 text-ui transition-colors duration-150 disabled:opacity-60
@@ -1091,29 +1062,7 @@
 							class="absolute left-0 top-full z-20 mt-1.5 w-full overflow-y-auto rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] py-1.5 shadow-xl"
 							style="max-height: 280px; animation: fadeUp 0.12s ease both"
 						>
-							{#each Object.entries(groupedEvents) as [group, events], gi}
-								<div class="px-3 py-1.5 text-badge font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">{group}</div>
-
-								{#each events as et}
-									{@const checked = editEvents.includes(et.value)}
-									<label class="flex cursor-pointer items-center gap-2.5 px-3 py-2 transition-colors duration-100 hover:bg-[var(--color-bg-3)]">
-										<span class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border transition-colors duration-100
-											{checked ? 'border-[var(--color-accent)] bg-[var(--color-accent)]' : 'border-[var(--color-border-mid)] bg-[var(--color-bg-4)]'}">
-											{#if checked}
-												<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
-													<polyline points="20 6 9 17 4 12" />
-												</svg>
-											{/if}
-										</span>
-										<input type="checkbox" class="sr-only" {checked} onchange={() => { editEvents = toggleEvent(editEvents, et.value); }} />
-										<span class="font-mono text-meta {checked ? 'text-[var(--color-text-bright)]' : 'text-[var(--color-text-secondary)]'}">{et.value}</span>
-									</label>
-								{/each}
-
-								{#if gi < Object.entries(groupedEvents).length - 1}
-									<div class="mx-3 my-1 border-t border-[var(--color-border)]"></div>
-								{/if}
-							{/each}
+							{@render eventsDropdownItems(editEvents, (v) => { editEvents = toggleEvent(editEvents, v); })}
 						</div>
 					{/if}
 				</div>
@@ -1157,12 +1106,12 @@
 		></div>
 
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Delete Channel</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Delete Channel</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Permanently delete <span class="font-medium text-[var(--color-text-secondary)]">{deleteTarget.name}</span>?
 				Events will stop being delivered to this destination immediately.
 			</p>
-			<span class="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-2 py-0.5 text-meta text-[var(--color-text-muted)]">
+			<span class="mt-2 inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-meta font-medium" style="color: {providerColor(deleteTarget.provider).text}; background: {providerColor(deleteTarget.provider).bg}; border-color: {providerColor(deleteTarget.provider).border}">
 				{@render providerIcon(deleteTarget.provider)}
 				{providerLabel(deleteTarget.provider)}
 			</span>
@@ -1211,7 +1160,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[460px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">
 				{rotateTarget.provider === 'webhook' ? 'Rotate Signing Secret' : 'Rotate Credentials'}
 			</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
@@ -1223,7 +1172,7 @@
 			</p>
 
 			<div class="mt-2">
-				<span class="inline-flex items-center gap-1.5 rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-2 py-0.5 text-meta text-[var(--color-text-secondary)]">
+				<span class="inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-meta font-medium" style="color: {providerColor(rotateTarget.provider).text}; background: {providerColor(rotateTarget.provider).bg}; border-color: {providerColor(rotateTarget.provider).border}">
 					{@render providerIcon(rotateTarget.provider)}
 					{providerLabel(rotateTarget.provider)}
 				</span>
@@ -1296,13 +1245,45 @@
 	</div>
 {/if}
 
+{#snippet eventsDropdownItems(selected: string[], toggle: (value: string) => void)}
+	{#each Object.entries(groupedEvents) as [group, events], gi}
+		<div class="px-3 py-1.5 text-badge font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)]">{group}</div>
+
+		{#each events as et}
+			{@const checked = selected.includes(et.value)}
+			<label class="flex cursor-pointer items-center gap-2.5 px-3 py-2 transition-colors duration-100 hover:bg-[var(--color-bg-3)]">
+				<span class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border transition-colors duration-100
+					{checked ? 'border-[var(--color-accent)] bg-[var(--color-accent)]' : 'border-[var(--color-border-mid)] bg-[var(--color-bg-4)]'}">
+					{#if checked}
+						<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+							<polyline points="20 6 9 17 4 12" />
+						</svg>
+					{/if}
+				</span>
+				<input type="checkbox" class="sr-only" {checked} onchange={() => toggle(et.value)} />
+				<span class="font-mono text-meta {checked ? 'text-[var(--color-text-bright)]' : 'text-[var(--color-text-secondary)]'}">{et.value}</span>
+			</label>
+		{/each}
+
+		{#if gi < Object.entries(groupedEvents).length - 1}
+			<div class="mx-3 my-1 border-t border-[var(--color-border)]"></div>
+		{/if}
+	{/each}
+{/snippet}
+
 {#snippet providerIcon(provider: string)}
 	{#if provider === 'discord'}
 		<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z" /></svg>
 	{:else if provider === 'slack'}
 		<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zm10.122 2.521a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zm-1.268 0a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zm-2.523 10.122a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zm0-1.268a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z" /></svg>
+	{:else if provider === 'teams'}
+		<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.625 8.5h-3.25V6.25a1.75 1.75 0 0 1 1.75-1.75h.002a1.75 1.75 0 1 1 0 3.5h-.002a1.7 1.7 0 0 1-.5-.074V8.5zM22.25 10h-4.375a.875.875 0 0 0-.875.875v5.25a3.375 3.375 0 0 0 3.016 3.355A3.5 3.5 0 0 0 24 16v-2.5A3.5 3.5 0 0 0 22.25 10zM9.5 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm5.25 3H4.25A2.25 2.25 0 0 0 2 12.25V18a5.5 5.5 0 0 0 11 0v-5.75A2.25 2.25 0 0 0 14.75 10zM16 8.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z" /></svg>
+	{:else if provider === 'googlechat'}
+		<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.372 0 0 5.042 0 11.264c0 2.026.564 3.94 1.544 5.612L.05 21.932a.75.75 0 0 0 .96.932l5.112-1.7A12.4 12.4 0 0 0 12 22.528c6.628 0 12-5.042 12-11.264S18.628 0 12 0zm4.5 14.25h-9a.75.75 0 0 1 0-1.5h9a.75.75 0 0 1 0 1.5zm0-3h-9a.75.75 0 0 1 0-1.5h9a.75.75 0 0 1 0 1.5zm0-3h-9a.75.75 0 0 1 0-1.5h9a.75.75 0 0 1 0 1.5z" /></svg>
 	{:else if provider === 'telegram'}
 		<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" /></svg>
+	{:else if provider === 'matrix'}
+		<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M.632.55v22.9H2.28V24H0V0h2.28v.55zm7.043 7.26v1.157h.033c.309-.443.683-.784 1.117-1.024.434-.24.905-.36 1.416-.36.54 0 1.033.107 1.48.32.448.214.773.553.974 1.02.309-.4.694-.727 1.154-.98a3.1 3.1 0 0 1 1.49-.36c.434 0 .839.058 1.213.172.375.115.694.303.957.565.264.262.467.6.61 1.014.144.414.215.907.215 1.478V17.3h-2.36v-5.18c0-.312-.013-.603-.04-.873a1.84 1.84 0 0 0-.195-.685 1.08 1.08 0 0 0-.432-.45c-.187-.108-.438-.162-.754-.162-.316 0-.573.058-.77.172a1.27 1.27 0 0 0-.472.46 1.98 1.98 0 0 0-.24.672 4.4 4.4 0 0 0-.065.746V17.3H9.36v-5.07c0-.282-.006-.558-.02-.826a2.15 2.15 0 0 0-.148-.72 1.04 1.04 0 0 0-.403-.498c-.182-.126-.44-.19-.773-.19a1.55 1.55 0 0 0-.416.068c-.158.052-.31.147-.458.286a1.62 1.62 0 0 0-.36.566c-.1.238-.15.545-.15.924V17.3H4.28V7.81zm15.693 15.64V.55H21.72V0H24v24h-2.28v-.55z" /></svg>
 	{:else if provider === 'webhook'}
 		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
 	{:else}

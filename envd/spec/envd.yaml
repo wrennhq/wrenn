@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Modifications by M/S Omukk
 
 openapi: 3.0.0
 info:
@@ -69,6 +70,13 @@ paths:
       responses:
         "204":
           description: Env vars set, the time and metadata is synced with the host
+
+  /snapshot/prepare:
+    post:
+      summary: Quiesce continuous goroutines before Firecracker snapshot
+      responses:
+        "204":
+          description: Goroutines quiesced, safe to snapshot
 
   /envs:
     get:

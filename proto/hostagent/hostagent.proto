@@ -29,6 +29,15 @@ service HostAgentService {
   // ReadFile reads a file from inside a sandbox.
   rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
 
+  // ListDir lists directory contents inside a sandbox.
+  rpc ListDir(ListDirRequest) returns (ListDirResponse);
+
+  // MakeDir creates a directory inside a sandbox.
+  rpc MakeDir(MakeDirRequest) returns (MakeDirResponse);
+
+  // RemovePath removes a file or directory inside a sandbox.
+  rpc RemovePath(RemovePathRequest) returns (RemovePathResponse);
+
   // CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
   // template, and destroys the sandbox.
   rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
@@ -67,6 +76,34 @@ service HostAgentService {
   // produce image-only templates (no memory/CPU state).
   rpc FlattenRootfs(FlattenRootfsRequest) returns (FlattenRootfsResponse);
 
+  // PtyAttach starts a new PTY process or reconnects to an existing one.
+  // If cmd is non-empty, starts a new process with the given PTY dimensions.
+  // If tag is set and cmd is empty, reconnects to the existing process with that tag.
+  // Returns a stream of output events (started, output data, exit).
+  rpc PtyAttach(PtyAttachRequest) returns (stream PtyAttachResponse);
+
+  // PtySendInput sends raw bytes to a PTY process identified by tag.
+  rpc PtySendInput(PtySendInputRequest) returns (PtySendInputResponse);
+
+  // PtyResize updates the terminal dimensions for a PTY process.
+  rpc PtyResize(PtyResizeRequest) returns (PtyResizeResponse);
+
+  // PtyKill sends a signal to a PTY process.
+  rpc PtyKill(PtyKillRequest) returns (PtyKillResponse);
+
+  // StartBackground starts a process in the background and returns immediately
+  // with the PID and tag. The process survives RPC disconnection.
+  rpc StartBackground(StartBackgroundRequest) returns (StartBackgroundResponse);
+
+  // ListProcesses returns all running processes inside a sandbox.
+  rpc ListProcesses(ListProcessesRequest) returns (ListProcessesResponse);
+
+  // KillProcess sends a signal to a process identified by PID or tag.
+  rpc KillProcess(KillProcessRequest) returns (KillProcessResponse);
+
+  // ConnectProcess re-attaches to a running process and streams its output.
+  rpc ConnectProcess(ConnectProcessRequest) returns (stream ConnectProcessResponse);
+
 }
 
 message CreateSandboxRequest {
@@ -95,12 +132,22 @@ message CreateSandboxRequest {
 
   // Template UUID (hex string). Both zeros + team zeros = "minimal" sentinel.
   string template_id = 8;
+
+  // Default unix user for the sandbox (set in envd via PostInit).
+  string default_user = 9;
+
+  // Default environment variables (set in envd via PostInit).
+  map<string, string> default_env = 10;
 }
 
 message CreateSandboxResponse {
   string sandbox_id = 1;
   string status = 2;
   string host_ip = 3;
+
+  // Runtime metadata collected during sandbox creation (e.g. envd_version,
+  // kernel_version, firecracker_version, agent_version).
+  map<string, string> metadata = 4;
 }
 
 message DestroySandboxRequest {
@@ -121,12 +168,26 @@ message ResumeSandboxRequest {
   // TTL in seconds restored from the DB so the reaper can auto-pause
   // the sandbox again after inactivity. 0 means no auto-pause.
   int32 timeout_sec = 2;
+
+  // Default unix user for the sandbox (set in envd via PostInit on resume).
+  string default_user = 3;
+
+  // Default environment variables (set in envd via PostInit on resume).
+  map<string, string> default_env = 4;
+
+  // Kernel version hint from the DB — the agent tries to use the exact version,
+  // falling back to latest if not found on disk.
+  string kernel_version = 5;
 }
 
 message ResumeSandboxResponse {
   string sandbox_id = 1;
   string status = 2;
   string host_ip = 3;
+
+  // Actual runtime metadata after resume (versions may differ from hint if
+  // the exact kernel was not available).
+  map<string, string> metadata = 4;
 }
 
 message CreateSnapshotRequest {
@@ -192,6 +253,9 @@ message SandboxInfo {
   int32 timeout_sec = 9;
   string team_id = 10;
   string template_id = 11;
+
+  // Runtime metadata (envd_version, kernel_version, etc.).
+  map<string, string> metadata = 12;
 }
 
 message WriteFileRequest {
@@ -269,6 +333,50 @@ message ReadFileStreamResponse {
   bytes chunk = 1;
 }
 
+// ── Filesystem Operations ──────────────────────────────────────────
+
+message ListDirRequest {
+  string sandbox_id = 1;
+  string path = 2;
+  uint32 depth = 3;
+}
+
+message ListDirResponse {
+  repeated FileEntry entries = 1;
+}
+
+message FileEntry {
+  string name = 1;
+  string path = 2;
+  // "file", "directory", or "symlink".
+  string type = 3;
+  int64 size = 4;
+  uint32 mode = 5;
+  // Human-readable permissions string, e.g. "-rwxr-xr-x".
+  string permissions = 6;
+  string owner = 7;
+  string group = 8;
+  // Last modification time as Unix timestamp (seconds).
+  int64 modified_at = 9;
+  optional string symlink_target = 10;
+}
+
+message MakeDirRequest {
+  string sandbox_id = 1;
+  string path = 2;
+}
+
+message MakeDirResponse {
+  FileEntry entry = 1;
+}
+
+message RemovePathRequest {
+  string sandbox_id = 1;
+  string path = 2;
+}
+
+message RemovePathResponse {}
+
 // ── Ping ────────────────────────────────────────────────────────────
 
 message PingSandboxRequest {
@@ -328,4 +436,132 @@ message FlattenRootfsRequest {
 
 message FlattenRootfsResponse {
   int64 size_bytes = 1;
+}
+
+// ── PTY ─────────────────────────────────────────────────────────────
+
+message PtyAttachRequest {
+  string sandbox_id = 1;
+  // Tag is the stable identifier for this PTY session (e.g. "pty-abc123de").
+  // Chosen by the caller and used to reconnect later.
+  string tag = 2;
+  // If cmd is non-empty, a new process is started. If empty, reconnects to
+  // the existing process identified by tag.
+  string cmd = 3;
+  repeated string args = 4;
+  uint32 cols = 5;
+  uint32 rows = 6;
+  // Environment variables for the process.
+  map<string, string> envs = 7;
+  // Working directory. Empty means default.
+  string cwd = 8;
+  // User to run as. Empty means default (root).
+  string user = 9;
+}
+
+message PtyAttachResponse {
+  oneof event {
+    PtyStarted started = 1;
+    PtyOutput  output  = 2;
+    PtyExited  exited  = 3;
+  }
+}
+
+message PtyStarted {
+  uint32 pid = 1;
+  string tag = 2;
+}
+
+message PtyOutput {
+  bytes data = 1;
+}
+
+message PtyExited {
+  int32  exit_code = 1;
+  string error = 2;
+}
+
+message PtySendInputRequest {
+  string sandbox_id = 1;
+  string tag = 2;
+  bytes  data = 3;
+}
+
+message PtySendInputResponse {}
+
+message PtyResizeRequest {
+  string sandbox_id = 1;
+  string tag = 2;
+  uint32 cols = 3;
+  uint32 rows = 4;
+}
+
+message PtyResizeResponse {}
+
+message PtyKillRequest {
+  string sandbox_id = 1;
+  string tag = 2;
+}
+
+message PtyKillResponse {}
+
+// ── Background Processes ───────────────────────────────────────────
+
+message StartBackgroundRequest {
+  string sandbox_id = 1;
+  string cmd = 2;
+  repeated string args = 3;
+  // User-chosen tag for the process. If empty, the host agent generates one.
+  string tag = 4;
+  map<string, string> envs = 5;
+  string cwd = 6;
+}
+
+message StartBackgroundResponse {
+  uint32 pid = 1;
+  string tag = 2;
+}
+
+message ListProcessesRequest {
+  string sandbox_id = 1;
+}
+
+message ProcessEntry {
+  uint32 pid = 1;
+  string tag = 2;
+  string cmd = 3;
+  repeated string args = 4;
+}
+
+message ListProcessesResponse {
+  repeated ProcessEntry processes = 1;
+}
+
+message KillProcessRequest {
+  string sandbox_id = 1;
+  oneof selector {
+    uint32 pid = 2;
+    string tag = 3;
+  }
+  // Signal to send: "SIGTERM" or "SIGKILL" (default: "SIGKILL").
+  string signal = 4;
+}
+
+message KillProcessResponse {}
+
+message ConnectProcessRequest {
+  string sandbox_id = 1;
+  oneof selector {
+    uint32 pid = 2;
+    string tag = 3;
+  }
+}
+
+// Reuses ExecStream event types for symmetry.
+message ConnectProcessResponse {
+  oneof event {
+    ExecStreamStart start = 1;
+    ExecStreamData data = 2;
+    ExecStreamEnd end = 3;
+  }
 }

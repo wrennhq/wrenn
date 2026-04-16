@@ -47,4 +47,5 @@ frontend/build/
 
 ## Dashboard embedded static (built from frontend, not committed)
 internal/dashboard/static/*
-!internal/dashboard/static/.gitkeep
+!internal/dashboard/static/.gitkeep.dual-graph/
+.dual-graph/

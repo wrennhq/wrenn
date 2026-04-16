@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 
-	"git.omukk.dev/wrenn/wrenn/internal/id"
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
 // DefaultDiskSizeMB is the standard disk size for base images. Images smaller
@@ -64,6 +66,73 @@ func EnsureImageSizes(wrennDir string, targetMB int) error {
 	}
 
 	return nil
+}
+
+// ParseSizeToMB parses a human-readable size string into megabytes.
+// Supported suffixes: G, Gi (gibibytes), M, Mi (mebibytes).
+// Examples: "5G" → 5120, "2Gi" → 2048, "1000M" → 1000, "512Mi" → 512.
+func ParseSizeToMB(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty size string")
+	}
+
+	// Find where the numeric part ends.
+	i := 0
+	for i < len(s) && (s[i] == '.' || (s[i] >= '0' && s[i] <= '9')) {
+		i++
+	}
+	if i == 0 {
+		return 0, fmt.Errorf("invalid size %q: no numeric value", s)
+	}
+
+	numStr := s[:i]
+	suffix := strings.TrimSpace(s[i:])
+
+	num, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size %q: %w", s, err)
+	}
+
+	switch suffix {
+	case "G", "Gi":
+		return int(num * 1024), nil
+	case "M", "Mi", "":
+		return int(num), nil
+	default:
+		return 0, fmt.Errorf("invalid size %q: unknown suffix %q (use G, Gi, M, or Mi)", s, suffix)
+	}
+}
+
+// ShrinkMinimalImage shrinks the built-in minimal rootfs back to its minimum
+// size using resize2fs -M. This is the inverse of EnsureImageSizes and should
+// be called during graceful shutdown so the image is stored compactly on disk.
+func ShrinkMinimalImage(wrennDir string) {
+	minimalRootfs := layout.TemplateRootfs(wrennDir, id.PlatformTeamID, id.MinimalTemplateID)
+	shrinkImage(minimalRootfs)
+}
+
+// shrinkImage shrinks a single rootfs image to its minimum size.
+func shrinkImage(rootfs string) {
+	if _, err := os.Stat(rootfs); err != nil {
+		return
+	}
+
+	slog.Info("shrinking base image", "path", rootfs)
+
+	if out, err := exec.Command("e2fsck", "-fy", rootfs).CombinedOutput(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() > 1 {
+			slog.Warn("e2fsck before shrink failed", "path", rootfs, "output", string(out), "error", err)
+			return
+		}
+	}
+
+	if out, err := exec.Command("resize2fs", "-M", rootfs).CombinedOutput(); err != nil {
+		slog.Warn("resize2fs -M failed", "path", rootfs, "output", string(out), "error", err)
+		return
+	}
+
+	slog.Info("base image shrunk", "path", rootfs)
 }
 
 // expandImage expands a single rootfs image if it is smaller than targetBytes.

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount } from 'svelte';
 	import { auth } from '$lib/auth.svelte';
 	import { toast } from '$lib/toast.svelte';
@@ -14,12 +13,6 @@
 		type Host,
 		type CreateHostResult
 	} from '$lib/api/hosts';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	let canManage = $derived(auth.role === 'owner' || auth.role === 'admin');
 
@@ -43,7 +36,7 @@
 
 	// Delete confirmation
 	let deleteTarget = $state<Host | null>(null);
-	let deletePreviewSandboxes = $state<string[]>([]);
+	let deletePreviewCapsules = $state<string[]>([]);
 	let deletePreviewLoading = $state(false);
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
@@ -97,12 +90,12 @@
 	async function openDeleteConfirm(host: Host) {
 		deleteTarget = host;
 		deleteError = null;
-		deletePreviewSandboxes = [];
+		deletePreviewCapsules = [];
 		deletePreviewLoading = true;
 		const preview = await getDeletePreview(host.id);
 		deletePreviewLoading = false;
 		if (preview.ok) {
-			deletePreviewSandboxes = preview.data.sandbox_ids;
+			deletePreviewCapsules = preview.data.sandbox_ids;
 		}
 	}
 
@@ -110,7 +103,7 @@
 		if (!deleteTarget) return;
 		deleting = true;
 		deleteError = null;
-		const result = await deleteHost(deleteTarget.id, deletePreviewSandboxes.length > 0);
+		const result = await deleteHost(deleteTarget.id, deletePreviewCapsules.length > 0);
 		if (result.ok) {
 			hosts = hosts.filter((h) => h.id !== deleteTarget!.id);
 			deleteTarget = null;
@@ -156,16 +149,12 @@
 	<title>Wrenn — Hosts</title>
 </svelte:head>
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
 				<div class="flex items-center justify-between">
 					<div>
-						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 							Hosts
 						</h1>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -326,11 +315,17 @@
 					</p>
 				{/if}
 			</div>
-		</main>
+	</main>
 
-		<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
+<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
+	<div class="flex items-center gap-1.5">
+		<span class="relative flex h-[5px] w-[5px]">
+			<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+			<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+		</span>
+		<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 	</div>
-</div>
+</footer>
 
 {#snippet skeletonRows()}
 	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] overflow-hidden">
@@ -378,7 +373,7 @@
 			</div>
 		</div>
 		{#if canManage}
-			<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No hosts yet</p>
+			<p class="font-serif text-heading text-[var(--color-text-bright)]">No hosts yet</p>
 			<p class="mt-1.5 max-w-[340px] text-center text-ui text-[var(--color-text-tertiary)]">
 				Register a server and Wrenn will schedule capsules on your own infrastructure.
 			</p>
@@ -392,7 +387,7 @@
 				</svg>
 			</button>
 		{:else}
-			<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No hosts registered</p>
+			<p class="font-serif text-heading text-[var(--color-text-bright)]">No hosts registered</p>
 			<p class="mt-1.5 max-w-[320px] text-center text-ui text-[var(--color-text-tertiary)]">
 				Ask a team owner or admin to register a host for your team.
 			</p>
@@ -411,7 +406,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Register Host</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Register Host</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Add a server to your team's host pool. You'll receive a one-time registration token.
 			</p>
@@ -501,7 +496,7 @@
 				<span class="text-meta font-semibold text-[var(--color-accent-mid)]" style="animation: fadeUp 0.3s 0.15s ease both">Host registered successfully</span>
 			</div>
 
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Registration Token</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Registration Token</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Pass this token to the host agent to complete registration. It expires in
 				<strong class="font-semibold text-[var(--color-amber)]">1 hour</strong> and is single-use.
@@ -573,7 +568,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Delete Host</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Delete Host</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Remove <span class="inline-flex items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-text-primary)]">{deleteTarget.id}</span> from your host pool.
 			</p>
@@ -583,10 +578,10 @@
 					<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
 					Checking active capsules…
 				</div>
-			{:else if deletePreviewSandboxes.length > 0}
+			{:else if deletePreviewCapsules.length > 0}
 				<div class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-amber)]/20 bg-[var(--color-amber)]/5 px-3 py-2.5">
 					<p class="text-meta font-semibold text-[var(--color-amber)]">
-						{deletePreviewSandboxes.length} active capsule{deletePreviewSandboxes.length === 1 ? '' : 's'} will be destroyed.
+						{deletePreviewCapsules.length} active capsule{deletePreviewCapsules.length === 1 ? '' : 's'} will be destroyed.
 					</p>
 					<p class="mt-0.5 text-meta text-[var(--color-amber)]/70">
 						All running workloads on this host will be terminated immediately.
@@ -617,7 +612,7 @@
 						<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
 						Deleting…
 					{:else}
-						{deletePreviewSandboxes.length > 0 ? 'Force Delete' : 'Delete Host'}
+						{deletePreviewCapsules.length > 0 ? 'Force Delete' : 'Delete Host'}
 					{/if}
 				</button>
 			</div>

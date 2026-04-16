@@ -10,10 +10,10 @@ import (
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
-	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
@@ -26,7 +26,7 @@ func newFilesStreamHandler(db *db.Queries, pool *lifecycle.HostClientPool) *file
 	return &filesStreamHandler{db: db, pool: pool}
 }
 
-// StreamUpload handles POST /v1/sandboxes/{id}/files/stream/write.
+// StreamUpload handles POST /v1/capsules/{id}/files/stream/write.
 // Expects multipart/form-data with "path" text field and "file" file field.
 // Streams file content directly from the request body to the host agent without buffering.
 func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +150,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// StreamDownload handles POST /v1/sandboxes/{id}/files/stream/read.
+// StreamDownload handles POST /v1/capsules/{id}/files/stream/read.
 // Accepts JSON body with path, streams file content back without buffering.
 func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")

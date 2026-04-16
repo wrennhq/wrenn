@@ -16,10 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/auth/oauth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
 type oauthHandler struct {
@@ -137,6 +137,73 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	email := strings.TrimSpace(strings.ToLower(profile.Email))
 
+	// Check for a link operation initiated from the settings page.
+	if linkCookie, err := r.Cookie("oauth_link_user_id"); err == nil && linkCookie.Value != "" {
+		// Clear the link cookie immediately.
+		http.SetCookie(w, &http.Cookie{
+			Name:     "oauth_link_user_id",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   isSecure(r),
+		})
+
+		settingsBase := h.redirectURL + "/dashboard/settings"
+
+		// Verify the HMAC to prevent cookie forgery.
+		linkParts := strings.SplitN(linkCookie.Value, ":", 2)
+		if len(linkParts) != 2 || !hmac.Equal([]byte(computeHMAC(h.jwtSecret, linkParts[0])), []byte(linkParts[1])) {
+			slog.Warn("oauth link: invalid or tampered link cookie")
+			http.Redirect(w, r, settingsBase+"?connect_error=invalid_state", http.StatusFound)
+			return
+		}
+
+		userID, parseErr := id.ParseUserID(linkParts[0])
+		if parseErr != nil {
+			slog.Error("oauth link: invalid user ID in cookie", "error", parseErr)
+			http.Redirect(w, r, settingsBase+"?connect_error=invalid_state", http.StatusFound)
+			return
+		}
+
+		// Ensure the GitHub account isn't already linked to a different user.
+		existing, lookupErr := h.db.GetOAuthProvider(ctx, db.GetOAuthProviderParams{
+			Provider:   provider,
+			ProviderID: profile.ProviderID,
+		})
+		if lookupErr == nil && existing.UserID != userID {
+			slog.Warn("oauth link: provider already linked to another account", "provider", provider)
+			http.Redirect(w, r, settingsBase+"?connect_error=already_linked", http.StatusFound)
+			return
+		}
+		if lookupErr == nil && existing.UserID == userID {
+			// Already linked to this user — treat as success.
+			http.Redirect(w, r, settingsBase+"?connected="+provider, http.StatusFound)
+			return
+		}
+		if !errors.Is(lookupErr, pgx.ErrNoRows) {
+			slog.Error("oauth link: db lookup failed", "error", lookupErr)
+			http.Redirect(w, r, settingsBase+"?connect_error=db_error", http.StatusFound)
+			return
+		}
+
+		if insertErr := h.db.InsertOAuthProvider(ctx, db.InsertOAuthProviderParams{
+			Provider:   provider,
+			ProviderID: profile.ProviderID,
+			UserID:     userID,
+			Email:      email,
+		}); insertErr != nil {
+			slog.Error("oauth link: failed to insert provider", "error", insertErr)
+			http.Redirect(w, r, settingsBase+"?connect_error=db_error", http.StatusFound)
+			return
+		}
+
+		slog.Info("oauth link: provider linked", "provider", provider, "user_id", id.FormatUserID(userID))
+		http.Redirect(w, r, settingsBase+"?connected="+provider, http.StatusFound)
+		return
+	}
+
 	// Check if this OAuth identity already exists.
 	existing, err := h.db.GetOAuthProvider(ctx, db.GetOAuthProviderParams{
 		Provider:   provider,
@@ -145,18 +212,29 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		// Existing OAuth user — log them in.
 		user, err := h.db.GetUserByID(ctx, existing.UserID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("oauth login: user no longer exists", "user_id", existing.UserID)
+			redirectWithError(w, r, redirectBase, "account_deactivated")
+			return
+		}
 		if err != nil {
 			slog.Error("oauth login: failed to get user", "error", err)
 			redirectWithError(w, r, redirectBase, "db_error")
 			return
 		}
-		team, role, err := loginTeam(ctx, h.db, user.ID)
+		if user.Status != "active" {
+			slog.Warn("oauth login: account not active", "email", user.Email, "status", user.Status)
+			redirectWithError(w, r, redirectBase, "account_deactivated")
+			return
+		}
+		team, role, isFirstUser, err := ensureDefaultTeam(ctx, h.db, h.pool, user.ID, user.Name)
 		if err != nil {
-			slog.Error("oauth login: failed to get team", "error", err)
+			slog.Error("oauth login: failed to ensure team", "error", err)
 			redirectWithError(w, r, redirectBase, "db_error")
 			return
 		}
-		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, user.IsAdmin)
+		isAdmin := user.IsAdmin || isFirstUser
+		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, isAdmin)
 		if err != nil {
 			slog.Error("oauth login: failed to sign jwt", "error", err)
 			redirectWithError(w, r, redirectBase, "internal_error")
@@ -172,13 +250,21 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// New OAuth identity — check for email collision.
-	_, err = h.db.GetUserByEmail(ctx, email)
+	existingUser, err := h.db.GetUserByEmail(ctx, email)
 	if err == nil {
-		// Email already taken by another account.
-		redirectWithError(w, r, redirectBase, "email_taken")
-		return
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+		if existingUser.Status == "inactive" {
+			// Unactivated email signup — delete and let OAuth take over.
+			if delErr := h.db.HardDeleteUser(ctx, existingUser.ID); delErr != nil {
+				slog.Error("oauth: failed to delete inactive user", "error", delErr)
+				redirectWithError(w, r, redirectBase, "db_error")
+				return
+			}
+		} else {
+			// Email already taken by an active/disabled/deleted account.
+			redirectWithError(w, r, redirectBase, "email_taken")
+			return
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		slog.Error("oauth: email check failed", "error", err)
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
@@ -194,6 +280,15 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	qtx := h.db.WithTx(tx)
+
+	// The first user to sign up becomes a platform admin.
+	userCount, err := qtx.CountUsers(ctx)
+	if err != nil {
+		slog.Error("oauth: failed to count users", "error", err)
+		redirectWithError(w, r, redirectBase, "db_error")
+		return
+	}
+	isFirstUser := userCount == 0
 
 	userID := id.NewUserID()
 	_, err = qtx.InsertUserOAuth(ctx, db.InsertUserOAuthParams{
@@ -238,6 +333,14 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isFirstUser {
+		if err := qtx.SetUserAdmin(ctx, db.SetUserAdminParams{ID: userID, IsAdmin: true}); err != nil {
+			slog.Error("oauth: failed to set admin status", "error", err)
+			redirectWithError(w, r, redirectBase, "db_error")
+			return
+		}
+	}
+
 	if err := qtx.InsertOAuthProvider(ctx, db.InsertOAuthProviderParams{
 		Provider:   provider,
 		ProviderID: profile.ProviderID,
@@ -255,7 +358,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, profile.Name, "owner", false)
+	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, profile.Name, "owner", isFirstUser)
 	if err != nil {
 		slog.Error("oauth: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
@@ -279,18 +382,29 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 		return
 	}
 	user, err := h.db.GetUserByID(ctx, existing.UserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("oauth: retry login: user no longer exists", "user_id", existing.UserID)
+		redirectWithError(w, r, redirectBase, "account_deactivated")
+		return
+	}
 	if err != nil {
 		slog.Error("oauth: retry login: failed to get user", "error", err)
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
 	}
-	team, role, err := loginTeam(ctx, h.db, user.ID)
+	if user.Status != "active" {
+		slog.Warn("oauth: retry login: account not active", "email", user.Email, "status", user.Status)
+		redirectWithError(w, r, redirectBase, "account_deactivated")
+		return
+	}
+	team, role, isFirstUser, err := ensureDefaultTeam(ctx, h.db, h.pool, user.ID, user.Name)
 	if err != nil {
-		slog.Error("oauth: retry login: failed to get team", "error", err)
+		slog.Error("oauth: retry login: failed to ensure team", "error", err)
 		redirectWithError(w, r, redirectBase, "db_error")
 		return
 	}
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, user.IsAdmin)
+	isAdmin := user.IsAdmin || isFirstUser
+	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, isAdmin)
 	if err != nil {
 		slog.Error("oauth: retry login: failed to sign jwt", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")

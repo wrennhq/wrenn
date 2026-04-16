@@ -8,7 +8,7 @@
 # Option 2: Use dnsmasq: address=/.localhost/127.0.0.1
 # Option 3: Use systemd-resolved (Ubuntu default — *.localhost resolves to 127.0.0.1)
 http://*.localhost {
-	reverse_proxy host.docker.internal:8080
+	reverse_proxy host.docker.internal:9725
 }
 
 # Main entry point: API + frontend
@@ -16,21 +16,21 @@ http://localhost {
 	# API routes — strip /api prefix and proxy to the control plane.
 	# The frontend calls /api/v1/... which becomes /v1/... at the CP.
 	handle_path /api/* {
-		reverse_proxy host.docker.internal:8080
+		reverse_proxy host.docker.internal:9725
 	}
 
 	# Backend routes served directly (SDK clients, OAuth initiation)
 	handle /v1/* {
-		reverse_proxy host.docker.internal:8080
+		reverse_proxy host.docker.internal:9725
 	}
 	handle /openapi.yaml {
-		reverse_proxy host.docker.internal:8080
+		reverse_proxy host.docker.internal:9725
 	}
 	handle /docs {
-		reverse_proxy host.docker.internal:8080
+		reverse_proxy host.docker.internal:9725
 	}
 	handle /auth/oauth/* {
-		reverse_proxy host.docker.internal:8080
+		reverse_proxy host.docker.internal:9725
 	}
 
 	# Everything else — proxy to the frontend dev server

@@ -50,7 +50,7 @@ const (
 )
 
 var (
-	Version = "0.5.4"
+	Version = "0.1.0"
 
 	commitSHA string
 
@@ -190,7 +190,14 @@ func main() {
 	processLogger := l.With().Str("logger", "process").Logger()
 	processService := processRpc.Handle(m, &processLogger, defaults, cgroupManager)
 
-	service := api.New(&envLogger, defaults, mmdsChan, isNotFC)
+	// Port scanner and forwarder are managed by PortSubsystem, which
+	// supports stop/restart across Firecracker snapshot/restore cycles.
+	portLogger := l.With().Str("logger", "port-forwarder").Logger()
+	portSubsystem := publicport.NewPortSubsystem(&portLogger, cgroupManager, portScannerInterval)
+	portSubsystem.Start(ctx)
+	defer portSubsystem.Stop()
+
+	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, ctx, portSubsystem, Version)
 	handler := api.HandlerFromMux(service, m)
 	middleware := authn.NewMiddleware(permissions.AuthenticateUsername)
 
@@ -228,16 +235,6 @@ func main() {
 			log.Fatalf("error starting process: %v", err)
 		}
 	}
-
-	// Bind all open ports on 127.0.0.1 and localhost to the eth0 interface
-	portScanner := publicport.NewScanner(portScannerInterval)
-	defer portScanner.Destroy()
-
-	portLogger := l.With().Str("logger", "port-forwarder").Logger()
-	portForwarder := publicport.NewForwarder(&portLogger, portScanner, cgroupManager)
-	go portForwarder.StartForwarding(ctx)
-
-	go portScanner.ScanAndBroadcast()
 
 	err := s.ListenAndServe()
 	if err != nil {

@@ -1,0 +1,13 @@
+Hello{{if .RecipientName}} {{.RecipientName}}{{end}},
+
+{{.Message}}
+{{if .Button}}
+
+{{.Button.Text}}: {{.Button.URL}}
+{{end}}{{if .Closing}}
+
+{{.Closing}}
+{{end}}
+
+---
+This is a transactional email from Wrenn (https://wrenn.dev).

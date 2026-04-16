@@ -56,6 +56,15 @@ const (
 	// HostAgentServiceReadFileProcedure is the fully-qualified name of the HostAgentService's ReadFile
 	// RPC.
 	HostAgentServiceReadFileProcedure = "/hostagent.v1.HostAgentService/ReadFile"
+	// HostAgentServiceListDirProcedure is the fully-qualified name of the HostAgentService's ListDir
+	// RPC.
+	HostAgentServiceListDirProcedure = "/hostagent.v1.HostAgentService/ListDir"
+	// HostAgentServiceMakeDirProcedure is the fully-qualified name of the HostAgentService's MakeDir
+	// RPC.
+	HostAgentServiceMakeDirProcedure = "/hostagent.v1.HostAgentService/MakeDir"
+	// HostAgentServiceRemovePathProcedure is the fully-qualified name of the HostAgentService's
+	// RemovePath RPC.
+	HostAgentServiceRemovePathProcedure = "/hostagent.v1.HostAgentService/RemovePath"
 	// HostAgentServiceCreateSnapshotProcedure is the fully-qualified name of the HostAgentService's
 	// CreateSnapshot RPC.
 	HostAgentServiceCreateSnapshotProcedure = "/hostagent.v1.HostAgentService/CreateSnapshot"
@@ -86,6 +95,30 @@ const (
 	// HostAgentServiceFlattenRootfsProcedure is the fully-qualified name of the HostAgentService's
 	// FlattenRootfs RPC.
 	HostAgentServiceFlattenRootfsProcedure = "/hostagent.v1.HostAgentService/FlattenRootfs"
+	// HostAgentServicePtyAttachProcedure is the fully-qualified name of the HostAgentService's
+	// PtyAttach RPC.
+	HostAgentServicePtyAttachProcedure = "/hostagent.v1.HostAgentService/PtyAttach"
+	// HostAgentServicePtySendInputProcedure is the fully-qualified name of the HostAgentService's
+	// PtySendInput RPC.
+	HostAgentServicePtySendInputProcedure = "/hostagent.v1.HostAgentService/PtySendInput"
+	// HostAgentServicePtyResizeProcedure is the fully-qualified name of the HostAgentService's
+	// PtyResize RPC.
+	HostAgentServicePtyResizeProcedure = "/hostagent.v1.HostAgentService/PtyResize"
+	// HostAgentServicePtyKillProcedure is the fully-qualified name of the HostAgentService's PtyKill
+	// RPC.
+	HostAgentServicePtyKillProcedure = "/hostagent.v1.HostAgentService/PtyKill"
+	// HostAgentServiceStartBackgroundProcedure is the fully-qualified name of the HostAgentService's
+	// StartBackground RPC.
+	HostAgentServiceStartBackgroundProcedure = "/hostagent.v1.HostAgentService/StartBackground"
+	// HostAgentServiceListProcessesProcedure is the fully-qualified name of the HostAgentService's
+	// ListProcesses RPC.
+	HostAgentServiceListProcessesProcedure = "/hostagent.v1.HostAgentService/ListProcesses"
+	// HostAgentServiceKillProcessProcedure is the fully-qualified name of the HostAgentService's
+	// KillProcess RPC.
+	HostAgentServiceKillProcessProcedure = "/hostagent.v1.HostAgentService/KillProcess"
+	// HostAgentServiceConnectProcessProcedure is the fully-qualified name of the HostAgentService's
+	// ConnectProcess RPC.
+	HostAgentServiceConnectProcessProcedure = "/hostagent.v1.HostAgentService/ConnectProcess"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -106,6 +139,12 @@ type HostAgentServiceClient interface {
 	WriteFile(context.Context, *connect.Request[gen.WriteFileRequest]) (*connect.Response[gen.WriteFileResponse], error)
 	// ReadFile reads a file from inside a sandbox.
 	ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error)
+	// ListDir lists directory contents inside a sandbox.
+	ListDir(context.Context, *connect.Request[gen.ListDirRequest]) (*connect.Response[gen.ListDirResponse], error)
+	// MakeDir creates a directory inside a sandbox.
+	MakeDir(context.Context, *connect.Request[gen.MakeDirRequest]) (*connect.Response[gen.MakeDirResponse], error)
+	// RemovePath removes a file or directory inside a sandbox.
+	RemovePath(context.Context, *connect.Request[gen.RemovePathRequest]) (*connect.Response[gen.RemovePathResponse], error)
 	// CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
 	// template, and destroys the sandbox.
 	CreateSnapshot(context.Context, *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error)
@@ -134,6 +173,26 @@ type HostAgentServiceClient interface {
 	// cleans up all sandbox resources. Used by the template build system to
 	// produce image-only templates (no memory/CPU state).
 	FlattenRootfs(context.Context, *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error)
+	// PtyAttach starts a new PTY process or reconnects to an existing one.
+	// If cmd is non-empty, starts a new process with the given PTY dimensions.
+	// If tag is set and cmd is empty, reconnects to the existing process with that tag.
+	// Returns a stream of output events (started, output data, exit).
+	PtyAttach(context.Context, *connect.Request[gen.PtyAttachRequest]) (*connect.ServerStreamForClient[gen.PtyAttachResponse], error)
+	// PtySendInput sends raw bytes to a PTY process identified by tag.
+	PtySendInput(context.Context, *connect.Request[gen.PtySendInputRequest]) (*connect.Response[gen.PtySendInputResponse], error)
+	// PtyResize updates the terminal dimensions for a PTY process.
+	PtyResize(context.Context, *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error)
+	// PtyKill sends a signal to a PTY process.
+	PtyKill(context.Context, *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error)
+	// StartBackground starts a process in the background and returns immediately
+	// with the PID and tag. The process survives RPC disconnection.
+	StartBackground(context.Context, *connect.Request[gen.StartBackgroundRequest]) (*connect.Response[gen.StartBackgroundResponse], error)
+	// ListProcesses returns all running processes inside a sandbox.
+	ListProcesses(context.Context, *connect.Request[gen.ListProcessesRequest]) (*connect.Response[gen.ListProcessesResponse], error)
+	// KillProcess sends a signal to a process identified by PID or tag.
+	KillProcess(context.Context, *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error)
+	// ConnectProcess re-attaches to a running process and streams its output.
+	ConnectProcess(context.Context, *connect.Request[gen.ConnectProcessRequest]) (*connect.ServerStreamForClient[gen.ConnectProcessResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -193,6 +252,24 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			httpClient,
 			baseURL+HostAgentServiceReadFileProcedure,
 			connect.WithSchema(hostAgentServiceMethods.ByName("ReadFile")),
+			connect.WithClientOptions(opts...),
+		),
+		listDir: connect.NewClient[gen.ListDirRequest, gen.ListDirResponse](
+			httpClient,
+			baseURL+HostAgentServiceListDirProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("ListDir")),
+			connect.WithClientOptions(opts...),
+		),
+		makeDir: connect.NewClient[gen.MakeDirRequest, gen.MakeDirResponse](
+			httpClient,
+			baseURL+HostAgentServiceMakeDirProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("MakeDir")),
+			connect.WithClientOptions(opts...),
+		),
+		removePath: connect.NewClient[gen.RemovePathRequest, gen.RemovePathResponse](
+			httpClient,
+			baseURL+HostAgentServiceRemovePathProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("RemovePath")),
 			connect.WithClientOptions(opts...),
 		),
 		createSnapshot: connect.NewClient[gen.CreateSnapshotRequest, gen.CreateSnapshotResponse](
@@ -255,6 +332,54 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("FlattenRootfs")),
 			connect.WithClientOptions(opts...),
 		),
+		ptyAttach: connect.NewClient[gen.PtyAttachRequest, gen.PtyAttachResponse](
+			httpClient,
+			baseURL+HostAgentServicePtyAttachProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("PtyAttach")),
+			connect.WithClientOptions(opts...),
+		),
+		ptySendInput: connect.NewClient[gen.PtySendInputRequest, gen.PtySendInputResponse](
+			httpClient,
+			baseURL+HostAgentServicePtySendInputProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("PtySendInput")),
+			connect.WithClientOptions(opts...),
+		),
+		ptyResize: connect.NewClient[gen.PtyResizeRequest, gen.PtyResizeResponse](
+			httpClient,
+			baseURL+HostAgentServicePtyResizeProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("PtyResize")),
+			connect.WithClientOptions(opts...),
+		),
+		ptyKill: connect.NewClient[gen.PtyKillRequest, gen.PtyKillResponse](
+			httpClient,
+			baseURL+HostAgentServicePtyKillProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("PtyKill")),
+			connect.WithClientOptions(opts...),
+		),
+		startBackground: connect.NewClient[gen.StartBackgroundRequest, gen.StartBackgroundResponse](
+			httpClient,
+			baseURL+HostAgentServiceStartBackgroundProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("StartBackground")),
+			connect.WithClientOptions(opts...),
+		),
+		listProcesses: connect.NewClient[gen.ListProcessesRequest, gen.ListProcessesResponse](
+			httpClient,
+			baseURL+HostAgentServiceListProcessesProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("ListProcesses")),
+			connect.WithClientOptions(opts...),
+		),
+		killProcess: connect.NewClient[gen.KillProcessRequest, gen.KillProcessResponse](
+			httpClient,
+			baseURL+HostAgentServiceKillProcessProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("KillProcess")),
+			connect.WithClientOptions(opts...),
+		),
+		connectProcess: connect.NewClient[gen.ConnectProcessRequest, gen.ConnectProcessResponse](
+			httpClient,
+			baseURL+HostAgentServiceConnectProcessProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("ConnectProcess")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -268,6 +393,9 @@ type hostAgentServiceClient struct {
 	listSandboxes       *connect.Client[gen.ListSandboxesRequest, gen.ListSandboxesResponse]
 	writeFile           *connect.Client[gen.WriteFileRequest, gen.WriteFileResponse]
 	readFile            *connect.Client[gen.ReadFileRequest, gen.ReadFileResponse]
+	listDir             *connect.Client[gen.ListDirRequest, gen.ListDirResponse]
+	makeDir             *connect.Client[gen.MakeDirRequest, gen.MakeDirResponse]
+	removePath          *connect.Client[gen.RemovePathRequest, gen.RemovePathResponse]
 	createSnapshot      *connect.Client[gen.CreateSnapshotRequest, gen.CreateSnapshotResponse]
 	deleteSnapshot      *connect.Client[gen.DeleteSnapshotRequest, gen.DeleteSnapshotResponse]
 	execStream          *connect.Client[gen.ExecStreamRequest, gen.ExecStreamResponse]
@@ -278,6 +406,14 @@ type hostAgentServiceClient struct {
 	getSandboxMetrics   *connect.Client[gen.GetSandboxMetricsRequest, gen.GetSandboxMetricsResponse]
 	flushSandboxMetrics *connect.Client[gen.FlushSandboxMetricsRequest, gen.FlushSandboxMetricsResponse]
 	flattenRootfs       *connect.Client[gen.FlattenRootfsRequest, gen.FlattenRootfsResponse]
+	ptyAttach           *connect.Client[gen.PtyAttachRequest, gen.PtyAttachResponse]
+	ptySendInput        *connect.Client[gen.PtySendInputRequest, gen.PtySendInputResponse]
+	ptyResize           *connect.Client[gen.PtyResizeRequest, gen.PtyResizeResponse]
+	ptyKill             *connect.Client[gen.PtyKillRequest, gen.PtyKillResponse]
+	startBackground     *connect.Client[gen.StartBackgroundRequest, gen.StartBackgroundResponse]
+	listProcesses       *connect.Client[gen.ListProcessesRequest, gen.ListProcessesResponse]
+	killProcess         *connect.Client[gen.KillProcessRequest, gen.KillProcessResponse]
+	connectProcess      *connect.Client[gen.ConnectProcessRequest, gen.ConnectProcessResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -318,6 +454,21 @@ func (c *hostAgentServiceClient) WriteFile(ctx context.Context, req *connect.Req
 // ReadFile calls hostagent.v1.HostAgentService.ReadFile.
 func (c *hostAgentServiceClient) ReadFile(ctx context.Context, req *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error) {
 	return c.readFile.CallUnary(ctx, req)
+}
+
+// ListDir calls hostagent.v1.HostAgentService.ListDir.
+func (c *hostAgentServiceClient) ListDir(ctx context.Context, req *connect.Request[gen.ListDirRequest]) (*connect.Response[gen.ListDirResponse], error) {
+	return c.listDir.CallUnary(ctx, req)
+}
+
+// MakeDir calls hostagent.v1.HostAgentService.MakeDir.
+func (c *hostAgentServiceClient) MakeDir(ctx context.Context, req *connect.Request[gen.MakeDirRequest]) (*connect.Response[gen.MakeDirResponse], error) {
+	return c.makeDir.CallUnary(ctx, req)
+}
+
+// RemovePath calls hostagent.v1.HostAgentService.RemovePath.
+func (c *hostAgentServiceClient) RemovePath(ctx context.Context, req *connect.Request[gen.RemovePathRequest]) (*connect.Response[gen.RemovePathResponse], error) {
+	return c.removePath.CallUnary(ctx, req)
 }
 
 // CreateSnapshot calls hostagent.v1.HostAgentService.CreateSnapshot.
@@ -370,6 +521,46 @@ func (c *hostAgentServiceClient) FlattenRootfs(ctx context.Context, req *connect
 	return c.flattenRootfs.CallUnary(ctx, req)
 }
 
+// PtyAttach calls hostagent.v1.HostAgentService.PtyAttach.
+func (c *hostAgentServiceClient) PtyAttach(ctx context.Context, req *connect.Request[gen.PtyAttachRequest]) (*connect.ServerStreamForClient[gen.PtyAttachResponse], error) {
+	return c.ptyAttach.CallServerStream(ctx, req)
+}
+
+// PtySendInput calls hostagent.v1.HostAgentService.PtySendInput.
+func (c *hostAgentServiceClient) PtySendInput(ctx context.Context, req *connect.Request[gen.PtySendInputRequest]) (*connect.Response[gen.PtySendInputResponse], error) {
+	return c.ptySendInput.CallUnary(ctx, req)
+}
+
+// PtyResize calls hostagent.v1.HostAgentService.PtyResize.
+func (c *hostAgentServiceClient) PtyResize(ctx context.Context, req *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error) {
+	return c.ptyResize.CallUnary(ctx, req)
+}
+
+// PtyKill calls hostagent.v1.HostAgentService.PtyKill.
+func (c *hostAgentServiceClient) PtyKill(ctx context.Context, req *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error) {
+	return c.ptyKill.CallUnary(ctx, req)
+}
+
+// StartBackground calls hostagent.v1.HostAgentService.StartBackground.
+func (c *hostAgentServiceClient) StartBackground(ctx context.Context, req *connect.Request[gen.StartBackgroundRequest]) (*connect.Response[gen.StartBackgroundResponse], error) {
+	return c.startBackground.CallUnary(ctx, req)
+}
+
+// ListProcesses calls hostagent.v1.HostAgentService.ListProcesses.
+func (c *hostAgentServiceClient) ListProcesses(ctx context.Context, req *connect.Request[gen.ListProcessesRequest]) (*connect.Response[gen.ListProcessesResponse], error) {
+	return c.listProcesses.CallUnary(ctx, req)
+}
+
+// KillProcess calls hostagent.v1.HostAgentService.KillProcess.
+func (c *hostAgentServiceClient) KillProcess(ctx context.Context, req *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error) {
+	return c.killProcess.CallUnary(ctx, req)
+}
+
+// ConnectProcess calls hostagent.v1.HostAgentService.ConnectProcess.
+func (c *hostAgentServiceClient) ConnectProcess(ctx context.Context, req *connect.Request[gen.ConnectProcessRequest]) (*connect.ServerStreamForClient[gen.ConnectProcessResponse], error) {
+	return c.connectProcess.CallServerStream(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -388,6 +579,12 @@ type HostAgentServiceHandler interface {
 	WriteFile(context.Context, *connect.Request[gen.WriteFileRequest]) (*connect.Response[gen.WriteFileResponse], error)
 	// ReadFile reads a file from inside a sandbox.
 	ReadFile(context.Context, *connect.Request[gen.ReadFileRequest]) (*connect.Response[gen.ReadFileResponse], error)
+	// ListDir lists directory contents inside a sandbox.
+	ListDir(context.Context, *connect.Request[gen.ListDirRequest]) (*connect.Response[gen.ListDirResponse], error)
+	// MakeDir creates a directory inside a sandbox.
+	MakeDir(context.Context, *connect.Request[gen.MakeDirRequest]) (*connect.Response[gen.MakeDirResponse], error)
+	// RemovePath removes a file or directory inside a sandbox.
+	RemovePath(context.Context, *connect.Request[gen.RemovePathRequest]) (*connect.Response[gen.RemovePathResponse], error)
 	// CreateSnapshot pauses a sandbox, takes a snapshot, stores it as a reusable
 	// template, and destroys the sandbox.
 	CreateSnapshot(context.Context, *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error)
@@ -416,6 +613,26 @@ type HostAgentServiceHandler interface {
 	// cleans up all sandbox resources. Used by the template build system to
 	// produce image-only templates (no memory/CPU state).
 	FlattenRootfs(context.Context, *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error)
+	// PtyAttach starts a new PTY process or reconnects to an existing one.
+	// If cmd is non-empty, starts a new process with the given PTY dimensions.
+	// If tag is set and cmd is empty, reconnects to the existing process with that tag.
+	// Returns a stream of output events (started, output data, exit).
+	PtyAttach(context.Context, *connect.Request[gen.PtyAttachRequest], *connect.ServerStream[gen.PtyAttachResponse]) error
+	// PtySendInput sends raw bytes to a PTY process identified by tag.
+	PtySendInput(context.Context, *connect.Request[gen.PtySendInputRequest]) (*connect.Response[gen.PtySendInputResponse], error)
+	// PtyResize updates the terminal dimensions for a PTY process.
+	PtyResize(context.Context, *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error)
+	// PtyKill sends a signal to a PTY process.
+	PtyKill(context.Context, *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error)
+	// StartBackground starts a process in the background and returns immediately
+	// with the PID and tag. The process survives RPC disconnection.
+	StartBackground(context.Context, *connect.Request[gen.StartBackgroundRequest]) (*connect.Response[gen.StartBackgroundResponse], error)
+	// ListProcesses returns all running processes inside a sandbox.
+	ListProcesses(context.Context, *connect.Request[gen.ListProcessesRequest]) (*connect.Response[gen.ListProcessesResponse], error)
+	// KillProcess sends a signal to a process identified by PID or tag.
+	KillProcess(context.Context, *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error)
+	// ConnectProcess re-attaches to a running process and streams its output.
+	ConnectProcess(context.Context, *connect.Request[gen.ConnectProcessRequest], *connect.ServerStream[gen.ConnectProcessResponse]) error
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -471,6 +688,24 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		HostAgentServiceReadFileProcedure,
 		svc.ReadFile,
 		connect.WithSchema(hostAgentServiceMethods.ByName("ReadFile")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceListDirHandler := connect.NewUnaryHandler(
+		HostAgentServiceListDirProcedure,
+		svc.ListDir,
+		connect.WithSchema(hostAgentServiceMethods.ByName("ListDir")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceMakeDirHandler := connect.NewUnaryHandler(
+		HostAgentServiceMakeDirProcedure,
+		svc.MakeDir,
+		connect.WithSchema(hostAgentServiceMethods.ByName("MakeDir")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceRemovePathHandler := connect.NewUnaryHandler(
+		HostAgentServiceRemovePathProcedure,
+		svc.RemovePath,
+		connect.WithSchema(hostAgentServiceMethods.ByName("RemovePath")),
 		connect.WithHandlerOptions(opts...),
 	)
 	hostAgentServiceCreateSnapshotHandler := connect.NewUnaryHandler(
@@ -533,6 +768,54 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("FlattenRootfs")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServicePtyAttachHandler := connect.NewServerStreamHandler(
+		HostAgentServicePtyAttachProcedure,
+		svc.PtyAttach,
+		connect.WithSchema(hostAgentServiceMethods.ByName("PtyAttach")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServicePtySendInputHandler := connect.NewUnaryHandler(
+		HostAgentServicePtySendInputProcedure,
+		svc.PtySendInput,
+		connect.WithSchema(hostAgentServiceMethods.ByName("PtySendInput")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServicePtyResizeHandler := connect.NewUnaryHandler(
+		HostAgentServicePtyResizeProcedure,
+		svc.PtyResize,
+		connect.WithSchema(hostAgentServiceMethods.ByName("PtyResize")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServicePtyKillHandler := connect.NewUnaryHandler(
+		HostAgentServicePtyKillProcedure,
+		svc.PtyKill,
+		connect.WithSchema(hostAgentServiceMethods.ByName("PtyKill")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceStartBackgroundHandler := connect.NewUnaryHandler(
+		HostAgentServiceStartBackgroundProcedure,
+		svc.StartBackground,
+		connect.WithSchema(hostAgentServiceMethods.ByName("StartBackground")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceListProcessesHandler := connect.NewUnaryHandler(
+		HostAgentServiceListProcessesProcedure,
+		svc.ListProcesses,
+		connect.WithSchema(hostAgentServiceMethods.ByName("ListProcesses")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceKillProcessHandler := connect.NewUnaryHandler(
+		HostAgentServiceKillProcessProcedure,
+		svc.KillProcess,
+		connect.WithSchema(hostAgentServiceMethods.ByName("KillProcess")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hostAgentServiceConnectProcessHandler := connect.NewServerStreamHandler(
+		HostAgentServiceConnectProcessProcedure,
+		svc.ConnectProcess,
+		connect.WithSchema(hostAgentServiceMethods.ByName("ConnectProcess")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -551,6 +834,12 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceWriteFileHandler.ServeHTTP(w, r)
 		case HostAgentServiceReadFileProcedure:
 			hostAgentServiceReadFileHandler.ServeHTTP(w, r)
+		case HostAgentServiceListDirProcedure:
+			hostAgentServiceListDirHandler.ServeHTTP(w, r)
+		case HostAgentServiceMakeDirProcedure:
+			hostAgentServiceMakeDirHandler.ServeHTTP(w, r)
+		case HostAgentServiceRemovePathProcedure:
+			hostAgentServiceRemovePathHandler.ServeHTTP(w, r)
 		case HostAgentServiceCreateSnapshotProcedure:
 			hostAgentServiceCreateSnapshotHandler.ServeHTTP(w, r)
 		case HostAgentServiceDeleteSnapshotProcedure:
@@ -571,6 +860,22 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceFlushSandboxMetricsHandler.ServeHTTP(w, r)
 		case HostAgentServiceFlattenRootfsProcedure:
 			hostAgentServiceFlattenRootfsHandler.ServeHTTP(w, r)
+		case HostAgentServicePtyAttachProcedure:
+			hostAgentServicePtyAttachHandler.ServeHTTP(w, r)
+		case HostAgentServicePtySendInputProcedure:
+			hostAgentServicePtySendInputHandler.ServeHTTP(w, r)
+		case HostAgentServicePtyResizeProcedure:
+			hostAgentServicePtyResizeHandler.ServeHTTP(w, r)
+		case HostAgentServicePtyKillProcedure:
+			hostAgentServicePtyKillHandler.ServeHTTP(w, r)
+		case HostAgentServiceStartBackgroundProcedure:
+			hostAgentServiceStartBackgroundHandler.ServeHTTP(w, r)
+		case HostAgentServiceListProcessesProcedure:
+			hostAgentServiceListProcessesHandler.ServeHTTP(w, r)
+		case HostAgentServiceKillProcessProcedure:
+			hostAgentServiceKillProcessHandler.ServeHTTP(w, r)
+		case HostAgentServiceConnectProcessProcedure:
+			hostAgentServiceConnectProcessHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -612,6 +917,18 @@ func (UnimplementedHostAgentServiceHandler) ReadFile(context.Context, *connect.R
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ReadFile is not implemented"))
 }
 
+func (UnimplementedHostAgentServiceHandler) ListDir(context.Context, *connect.Request[gen.ListDirRequest]) (*connect.Response[gen.ListDirResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ListDir is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) MakeDir(context.Context, *connect.Request[gen.MakeDirRequest]) (*connect.Response[gen.MakeDirResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.MakeDir is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) RemovePath(context.Context, *connect.Request[gen.RemovePathRequest]) (*connect.Response[gen.RemovePathResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.RemovePath is not implemented"))
+}
+
 func (UnimplementedHostAgentServiceHandler) CreateSnapshot(context.Context, *connect.Request[gen.CreateSnapshotRequest]) (*connect.Response[gen.CreateSnapshotResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.CreateSnapshot is not implemented"))
 }
@@ -650,4 +967,36 @@ func (UnimplementedHostAgentServiceHandler) FlushSandboxMetrics(context.Context,
 
 func (UnimplementedHostAgentServiceHandler) FlattenRootfs(context.Context, *connect.Request[gen.FlattenRootfsRequest]) (*connect.Response[gen.FlattenRootfsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.FlattenRootfs is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) PtyAttach(context.Context, *connect.Request[gen.PtyAttachRequest], *connect.ServerStream[gen.PtyAttachResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PtyAttach is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) PtySendInput(context.Context, *connect.Request[gen.PtySendInputRequest]) (*connect.Response[gen.PtySendInputResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PtySendInput is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) PtyResize(context.Context, *connect.Request[gen.PtyResizeRequest]) (*connect.Response[gen.PtyResizeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PtyResize is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) PtyKill(context.Context, *connect.Request[gen.PtyKillRequest]) (*connect.Response[gen.PtyKillResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.PtyKill is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) StartBackground(context.Context, *connect.Request[gen.StartBackgroundRequest]) (*connect.Response[gen.StartBackgroundResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.StartBackground is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) ListProcesses(context.Context, *connect.Request[gen.ListProcessesRequest]) (*connect.Response[gen.ListProcessesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ListProcesses is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) KillProcess(context.Context, *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.KillProcess is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) ConnectProcess(context.Context, *connect.Request[gen.ConnectProcessRequest], *connect.ServerStream[gen.ConnectProcessResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ConnectProcess is not implemented"))
 }

@@ -131,26 +131,31 @@ type Slot struct {
 }
 
 // NewSlot computes the addressing for the given slot index (1-based).
+// Index must be in [1, 32767] so that veth offset (index*2) fits in 16 bits.
 func NewSlot(index int) *Slot {
+	if index < 1 || index > 32767 {
+		panic(fmt.Sprintf("slot index %d out of range [1, 32767]", index))
+	}
+
 	hostBaseIP := net.ParseIP(hostBase).To4()
 	vrtBaseIP := net.ParseIP(vrtBase).To4()
 
 	hostIP := make(net.IP, 4)
 	copy(hostIP, hostBaseIP)
-	hostIP[2] += byte(index >> 8)
-	hostIP[3] += byte(index & 0xFF)
+	hostIP[2] = hostBaseIP[2] + byte(index>>8)
+	hostIP[3] = hostBaseIP[3] + byte(index&0xFF)
 
 	vethOffset := index * vrtAddressesPerSlot
 	vethIP := make(net.IP, 4)
 	copy(vethIP, vrtBaseIP)
-	vethIP[2] += byte(vethOffset >> 8)
-	vethIP[3] += byte(vethOffset & 0xFF)
+	vethIP[2] = vrtBaseIP[2] + byte(vethOffset>>8)
+	vethIP[3] = vrtBaseIP[3] + byte(vethOffset&0xFF)
 
 	vpeerOffset := vethOffset + 1
 	vpeerIP := make(net.IP, 4)
 	copy(vpeerIP, vrtBaseIP)
-	vpeerIP[2] += byte(vpeerOffset >> 8)
-	vpeerIP[3] += byte(vpeerOffset & 0xFF)
+	vpeerIP[2] = vrtBaseIP[2] + byte(vpeerOffset>>8)
+	vpeerIP[3] = vrtBaseIP[3] + byte(vpeerOffset&0xFF)
 
 	return &Slot{
 		Index:        index,

@@ -7,11 +7,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"git.omukk.dev/wrenn/wrenn/internal/audit"
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
-	"git.omukk.dev/wrenn/wrenn/internal/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 type sandboxHandler struct {
@@ -31,18 +31,19 @@ type createSandboxRequest struct {
 }
 
 type sandboxResponse struct {
-	ID           string  `json:"id"`
-	Status       string  `json:"status"`
-	Template     string  `json:"template"`
-	VCPUs        int32   `json:"vcpus"`
-	MemoryMB     int32   `json:"memory_mb"`
-	TimeoutSec   int32   `json:"timeout_sec"`
-	GuestIP      string  `json:"guest_ip,omitempty"`
-	HostIP       string  `json:"host_ip,omitempty"`
-	CreatedAt    string  `json:"created_at"`
-	StartedAt    *string `json:"started_at,omitempty"`
-	LastActiveAt *string `json:"last_active_at,omitempty"`
-	LastUpdated  string  `json:"last_updated"`
+	ID           string            `json:"id"`
+	Status       string            `json:"status"`
+	Template     string            `json:"template"`
+	VCPUs        int32             `json:"vcpus"`
+	MemoryMB     int32             `json:"memory_mb"`
+	TimeoutSec   int32             `json:"timeout_sec"`
+	GuestIP      string            `json:"guest_ip,omitempty"`
+	HostIP       string            `json:"host_ip,omitempty"`
+	CreatedAt    string            `json:"created_at"`
+	StartedAt    *string           `json:"started_at,omitempty"`
+	LastActiveAt *string           `json:"last_active_at,omitempty"`
+	LastUpdated  string            `json:"last_updated"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 func sandboxToResponse(sb db.Sandbox) sandboxResponse {
@@ -55,6 +56,12 @@ func sandboxToResponse(sb db.Sandbox) sandboxResponse {
 		TimeoutSec: sb.TimeoutSec,
 		GuestIP:    sb.GuestIp,
 		HostIP:     sb.HostIp,
+	}
+	if len(sb.Metadata) > 0 {
+		var meta map[string]string
+		if err := json.Unmarshal(sb.Metadata, &meta); err == nil && len(meta) > 0 {
+			resp.Metadata = meta
+		}
 	}
 	if sb.CreatedAt.Valid {
 		resp.CreatedAt = sb.CreatedAt.Time.Format(time.RFC3339)
@@ -73,7 +80,7 @@ func sandboxToResponse(sb db.Sandbox) sandboxResponse {
 	return resp
 }
 
-// Create handles POST /v1/sandboxes.
+// Create handles POST /v1/capsules.
 func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createSandboxRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -104,7 +111,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, sandboxToResponse(sb))
 }
 
-// List handles GET /v1/sandboxes.
+// List handles GET /v1/capsules.
 func (h *sandboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 	sandboxes, err := h.svc.List(r.Context(), ac.TeamID)
@@ -121,7 +128,7 @@ func (h *sandboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// Get handles GET /v1/sandboxes/{id}.
+// Get handles GET /v1/capsules/{id}.
 func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
@@ -141,7 +148,7 @@ func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
 }
 
-// Pause handles POST /v1/sandboxes/{id}/pause.
+// Pause handles POST /v1/capsules/{id}/pause.
 func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
@@ -163,7 +170,7 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
 }
 
-// Resume handles POST /v1/sandboxes/{id}/resume.
+// Resume handles POST /v1/capsules/{id}/resume.
 func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
@@ -185,7 +192,7 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
 }
 
-// Ping handles POST /v1/sandboxes/{id}/ping.
+// Ping handles POST /v1/capsules/{id}/ping.
 func (h *sandboxHandler) Ping(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())
@@ -205,7 +212,7 @@ func (h *sandboxHandler) Ping(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Destroy handles DELETE /v1/sandboxes/{id}.
+// Destroy handles DELETE /v1/capsules/{id}.
 func (h *sandboxHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ac := auth.MustFromContext(r.Context())

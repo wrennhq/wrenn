@@ -83,3 +83,39 @@ export async function leaveTeam(id: string): Promise<ApiResult<void>> {
 export async function searchUsers(email: string): Promise<ApiResult<UserSearchResult[]>> {
 	return apiFetch('GET', `/api/v1/users/search?email=${encodeURIComponent(email)}`);
 }
+
+// Admin team types and API functions
+
+export type AdminTeam = {
+	id: string;
+	name: string;
+	slug: string;
+	is_byoc: boolean;
+	created_at: string;
+	deleted_at: string | null;
+	member_count: number;
+	owner_name: string;
+	owner_email: string;
+	active_sandbox_count: number;
+	channel_count: number;
+};
+
+export type AdminTeamsResponse = {
+	teams: AdminTeam[];
+	total: number;
+	page: number;
+	per_page: number;
+	total_pages: number;
+};
+
+export async function listAdminTeams(page: number = 1): Promise<ApiResult<AdminTeamsResponse>> {
+	return apiFetch('GET', `/api/v1/admin/teams?page=${page}`);
+}
+
+export async function adminSetBYOC(id: string, enabled: boolean): Promise<ApiResult<void>> {
+	return apiFetch('PUT', `/api/v1/admin/teams/${id}/byoc`, { enabled });
+}
+
+export async function adminDeleteTeam(id: string): Promise<ApiResult<void>> {
+	return apiFetch('DELETE', `/api/v1/admin/teams/${id}`);
+}

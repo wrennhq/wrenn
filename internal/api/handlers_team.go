@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -9,20 +11,22 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/audit"
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
-	"git.omukk.dev/wrenn/wrenn/internal/service"
+	"git.omukk.dev/wrenn/wrenn/internal/email"
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 type teamHandler struct {
-	svc   *service.TeamService
-	audit *audit.AuditLogger
+	svc    *service.TeamService
+	audit  *audit.AuditLogger
+	mailer email.Mailer
 }
 
-func newTeamHandler(svc *service.TeamService, al *audit.AuditLogger) *teamHandler {
-	return &teamHandler{svc: svc, audit: al}
+func newTeamHandler(svc *service.TeamService, al *audit.AuditLogger, mailer email.Mailer) *teamHandler {
+	return &teamHandler{svc: svc, audit: al, mailer: mailer}
 }
 
 // teamResponse is the JSON shape for a team.
@@ -130,6 +134,15 @@ func (h *teamHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, code, msg)
 		return
 	}
+
+	go func() {
+		if err := h.mailer.Send(context.Background(), ac.Email, "Your team has been created", email.EmailData{
+			RecipientName: ac.Name,
+			Message:       fmt.Sprintf("Your team \"%s\" has been created on Wrenn. You can now invite members and start creating sandboxes under this team.", req.Name),
+		}); err != nil {
+			slog.Warn("failed to send team created email", "email", ac.Email, "error", err)
+		}
+	}()
 
 	writeJSON(w, http.StatusCreated, teamWithRoleResponse{
 		teamResponse: teamToResponse(team.Team),
@@ -279,6 +292,21 @@ func (h *teamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	if parseErr == nil {
 		h.audit.LogMemberAdd(r.Context(), ac, targetUserID, member.Email, member.Role)
 	}
+
+	go func() {
+		team, err := h.svc.GetTeam(context.Background(), teamID)
+		teamName := "a team"
+		if err == nil {
+			teamName = team.Name
+		}
+		if err := h.mailer.Send(context.Background(), member.Email, "You've been added to a team on Wrenn", email.EmailData{
+			RecipientName: member.Name,
+			Message:       fmt.Sprintf("%s has added you to the team \"%s\" on Wrenn.", ac.Name, teamName),
+		}); err != nil {
+			slog.Warn("failed to send team invitation email", "email", member.Email, "error", err)
+		}
+	}()
+
 	writeJSON(w, http.StatusCreated, memberInfoToResponse(member))
 }
 
@@ -381,6 +409,90 @@ func (h *teamHandler) SetBYOC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.SetBYOC(r.Context(), teamID, req.Enabled); err != nil {
+		status, code, msg := serviceErrToHTTP(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdminListTeams handles GET /v1/admin/teams?page=1
+// Returns a paginated list of all teams with member counts, owner info, and active sandbox counts.
+func (h *teamHandler) AdminListTeams(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if _, err := fmt.Sscanf(p, "%d", &page); err != nil || page < 1 {
+			page = 1
+		}
+	}
+	const perPage = 100
+	offset := int32((page - 1) * perPage)
+
+	teams, total, err := h.svc.AdminListTeams(r.Context(), perPage, offset)
+	if err != nil {
+		status, code, msg := serviceErrToHTTP(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	type adminTeamResponse struct {
+		ID                 string  `json:"id"`
+		Name               string  `json:"name"`
+		Slug               string  `json:"slug"`
+		IsByoc             bool    `json:"is_byoc"`
+		CreatedAt          string  `json:"created_at"`
+		DeletedAt          *string `json:"deleted_at"`
+		MemberCount        int32   `json:"member_count"`
+		OwnerName          string  `json:"owner_name"`
+		OwnerEmail         string  `json:"owner_email"`
+		ActiveSandboxCount int32   `json:"active_sandbox_count"`
+		ChannelCount       int32   `json:"channel_count"`
+	}
+
+	resp := make([]adminTeamResponse, len(teams))
+	for i, t := range teams {
+		r := adminTeamResponse{
+			ID:                 id.FormatTeamID(t.ID),
+			Name:               t.Name,
+			Slug:               t.Slug,
+			IsByoc:             t.IsByoc,
+			CreatedAt:          t.CreatedAt.Format(time.RFC3339),
+			MemberCount:        t.MemberCount,
+			OwnerName:          t.OwnerName,
+			OwnerEmail:         t.OwnerEmail,
+			ActiveSandboxCount: t.ActiveSandboxCount,
+			ChannelCount:       t.ChannelCount,
+		}
+		if t.DeletedAt != nil {
+			s := t.DeletedAt.Format(time.RFC3339)
+			r.DeletedAt = &s
+		}
+		resp[i] = r
+	}
+
+	totalPages := (total + perPage - 1) / perPage
+	writeJSON(w, http.StatusOK, map[string]any{
+		"teams":       resp,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
+		"total_pages": totalPages,
+	})
+}
+
+// AdminDeleteTeam handles DELETE /v1/admin/teams/{id}
+// Soft-deletes a team and destroys all its active sandboxes.
+func (h *teamHandler) AdminDeleteTeam(w http.ResponseWriter, r *http.Request) {
+	teamIDStr := chi.URLParam(r, "id")
+
+	teamID, err := id.ParseTeamID(teamIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid team ID")
+		return
+	}
+
+	if err := h.svc.AdminDeleteTeam(r.Context(), teamID); err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return

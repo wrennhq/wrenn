@@ -31,3 +31,8 @@ WHERE id = $1;
 UPDATE template_builds
 SET error = $2, status = 'failed', completed_at = NOW()
 WHERE id = $1;
+
+-- name: UpdateBuildDefaults :exec
+UPDATE template_builds
+SET default_user = $2, default_env = $3, metadata = $4
+WHERE id = $1;

@@ -1,6 +1,6 @@
 openapi: "3.1.0"
 info:
-  title: Wrenn Sandbox API
+  title: Wrenn API
   description: MicroVM-based code execution platform API.
   version: "0.1.0"
 
@@ -16,6 +16,10 @@ paths:
       summary: Create a new account
       operationId: signup
       tags: [auth]
+      description: |
+        Creates an inactive user account and sends an activation email.
+        The user must activate their account within 30 minutes.
+        Does not return a JWT — the user must activate first, then sign in.
       requestBody:
         required: true
         content:
@@ -24,11 +28,11 @@ paths:
               $ref: "#/components/schemas/SignupRequest"
       responses:
         "201":
-          description: Account created
+          description: Account created, activation email sent
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: "#/components/schemas/SignupResponse"
         "400":
           description: Invalid request (bad email, short password)
           content:
@@ -36,7 +40,39 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Email already registered
+          description: Email already registered or signup cooldown active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/auth/activate:
+    post:
+      summary: Activate account via email token
+      operationId: activate
+      tags: [auth]
+      description: |
+        Consumes the activation token sent via email and activates the user account.
+        Creates a default team and returns a JWT to log the user in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: Account activated, JWT issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Invalid or expired token
           content:
             application/json:
               schema:
@@ -174,6 +210,252 @@ paths:
       responses:
         "302":
           description: Redirect to frontend with token or error
+
+  /v1/me:
+    get:
+      summary: Get current user profile
+      operationId: getMe
+      tags: [account]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+
+    patch:
+      summary: Update display name
+      operationId: updateName
+      tags: [account]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+      responses:
+        "200":
+          description: Name updated, new JWT issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Invalid name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Delete current account
+      operationId: deleteAccount
+      tags: [account]
+      security:
+        - bearerAuth: []
+      description: |
+        Soft-deletes the account (sets status=deleted, deleted_at=now).
+        The account is permanently removed after 15 days. Blocked if the user
+        owns any team that has other members.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation:
+                  type: string
+                  description: Must match the user's email address (case-insensitive)
+      responses:
+        "204":
+          description: Account scheduled for deletion
+        "400":
+          description: Confirmation does not match email
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: User owns teams with other members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/me/password:
+    post:
+      summary: Change or add password
+      operationId: changePassword
+      tags: [account]
+      security:
+        - bearerAuth: []
+      description: |
+        For users with an existing password: requires `current_password` and `new_password`.
+        For OAuth-only users adding a password: requires `new_password` and `confirm_password`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: Password updated
+        "400":
+          description: Invalid request (short password, mismatch, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Current password is incorrect
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/me/password/reset:
+    post:
+      summary: Request a password reset email
+      operationId: requestPasswordReset
+      tags: [account]
+      description: |
+        Sends a password reset link to the given email. Always returns 200
+        regardless of whether the email exists, to prevent account enumeration.
+        The reset token expires in 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "204":
+          description: Request accepted (email sent if account exists)
+
+  /v1/me/password/reset/confirm:
+    post:
+      summary: Confirm password reset
+      operationId: confirmPasswordReset
+      tags: [account]
+      description: |
+        Consumes a password reset token and sets a new password. The token is
+        single-use and expires after 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                  description: Raw reset token from the email link
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        "204":
+          description: Password reset successful
+        "400":
+          description: Invalid or expired token, or password too short
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/me/providers/{provider}/connect:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [github]
+        description: OAuth provider name
+
+    get:
+      summary: Initiate OAuth provider link
+      operationId: connectProvider
+      tags: [account]
+      security:
+        - bearerAuth: []
+      description: |
+        Sets OAuth state and link cookies, then returns the provider's
+        authorization URL. The frontend navigates to this URL to start the
+        OAuth flow. On callback, the provider is linked to the current account
+        (not a new registration).
+      responses:
+        "200":
+          description: Authorization URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth_url:
+                    type: string
+                    format: uri
+        "404":
+          description: Provider not found or not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/me/providers/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [github]
+        description: OAuth provider name
+
+    delete:
+      summary: Disconnect an OAuth provider
+      operationId: disconnectProvider
+      tags: [account]
+      security:
+        - bearerAuth: []
+      description: |
+        Unlinks the OAuth provider from the current account. Blocked if this
+        is the user's only login method (no password and no other providers).
+      responses:
+        "204":
+          description: Provider disconnected
+        "400":
+          description: Cannot disconnect last login method
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Provider not connected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/api-keys:
     post:
@@ -393,7 +675,7 @@ paths:
         - bearerAuth: []
       description: |
         Owner only. Soft-deletes the team and destroys all running/paused/starting
-        sandboxes. All DB records are preserved. The team slug is permanently reserved.
+        capsulees. All DB records are preserved. The team slug is permanently reserved.
       responses:
         "204":
           description: Team deleted
@@ -570,11 +852,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sandboxes:
+  /v1/capsules:
     post:
-      summary: Create a sandbox
-      operationId: createSandbox
-      tags: [sandboxes]
+      summary: Create a capsule
+      operationId: createCapsule
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       requestBody:
@@ -582,14 +864,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateSandboxRequest"
+              $ref: "#/components/schemas/CreateCapsuleRequest"
       responses:
         "201":
-          description: Sandbox created
+          description: Capsule created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Sandbox"
+                $ref: "#/components/schemas/Capsule"
         "502":
           description: Host agent error
           content:
@@ -598,26 +880,26 @@ paths:
                 $ref: "#/components/schemas/Error"
 
     get:
-      summary: List sandboxes for your team
-      operationId: listSandboxes
-      tags: [sandboxes]
+      summary: List capsulees for your team
+      operationId: listCapsules
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       responses:
         "200":
-          description: List of sandboxes
+          description: List of capsulees
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Sandbox"
+                  $ref: "#/components/schemas/Capsule"
 
-  /v1/sandboxes/stats:
+  /v1/capsules/stats:
     get:
-      summary: Get sandbox usage stats for your team
-      operationId: getSandboxStats
-      tags: [sandboxes]
+      summary: Get capsule usage stats for your team
+      operationId: getCapsuleStats
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       parameters:
@@ -631,15 +913,15 @@ paths:
           description: Time window for the time-series data.
       responses:
         "200":
-          description: Sandbox stats for the team
+          description: Capsule stats for the team
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SandboxStats"
+                $ref: "#/components/schemas/CapsuleStats"
         "400":
           $ref: "#/components/responses/BadRequest"
 
-  /v1/sandboxes/{id}:
+  /v1/capsules/{id}:
     parameters:
       - name: id
         in: path
@@ -648,36 +930,36 @@ paths:
           type: string
 
     get:
-      summary: Get sandbox details
-      operationId: getSandbox
-      tags: [sandboxes]
+      summary: Get capsule details
+      operationId: getCapsule
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       responses:
         "200":
-          description: Sandbox details
+          description: Capsule details
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Sandbox"
+                $ref: "#/components/schemas/Capsule"
         "404":
-          description: Sandbox not found
+          description: Capsule not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 
     delete:
-      summary: Destroy a sandbox
-      operationId: destroySandbox
-      tags: [sandboxes]
+      summary: Destroy a capsule
+      operationId: destroyCapsule
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       responses:
         "204":
-          description: Sandbox destroyed
+          description: Capsule destroyed
 
-  /v1/sandboxes/{id}/exec:
+  /v1/capsules/{id}/exec:
     parameters:
       - name: id
         in: path
@@ -688,7 +970,7 @@ paths:
     post:
       summary: Execute a command
       operationId: execCommand
-      tags: [sandboxes]
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       requestBody:
@@ -699,59 +981,31 @@ paths:
               $ref: "#/components/schemas/ExecRequest"
       responses:
         "200":
-          description: Command output
+          description: Command output (foreground exec)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExecResponse"
+        "202":
+          description: Background process started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackgroundExecResponse"
         "404":
-          description: Sandbox not found
+          description: Capsule not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Sandbox not running
+          description: Capsule not running
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sandboxes/{id}/ping:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-
-    post:
-      summary: Reset sandbox inactivity timer
-      operationId: pingSandbox
-      tags: [sandboxes]
-      security:
-        - apiKeyAuth: []
-      description: |
-        Resets the last_active_at timestamp for a running sandbox, preventing
-        the auto-pause TTL from expiring. Use this as a keepalive for sandboxes
-        that are idle but should remain running.
-      responses:
-        "204":
-          description: Ping acknowledged, inactivity timer reset
-        "404":
-          description: Sandbox not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "409":
-          description: Sandbox not running
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /v1/sandboxes/{id}/metrics:
+  /v1/capsules/{id}/processes:
     parameters:
       - name: id
         in: path
@@ -760,22 +1014,172 @@ paths:
           type: string
 
     get:
-      summary: Get per-sandbox resource metrics
-      operationId: getSandboxMetrics
-      tags: [sandboxes]
+      summary: List running processes
+      operationId: listProcesses
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Returns all running processes inside the capsule, including background
+        processes and any processes started by templates or init scripts.
+      responses:
+        "200":
+          description: Process list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessListResponse"
+        "404":
+          description: Capsule not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/processes/{selector}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: selector
+        in: path
+        required: true
+        description: Process PID (numeric) or tag (string)
+        schema:
+          type: string
+
+    delete:
+      summary: Kill a process
+      operationId: killProcess
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: signal
+          in: query
+          required: false
+          description: Signal to send (SIGKILL or SIGTERM, default SIGKILL)
+          schema:
+            type: string
+            enum: [SIGKILL, SIGTERM]
+            default: SIGKILL
+      responses:
+        "204":
+          description: Process killed
+        "404":
+          description: Capsule or process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/processes/{selector}/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: selector
+        in: path
+        required: true
+        description: Process PID (numeric) or tag (string)
+        schema:
+          type: string
+
+    get:
+      summary: Stream process output via WebSocket
+      operationId: connectProcess
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Opens a WebSocket connection to stream stdout/stderr from a running
+        background process. The selector can be a numeric PID or a string tag.
+
+        Server sends JSON messages:
+        - `{"type": "start", "pid": 42}` — connected to process
+        - `{"type": "stdout", "data": "..."}` — stdout output
+        - `{"type": "stderr", "data": "..."}` — stderr output
+        - `{"type": "exit", "exit_code": 0}` — process exited
+        - `{"type": "error", "data": "..."}` — error message
+      responses:
+        "101":
+          description: WebSocket upgrade
+
+  /v1/capsules/{id}/ping:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Reset capsule inactivity timer
+      operationId: pingCapsule
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Resets the last_active_at timestamp for a running capsule, preventing
+        the auto-pause TTL from expiring. Use this as a keepalive for capsulees
+        that are idle but should remain running.
+      responses:
+        "204":
+          description: Ping acknowledged, inactivity timer reset
+        "404":
+          description: Capsule not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/metrics:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get per-capsule resource metrics
+      operationId: getCapsuleMetrics
+      tags: [capsules]
       security:
         - apiKeyAuth: []
         - bearerAuth: []
       description: |
-        Returns time-series CPU, memory, and disk metrics for a sandbox.
+        Returns time-series CPU, memory, and disk metrics for a capsule.
         Three tiers are available with different granularity and retention:
         - `10m`: 500ms samples, last 10 minutes
         - `2h`: 30-second averages, last 2 hours
         - `24h`: 5-minute averages, last 24 hours
 
-        For running sandboxes, data comes from the host agent's in-memory
-        ring buffer. For paused sandboxes, data is read from persisted
-        snapshots in the database. Stopped/destroyed sandboxes return 404.
+        For running capsulees, data comes from the host agent's in-memory
+        ring buffer. For paused capsulees, data is read from persisted
+        snapshots in the database. Stopped/destroyed capsulees return 404.
       parameters:
         - name: range
           in: query
@@ -791,7 +1195,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SandboxMetrics"
+                $ref: "#/components/schemas/CapsuleMetrics"
         "400":
           description: Invalid range parameter
           content:
@@ -799,13 +1203,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: Sandbox not found or metrics not available
+          description: Capsule not found or metrics not available
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sandboxes/{id}/pause:
+  /v1/capsules/{id}/pause:
     parameters:
       - name: id
         in: path
@@ -814,30 +1218,30 @@ paths:
           type: string
 
     post:
-      summary: Pause a running sandbox
-      operationId: pauseSandbox
-      tags: [sandboxes]
+      summary: Pause a running capsule
+      operationId: pauseCapsule
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       description: |
-        Takes a snapshot of the sandbox (VM state + memory + rootfs), then
-        destroys all running resources. The sandbox exists only as files on
+        Takes a snapshot of the capsule (VM state + memory + rootfs), then
+        destroys all running resources. The capsule exists only as files on
         disk and can be resumed later.
       responses:
         "200":
-          description: Sandbox paused (snapshot taken, resources released)
+          description: Capsule paused (snapshot taken, resources released)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Sandbox"
+                $ref: "#/components/schemas/Capsule"
         "409":
-          description: Sandbox not running
+          description: Capsule not running
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sandboxes/{id}/resume:
+  /v1/capsules/{id}/resume:
     parameters:
       - name: id
         in: path
@@ -846,24 +1250,24 @@ paths:
           type: string
 
     post:
-      summary: Resume a paused sandbox
-      operationId: resumeSandbox
-      tags: [sandboxes]
+      summary: Resume a paused capsule
+      operationId: resumeCapsule
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       description: |
-        Restores a paused sandbox from its snapshot using UFFD for lazy
+        Restores a paused capsule from its snapshot using UFFD for lazy
         memory loading. Boots a fresh Firecracker process, sets up a new
         network slot, and waits for envd to become ready.
       responses:
         "200":
-          description: Sandbox resumed (new VM booted from snapshot)
+          description: Capsule resumed (new VM booted from snapshot)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Sandbox"
+                $ref: "#/components/schemas/Capsule"
         "409":
-          description: Sandbox not paused
+          description: Capsule not paused
           content:
             application/json:
               schema:
@@ -877,9 +1281,9 @@ paths:
       security:
         - apiKeyAuth: []
       description: |
-        Pauses a running sandbox, takes a full snapshot, copies the snapshot
+        Pauses a running capsule, takes a full snapshot, copies the snapshot
         files to the images directory as a reusable template, then destroys
-        the sandbox. The template can be used to create new sandboxes.
+        the capsule. The template can be used to create new capsulees.
       parameters:
         - name: overwrite
           in: query
@@ -902,7 +1306,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Template"
         "409":
-          description: Name already exists or sandbox not running
+          description: Name already exists or capsule not running
           content:
             application/json:
               schema:
@@ -957,7 +1361,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sandboxes/{id}/files/write:
+  /v1/capsules/{id}/files/write:
     parameters:
       - name: id
         in: path
@@ -968,7 +1372,7 @@ paths:
     post:
       summary: Upload a file
       operationId: uploadFile
-      tags: [sandboxes]
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       requestBody:
@@ -981,7 +1385,7 @@ paths:
               properties:
                 path:
                   type: string
-                  description: Absolute destination path inside the sandbox
+                  description: Absolute destination path inside the capsule
                 file:
                   type: string
                   format: binary
@@ -990,7 +1394,7 @@ paths:
         "204":
           description: File uploaded
         "409":
-          description: Sandbox not running
+          description: Capsule not running
           content:
             application/json:
               schema:
@@ -1002,7 +1406,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sandboxes/{id}/files/read:
+  /v1/capsules/{id}/files/read:
     parameters:
       - name: id
         in: path
@@ -1013,7 +1417,7 @@ paths:
     post:
       summary: Download a file
       operationId: downloadFile
-      tags: [sandboxes]
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       requestBody:
@@ -1031,13 +1435,129 @@ paths:
                 type: string
                 format: binary
         "404":
-          description: Sandbox or file not found
+          description: Capsule or file not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sandboxes/{id}/exec/stream:
+  /v1/capsules/{id}/files/list:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: List directory contents
+      operationId: listDir
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListDirRequest"
+      responses:
+        "200":
+          description: Directory listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDirResponse"
+        "404":
+          description: Capsule not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/files/mkdir:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Create a directory
+      operationId: makeDir
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MakeDirRequest"
+      responses:
+        "200":
+          description: Directory created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MakeDirResponse"
+        "404":
+          description: Capsule not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/files/remove:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Remove a file or directory
+      operationId: removePath
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveRequest"
+      responses:
+        "204":
+          description: File or directory removed
+        "404":
+          description: Capsule not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/exec/stream:
     parameters:
       - name: id
         in: path
@@ -1048,7 +1568,7 @@ paths:
     get:
       summary: Stream command execution via WebSocket
       operationId: execStream
-      tags: [sandboxes]
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       description: |
@@ -1078,19 +1598,96 @@ paths:
         "101":
           description: WebSocket upgrade
         "404":
-          description: Sandbox not found
+          description: Capsule not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Sandbox not running
+          description: Capsule not running
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sandboxes/{id}/files/stream/write:
+  /v1/capsules/{id}/pty:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Interactive PTY session via WebSocket
+      operationId: ptySession
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      description: |
+        Opens a WebSocket connection for an interactive PTY (terminal) session.
+        Supports creating new sessions, sending input, resizing, killing, and
+        reconnecting to existing sessions.
+
+        **Client sends** (first message — start a new PTY):
+        ```json
+        {
+          "type": "start",
+          "cmd": "/bin/bash",
+          "args": [],
+          "cols": 80,
+          "rows": 24,
+          "envs": {"TERM": "xterm-256color"},
+          "cwd": "/home/user",
+          "user": "user"
+        }
+        ```
+        All fields except `type` are optional. Defaults: cmd="/bin/bash", cols=80, rows=24.
+
+        **Client sends** (first message — reconnect to existing PTY):
+        ```json
+        {"type": "connect", "tag": "pty-abc123de"}
+        ```
+
+        **Client sends** (after session is established):
+        ```json
+        {"type": "input", "data": "<base64-encoded bytes>"}
+        {"type": "resize", "cols": 120, "rows": 40}
+        {"type": "kill"}
+        ```
+
+        **Server sends**:
+        ```json
+        {"type": "started", "tag": "pty-abc123de", "pid": 42}
+        {"type": "output", "data": "<base64-encoded PTY bytes>"}
+        {"type": "exit", "exit_code": 0}
+        {"type": "error", "data": "description", "fatal": true}
+        {"type": "ping"}
+        ```
+
+        PTY data (input and output) is base64-encoded because it contains raw
+        terminal bytes (escape sequences, control codes) that are not valid UTF-8.
+
+        Sessions persist across WebSocket disconnections — the process keeps
+        running in the capsule. Use the `tag` from the "started" response to
+        reconnect later.
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          description: Capsule not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/capsules/{id}/files/stream/write:
     parameters:
       - name: id
         in: path
@@ -1101,11 +1698,11 @@ paths:
     post:
       summary: Upload a file (streaming)
       operationId: streamUploadFile
-      tags: [sandboxes]
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       description: |
-        Streams file content to the sandbox without buffering in memory.
+        Streams file content to the capsule without buffering in memory.
         Suitable for large files. Uses the same multipart/form-data format
         as the non-streaming upload endpoint.
       requestBody:
@@ -1118,7 +1715,7 @@ paths:
               properties:
                 path:
                   type: string
-                  description: Absolute destination path inside the sandbox
+                  description: Absolute destination path inside the capsule
                 file:
                   type: string
                   format: binary
@@ -1127,19 +1724,19 @@ paths:
         "204":
           description: File uploaded
         "404":
-          description: Sandbox not found
+          description: Capsule not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Sandbox not running
+          description: Capsule not running
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/sandboxes/{id}/files/stream/read:
+  /v1/capsules/{id}/files/stream/read:
     parameters:
       - name: id
         in: path
@@ -1150,11 +1747,11 @@ paths:
     post:
       summary: Download a file (streaming)
       operationId: streamDownloadFile
-      tags: [sandboxes]
+      tags: [capsules]
       security:
         - apiKeyAuth: []
       description: |
-        Streams file content from the sandbox without buffering in memory.
+        Streams file content from the capsule without buffering in memory.
         Suitable for large files. Returns raw bytes with chunked transfer encoding.
       requestBody:
         required: true
@@ -1171,13 +1768,13 @@ paths:
                 type: string
                 format: binary
         "404":
-          description: Sandbox or file not found
+          description: Capsule or file not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Sandbox not running
+          description: Capsule not running
           content:
             application/json:
               schema:
@@ -1275,14 +1872,14 @@ paths:
       description: |
         Admins can delete any host. Team owners and admins can delete BYOC hosts
         belonging to their team. Without `?force=true`, returns 409 if the host
-        has active sandboxes. With `?force=true`, destroys all sandboxes first.
+        has active capsulees. With `?force=true`, destroys all capsulees first.
       parameters:
         - name: force
           in: query
           required: false
           schema:
             type: boolean
-          description: If true, destroy all sandboxes on the host before deleting.
+          description: If true, destroy all capsulees on the host before deleting.
       responses:
         "204":
           description: Host deleted
@@ -1293,11 +1890,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Host has active sandboxes (only when force is not set)
+          description: Host has active capsulees (only when force is not set)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HostHasSandboxesError"
+                $ref: "#/components/schemas/HostHasCapsulesError"
 
   /v1/hosts/{id}/token:
     parameters:
@@ -1450,7 +2047,7 @@ paths:
       security:
         - bearerAuth: []
       description: |
-        Returns the list of sandbox IDs that would be destroyed if the host
+        Returns the list of capsule IDs that would be destroyed if the host
         were deleted with `?force=true`. No state is modified.
       responses:
         "200":
@@ -1723,7 +2320,7 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
-      description: API key for sandbox lifecycle operations. Create via POST /v1/api-keys.
+      description: API key for capsule lifecycle operations. Create via POST /v1/api-keys.
 
     bearerAuth:
       type: http
@@ -1761,6 +2358,13 @@ components:
           format: email
         password:
           type: string
+
+    SignupResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Confirmation message instructing user to check email
 
     AuthResponse:
       type: object
@@ -1808,7 +2412,7 @@ components:
           description: Full plaintext key. Only returned on creation, never again.
           nullable: true
 
-    CreateSandboxRequest:
+    CreateCapsuleRequest:
       type: object
       properties:
         template:
@@ -1824,11 +2428,11 @@ components:
           type: integer
           default: 0
           description: >
-            Auto-pause TTL in seconds. The sandbox is automatically paused
+            Auto-pause TTL in seconds. The capsule is automatically paused
             after this duration of inactivity (no exec or ping). 0 means
             no auto-pause.
 
-    SandboxStats:
+    CapsuleStats:
       type: object
       properties:
         range:
@@ -1879,7 +2483,7 @@ components:
               items:
                 type: integer
 
-    Sandbox:
+    Capsule:
       type: object
       properties:
         id:
@@ -1920,7 +2524,7 @@ components:
       properties:
         sandbox_id:
           type: string
-          description: ID of the running sandbox to snapshot.
+          description: ID of the running capsule to snapshot.
         name:
           type: string
           description: Name for the snapshot template. Auto-generated if omitted.
@@ -1959,6 +2563,56 @@ components:
         timeout_sec:
           type: integer
           default: 30
+          description: Timeout in seconds (foreground exec only, default 30)
+        background:
+          type: boolean
+          default: false
+          description: If true, starts the process in the background and returns immediately with a PID and tag (HTTP 202)
+        tag:
+          type: string
+          description: Optional user-chosen tag for the background process. Auto-generated if omitted. Only used when background is true.
+        envs:
+          type: object
+          additionalProperties:
+            type: string
+          description: Environment variables for the process (background exec only)
+        cwd:
+          type: string
+          description: Working directory for the process (background exec only)
+
+    BackgroundExecResponse:
+      type: object
+      properties:
+        sandbox_id:
+          type: string
+        cmd:
+          type: string
+        pid:
+          type: integer
+        tag:
+          type: string
+
+    ProcessEntry:
+      type: object
+      properties:
+        pid:
+          type: integer
+        tag:
+          type: string
+        cmd:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+
+    ProcessListResponse:
+      type: object
+      properties:
+        processes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessEntry"
 
     ExecResponse:
       type: object
@@ -1986,7 +2640,79 @@ components:
       properties:
         path:
           type: string
-          description: Absolute file path inside the sandbox
+          description: Absolute file path inside the capsule
+
+    ListDirRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Directory path inside the capsule
+        depth:
+          type: integer
+          default: 1
+          description: Recursion depth (0 = non-recursive, 1 = immediate children)
+
+    ListDirResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileEntry"
+
+    FileEntry:
+      type: object
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        type:
+          type: string
+          enum: [file, directory, symlink]
+        size:
+          type: integer
+          format: int64
+        mode:
+          type: integer
+        permissions:
+          type: string
+          description: Human-readable permissions (e.g. "-rwxr-xr-x")
+        owner:
+          type: string
+        group:
+          type: string
+        modified_at:
+          type: integer
+          format: int64
+          description: Unix timestamp (seconds)
+        symlink_target:
+          type: string
+          nullable: true
+
+    MakeDirRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Directory path to create inside the capsule
+
+    MakeDirResponse:
+      type: object
+      properties:
+        entry:
+          $ref: "#/components/schemas/FileEntry"
+
+    RemoveRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Path to remove inside the capsule
 
     CreateHostRequest:
       type: object
@@ -2124,9 +2850,9 @@ components:
           type: array
           items:
             type: string
-          description: IDs of sandboxes that would be destroyed on force-delete.
+          description: IDs of capsulees that would be destroyed on force-delete.
 
-    HostHasSandboxesError:
+    HostHasCapsulesError:
       type: object
       properties:
         error:
@@ -2141,7 +2867,7 @@ components:
               type: array
               items:
                 type: string
-              description: IDs of active sandboxes blocking deletion.
+              description: IDs of active capsulees blocking deletion.
 
     AddTagRequest:
       type: object
@@ -2205,7 +2931,7 @@ components:
           items:
             $ref: "#/components/schemas/TeamMember"
 
-    SandboxMetrics:
+    CapsuleMetrics:
       type: object
       properties:
         sandbox_id:
@@ -2342,6 +3068,37 @@ components:
           type: string
           nullable: true
           description: Webhook secret. Only returned on creation, never again.
+
+    MeResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        has_password:
+          type: boolean
+          description: Whether the user has a password set (false for OAuth-only accounts)
+        providers:
+          type: array
+          items:
+            type: string
+          description: List of linked OAuth provider names (e.g. ["github"])
+
+    ChangePasswordRequest:
+      type: object
+      required: [new_password]
+      properties:
+        current_password:
+          type: string
+          description: Required when changing an existing password
+        new_password:
+          type: string
+          minLength: 8
+        confirm_password:
+          type: string
+          description: Required when adding a password to an OAuth-only account (must match new_password)
 
     Error:
       type: object

@@ -13,14 +13,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/audit"
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
-	"git.omukk.dev/wrenn/wrenn/internal/service"
-	"git.omukk.dev/wrenn/wrenn/internal/validate"
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
@@ -38,8 +38,8 @@ func newSnapshotHandler(svc *service.TemplateService, db *db.Queries, pool *life
 // deleteSnapshotBroadcast attempts to delete snapshot files on all online hosts.
 // Snapshots aren't currently host-tracked in the DB, so we broadcast to all hosts
 // and ignore NotFound errors.
-func (h *snapshotHandler) deleteSnapshotBroadcast(ctx context.Context, teamID, templateID pgtype.UUID) error {
-	hosts, err := h.db.ListActiveHosts(ctx)
+func deleteSnapshotBroadcast(ctx context.Context, queries *db.Queries, pool *lifecycle.HostClientPool, teamID, templateID pgtype.UUID) error {
+	hosts, err := queries.ListActiveHosts(ctx)
 	if err != nil {
 		return fmt.Errorf("list hosts: %w", err)
 	}
@@ -47,7 +47,7 @@ func (h *snapshotHandler) deleteSnapshotBroadcast(ctx context.Context, teamID, t
 		if host.Status != "online" {
 			continue
 		}
-		agent, err := h.pool.GetForHost(host)
+		agent, err := pool.GetForHost(host)
 		if err != nil {
 			continue
 		}
@@ -69,13 +69,14 @@ type createSnapshotRequest struct {
 }
 
 type snapshotResponse struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	VCPUs     *int32 `json:"vcpus,omitempty"`
-	MemoryMB  *int32 `json:"memory_mb,omitempty"`
-	SizeBytes int64  `json:"size_bytes"`
-	CreatedAt string `json:"created_at"`
-	Platform  bool   `json:"platform"`
+	Name      string            `json:"name"`
+	Type      string            `json:"type"`
+	VCPUs     *int32            `json:"vcpus,omitempty"`
+	MemoryMB  *int32            `json:"memory_mb,omitempty"`
+	SizeBytes int64             `json:"size_bytes"`
+	CreatedAt string            `json:"created_at"`
+	Platform  bool              `json:"platform"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 func templateToResponse(t db.Template) snapshotResponse {
@@ -93,6 +94,12 @@ func templateToResponse(t db.Template) snapshotResponse {
 	}
 	if t.CreatedAt.Valid {
 		resp.CreatedAt = t.CreatedAt.Time.Format(time.RFC3339)
+	}
+	if len(t.Metadata) > 0 {
+		var meta map[string]string
+		if err := json.Unmarshal(t.Metadata, &meta); err == nil && len(meta) > 0 {
+			resp.Metadata = meta
+		}
 	}
 	return resp
 }
@@ -126,7 +133,6 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
-	overwrite := r.URL.Query().Get("overwrite") == "true"
 
 	// Check for global name collision.
 	if _, err := h.db.GetPlatformTemplateByName(ctx, req.Name); err == nil {
@@ -135,20 +141,10 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if name already exists for this team.
-	if existing, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err == nil {
-		if !overwrite {
-			writeError(w, http.StatusConflict, "already_exists", "snapshot name already exists; use ?overwrite=true to replace")
-			return
-		}
-		// Delete old snapshot files from all hosts before removing the DB record.
-		if err := h.deleteSnapshotBroadcast(ctx, existing.TeamID, existing.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete existing snapshot files")
-			return
-		}
-		if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err != nil {
-			writeError(w, http.StatusInternalServerError, "db_error", "failed to remove existing template record")
-			return
-		}
+	if _, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err == nil {
+		writeError(w, http.StatusConflict, "template_name_taken",
+			"snapshot name already exists; delete the existing snapshot first to reuse this name")
+		return
 	}
 
 	// Verify sandbox exists, belongs to team, and is running or paused.
@@ -210,13 +206,16 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tmpl, err := h.db.InsertTemplate(snapCtx, db.InsertTemplateParams{
-		ID:        newTemplateID,
-		Name:      req.Name,
-		Type:      "snapshot",
-		Vcpus:     sb.Vcpus,
-		MemoryMb:  sb.MemoryMb,
-		SizeBytes: resp.Msg.SizeBytes,
-		TeamID:    ac.TeamID,
+		ID:          newTemplateID,
+		Name:        req.Name,
+		Type:        "snapshot",
+		Vcpus:       sb.Vcpus,
+		MemoryMb:    sb.MemoryMb,
+		SizeBytes:   resp.Msg.SizeBytes,
+		TeamID:      ac.TeamID,
+		DefaultUser: "root",
+		DefaultEnv:  []byte("{}"),
+		Metadata:    sb.Metadata,
 	})
 	if err != nil {
 		slog.Error("failed to insert template record", "name", req.Name, "error", err)
@@ -277,7 +276,7 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.deleteSnapshotBroadcast(ctx, tmpl.TeamID, tmpl.ID); err != nil {
+	if err := deleteSnapshotBroadcast(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete snapshot files")
 		return
 	}

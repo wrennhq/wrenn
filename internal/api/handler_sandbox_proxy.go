@@ -17,10 +17,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
-	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 )
 
 // Sentinel errors returned by proxyTarget, used to map to HTTP status codes
@@ -44,7 +43,7 @@ func (e errProxySandboxNotRunning) Error() string {
 	return fmt.Sprintf("sandbox is not running (status: %s)", e.status)
 }
 
-// proxyCacheEntry caches the resolved agent URL for a (sandbox, team) pair.
+// proxyCacheEntry caches the resolved agent URL for a sandbox.
 // The *httputil.ReverseProxy is built per-request (cheap) so the Director closure
 // can capture the correct port without the cache key needing to include it.
 type proxyCacheEntry struct {
@@ -52,23 +51,13 @@ type proxyCacheEntry struct {
 	expiresAt time.Time
 }
 
-// proxyCacheKey is a fixed-size key from two UUIDs, avoids string allocation.
-type proxyCacheKey [32]byte
-
-func makeProxyCacheKey(sandboxID, teamID pgtype.UUID) proxyCacheKey {
-	var k proxyCacheKey
-	copy(k[:16], sandboxID.Bytes[:])
-	copy(k[16:], teamID.Bytes[:])
-	return k
-}
-
 // SandboxProxyWrapper wraps an existing HTTP handler and intercepts requests
 // whose Host header matches the {port}-{sandbox_id}.{domain} pattern. Matching
 // requests are reverse-proxied through the host agent that owns the sandbox.
 // All other requests are passed through to the inner handler.
 //
-// Authentication is via X-API-Key header only (no JWT). The API key's team
-// must own the sandbox.
+// No authentication is required — sandbox URLs are unguessable and access is
+// scoped to the sandbox ID embedded in the hostname.
 type SandboxProxyWrapper struct {
 	inner     http.Handler
 	db        *db.Queries
@@ -76,7 +65,7 @@ type SandboxProxyWrapper struct {
 	transport http.RoundTripper
 
 	cacheMu sync.Mutex
-	cache   map[proxyCacheKey]proxyCacheEntry
+	cache   map[pgtype.UUID]proxyCacheEntry
 }
 
 // NewSandboxProxyWrapper creates a new proxy wrapper.
@@ -86,19 +75,15 @@ func NewSandboxProxyWrapper(inner http.Handler, queries *db.Queries, pool *lifec
 		db:        queries,
 		pool:      pool,
 		transport: pool.Transport(),
-		cache:     make(map[proxyCacheKey]proxyCacheEntry),
+		cache:     make(map[pgtype.UUID]proxyCacheEntry),
 	}
 }
 
-// proxyTarget looks up the cached agent URL for (sandboxID, teamID).
+// proxyTarget looks up the cached agent URL for sandboxID.
 // On a miss it queries the DB, resolves the address, and populates the cache.
-// The *httputil.ReverseProxy is built by the caller so the Director closure
-// captures the correct port without the cache key needing to include it.
-func (h *SandboxProxyWrapper) proxyTarget(ctx context.Context, sandboxID, teamID pgtype.UUID) (*url.URL, error) {
-	cacheKey := makeProxyCacheKey(sandboxID, teamID)
-
+func (h *SandboxProxyWrapper) proxyTarget(ctx context.Context, sandboxID pgtype.UUID) (*url.URL, error) {
 	h.cacheMu.Lock()
-	entry, ok := h.cache[cacheKey]
+	entry, ok := h.cache[sandboxID]
 	h.cacheMu.Unlock()
 
 	if ok && time.Now().Before(entry.expiresAt) {
@@ -106,10 +91,7 @@ func (h *SandboxProxyWrapper) proxyTarget(ctx context.Context, sandboxID, teamID
 	}
 
 	// Cache miss or expired — query DB.
-	target, err := h.db.GetSandboxProxyTarget(ctx, db.GetSandboxProxyTargetParams{
-		ID:     sandboxID,
-		TeamID: teamID,
-	})
+	target, err := h.db.GetSandboxProxyTarget(ctx, sandboxID)
 	if err != nil {
 		return nil, errProxySandboxNotFound
 	}
@@ -126,7 +108,7 @@ func (h *SandboxProxyWrapper) proxyTarget(ctx context.Context, sandboxID, teamID
 	}
 
 	h.cacheMu.Lock()
-	h.cache[cacheKey] = proxyCacheEntry{
+	h.cache[sandboxID] = proxyCacheEntry{
 		agentURL:  agentURL,
 		expiresAt: time.Now().Add(proxyCacheTTL),
 	}
@@ -135,11 +117,11 @@ func (h *SandboxProxyWrapper) proxyTarget(ctx context.Context, sandboxID, teamID
 	return agentURL, nil
 }
 
-// evictProxyCache removes the cached entry for a (sandbox, team) pair.
+// evictProxyCache removes the cached entry for a sandbox.
 // Called on 502 so a stopped/moved sandbox is re-resolved on the next request.
-func (h *SandboxProxyWrapper) evictProxyCache(sandboxID, teamID pgtype.UUID) {
+func (h *SandboxProxyWrapper) evictProxyCache(sandboxID pgtype.UUID) {
 	h.cacheMu.Lock()
-	delete(h.cache, makeProxyCacheKey(sandboxID, teamID))
+	delete(h.cache, sandboxID)
 	h.cacheMu.Unlock()
 }
 
@@ -166,20 +148,13 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Authenticate: require API key or JWT, extract team ID.
-	teamID, err := h.authenticateRequest(r)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", err.Error())
-		return
-	}
-
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
 		http.Error(w, "invalid sandbox ID", http.StatusBadRequest)
 		return
 	}
 
-	agentURL, err := h.proxyTarget(r.Context(), sandboxID, teamID)
+	agentURL, err := h.proxyTarget(r.Context(), sandboxID)
 	if err != nil {
 		switch {
 		case errors.Is(err, errProxySandboxNotFound):
@@ -206,25 +181,9 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				"port", port,
 				"error", err,
 			)
-			h.evictProxyCache(sandboxID, teamID)
+			h.evictProxyCache(sandboxID)
 			http.Error(w, "proxy error: "+err.Error(), http.StatusBadGateway)
 		},
 	}
 	proxy.ServeHTTP(w, r)
-}
-
-// authenticateRequest validates the request's API key and returns the team ID.
-// Only API key authentication is supported for sandbox proxy requests (not JWT).
-func (h *SandboxProxyWrapper) authenticateRequest(r *http.Request) (pgtype.UUID, error) {
-	key := r.Header.Get("X-API-Key")
-	if key == "" {
-		return pgtype.UUID{}, fmt.Errorf("X-API-Key header required")
-	}
-
-	hash := auth.HashAPIKey(key)
-	row, err := h.db.GetAPIKeyByHash(r.Context(), hash)
-	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("invalid API key")
-	}
-	return row.TeamID, nil
 }

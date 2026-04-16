@@ -12,10 +12,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
-	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
@@ -29,9 +29,13 @@ func newExecHandler(db *db.Queries, pool *lifecycle.HostClientPool) *execHandler
 }
 
 type execRequest struct {
-	Cmd        string   `json:"cmd"`
-	Args       []string `json:"args"`
-	TimeoutSec int32    `json:"timeout_sec"`
+	Cmd        string            `json:"cmd"`
+	Args       []string          `json:"args"`
+	TimeoutSec int32             `json:"timeout_sec"`
+	Background bool              `json:"background"`
+	Tag        string            `json:"tag"`
+	Envs       map[string]string `json:"envs"`
+	Cwd        string            `json:"cwd"`
 }
 
 type execResponse struct {
@@ -45,7 +49,14 @@ type execResponse struct {
 	Encoding string `json:"encoding"`
 }
 
-// Exec handles POST /v1/sandboxes/{id}/exec.
+type backgroundExecResponse struct {
+	SandboxID string `json:"sandbox_id"`
+	Cmd       string `json:"cmd"`
+	PID       uint32 `json:"pid"`
+	Tag       string `json:"tag"`
+}
+
+// Exec handles POST /v1/capsules/{id}/exec.
 func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
@@ -78,13 +89,53 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	start := time.Now()
-
 	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
 		return
 	}
+
+	// Background mode: start process and return immediately.
+	if req.Background {
+		tag := req.Tag
+		if tag == "" {
+			tag = "proc-" + id.NewPtyTag()
+		}
+
+		bgResp, err := agent.StartBackground(ctx, connect.NewRequest(&pb.StartBackgroundRequest{
+			SandboxId: sandboxIDStr,
+			Tag:       tag,
+			Cmd:       req.Cmd,
+			Args:      req.Args,
+			Envs:      req.Envs,
+			Cwd:       req.Cwd,
+		}))
+		if err != nil {
+			status, code, msg := agentErrToHTTP(err)
+			writeError(w, status, code, msg)
+			return
+		}
+
+		if err := h.db.UpdateLastActive(ctx, db.UpdateLastActiveParams{
+			ID: sandboxID,
+			LastActiveAt: pgtype.Timestamptz{
+				Time:  time.Now(),
+				Valid: true,
+			},
+		}); err != nil {
+			slog.Warn("failed to update last_active_at", "id", sandboxIDStr, "error", err)
+		}
+
+		writeJSON(w, http.StatusAccepted, backgroundExecResponse{
+			SandboxID: sandboxIDStr,
+			Cmd:       req.Cmd,
+			PID:       bgResp.Msg.Pid,
+			Tag:       bgResp.Msg.Tag,
+		})
+		return
+	}
+
+	start := time.Now()
 
 	resp, err := agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
 		SandboxId:  sandboxIDStr,

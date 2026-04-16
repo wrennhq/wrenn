@@ -25,34 +25,38 @@ func NewMultiplexedChannel[T any](buffer int) *MultiplexedChannel[T] {
 			c.mu.RLock()
 
 			for _, cons := range c.channels {
-				cons <- v
+				select {
+				case cons <- v:
+				default:
+					// Consumer not reading — skip to prevent deadlock
+				}
 			}
 
 			c.mu.RUnlock()
 		}
 
+		c.mu.Lock()
 		c.exited.Store(true)
-
 		for _, cons := range c.channels {
 			close(cons)
 		}
+		c.mu.Unlock()
 	}()
 
 	return c
 }
 
 func (m *MultiplexedChannel[T]) Fork() (chan T, func()) {
-	if m.exited.Load() {
-		ch := make(chan T)
-		close(ch)
-
-		return ch, func() {}
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	consumer := make(chan T)
+	if m.exited.Load() {
+		ch := make(chan T)
+		close(ch)
+		return ch, func() {}
+	}
+
+	consumer := make(chan T, 4096)
 
 	m.channels = append(m.channels, consumer)
 

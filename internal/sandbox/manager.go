@@ -17,19 +17,28 @@ import (
 
 	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
 	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/internal/models"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
 	"git.omukk.dev/wrenn/wrenn/internal/uffd"
 	"git.omukk.dev/wrenn/wrenn/internal/vm"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 )
 
 // Config holds the paths and defaults for the sandbox manager.
 type Config struct {
-	WrennDir    string // root directory (e.g. /var/lib/wrenn); all sub-paths derived via layout package
-	EnvdTimeout time.Duration
+	WrennDir            string // root directory (e.g. /var/lib/wrenn); all sub-paths derived via layout package
+	EnvdTimeout         time.Duration
+	DefaultRootfsSizeMB int // target size for template rootfs images; 0 → DefaultDiskSizeMB
+
+	// Resolved at startup by the host agent.
+	KernelPath         string // path to the latest vmlinux-x.y.z
+	KernelVersion      string // semver extracted from filename
+	FirecrackerBin     string // path to the firecracker binary
+	FirecrackerVersion string // semver from firecracker --version
+	AgentVersion       string // host agent version (injected via ldflags)
 }
 
 // Manager orchestrates sandbox lifecycle: VM, network, filesystem, envd.
@@ -83,6 +92,35 @@ type snapshotParent struct {
 // A Full snapshot resets the generation counter and produces a clean base,
 // preventing the crash.
 const maxDiffGenerations = 8
+
+// buildMetadata constructs the metadata map with version information.
+func (m *Manager) buildMetadata(envdVersion string) map[string]string {
+	meta := map[string]string{
+		"kernel_version":      m.cfg.KernelVersion,
+		"firecracker_version": m.cfg.FirecrackerVersion,
+		"agent_version":       m.cfg.AgentVersion,
+	}
+	if envdVersion != "" {
+		meta["envd_version"] = envdVersion
+	}
+	return meta
+}
+
+// resolveKernelPath returns the kernel path for the given version hint.
+// If the exact version exists on disk, it is used. Otherwise, falls back to
+// the latest kernel (m.cfg.KernelPath).
+func (m *Manager) resolveKernelPath(versionHint string) string {
+	if versionHint == "" {
+		return m.cfg.KernelPath
+	}
+	exact := layout.KernelPathVersioned(m.cfg.WrennDir, versionHint)
+	if _, err := os.Stat(exact); err == nil {
+		return exact
+	}
+	slog.Warn("requested kernel version not found, using latest",
+		"requested", versionHint, "latest", m.cfg.KernelVersion)
+	return m.cfg.KernelPath
+}
 
 // New creates a new sandbox manager.
 func New(cfg Config) *Manager {
@@ -173,7 +211,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
 		TemplateID:       id.UUIDString(templateID),
-		KernelPath:       layout.KernelPath(m.cfg.WrennDir),
+		KernelPath:       m.cfg.KernelPath,
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            vcpus,
 		MemoryMB:         memoryMB,
@@ -183,6 +221,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 		GuestIP:          slot.GuestIP,
 		GatewayIP:        slot.TapIP,
 		NetMask:          slot.GuestNetMask,
+		FirecrackerBin:   m.cfg.FirecrackerBin,
 	}
 
 	if _, err := m.vm.Create(ctx, vmCfg); err != nil {
@@ -209,6 +248,9 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
+	// Fetch envd version (best-effort).
+	envdVersion, _ := client.FetchVersion(ctx)
+
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -224,6 +266,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 			RootfsPath:     dmDev.DevicePath,
 			CreatedAt:      now,
 			LastActiveAt:   now,
+			Metadata:       m.buildMetadata(envdVersion),
 		},
 		slot:          slot,
 		client:        client,
@@ -325,6 +368,20 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	// TCP state from connections that were alive when the VM was snapshotted.
 	sb.connTracker.Drain(2 * time.Second)
 	slog.Debug("pause: proxy connections drained", "id", sandboxID)
+
+	// Step 0b: Signal envd to quiesce continuous goroutines (port scanner,
+	// forwarder) and run GC before freezing vCPUs. This prevents Go runtime
+	// page allocator corruption ("bad summary data") on snapshot restore.
+	// Best-effort: a failure is logged but does not abort the pause.
+	func() {
+		prepCtx, prepCancel := context.WithTimeout(ctx, 3*time.Second)
+		defer prepCancel()
+		if err := sb.client.PrepareSnapshot(prepCtx); err != nil {
+			slog.Warn("pause: pre-snapshot quiesce failed (best-effort)", "id", sandboxID, "error", err)
+		} else {
+			slog.Debug("pause: envd goroutines quiesced", "id", sandboxID)
+		}
+	}()
 
 	pauseStart := time.Now()
 
@@ -542,7 +599,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 // Resume restores a paused sandbox from its snapshot using UFFD for
 // lazy memory loading. The sandbox gets a new network slot.
-func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) (*models.Sandbox, error) {
+func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, kernelVersion string) (*models.Sandbox, error) {
 	pauseDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sandboxID)
 	if _, err := os.Stat(pauseDir); err != nil {
 		return nil, fmt.Errorf("no snapshot found for sandbox %s", sandboxID)
@@ -656,7 +713,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 	// Restore VM from snapshot.
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
-		KernelPath:       layout.KernelPath(m.cfg.WrennDir),
+		KernelPath:       m.resolveKernelPath(kernelVersion),
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            1,                                         // Placeholder; overridden by snapshot.
 		MemoryMB:         int(header.Metadata.Size / (1024 * 1024)), // Placeholder; overridden by snapshot.
@@ -666,6 +723,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 		GuestIP:          slot.GuestIP,
 		GatewayIP:        slot.TapIP,
 		NetMask:          slot.GuestNetMask,
+		FirecrackerBin:   m.cfg.FirecrackerBin,
 	}
 
 	resumeSnapPath := filepath.Join(pauseDir, snapshot.SnapFileName)
@@ -697,6 +755,14 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
+	// Trigger envd to re-read MMDS so it picks up the new sandbox/template IDs.
+	if err := client.PostInit(waitCtx); err != nil {
+		slog.Warn("post-init failed after resume, metadata files may be stale", "sandbox", sandboxID, "error", err)
+	}
+
+	// Fetch envd version (best-effort).
+	envdVersion, _ := client.FetchVersion(ctx)
+
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -710,6 +776,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int) 
 			RootfsPath:   dmDev.DevicePath,
 			CreatedAt:    now,
 			LastActiveAt: now,
+			Metadata:     m.buildMetadata(envdVersion),
 		},
 		slot:           slot,
 		client:         client,
@@ -880,6 +947,18 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 		return 0, fmt.Errorf("sandbox %s not found", sandboxID)
 	}
 
+	// Flush guest page cache to disk before stopping the VM. Without this,
+	// files written by the build (e.g. pip-installed packages) may exist in the
+	// guest's page cache but not yet on the dm block device — flatten would then
+	// capture 0-byte files.
+	func() {
+		syncCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if _, err := sb.client.Exec(syncCtx, "/bin/sync"); err != nil {
+			slog.Warn("flatten: guest sync failed (non-fatal)", "id", sb.ID, "error", err)
+		}
+	}()
+
 	// Stop the VM but keep the dm device alive for flattening.
 	m.stopSampler(sb)
 	if err := m.vm.Destroy(ctx, sb.ID); err != nil {
@@ -919,8 +998,8 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 	// Clean up dm device and loop device now that flatten is complete.
 	m.cleanupDM(sb)
 
-	// Shrink the flattened image to its minimum size so stored templates are
-	// compact. EnsureImageSizes will re-expand them on the next agent startup.
+	// Shrink the flattened image to its minimum size, then re-expand to the
+	// configured default rootfs size so sandboxes see the full disk from boot.
 	if out, err := exec.Command("e2fsck", "-fy", outputPath).CombinedOutput(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() > 1 {
 			slog.Warn("e2fsck before shrink failed (non-fatal)", "output", string(out), "error", err)
@@ -928,6 +1007,15 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 	}
 	if out, err := exec.Command("resize2fs", "-M", outputPath).CombinedOutput(); err != nil {
 		slog.Warn("resize2fs -M failed (non-fatal)", "output", string(out), "error", err)
+	}
+
+	// Re-expand to default rootfs size.
+	targetMB := m.cfg.DefaultRootfsSizeMB
+	if targetMB <= 0 {
+		targetMB = DefaultDiskSizeMB
+	}
+	if err := expandImage(outputPath, int64(targetMB)*1024*1024, targetMB); err != nil {
+		slog.Warn("failed to expand template to default size (non-fatal)", "error", err)
 	}
 
 	sizeBytes, err := snapshot.DirSize(flattenDstDir, "")
@@ -1057,7 +1145,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
 		TemplateID:       id.UUIDString(templateID),
-		KernelPath:       layout.KernelPath(m.cfg.WrennDir),
+		KernelPath:       m.cfg.KernelPath,
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            vcpus,
 		MemoryMB:         memoryMB,
@@ -1067,6 +1155,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		GuestIP:          slot.GuestIP,
 		GatewayIP:        slot.TapIP,
 		NetMask:          slot.GuestNetMask,
+		FirecrackerBin:   m.cfg.FirecrackerBin,
 	}
 
 	snapPath := filepath.Join(tmplDir, snapshot.SnapFileName)
@@ -1098,6 +1187,14 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
+	// Trigger envd to re-read MMDS so it picks up the new sandbox/template IDs.
+	if err := client.PostInit(waitCtx); err != nil {
+		slog.Warn("post-init failed after template restore, metadata files may be stale", "sandbox", sandboxID, "error", err)
+	}
+
+	// Fetch envd version (best-effort).
+	envdVersion, _ := client.FetchVersion(ctx)
+
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -1113,6 +1210,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 			RootfsPath:     dmDev.DevicePath,
 			CreatedAt:      now,
 			LastActiveAt:   now,
+			Metadata:       m.buildMetadata(envdVersion),
 		},
 		slot:           slot,
 		client:         client,
@@ -1211,6 +1309,155 @@ func (m *Manager) GetClient(sandboxID string) (*envdclient.Client, error) {
 		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
 	}
 	return sb.client, nil
+}
+
+// SetDefaults calls envd's PostInit to configure the default user and
+// environment variables for a running sandbox. This is called by the host
+// agent after sandbox creation or resume when the template specifies defaults.
+func (m *Manager) SetDefaults(ctx context.Context, sandboxID, defaultUser string, defaultEnv map[string]string) error {
+	if defaultUser == "" && len(defaultEnv) == 0 {
+		return nil
+	}
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+	return sb.client.PostInitWithDefaults(ctx, defaultUser, defaultEnv)
+}
+
+// PtyAttach starts a new PTY process or reconnects to an existing one.
+// If cmd is non-empty, starts a new process. If empty, reconnects using tag.
+func (m *Manager) PtyAttach(ctx context.Context, sandboxID, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd string) (<-chan envdclient.PtyEvent, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if sb.Status != models.StatusRunning {
+		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	if cmd != "" {
+		return sb.client.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd)
+	}
+	return sb.client.PtyConnect(ctx, tag)
+}
+
+// PtySendInput sends raw bytes to a PTY process in a sandbox.
+func (m *Manager) PtySendInput(ctx context.Context, sandboxID, tag string, data []byte) error {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.PtySendInput(ctx, tag, data)
+}
+
+// PtyResize updates the terminal dimensions for a PTY process in a sandbox.
+func (m *Manager) PtyResize(ctx context.Context, sandboxID, tag string, cols, rows uint32) error {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	return sb.client.PtyResize(ctx, tag, cols, rows)
+}
+
+// PtyKill sends SIGKILL to a PTY process in a sandbox.
+func (m *Manager) PtyKill(ctx context.Context, sandboxID, tag string) error {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	return sb.client.PtyKill(ctx, tag)
+}
+
+// StartBackground starts a background process inside a sandbox.
+func (m *Manager) StartBackground(ctx context.Context, sandboxID, tag, cmd string, args []string, envs map[string]string, cwd string) (uint32, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return 0, err
+	}
+	if sb.Status != models.StatusRunning {
+		return 0, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.StartBackground(ctx, tag, cmd, args, envs, cwd)
+}
+
+// ConnectProcess re-attaches to a running process inside a sandbox.
+func (m *Manager) ConnectProcess(ctx context.Context, sandboxID string, pid uint32, tag string) (<-chan envdclient.ExecStreamEvent, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if sb.Status != models.StatusRunning {
+		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.ConnectProcess(ctx, pid, tag)
+}
+
+// ListProcesses returns all running processes inside a sandbox.
+func (m *Manager) ListProcesses(ctx context.Context, sandboxID string) ([]envdclient.ProcessInfo, error) {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	if sb.Status != models.StatusRunning {
+		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.ListProcesses(ctx)
+}
+
+// KillProcess sends a signal to a process inside a sandbox.
+func (m *Manager) KillProcess(ctx context.Context, sandboxID string, pid uint32, tag string, signal envdpb.Signal) error {
+	sb, err := m.get(sandboxID)
+	if err != nil {
+		return err
+	}
+	if sb.Status != models.StatusRunning {
+		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+	}
+
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
+
+	return sb.client.KillProcess(ctx, pid, tag, signal)
 }
 
 // AcquireProxyConn atomically looks up a sandbox by ID and registers an

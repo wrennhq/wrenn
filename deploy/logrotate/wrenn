@@ -1,0 +1,19 @@
+/var/lib/wrenn/logs/control-plane.log
+/var/lib/wrenn/logs/host-agent.log
+{
+    daily
+    rotate 3
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y-%m-%d
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        # Signal the processes to reopen their log files.
+        # Use SIGHUP — both binaries handle it gracefully.
+        pkill -HUP -f wrenn-cp || true
+        pkill -HUP -f wrenn-agent || true
+    endscript
+}

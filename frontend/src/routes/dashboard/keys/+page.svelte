@@ -1,15 +1,8 @@
 <script lang="ts">
-	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount } from 'svelte';
 	import { listKeys, createKey, revokeKey, type APIKey } from '$lib/api/keys';
 	import { toast } from '$lib/toast.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
-
-	let collapsed = $state(
-		typeof window !== 'undefined'
-			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
-			: false
-	);
 
 	// List state
 	let keys = $state<APIKey[]>([]);
@@ -108,16 +101,12 @@
 	<title>Wrenn — API Keys</title>
 </svelte:head>
 
-<div class="flex h-screen overflow-hidden">
-	<Sidebar bind:collapsed />
-
-	<div class="flex flex-1 flex-col overflow-hidden">
-		<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
+<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
 				<div class="flex items-center justify-between">
 					<div>
-						<h1 class="font-serif text-page tracking-[-0.02em] text-[var(--color-text-bright)]">
+						<h1 class="font-serif text-page text-[var(--color-text-bright)]">
 							API Keys
 						</h1>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
@@ -172,7 +161,7 @@
 								</svg>
 							</div>
 						</div>
-						<p class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">No API keys yet</p>
+						<p class="font-serif text-heading text-[var(--color-text-bright)]">No API keys yet</p>
 						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">Nothing can call the API without a key. Create one to authenticate your SDK or HTTP requests.</p>
 						<button
 							onclick={() => { showCreate = true; createError = null; createName = ''; }}
@@ -246,11 +235,17 @@
 					</p>
 				{/if}
 			</div>
-		</main>
+	</main>
 
-		<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
+<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
+	<div class="flex items-center gap-1.5">
+		<span class="relative flex h-[5px] w-[5px]">
+			<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+			<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+		</span>
+		<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 	</div>
-</div>
+</footer>
 
 <!-- Create Key Dialog -->
 {#if showCreate}
@@ -263,7 +258,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">New API Key</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">New API Key</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">Name it after its environment or purpose — production, staging, CI. You can't rename it later.</p>
 
 			{#if createError}
@@ -334,7 +329,7 @@
 				<span class="text-meta font-semibold text-[var(--color-accent-mid)]" style="animation: fadeUp 0.3s 0.15s ease both">Key created successfully</span>
 			</div>
 
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">{newKey.name || 'API Key'}</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">{newKey.name || 'API Key'}</h2>
 			<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 				Copy this key now — it won't be shown again.
 			</p>
@@ -405,7 +400,7 @@
 		></div>
 
 		<div class="relative w-full max-w-[380px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<h2 class="font-serif text-heading tracking-[-0.02em] text-[var(--color-text-bright)]">Revoke Key</h2>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Revoke Key</h2>
 			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
 				Permanently revoke <span class="font-medium text-[var(--color-text-secondary)]">{revokeTarget.name || revokeTarget.id}</span>.
 				Any request using this key will fail immediately.

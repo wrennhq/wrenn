@@ -13,7 +13,7 @@ SELECT * FROM team_api_keys WHERE team_id = $1 ORDER BY created_at DESC;
 SELECT k.id, k.team_id, k.name, k.key_hash, k.key_prefix, k.created_by, k.created_at, k.last_used,
        u.email AS creator_email
 FROM team_api_keys k
-JOIN users u ON u.id = k.created_by
+LEFT JOIN users u ON u.id = k.created_by
 WHERE k.team_id = $1
 ORDER BY k.created_at DESC;
 
@@ -22,3 +22,9 @@ DELETE FROM team_api_keys WHERE id = $1 AND team_id = $2;
 
 -- name: UpdateAPIKeyLastUsed :exec
 UPDATE team_api_keys SET last_used = NOW() WHERE id = $1;
+
+-- name: DeleteAPIKeysByTeam :exec
+DELETE FROM team_api_keys WHERE team_id = $1;
+
+-- name: DeleteAPIKeysByCreator :exec
+DELETE FROM team_api_keys WHERE created_by = $1;

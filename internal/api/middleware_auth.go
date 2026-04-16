@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
 // requireAPIKeyOrJWT accepts either X-API-Key header or Authorization: Bearer JWT.
@@ -38,9 +38,12 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 				return
 			}
 
-			// Try JWT bearer token.
+			// Try JWT bearer token from Authorization header.
+			tokenStr := ""
 			if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
-				tokenStr := strings.TrimPrefix(header, "Bearer ")
+				tokenStr = strings.TrimPrefix(header, "Bearer ")
+			}
+			if tokenStr != "" {
 				claims, err := auth.VerifyJWT(jwtSecret, tokenStr)
 				if err != nil {
 					slog.Warn("jwt auth failed", "error", err, "ip", r.RemoteAddr)
@@ -59,6 +62,18 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 					return
 				}
 
+				// Verify user is still active in the database.
+				user, err := queries.GetUserByID(r.Context(), userID)
+				if err != nil {
+					slog.Warn("jwt auth: failed to look up user", "user_id", claims.Subject, "error", err)
+					writeError(w, http.StatusUnauthorized, "unauthorized", "user not found")
+					return
+				}
+				if user.Status != "active" {
+					writeError(w, http.StatusForbidden, "account_deactivated", "your account has been deactivated — contact your administrator to regain access")
+					return
+				}
+
 				ctx := auth.WithAuthContext(r.Context(), auth.AuthContext{
 					TeamID: teamID,
 					UserID: userID,
@@ -67,6 +82,14 @@ func requireAPIKeyOrJWT(queries *db.Queries, jwtSecret []byte) func(http.Handler
 					Role:   claims.Role,
 				})
 				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// WebSocket upgrade requests may not carry auth headers (browsers
+			// cannot set custom headers on WS connections). Pass through —
+			// the WS handler authenticates via the first message after upgrade.
+			if isWebSocketUpgrade(r) {
+				next.ServeHTTP(w, r)
 				return
 			}
 

@@ -6,11 +6,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"git.omukk.dev/wrenn/wrenn/internal/audit"
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
-	"git.omukk.dev/wrenn/wrenn/internal/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 type apiKeyHandler struct {
@@ -63,7 +63,7 @@ func apiKeyWithCreatorToResponse(k db.ListAPIKeysByTeamWithCreatorRow) apiKeyRes
 		Name:         k.Name,
 		KeyPrefix:    k.KeyPrefix,
 		CreatedBy:    id.FormatUserID(k.CreatedBy),
-		CreatorEmail: k.CreatorEmail,
+		CreatorEmail: k.CreatorEmail.String,
 	}
 	if k.CreatedAt.Valid {
 		resp.CreatedAt = k.CreatedAt.Time.Format(time.RFC3339)

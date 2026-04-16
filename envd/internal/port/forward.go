@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Modifications by M/S Omukk
 
 // portf (port forward) periodaically scans opened TCP ports on the 127.0.0.1 (or localhost)
 // and launches `socat` process for every such port in the background.
@@ -80,8 +81,16 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 	}
 
 	for {
-		// procs is an array of currently opened ports.
-		if procs, ok := <-f.scannerSubscriber.Messages; ok {
+		select {
+		case <-ctx.Done():
+			f.stopAllForwarding()
+			return
+		case procs, ok := <-f.scannerSubscriber.Messages:
+			if !ok {
+				f.stopAllForwarding()
+				return
+			}
+
 			// Now we are going to refresh all ports that are being forwarded in the `ports` map. Maybe add new ones
 			// and maybe remove some.
 
@@ -133,11 +142,22 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 	}
 }
 
-func (f *Forwarder) startPortForwarding(ctx context.Context, p *PortToForward) {
+func (f *Forwarder) stopAllForwarding() {
+	for _, p := range f.ports {
+		f.stopPortForwarding(p)
+	}
+	f.ports = make(map[string]*PortToForward)
+}
+
+func (f *Forwarder) startPortForwarding(_ context.Context, p *PortToForward) {
 	// https://unix.stackexchange.com/questions/311492/redirect-application-listening-on-localhost-to-listening-on-external-interface
 	// socat -d -d TCP4-LISTEN:4000,bind=169.254.0.21,fork TCP4:localhost:4000
 	// reuseaddr is used to fix the "Address already in use" error when restarting socat quickly.
-	cmd := exec.CommandContext(ctx,
+	//
+	// We use exec.Command (not CommandContext) because stopAllForwarding kills
+	// socat via SIGKILL to the process group. CommandContext would also call
+	// cmd.Wait() on context cancellation, racing with the wait goroutine below.
+	cmd := exec.Command(
 		"socat", "-d", "-d", "-d",
 		fmt.Sprintf("TCP4-LISTEN:%v,bind=%s,reuseaddr,fork", p.port, f.sourceIP.To4()),
 		fmt.Sprintf("TCP%d:localhost:%v", p.family, p.port),

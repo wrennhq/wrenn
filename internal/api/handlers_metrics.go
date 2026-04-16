@@ -9,10 +9,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/auth"
-	"git.omukk.dev/wrenn/wrenn/internal/db"
-	"git.omukk.dev/wrenn/wrenn/internal/id"
-	"git.omukk.dev/wrenn/wrenn/internal/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
@@ -38,7 +38,7 @@ type metricsResponse struct {
 	Points    []metricPointResponse `json:"points"`
 }
 
-// GetMetrics handles GET /v1/sandboxes/{id}/metrics?range=10m|2h|24h.
+// GetMetrics handles GET /v1/capsules/{id}/metrics?range=10m|2h|24h.
 func (h *sandboxMetricsHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()

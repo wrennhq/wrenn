@@ -1,6 +1,6 @@
 -- name: InsertSandbox :one
-INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, template_id, template_team_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+INSERT INTO sandboxes (id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, template_id, template_team_id, metadata)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING *;
 
 -- name: GetSandbox :one
@@ -15,7 +15,7 @@ SELECT * FROM sandboxes WHERE id = $1 AND team_id = $2;
 SELECT s.status, h.address AS host_address
 FROM sandboxes s
 JOIN hosts h ON h.id = s.host_id
-WHERE s.id = $1 AND s.team_id = $2;
+WHERE s.id = $1;
 
 -- name: ListSandboxes :many
 SELECT * FROM sandboxes ORDER BY created_at DESC;
@@ -62,7 +62,7 @@ WHERE id = ANY($1::uuid[]);
 
 -- name: ListActiveSandboxesByTeam :many
 SELECT * FROM sandboxes
-WHERE team_id = $1 AND status IN ('running', 'paused', 'starting')
+WHERE team_id = $1 AND status IN ('running', 'paused', 'starting', 'hibernated')
 ORDER BY created_at DESC;
 
 -- name: MarkSandboxesMissingByHost :exec
@@ -73,6 +73,12 @@ UPDATE sandboxes
 SET status       = 'missing',
     last_updated = NOW()
 WHERE host_id = $1 AND status IN ('running', 'starting', 'pending');
+
+-- name: UpdateSandboxMetadata :exec
+UPDATE sandboxes
+SET metadata = $2,
+    last_updated = NOW()
+WHERE id = $1;
 
 -- name: BulkRestoreRunning :exec
 -- Called by the reconciler when a host comes back online and its sandboxes are

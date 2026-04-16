@@ -1,6 +1,6 @@
 -- name: InsertTemplate :one
-INSERT INTO templates (id, name, type, vcpus, memory_mb, size_bytes, team_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO templates (id, name, type, vcpus, memory_mb, size_bytes, team_id, default_user, default_env, metadata)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: GetTemplate :one

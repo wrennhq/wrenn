@@ -7,10 +7,11 @@ import (
 )
 
 // ExecContext holds mutable state that persists across recipe steps.
-// It is initialized empty and updated by ENV and WORKDIR steps.
+// It is initialized empty and updated by ENV, WORKDIR, and USER steps.
 type ExecContext struct {
 	WorkDir string
 	EnvVars map[string]string
+	User    string // Current unix user for command execution.
 }
 
 // This regex matches:
@@ -25,7 +26,20 @@ var envRegex = regexp.MustCompile(`\$\$|\$\{([a-zA-Z0-9_]*)\}|\$([a-zA-Z0-9_]+)`
 // If WORKDIR and/or ENV are set, they are prepended as a shell preamble:
 //
 //	cd '/the/dir' && KEY='val' /bin/sh -c 'original command'
+//
+// If USER is set to a non-root user, the entire command is wrapped with su:
+//
+//	su <user> -s /bin/sh -c '<preamble + command>'
 func (c *ExecContext) WrappedCommand(cmd string) string {
+	inner := c.innerCommand(cmd)
+	if c.User != "" && c.User != "root" {
+		return "su " + shellescape(c.User) + " -s /bin/sh -c " + shellescape(inner)
+	}
+	return inner
+}
+
+// innerCommand builds the command with workdir/env preamble but without user wrapping.
+func (c *ExecContext) innerCommand(cmd string) string {
 	prefix := c.shellPrefix()
 	if prefix == "" {
 		return cmd
@@ -42,7 +56,11 @@ func (c *ExecContext) WrappedCommand(cmd string) string {
 // simultaneously before a healthcheck is evaluated.
 func (c *ExecContext) StartCommand(cmd string) string {
 	prefix := c.shellPrefix()
-	return prefix + "nohup /bin/sh -c " + shellescape(cmd) + " >/dev/null 2>&1 &"
+	inner := prefix + "nohup /bin/sh -c " + shellescape(cmd) + " >/dev/null 2>&1 &"
+	if c.User != "" && c.User != "root" {
+		return "su " + shellescape(c.User) + " -s /bin/sh -c " + shellescape(inner)
+	}
+	return inner
 }
 
 // shellPrefix builds the "cd ... && KEY=val " preamble for a shell command.
@@ -97,8 +115,11 @@ func expandEnv(s string, vars map[string]string) string {
 	})
 }
 
-// shellescape wraps s in single quotes, escaping any embedded single quotes.
+// Shellescape wraps s in single quotes, escaping any embedded single quotes.
 // This is POSIX-safe for paths, env values, and shell commands.
-func shellescape(s string) string {
+func Shellescape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
+
+// shellescape is the package-internal alias for Shellescape.
+func shellescape(s string) string { return Shellescape(s) }

@@ -17,11 +17,11 @@ export type Capsule = {
 
 
 export async function listCapsules(): Promise<ApiResult<Capsule[]>> {
-	return apiFetch('GET', '/api/v1/sandboxes');
+	return apiFetch('GET', '/api/v1/capsules');
 }
 
 export async function getCapsule(id: string): Promise<ApiResult<Capsule>> {
-	return apiFetch('GET', `/api/v1/sandboxes/${id}`);
+	return apiFetch('GET', `/api/v1/capsules/${id}`);
 }
 
 export type CreateCapsuleParams = {
@@ -32,19 +32,19 @@ export type CreateCapsuleParams = {
 };
 
 export async function createCapsule(params: CreateCapsuleParams): Promise<ApiResult<Capsule>> {
-	return apiFetch('POST', '/api/v1/sandboxes', params);
+	return apiFetch('POST', '/api/v1/capsules', params);
 }
 
 export async function pauseCapsule(id: string): Promise<ApiResult<Capsule>> {
-	return apiFetch('POST', `/api/v1/sandboxes/${id}/pause`);
+	return apiFetch('POST', `/api/v1/capsules/${id}/pause`);
 }
 
 export async function resumeCapsule(id: string): Promise<ApiResult<Capsule>> {
-	return apiFetch('POST', `/api/v1/sandboxes/${id}/resume`);
+	return apiFetch('POST', `/api/v1/capsules/${id}/resume`);
 }
 
 export async function destroyCapsule(id: string): Promise<ApiResult<void>> {
-	return apiFetch('DELETE', `/api/v1/sandboxes/${id}`);
+	return apiFetch('DELETE', `/api/v1/capsules/${id}`);
 }
 
 export type Snapshot = {
@@ -57,8 +57,8 @@ export type Snapshot = {
 	platform: boolean;
 };
 
-export async function createSnapshot(sandboxId: string, name?: string): Promise<ApiResult<Snapshot>> {
-	return apiFetch('POST', '/api/v1/snapshots', { sandbox_id: sandboxId, name });
+export async function createSnapshot(capsuleId: string, name?: string): Promise<ApiResult<Snapshot>> {
+	return apiFetch('POST', '/api/v1/snapshots', { sandbox_id: capsuleId, name });
 }
 
 export async function listSnapshots(typeFilter?: string): Promise<ApiResult<Snapshot[]>> {

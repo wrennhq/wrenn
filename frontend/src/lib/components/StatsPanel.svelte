@@ -26,6 +26,8 @@
 	let chartRam: any = null;
 
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let lastDataKey = '';   // cheap fingerprint to skip redundant chart redraws
+	let visibilityHandler: (() => void) | null = null;
 
 	async function load() {
 		const result = await fetchStats(range);
@@ -43,6 +45,10 @@
 
 	function updateCharts() {
 		if (!stats) return;
+		// Skip redraw if data hasn't changed (same length + same last label).
+		const key = `${stats.series.labels.length}:${stats.series.labels.at(-1) ?? ''}`;
+		if (key === lastDataKey) return;
+		lastDataKey = key;
 		// Use Array.from to pass plain JS arrays to Chart.js — Svelte 5 $state
 		// wraps arrays in reactive proxies which Chart.js can't iterate reliably.
 		const labels = formatLabels(Array.from(stats.series.labels), range);
@@ -77,14 +83,19 @@
 		});
 	}
 
+	function stopPolling() {
+		if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+	}
+
 	function restartPolling() {
-		if (pollInterval) clearInterval(pollInterval);
+		stopPolling();
 		load();
 		pollInterval = setInterval(load, POLL_INTERVALS[range]);
 	}
 
 	function setRange(r: TimeRange) {
 		range = r;
+		lastDataKey = '';   // force chart redraw on range switch
 		goto(`?range=${r}`, { replaceState: true, noScroll: true, keepFocus: true });
 		restartPolling();
 	}
@@ -185,7 +196,7 @@
 						...BASE_CHART_OPTIONS.scales.y,
 						ticks: {
 							...BASE_CHART_OPTIONS.scales.y.ticks,
-							callback: (v: number) => `${v}`,
+							callback: (v: string | number) => `${v}`,
 						},
 					},
 				},
@@ -215,7 +226,8 @@
 					tooltip: {
 						...BASE_CHART_OPTIONS.plugins.tooltip,
 						callbacks: {
-							label: (ctx: { parsed: { y: number } }) => ` ${ctx.parsed.y.toFixed(1)} GB`,
+							// eslint-disable-next-line @typescript-eslint/no-explicit-any
+							label: (ctx: any) => ` ${ctx.parsed.y.toFixed(1)} GB`,
 						},
 					},
 				},
@@ -225,7 +237,7 @@
 						...BASE_CHART_OPTIONS.scales.y,
 						ticks: {
 							...BASE_CHART_OPTIONS.scales.y.ticks,
-							callback: (v: number) => `${(+v).toFixed(1)} GB`,
+							callback: (v: string | number) => `${(+v).toFixed(1)} GB`,
 						},
 					},
 				},
@@ -236,10 +248,21 @@
 		updateCharts();
 
 		restartPolling();
+
+		// Pause polling when the browser tab is hidden to save bandwidth/CPU.
+		visibilityHandler = () => {
+			if (document.hidden) {
+				stopPolling();
+			} else {
+				restartPolling();
+			}
+		};
+		document.addEventListener('visibilitychange', visibilityHandler);
 	});
 
 	onDestroy(() => {
-		if (pollInterval) clearInterval(pollInterval);
+		stopPolling();
+		if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
 		chartRunning?.destroy();
 		chartCpu?.destroy();
 		chartRam?.destroy();
@@ -312,7 +335,7 @@
 				</div>
 				<div class="bg-[var(--color-bg-2)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
 					<div class="text-label text-[var(--color-text-muted)]">Peak · 30d</div>
-					<div class="mt-2 font-serif text-[1.714rem] leading-none tracking-[-0.03em] text-[var(--color-text-secondary)]">
+					<div class="mt-2 font-serif text-[1.714rem] leading-none text-[var(--color-text-secondary)]">
 						{loading ? '—' : (stats?.peaks.running_count ?? 0)}
 					</div>
 				</div>
@@ -334,7 +357,7 @@
 				</div>
 				<div class="bg-[var(--color-bg-2)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
 					<div class="text-label text-[var(--color-text-muted)]">Peak · 30d</div>
-					<div class="mt-2 font-serif text-[1.714rem] leading-none tracking-[-0.03em] text-[var(--color-text-secondary)]">
+					<div class="mt-2 font-serif text-[1.714rem] leading-none text-[var(--color-text-secondary)]">
 						{loading ? '—' : (stats?.peaks.vcpus ?? 0)}
 					</div>
 				</div>
@@ -356,7 +379,7 @@
 				</div>
 				<div class="bg-[var(--color-bg-2)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
 					<div class="text-label text-[var(--color-text-muted)]">Peak · 30d</div>
-					<div class="mt-2 font-serif text-[1.714rem] leading-none tracking-[-0.03em] text-[var(--color-text-secondary)]">
+					<div class="mt-2 font-serif text-[1.714rem] leading-none text-[var(--color-text-secondary)]">
 						{loading ? '—' : fmtGB(stats?.peaks.memory_mb ?? 0)}
 					</div>
 				</div>

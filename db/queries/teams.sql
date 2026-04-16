@@ -53,3 +53,48 @@ UPDATE users_teams SET role = $3 WHERE team_id = $1 AND user_id = $2;
 
 -- name: DeleteTeamMember :exec
 DELETE FROM users_teams WHERE team_id = $1 AND user_id = $2;
+
+-- name: ListTeamsAdmin :many
+SELECT
+    t.id,
+    t.name,
+    t.slug,
+    t.is_byoc,
+    t.created_at,
+    t.deleted_at,
+    (SELECT COUNT(*) FROM users_teams ut WHERE ut.team_id = t.id)::int AS member_count,
+    COALESCE(owner_u.name, '') AS owner_name,
+    COALESCE(owner_u.email, '') AS owner_email,
+    (SELECT COUNT(*) FROM sandboxes s WHERE s.team_id = t.id AND s.status IN ('running', 'paused', 'starting'))::int AS active_sandbox_count,
+    (SELECT COUNT(*) FROM channels c WHERE c.team_id = t.id)::int AS channel_count
+FROM teams t
+LEFT JOIN users_teams owner_ut ON owner_ut.team_id = t.id AND owner_ut.role = 'owner'
+LEFT JOIN users owner_u ON owner_u.id = owner_ut.user_id
+WHERE t.id != '00000000-0000-0000-0000-000000000000'
+ORDER BY t.deleted_at ASC NULLS FIRST, t.created_at DESC
+LIMIT $1 OFFSET $2;
+
+-- name: ListSoleOwnedTeams :many
+-- Returns teams where the user is the owner and no other members exist.
+SELECT t.id FROM teams t
+JOIN users_teams ut ON ut.team_id = t.id
+WHERE ut.user_id = $1
+  AND ut.role = 'owner'
+  AND t.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM users_teams ut2
+      WHERE ut2.team_id = t.id AND ut2.user_id <> $1
+  );
+
+-- name: GetOwnedTeamIDs :many
+-- Returns team IDs where the given user has the 'owner' role.
+SELECT t.id FROM teams t
+JOIN users_teams ut ON ut.team_id = t.id
+WHERE ut.user_id = $1
+  AND ut.role = 'owner'
+  AND t.deleted_at IS NULL;
+
+-- name: CountTeamsAdmin :one
+SELECT COUNT(*)::int AS total
+FROM teams
+WHERE id != '00000000-0000-0000-0000-000000000000';

@@ -150,6 +150,13 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 		host.PollForMMDSOpts(ctx, a.mmdsChan, a.defaults.EnvVars)
 	}()
 
+	// Start the port scanner and forwarder if they were stopped by a
+	// pre-snapshot prepare call. Start is a no-op if already running,
+	// so this is safe on first boot and only takes effect after restore.
+	if a.portSubsystem != nil {
+		a.portSubsystem.Start(a.rootCtx)
+	}
+
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "")
 

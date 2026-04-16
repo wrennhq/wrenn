@@ -6,17 +6,26 @@ export type AuthResponse = {
 	name: string;
 };
 
+export type SignupResponse = {
+	message: string;
+};
+
 export type AuthResult = { ok: true; data: AuthResponse } | { ok: false; error: string };
+export type SignupResult = { ok: true; data: SignupResponse } | { ok: false; error: string };
 
 export async function apiLogin(email: string, password: string): Promise<AuthResult> {
 	return authFetch('/api/v1/auth/login', { email, password });
 }
 
-export async function apiSignup(email: string, password: string, name: string): Promise<AuthResult> {
+export async function apiSignup(email: string, password: string, name: string): Promise<SignupResult> {
 	return authFetch('/api/v1/auth/signup', { email, password, name });
 }
 
-async function authFetch(url: string, body: Record<string, string>): Promise<AuthResult> {
+export async function apiActivate(token: string): Promise<AuthResult> {
+	return authFetch('/api/v1/auth/activate', { token });
+}
+
+async function authFetch<T = AuthResponse>(url: string, body: Record<string, string>): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
 	try {
 		const res = await fetch(url, {
 			method: 'POST',
@@ -31,7 +40,7 @@ async function authFetch(url: string, body: Record<string, string>): Promise<Aut
 			return { ok: false, error: message };
 		}
 
-		return { ok: true, data: data as AuthResponse };
+		return { ok: true, data: data as T };
 	} catch {
 		return { ok: false, error: 'Unable to connect to the server' };
 	}
