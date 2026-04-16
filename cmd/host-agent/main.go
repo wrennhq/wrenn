@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -43,14 +47,20 @@ func main() {
 	cleanupLog := logging.Setup(filepath.Join(rootDir, "logs"), "host-agent")
 	defer cleanupLog()
 
-	if os.Geteuid() != 0 {
-		slog.Error("host agent must run as root")
+	if err := checkPrivileges(); err != nil {
+		slog.Error("insufficient privileges", "error", err)
 		os.Exit(1)
 	}
 
-	// Enable IP forwarding (required for NAT).
+	// Enable IP forwarding (required for NAT). The write may fail if running
+	// as non-root without DAC_OVERRIDE on this path — that's OK if the systemd
+	// unit's ExecStartPre already set it. We verify the value regardless.
 	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
-		slog.Warn("failed to enable ip_forward", "error", err)
+		slog.Warn("failed to enable ip_forward (may have been set by systemd unit)", "error", err)
+	}
+	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward"); err != nil || strings.TrimSpace(string(b)) != "1" {
+		slog.Error("ip_forward is not enabled — sandbox networking will be broken", "error", err)
+		os.Exit(1)
 	}
 
 	// Clean up stale resources from a previous crash.
@@ -170,6 +180,7 @@ func main() {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer shutdownCancel()
 			mgr.Shutdown(shutdownCtx)
+			sandbox.ShrinkMinimalImage(rootDir)
 			if err := httpServer.Shutdown(shutdownCtx); err != nil {
 				slog.Error("http server shutdown error", "error", err)
 			}
@@ -244,4 +255,64 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// checkPrivileges verifies the process has the required Linux capabilities.
+// Always reads CapEff — even for root — because a root process inside a
+// restricted container (e.g. docker --cap-drop=all) may not have all caps.
+func checkPrivileges() error {
+	capEff, err := readEffectiveCaps()
+	if err != nil {
+		return fmt.Errorf("read capabilities: %w", err)
+	}
+
+	// All capabilities required by the host agent at runtime.
+	required := []struct {
+		bit  uint
+		name string
+	}{
+		{1, "CAP_DAC_OVERRIDE"},  // /dev/loop*, /dev/mapper/*, /dev/net/tun
+		{5, "CAP_KILL"},          // SIGTERM/SIGKILL to Firecracker processes
+		{12, "CAP_NET_ADMIN"},    // netlink, iptables, routing, TAP/veth
+		{13, "CAP_NET_RAW"},      // raw sockets (iptables)
+		{19, "CAP_SYS_PTRACE"},   // reading /proc/self/ns/net (netns.Get)
+		{21, "CAP_SYS_ADMIN"},    // netns, mount ns, losetup, dmsetup
+		{27, "CAP_MKNOD"},        // device-mapper node creation
+	}
+
+	var missing []string
+	for _, cap := range required {
+		if capEff&(1<<cap.bit) == 0 {
+			missing = append(missing, cap.name)
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("missing capabilities: %s — run as root or apply setcap to the binary",
+			strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+// readEffectiveCaps parses the CapEff bitmask from /proc/self/status.
+func readEffectiveCaps() (uint64, error) {
+	f, err := os.Open("/proc/self/status")
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if hexStr, ok := strings.CutPrefix(line, "CapEff:"); ok {
+			return strconv.ParseUint(strings.TrimSpace(hexStr), 16, 64)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("read /proc/self/status: %w", err)
+	}
+	return 0, fmt.Errorf("CapEff not found in /proc/self/status")
 }
