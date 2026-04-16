@@ -271,13 +271,13 @@ func checkPrivileges() error {
 		bit  uint
 		name string
 	}{
-		{1, "CAP_DAC_OVERRIDE"},  // /dev/loop*, /dev/mapper/*, /dev/net/tun
-		{5, "CAP_KILL"},          // SIGTERM/SIGKILL to Firecracker processes
-		{12, "CAP_NET_ADMIN"},    // netlink, iptables, routing, TAP/veth
-		{13, "CAP_NET_RAW"},      // raw sockets (iptables)
-		{19, "CAP_SYS_PTRACE"},   // reading /proc/self/ns/net (netns.Get)
-		{21, "CAP_SYS_ADMIN"},    // netns, mount ns, losetup, dmsetup
-		{27, "CAP_MKNOD"},        // device-mapper node creation
+		{1, "CAP_DAC_OVERRIDE"}, // /dev/loop*, /dev/mapper/*, /dev/net/tun
+		{5, "CAP_KILL"},         // SIGTERM/SIGKILL to Firecracker processes
+		{12, "CAP_NET_ADMIN"},   // netlink, iptables, routing, TAP/veth
+		{13, "CAP_NET_RAW"},     // raw sockets (iptables)
+		{19, "CAP_SYS_PTRACE"},  // reading /proc/self/ns/net (netns.Get)
+		{21, "CAP_SYS_ADMIN"},   // netns, mount ns, losetup, dmsetup
+		{27, "CAP_MKNOD"},       // device-mapper node creation
 	}
 
 	var missing []string
