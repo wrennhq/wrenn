@@ -4,10 +4,10 @@ VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetUserByEmail :one
-SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL;
+SELECT * FROM users WHERE email = $1 AND status != 'deleted';
 
 -- name: GetUserByID :one
-SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL;
+SELECT * FROM users WHERE id = $1 AND status != 'deleted';
 
 -- name: InsertUserOAuth :one
 INSERT INTO users (id, email, name)
@@ -63,14 +63,14 @@ SELECT
     (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id)::int AS teams_joined,
     (SELECT COUNT(*) FROM users_teams ut WHERE ut.user_id = u.id AND ut.role = 'owner')::int AS teams_owned
 FROM users u
-WHERE u.deleted_at IS NULL
+WHERE u.status != 'deleted'
 ORDER BY u.created_at DESC
 LIMIT $1 OFFSET $2;
 
 -- name: CountUsersAdmin :one
 SELECT COUNT(*)::int AS total
 FROM users
-WHERE deleted_at IS NULL;
+WHERE status != 'deleted';
 
 -- name: SetUserStatus :exec
 UPDATE users SET status = $2, updated_at = NOW() WHERE id = $1;

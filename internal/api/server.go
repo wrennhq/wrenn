@@ -58,7 +58,7 @@ func New(
 	templateSvc := &service.TemplateService{DB: queries}
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool}
-	userSvc := &service.UserService{DB: queries}
+	userSvc := &service.UserService{DB: queries, SandboxSvc: sandboxSvc}
 	auditSvc := &service.AuditService{DB: queries}
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}

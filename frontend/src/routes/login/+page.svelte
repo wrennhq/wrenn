@@ -25,7 +25,7 @@
 	let signupDone = $state(false);
 
 	const oauthErrorMessages: Record<string, string> = {
-		account_deactivated: 'Your account has been deactivated — contact your administrator to regain access',
+		account_deactivated: 'Your account has been deactivated — contact the administrator to regain access',
 		access_denied: 'Access was denied by the provider',
 		email_taken: 'An account with this email already exists',
 		exchange_failed: 'Authentication failed — please try again',
