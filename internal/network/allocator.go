@@ -24,7 +24,7 @@ func (a *SlotAllocator) Allocate() (int, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	for i := 1; i <= 65534; i++ {
+	for i := 1; i <= 32767; i++ {
 		if !a.inUse[i] {
 			a.inUse[i] = true
 			return i, nil
