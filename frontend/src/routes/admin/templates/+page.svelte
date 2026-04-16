@@ -365,6 +365,16 @@
 		</div>
 </main>
 
+<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
+	<div class="flex items-center gap-1.5">
+		<span class="relative flex h-[5px] w-[5px]">
+			<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+			<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+		</span>
+		<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
+	</div>
+</footer>
+
 <!-- ── Snippets ─────────────────────────────────────────────────────── -->
 
 {#snippet skeletonRows(count: number, headers: string[])}
@@ -838,6 +848,7 @@
 								<span class="font-mono">{createForm.archive.name}</span>
 								<button
 									onclick={() => { createForm.archive = null; }}
+									aria-label="Remove file"
 									class="text-[var(--color-text-muted)] hover:text-[var(--color-red)] transition-colors"
 								>
 									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

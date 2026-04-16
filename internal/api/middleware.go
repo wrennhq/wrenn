@@ -94,21 +94,25 @@ func serviceErrToHTTP(err error) (int, string, string) {
 	}
 
 	// Map well-known service error patterns.
+	// Return generic messages for most cases to avoid leaking internal details.
 	switch {
 	case strings.Contains(msg, "not found"):
-		return http.StatusNotFound, "not_found", msg
-	case strings.Contains(msg, "not running"), strings.Contains(msg, "not paused"):
-		return http.StatusConflict, "invalid_state", msg
+		return http.StatusNotFound, "not_found", "resource not found"
+	case strings.Contains(msg, "not running"):
+		return http.StatusConflict, "invalid_state", "resource is not running"
+	case strings.Contains(msg, "not paused"):
+		return http.StatusConflict, "invalid_state", "resource is not paused"
 	case strings.Contains(msg, "conflict:"):
-		return http.StatusConflict, "conflict", msg
+		return http.StatusConflict, "conflict", strings.TrimPrefix(msg, "conflict: ")
 	case strings.Contains(msg, "forbidden"):
-		return http.StatusForbidden, "forbidden", msg
+		return http.StatusForbidden, "forbidden", "forbidden"
 	case strings.Contains(msg, "invalid or expired"):
-		return http.StatusUnauthorized, "unauthorized", msg
+		return http.StatusUnauthorized, "unauthorized", "invalid or expired credentials"
 	case strings.Contains(msg, "invalid"):
-		return http.StatusBadRequest, "invalid_request", msg
+		return http.StatusBadRequest, "invalid_request", "invalid request"
 	default:
-		return http.StatusInternalServerError, "internal_error", msg
+		slog.Error("unhandled service error", "error", err)
+		return http.StatusInternalServerError, "internal_error", "an internal error occurred"
 	}
 }
 

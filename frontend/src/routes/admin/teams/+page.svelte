@@ -360,7 +360,7 @@
 		</div>
 
 		<!-- Status bar -->
-		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-8">
+		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
 			<div class="flex items-center gap-1.5">
 				<span class="relative flex h-[5px] w-[5px]">
 					<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>

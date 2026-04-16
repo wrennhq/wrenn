@@ -317,7 +317,15 @@
 			</div>
 	</main>
 
-<footer class="h-px shrink-0 bg-[var(--color-border)]"></footer>
+<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
+	<div class="flex items-center gap-1.5">
+		<span class="relative flex h-[5px] w-[5px]">
+			<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+			<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+		</span>
+		<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
+	</div>
+</footer>
 
 {#snippet skeletonRows()}
 	<div class="rounded-[var(--radius-card)] border border-[var(--color-border)] overflow-hidden">

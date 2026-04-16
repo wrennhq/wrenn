@@ -10,19 +10,25 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
-// requireJWT validates a JWT from the Authorization: Bearer header or the
-// ?token= query parameter (for WebSocket connections that cannot send headers).
+// requireJWT validates a JWT from the Authorization: Bearer header.
 // It also verifies the user is still active in the database.
+// WebSocket upgrade requests without an Authorization header are passed through
+// — WS handlers authenticate via the first message after upgrade.
 func requireJWT(secret []byte, queries *db.Queries) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var tokenStr string
 			if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
 				tokenStr = strings.TrimPrefix(header, "Bearer ")
-			} else if t := r.URL.Query().Get("token"); t != "" {
-				tokenStr = t
 			}
 			if tokenStr == "" {
+				// WebSocket upgrade requests may not have an Authorization header
+				// (browsers cannot set custom headers on WS connections). Let them
+				// through — the handler authenticates via the first WS message.
+				if isWebSocketUpgrade(r) {
+					next.ServeHTTP(w, r)
+					return
+				}
 				writeError(w, http.StatusUnauthorized, "unauthorized", "Authorization: Bearer <token> required")
 				return
 			}

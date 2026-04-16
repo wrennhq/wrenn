@@ -20,12 +20,13 @@ import (
 )
 
 type processHandler struct {
-	db   *db.Queries
-	pool *lifecycle.HostClientPool
+	db        *db.Queries
+	pool      *lifecycle.HostClientPool
+	jwtSecret []byte
 }
 
-func newProcessHandler(db *db.Queries, pool *lifecycle.HostClientPool) *processHandler {
-	return &processHandler{db: db, pool: pool}
+func newProcessHandler(db *db.Queries, pool *lifecycle.HostClientPool, jwtSecret []byte) *processHandler {
+	return &processHandler{db: db, pool: pool, jwtSecret: jwtSecret}
 }
 
 // processResponse is a single entry in the process list.
@@ -158,7 +159,6 @@ func (h *processHandler) ConnectProcess(w http.ResponseWriter, r *http.Request) 
 	sandboxIDStr := chi.URLParam(r, "id")
 	selectorStr := chi.URLParam(r, "selector")
 	ctx := r.Context()
-	ac := auth.MustFromContext(ctx)
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
@@ -166,19 +166,31 @@ func (h *processHandler) ConnectProcess(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running (status: "+sb.Status+")")
-		return
-	}
+	// Authenticate: use context from middleware (API key) or WS first message (JWT).
+	ac, hasAuth := auth.FromContext(ctx)
 
-	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+	if !hasAuth {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			slog.Error("process stream websocket upgrade failed", "error", err)
+			return
+		}
+		defer conn.Close()
+
+		var wsAC auth.AuthContext
+		var authErr error
+		if isAdminWSRoute(ctx) {
+			wsAC, authErr = wsAuthenticateAdmin(ctx, conn, h.jwtSecret, h.db)
+		} else {
+			wsAC, authErr = wsAuthenticate(ctx, conn, h.jwtSecret, h.db)
+		}
+		if authErr != nil {
+			sendProcessWSError(conn, "authentication failed")
+			return
+		}
+		ac = wsAC
+
+		h.runConnectProcess(ctx, conn, ac, sandboxID, sandboxIDStr, selectorStr)
 		return
 	}
 
@@ -188,6 +200,26 @@ func (h *processHandler) ConnectProcess(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer conn.Close()
+
+	h.runConnectProcess(ctx, conn, ac, sandboxID, sandboxIDStr, selectorStr)
+}
+
+func (h *processHandler) runConnectProcess(ctx context.Context, conn *websocket.Conn, ac auth.AuthContext, sandboxID pgtype.UUID, sandboxIDStr, selectorStr string) {
+	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
+	if err != nil {
+		sendProcessWSError(conn, "sandbox not found")
+		return
+	}
+	if sb.Status != "running" {
+		sendProcessWSError(conn, "sandbox is not running (status: "+sb.Status+")")
+		return
+	}
+
+	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
+	if err != nil {
+		sendProcessWSError(conn, "sandbox host is not reachable")
+		return
+	}
 
 	// Build the connect request with PID or tag selector.
 	connectReq := &pb.ConnectProcessRequest{

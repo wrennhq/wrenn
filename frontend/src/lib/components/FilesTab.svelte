@@ -81,7 +81,7 @@
 	);
 
 	// Breadcrumb segments from currentPath
-	const breadcrumbs = $derived(() => {
+	const breadcrumbs = $derived.by(() => {
 		const parts = currentPath.split('/').filter(Boolean);
 		const crumbs: { name: string; path: string }[] = [{ name: '/', path: '/' }];
 		for (let i = 0; i < parts.length; i++) {
@@ -517,7 +517,7 @@
 					</svg>
 				</button>
 				<span class="w-px h-4 bg-[var(--color-border)] shrink-0 mx-1"></span>
-				{#each breadcrumbs() as crumb, i}
+				{#each breadcrumbs as crumb, i}
 					{#if i > 0}
 						<svg class="shrink-0 text-[var(--color-text-muted)]" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 							<polyline points="9 18 15 12 9 6" />
@@ -526,7 +526,7 @@
 					<button
 						onclick={() => navigateTo(crumb.path)}
 						class="shrink-0 rounded-[3px] px-1.5 py-0.5 font-mono text-label transition-colors hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]
-							{i === breadcrumbs().length - 1
+							{i === breadcrumbs.length - 1
 								? 'text-[var(--color-text-primary)]'
 								: 'text-[var(--color-text-tertiary)]'}"
 					>

@@ -25,8 +25,8 @@
 	<div class="w-full max-w-[400px]" style="animation: fadeUp 0.35s ease both">
 		<!-- Brand -->
 		<div class="mb-8 flex items-center gap-3">
-			<img src="/logo.svg" alt="Wrenn" class="h-8 w-8 rounded-[var(--radius-logo)]" />
-			<span class="font-brand text-[1.5rem] text-[var(--color-text-bright)]">Wrenn</span>
+			<img src="/logo.svg" alt="Wrenn" class="h-10 w-10 rounded-[var(--radius-logo)]" />
+			<span class="font-brand text-page text-[var(--color-text-bright)]">Wrenn</span>
 		</div>
 
 		{#if submitted}

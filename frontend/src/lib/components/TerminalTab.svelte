@@ -93,8 +93,7 @@
 
 	function getWsUrl(): string {
 		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const token = auth.token ? `?token=${encodeURIComponent(auth.token)}` : '';
-		return `${proto}//${window.location.host}${apiBasePath}/${capsuleId}/pty${token}`;
+		return `${proto}//${window.location.host}${apiBasePath}/${capsuleId}/pty`;
 	}
 
 	function wsSend(ws: WebSocket | null, data: string) {
@@ -256,6 +255,11 @@
 		const int = internals.get(id);
 		if (!int) return;
 
+		if (!auth.token) {
+			updateSession(id, { state: 'error', errorMessage: 'Not authenticated' });
+			return;
+		}
+
 		const display = sessions.find(s => s.id === id);
 		const tag = reconnectTag ?? display?.ptyTag;
 
@@ -264,6 +268,8 @@
 		updateSession(id, { state: 'connecting', errorMessage: null });
 
 		ws.onopen = () => {
+			// Send auth as the first message (JWT no longer in URL).
+			wsSend(ws, JSON.stringify({ type: 'auth', token: auth.token }));
 			const { cols, rows } = int.term;
 			const msg: Record<string, unknown> = {
 				type: tag ? 'connect' : 'start',

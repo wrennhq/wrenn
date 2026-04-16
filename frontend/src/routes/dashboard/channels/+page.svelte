@@ -523,6 +523,7 @@
 													openDropdownId = ch.id;
 												}
 											}}
+											aria-label="More actions"
 											class="flex items-center px-2 py-1.5 text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-bright)]"
 										>
 											<svg
@@ -544,10 +545,10 @@
 		<!-- Status bar -->
 		<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
 			<div class="flex items-center gap-1.5">
-				<span
-					class="inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"
-					style="animation: wrenn-glow 2.4s ease-in-out infinite"
-				></span>
+				<span class="relative flex h-[5px] w-[5px]">
+					<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+					<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+				</span>
 				<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
 			</div>
 		</footer>
@@ -660,11 +661,12 @@
 
 				<!-- Provider -->
 				<div class="mt-4">
-					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
+					<label for="provider-select" class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
 						Provider
 					</label>
 					<div class="relative" bind:this={providerDropdownEl}>
 						<button
+							id="provider-select"
 							onclick={() => { providerDropdownOpen = !providerDropdownOpen; }}
 							disabled={creating}
 							class="flex w-full items-center justify-between rounded-[var(--radius-input)] border px-3 py-2 text-ui transition-colors duration-150 disabled:opacity-60
@@ -799,11 +801,12 @@
 
 				<!-- Events dropdown -->
 				<div class="mt-5">
-					<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
+					<label for="events-select" class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
 						Events
 					</label>
 					<div class="relative" bind:this={eventsDropdownEl}>
 						<button
+							id="events-select"
 							onclick={() => { eventsDropdownOpen = !eventsDropdownOpen; }}
 							disabled={creating}
 							class="flex w-full items-center justify-between rounded-[var(--radius-input)] border px-3 py-2 text-ui transition-colors duration-150 disabled:opacity-60
@@ -850,6 +853,7 @@
 								{ev}
 								<button
 									onclick={() => { createEvents = createEvents.filter((e) => e !== ev); }}
+									aria-label="Remove {ev}"
 									class="flex items-center justify-center text-[var(--color-accent)] opacity-60 transition-opacity duration-100 hover:opacity-100"
 								>
 									<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
@@ -1020,11 +1024,12 @@
 
 			<!-- Events -->
 			<div class="mt-5">
-				<label class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
+				<label for="edit-events-select" class="mb-1.5 block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">
 					Events
 				</label>
 				<div class="relative" bind:this={editEventsDropdownEl}>
 					<button
+						id="edit-events-select"
 						onclick={() => { editEventsDropdownOpen = !editEventsDropdownOpen; }}
 						disabled={editing}
 						class="flex w-full items-center justify-between rounded-[var(--radius-input)] border px-3 py-2 text-ui transition-colors duration-150 disabled:opacity-60

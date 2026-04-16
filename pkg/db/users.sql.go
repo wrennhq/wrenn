@@ -142,7 +142,7 @@ func (q *Queries) GetAdminUsers(ctx context.Context) ([]User, error) {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE email = $1
+SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE email = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -163,7 +163,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE id = $1
+SELECT id, email, password_hash, name, is_admin, created_at, updated_at, deleted_at, status FROM users WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
