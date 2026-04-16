@@ -14,6 +14,7 @@ type Config struct {
 	RedisURL    string
 	ListenAddr  string
 	JWTSecret   string
+	WrennDir    string // WRENN_DIR — base directory for wrenn data (logs, etc.)
 
 	// mTLS — CP→Agent channel. Both must be set to enable mTLS; omitting either
 	// disables cert issuance and leaves agent connections on plain HTTP (dev mode).
@@ -48,6 +49,7 @@ func Load() Config {
 		RedisURL:    envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
 		ListenAddr:  envOrDefault("WRENN_CP_LISTEN_ADDR", ":8080"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
+		WrennDir:    envOrDefault("WRENN_DIR", "/var/lib/wrenn"),
 
 		CACert: os.Getenv("WRENN_CA_CERT"),
 		CAKey:  os.Getenv("WRENN_CA_KEY"),

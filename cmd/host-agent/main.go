@@ -21,6 +21,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/logging"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 )
 
@@ -38,9 +39,9 @@ func main() {
 	advertiseAddr := flag.String("address", "", "Externally-reachable address (ip:port) for this host agent")
 	flag.Parse()
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	})))
+	rootDir := envOrDefault("WRENN_DIR", "/var/lib/wrenn")
+	cleanupLog := logging.Setup(filepath.Join(rootDir, "logs"), "host-agent")
+	defer cleanupLog()
 
 	if os.Geteuid() != 0 {
 		slog.Error("host agent must run as root")
@@ -57,7 +58,6 @@ func main() {
 	network.CleanupStaleNamespaces()
 
 	listenAddr := envOrDefault("WRENN_HOST_LISTEN_ADDR", ":50051")
-	rootDir := envOrDefault("WRENN_DIR", "/var/lib/wrenn")
 	cpURL := os.Getenv("WRENN_CP_URL")
 	credsFile := filepath.Join(rootDir, "host-credentials.json")
 

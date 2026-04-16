@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/config"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/logging"
 	"git.omukk.dev/wrenn/wrenn/pkg/scheduler"
 )
 
@@ -39,11 +41,9 @@ func Run(opts ...Option) {
 		opt(o)
 	}
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	})))
-
 	cfg := config.Load()
+	cleanupLog := logging.Setup(filepath.Join(cfg.WrennDir, "logs"), "control-plane")
+	defer cleanupLog()
 
 	if len(cfg.JWTSecret) < 32 {
 		slog.Error("JWT_SECRET must be at least 32 characters")
