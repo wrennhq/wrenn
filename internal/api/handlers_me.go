@@ -533,7 +533,7 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to start transaction")
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := h.db.WithTx(tx)
 

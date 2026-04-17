@@ -20,6 +20,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	emailtypes "git.omukk.dev/wrenn/wrenn/pkg/email"
 )
 
 // Config holds SMTP connection credentials. All fields except Host are
@@ -32,26 +34,10 @@ type Config struct {
 	FromEmail string // envelope sender address
 }
 
-// Mailer sends transactional emails.
-type Mailer interface {
-	Send(ctx context.Context, to string, subject string, data EmailData) error
-}
-
-// EmailData is the generic payload for all transactional emails.
-// Templates conditionally render each field based on presence.
-type EmailData struct {
-	RecipientName string  // optional — used after "Hello"
-	Message       string  // main body (plain text; HTML template wraps it)
-	Button        *Button // optional CTA button
-	Closing       string  // optional closing/footer message
-}
-
-// Button represents a call-to-action link rendered as a button in HTML
-// and as a plain URL in the text variant.
-type Button struct {
-	Text string // button label
-	URL  string // target URL
-}
+// Re-export public types so existing internal/ callers don't need to change imports.
+type Mailer = emailtypes.Mailer
+type EmailData = emailtypes.EmailData
+type Button = emailtypes.Button
 
 // New constructs a Mailer. If cfg.Host is empty, returns a no-op mailer
 // that logs at debug level and discards. Panics if templates fail to parse
