@@ -10,11 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/config"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	"git.omukk.dev/wrenn/wrenn/pkg/scheduler"
 )
