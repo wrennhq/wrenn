@@ -2,7 +2,7 @@ openapi: "3.1.0"
 info:
   title: Wrenn API
   description: MicroVM-based code execution platform API.
-  version: "0.1.0"
+  version: "0.1.2"
 
 servers:
   - url: http://localhost:8080
