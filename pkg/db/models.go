@@ -41,6 +41,13 @@ type Channel struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DailyUsage struct {
+	TeamID       pgtype.UUID    `json:"team_id"`
+	Day          pgtype.Date    `json:"day"`
+	CpuMinutes   pgtype.Numeric `json:"cpu_minutes"`
+	RamMbMinutes pgtype.Numeric `json:"ram_mb_minutes"`
+}
+
 type Host struct {
 	ID               pgtype.UUID        `json:"id"`
 	Type             string             `json:"type"`

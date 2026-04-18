@@ -196,12 +196,10 @@
 <main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
-				<div>
-					<h1 class="font-serif text-page text-[var(--color-text-bright)]">Settings</h1>
-					<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-						Manage your account details and security.
-					</p>
-				</div>
+				<h1 class="font-serif text-page text-[var(--color-text-bright)]">Settings</h1>
+				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+					Manage your account details and security.
+				</p>
 				<div class="mt-6 border-b border-[var(--color-border)]"></div>
 			</div>
 

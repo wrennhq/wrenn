@@ -2,7 +2,7 @@ openapi: "3.1.0"
 info:
   title: Wrenn API
   description: MicroVM-based code execution platform API.
-  version: "0.1.0"
+  version: "0.1.2"
 
 servers:
   - url: http://localhost:8080
@@ -918,6 +918,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CapsuleStats"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/capsules/usage:
+    get:
+      summary: Get daily CPU and RAM usage for your team
+      operationId: getCapsuleUsage
+      tags: [capsules]
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Start date (YYYY-MM-DD). Defaults to 30 days ago.
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: End date (YYYY-MM-DD). Defaults to today.
+      responses:
+        "200":
+          description: Daily usage data for the team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
 
@@ -2431,6 +2463,28 @@ components:
             Auto-pause TTL in seconds. The capsule is automatically paused
             after this duration of inactivity (no exec or ping). 0 means
             no auto-pause.
+
+    UsageResponse:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        points:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              cpu_minutes:
+                type: number
+              ram_mb_minutes:
+                type: number
 
     CapsuleStats:
       type: object

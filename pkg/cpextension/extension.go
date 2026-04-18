@@ -5,6 +5,7 @@ package cpextension
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,4 +48,11 @@ type Extension interface {
 	// the application context after the server is fully initialized.
 	// Each function should start its own goroutine(s) and return.
 	BackgroundWorkers(ctx ServerContext) []func(context.Context)
+}
+
+// MiddlewareProvider is optionally implemented by extensions that need
+// middleware applied before OSS routes are registered. This allows
+// cloud middleware to wrap existing OSS routes (e.g. billing checks).
+type MiddlewareProvider interface {
+	Middlewares(ctx ServerContext) []func(http.Handler) http.Handler
 }
