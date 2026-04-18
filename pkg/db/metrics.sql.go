@@ -11,6 +11,43 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const computeDailyUsageForDay = `-- name: ComputeDailyUsageForDay :one
+SELECT
+    COALESCE(SUM(vcpus_reserved     * 10.0 / 60.0), 0)::NUMERIC(18,4) AS cpu_minutes,
+    COALESCE(SUM(memory_mb_reserved * 10.0 / 60.0), 0)::NUMERIC(18,4) AS ram_mb_minutes
+FROM sandbox_metrics_snapshots
+WHERE team_id    = $1
+  AND sampled_at >= $2
+  AND sampled_at <  $3
+`
+
+type ComputeDailyUsageForDayParams struct {
+	TeamID      pgtype.UUID        `json:"team_id"`
+	SampledAt   pgtype.Timestamptz `json:"sampled_at"`
+	SampledAt_2 pgtype.Timestamptz `json:"sampled_at_2"`
+}
+
+type ComputeDailyUsageForDayRow struct {
+	CpuMinutes   pgtype.Numeric `json:"cpu_minutes"`
+	RamMbMinutes pgtype.Numeric `json:"ram_mb_minutes"`
+}
+
+func (q *Queries) ComputeDailyUsageForDay(ctx context.Context, arg ComputeDailyUsageForDayParams) (ComputeDailyUsageForDayRow, error) {
+	row := q.db.QueryRow(ctx, computeDailyUsageForDay, arg.TeamID, arg.SampledAt, arg.SampledAt_2)
+	var i ComputeDailyUsageForDayRow
+	err := row.Scan(&i.CpuMinutes, &i.RamMbMinutes)
+	return i, err
+}
+
+const deleteDailyUsageByTeam = `-- name: DeleteDailyUsageByTeam :exec
+DELETE FROM daily_usage WHERE team_id = $1
+`
+
+func (q *Queries) DeleteDailyUsageByTeam(ctx context.Context, teamID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteDailyUsageByTeam, teamID)
+	return err
+}
+
 const deleteMetricPointsByTeam = `-- name: DeleteMetricPointsByTeam :exec
 DELETE FROM sandbox_metric_points
 WHERE sandbox_id IN (SELECT id FROM sandboxes WHERE team_id = $1)
@@ -53,6 +90,47 @@ type DeleteSandboxMetricPointsByTierParams struct {
 func (q *Queries) DeleteSandboxMetricPointsByTier(ctx context.Context, arg DeleteSandboxMetricPointsByTierParams) error {
 	_, err := q.db.Exec(ctx, deleteSandboxMetricPointsByTier, arg.SandboxID, arg.Tier)
 	return err
+}
+
+const getDailyUsage = `-- name: GetDailyUsage :many
+SELECT day, cpu_minutes, ram_mb_minutes
+FROM daily_usage
+WHERE team_id = $1
+  AND day >= $2
+  AND day <= $3
+ORDER BY day ASC
+`
+
+type GetDailyUsageParams struct {
+	TeamID pgtype.UUID `json:"team_id"`
+	Day    pgtype.Date `json:"day"`
+	Day_2  pgtype.Date `json:"day_2"`
+}
+
+type GetDailyUsageRow struct {
+	Day          pgtype.Date    `json:"day"`
+	CpuMinutes   pgtype.Numeric `json:"cpu_minutes"`
+	RamMbMinutes pgtype.Numeric `json:"ram_mb_minutes"`
+}
+
+func (q *Queries) GetDailyUsage(ctx context.Context, arg GetDailyUsageParams) ([]GetDailyUsageRow, error) {
+	rows, err := q.db.Query(ctx, getDailyUsage, arg.TeamID, arg.Day, arg.Day_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetDailyUsageRow
+	for rows.Next() {
+		var i GetDailyUsageRow
+		if err := rows.Scan(&i.Day, &i.CpuMinutes, &i.RamMbMinutes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getLiveMetrics = `-- name: GetLiveMetrics :one
@@ -142,6 +220,32 @@ func (q *Queries) GetSandboxMetricPoints(ctx context.Context, arg GetSandboxMetr
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTeamsWithSnapshots = `-- name: GetTeamsWithSnapshots :many
+SELECT DISTINCT team_id
+FROM sandbox_metrics_snapshots
+WHERE sampled_at > NOW() - INTERVAL '93 days'
+`
+
+func (q *Queries) GetTeamsWithSnapshots(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, getTeamsWithSnapshots)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var team_id pgtype.UUID
+		if err := rows.Scan(&team_id); err != nil {
+			return nil, err
+		}
+		items = append(items, team_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -266,4 +370,29 @@ func (q *Queries) SampleSandboxMetrics(ctx context.Context) ([]SampleSandboxMetr
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertDailyUsage = `-- name: UpsertDailyUsage :exec
+INSERT INTO daily_usage (team_id, day, cpu_minutes, ram_mb_minutes)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (team_id, day) DO UPDATE
+    SET cpu_minutes    = EXCLUDED.cpu_minutes,
+        ram_mb_minutes = EXCLUDED.ram_mb_minutes
+`
+
+type UpsertDailyUsageParams struct {
+	TeamID       pgtype.UUID    `json:"team_id"`
+	Day          pgtype.Date    `json:"day"`
+	CpuMinutes   pgtype.Numeric `json:"cpu_minutes"`
+	RamMbMinutes pgtype.Numeric `json:"ram_mb_minutes"`
+}
+
+func (q *Queries) UpsertDailyUsage(ctx context.Context, arg UpsertDailyUsageParams) error {
+	_, err := q.db.Exec(ctx, upsertDailyUsage,
+		arg.TeamID,
+		arg.Day,
+		arg.CpuMinutes,
+		arg.RamMbMinutes,
+	)
+	return err
 }

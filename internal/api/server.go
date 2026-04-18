@@ -54,6 +54,13 @@ func New(
 	r := chi.NewRouter()
 	r.Use(requestLogger())
 
+	// Apply extension middleware before routes so it wraps all OSS routes.
+	for _, ext := range extensions {
+		if mp, ok := ext.(cpextension.MiddlewareProvider); ok {
+			r.Use(mp.Middlewares(sctx)...)
+		}
+	}
+
 	// Shared service layer.
 	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
 	apiKeySvc := &service.APIKeyService{DB: queries}
@@ -63,6 +70,7 @@ func New(
 	userSvc := &service.UserService{DB: queries, SandboxSvc: sandboxSvc}
 	auditSvc := &service.AuditService{DB: queries}
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
+	usageSvc := &service.UsageService{DB: queries}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
 
 	sandbox := newSandboxHandler(sandboxSvc, al)
@@ -80,6 +88,7 @@ func New(
 	usersH := newUsersHandler(queries, userSvc)
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)
+	usageH := newUsageHandler(usageSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
 	buildH := newBuildHandler(buildSvc, queries, pool)
 	channelH := newChannelHandler(channelSvc, al)
@@ -159,6 +168,7 @@ func New(
 		r.Post("/", sandbox.Create)
 		r.Get("/", sandbox.List)
 		r.Get("/stats", statsH.GetStats)
+		r.Get("/usage", usageH.GetUsage)
 
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", sandbox.Get)
