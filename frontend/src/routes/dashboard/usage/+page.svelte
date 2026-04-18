@@ -296,7 +296,7 @@
 			Usage
 		</h1>
 		<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-			Resource consumption and execution metrics across your team.
+			CPU and memory consumed by your capsules, aggregated daily.
 		</p>
 		<div class="mt-6 border-b border-[var(--color-border)]"></div>
 	</div>
@@ -307,30 +307,33 @@
 		<!-- Controls row -->
 		<div class="flex items-center justify-between">
 			<!-- Preset range selector -->
-			<div class="flex overflow-hidden rounded-[var(--radius-button)] border border-[var(--color-border)]">
-				{#each PRESETS as p, i}
-					<button
-						onclick={() => applyPreset(p)}
-						class="px-3 py-1.5 font-mono text-label transition-colors duration-150
-							{preset === p
-								? 'bg-[var(--color-bg-5)] text-[var(--color-text-bright)]'
-								: 'text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-secondary)]'}
-							{i > 0 ? 'border-l border-[var(--color-border)]' : ''}"
-					>
-						{p}
-					</button>
-				{/each}
+			<div class="flex items-center gap-3">
+				<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Period</span>
+				<div class="flex overflow-hidden rounded-[var(--radius-button)] border border-[var(--color-border)]">
+					{#each PRESETS as p, i}
+						<button
+							onclick={() => applyPreset(p)}
+							class="px-3 py-1.5 font-mono text-label transition-colors duration-150
+								{preset === p
+									? 'bg-[var(--color-bg-5)] text-[var(--color-text-bright)]'
+									: 'text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-secondary)]'}
+								{i > 0 ? 'border-l border-[var(--color-border)]' : ''}"
+						>
+							{p}
+						</button>
+					{/each}
+				</div>
 			</div>
 
 			<!-- Date inputs -->
-			<div class="flex items-center gap-2">
+			<div class="flex items-center gap-2.5">
 				<input
 					type="date"
 					bind:value={fromInput}
 					onchange={onDateChange}
 					class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] px-2.5 py-1.5 font-mono text-label text-[var(--color-text-secondary)] transition-colors duration-150 focus:border-[var(--color-accent)] focus:outline-none"
 				/>
-				<span class="text-meta text-[var(--color-text-muted)]">to</span>
+				<span class="text-meta text-[var(--color-text-tertiary)]">to</span>
 				<input
 					type="date"
 					bind:value={toInput}
@@ -359,7 +362,7 @@
 					<svg class="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<path d="M21 12a9 9 0 1 1-6.219-8.56" />
 					</svg>
-					Loading usage data...
+					Loading usage data…
 				</div>
 			</div>
 		{:else if data && data.points.length === 0}
@@ -376,44 +379,44 @@
 					</div>
 				</div>
 				<p class="font-serif text-heading text-[var(--color-text-bright)]">
-					No usage data yet
+					No usage recorded
 				</p>
 				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
-					Usage will appear here once capsules have been running.
+					Metrics appear here once you run a capsule. Create one to get started.
 				</p>
 			</div>
 		{:else if data}
 			<!-- Summary cards -->
-			<div class="mt-6 grid grid-cols-2 overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]">
+			<div class="mt-6 grid grid-cols-2 gap-4">
 
-				<!-- CPU-minutes total -->
-				<div class="border-r border-[var(--color-border)]" style="box-shadow: inset 5px 0 0 #5a9fd4">
-					<div class="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-6 py-3">
-						<span class="h-2 w-2 rounded-full" style="background: #5a9fd4"></span>
-						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Total CPU-Minutes</span>
+				<!-- CPU total -->
+				<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]" style="box-shadow: inset 3px 0 0 #5a9fd4; animation: fadeUp 0.35s ease both; animation-delay: 40ms">
+					<div class="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-5 py-2.5">
+						<span class="h-1.5 w-1.5 rounded-full" style="background: #5a9fd4"></span>
+						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">CPU time</span>
 					</div>
-					<div class="bg-[var(--color-bg-3)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-4)]">
-						<div class="font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
+					<div class="bg-[var(--color-bg-2)] px-5 py-5 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
+						<div class="font-serif text-display leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
 							{fmtNumber(totalCpuMinutes)}
 						</div>
-						<div class="mt-2 font-mono text-meta text-[var(--color-text-muted)]">
-							{fromInput} — {toInput}
+						<div class="mt-1.5 font-mono text-meta text-[var(--color-text-tertiary)]">
+							minutes
 						</div>
 					</div>
 				</div>
 
-				<!-- RAM GB-minutes total -->
-				<div style="box-shadow: inset 5px 0 0 #d4a73c">
-					<div class="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-6 py-3">
-						<span class="h-2 w-2 rounded-full" style="background: #d4a73c"></span>
-						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Total RAM GB-Minutes</span>
+				<!-- RAM total -->
+				<div class="overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)]" style="box-shadow: inset 3px 0 0 #d4a73c; animation: fadeUp 0.35s ease both; animation-delay: 80ms">
+					<div class="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-5 py-2.5">
+						<span class="h-1.5 w-1.5 rounded-full" style="background: #d4a73c"></span>
+						<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Memory</span>
 					</div>
-					<div class="bg-[var(--color-bg-3)] px-6 py-6 transition-colors duration-150 hover:bg-[var(--color-bg-4)]">
-						<div class="font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
+					<div class="bg-[var(--color-bg-2)] px-5 py-5 transition-colors duration-150 hover:bg-[var(--color-bg-3)]">
+						<div class="font-serif text-display leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
 							{fmtNumber(totalRamGBMinutes)}
 						</div>
-						<div class="mt-2 font-mono text-meta text-[var(--color-text-muted)]">
-							{fromInput} — {toInput}
+						<div class="mt-1.5 font-mono text-meta text-[var(--color-text-tertiary)]">
+							GB-minutes
 						</div>
 					</div>
 				</div>
@@ -421,14 +424,14 @@
 			</div>
 
 			<!-- Charts -->
-			<div class="mt-6 flex flex-col gap-5">
+			<div class="mt-6 flex flex-col gap-6">
 
 				<!-- CPU chart -->
-				<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
-					<div class="border-b border-[var(--color-border)] px-6 py-4">
+				<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]" style="animation: fadeUp 0.35s ease both; animation-delay: 120ms">
+					<div class="border-b border-[var(--color-border)] px-5 py-3">
 						<div class="flex items-center gap-2">
-							<span class="h-2 w-2 rounded-full" style="background: #5a9fd4"></span>
-							<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">CPU · Minutes</span>
+							<span class="h-1.5 w-1.5 rounded-full" style="background: #5a9fd4"></span>
+							<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">CPU minutes per day</span>
 						</div>
 					</div>
 					<div class="relative flex-1 px-5 pb-5 pt-3" style="min-height: 260px">
@@ -437,11 +440,11 @@
 				</div>
 
 				<!-- RAM chart -->
-				<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
-					<div class="border-b border-[var(--color-border)] px-6 py-4">
+				<div class="flex flex-col rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-2)]" style="animation: fadeUp 0.35s ease both; animation-delay: 160ms">
+					<div class="border-b border-[var(--color-border)] px-5 py-3">
 						<div class="flex items-center gap-2">
-							<span class="h-2 w-2 rounded-full" style="background: #d4a73c"></span>
-							<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">RAM · GB-Minutes</span>
+							<span class="h-1.5 w-1.5 rounded-full" style="background: #d4a73c"></span>
+							<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Memory GB-minutes per day</span>
 						</div>
 					</div>
 					<div class="relative flex-1 px-5 pb-5 pt-3" style="min-height: 260px">
