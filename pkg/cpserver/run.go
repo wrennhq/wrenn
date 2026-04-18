@@ -210,6 +210,10 @@ func Run(opts ...Option) {
 	sampler := api.NewMetricsSampler(queries, 10*time.Second)
 	sampler.Start(ctx)
 
+	// Start daily usage rollup (pre-computes CPU-minutes and RAM-MB-minutes).
+	rollup := api.NewDailyUsageRollup(queries, time.Hour)
+	rollup.Start(ctx)
+
 	// Start extension background workers.
 	for _, ext := range o.extensions {
 		for _, worker := range ext.BackgroundWorkers(sctx) {

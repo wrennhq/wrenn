@@ -343,14 +343,9 @@
 			<div class="px-7 pt-8">
 				<div class="flex items-center justify-between">
 					<div>
-						<div class="flex items-baseline gap-4">
-							<h1 class="font-serif text-page text-[var(--color-text-bright)]">
-								Channels
-							</h1>
-							{#if !loading && channels.length > 0}
-								<span class="font-serif text-[1.75rem] text-[var(--color-text-muted)]">{channels.length}</span>
-							{/if}
-						</div>
+						<h1 class="font-serif text-page text-[var(--color-text-bright)]">
+							Channels
+						</h1>
 						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
 							Route capsule events to Discord, Slack, Telegram, and other destinations.
 						</p>

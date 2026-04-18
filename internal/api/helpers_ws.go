@@ -43,14 +43,14 @@ type wsAuthMsg struct {
 // authenticated context. The caller must send this as the first message after
 // connecting.
 func wsAuthenticate(ctx context.Context, conn *websocket.Conn, jwtSecret []byte, queries *db.Queries) (auth.AuthContext, error) {
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
 	var msg wsAuthMsg
 	if err := conn.ReadJSON(&msg); err != nil {
 		return auth.AuthContext{}, fmt.Errorf("read auth message: %w", err)
 	}
 
-	conn.SetReadDeadline(time.Time{}) // clear deadline
+	_ = conn.SetReadDeadline(time.Time{}) // clear deadline
 
 	if msg.Type != "auth" || msg.Token == "" {
 		return auth.AuthContext{}, fmt.Errorf("first message must be type 'auth' with a token")

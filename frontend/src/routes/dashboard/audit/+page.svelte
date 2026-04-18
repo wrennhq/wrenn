@@ -279,14 +279,12 @@
 
 			<!-- Header -->
 			<div class="px-7 pt-8">
-				<div>
-					<h1 class="font-serif text-page text-[var(--color-text-bright)]">
-						Audit Logs
-					</h1>
-					<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-						A complete record of activity across your team.
-					</p>
-				</div>
+				<h1 class="font-serif text-page text-[var(--color-text-bright)]">
+					Audit Logs
+				</h1>
+				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+					A complete record of activity across your team.
+				</p>
 				<div class="mt-6 border-b border-[var(--color-border)]"></div>
 			</div>
 

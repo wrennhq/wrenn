@@ -152,16 +152,12 @@
 	<main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
 			<!-- Header -->
 			<div class="px-7 pt-8">
-				<div class="flex items-start justify-between">
-					<div>
-						<h1 class="font-serif text-page text-[var(--color-text-bright)]">
-							Templates
-						</h1>
-						<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-							Snapshots capture a running capsule's state. Base images are the starting point for every new capsule. Launch from either.
-						</p>
-					</div>
-				</div>
+				<h1 class="font-serif text-page text-[var(--color-text-bright)]">
+					Templates
+				</h1>
+				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
+					Snapshots capture a running capsule's state. Base images are the starting point for every new capsule. Launch from either.
+				</p>
 
 				<!-- Page-level tabs -->
 				<div class="mt-6 flex gap-0 border-b border-[var(--color-border)]">

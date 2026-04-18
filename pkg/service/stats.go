@@ -158,3 +158,91 @@ func (s *StatsService) queryTimeSeries(ctx context.Context, teamID pgtype.UUID, 
 	}
 	return points, rows.Err()
 }
+
+// UsagePoint is one daily usage data point.
+type UsagePoint struct {
+	Day          time.Time
+	CPUMinutes   float64
+	RAMMBMinutes float64
+}
+
+// UsageService queries pre-computed daily usage rollups. For the current
+// day it computes usage live from sandbox_metrics_snapshots so the value
+// is always up-to-date rather than stale until the next hourly rollup.
+type UsageService struct {
+	DB *db.Queries
+}
+
+// GetUsage returns daily CPU-minute and RAM-MB-minute totals for a team
+// within the given date range (inclusive). Past days come from the
+// pre-computed daily_usage table; today is computed live from snapshots.
+func (s *UsageService) GetUsage(ctx context.Context, teamID pgtype.UUID, from, to time.Time) ([]UsagePoint, error) {
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+	// Clamp the pre-computed query to exclude today (it hasn't been rolled up).
+	precomputedTo := to
+	if !to.Before(today) {
+		precomputedTo = today.AddDate(0, 0, -1)
+	}
+
+	var points []UsagePoint
+
+	// Fetch pre-computed days (from..min(to, yesterday)).
+	if !from.After(precomputedTo) {
+		rows, err := s.DB.GetDailyUsage(ctx, db.GetDailyUsageParams{
+			TeamID: teamID,
+			Day:    pgtype.Date{Time: from, Valid: true},
+			Day_2:  pgtype.Date{Time: precomputedTo, Valid: true},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("get daily usage: %w", err)
+		}
+
+		points = make([]UsagePoint, 0, len(rows)+1)
+		for _, r := range rows {
+			cpu, err := r.CpuMinutes.Float64Value()
+			if err != nil {
+				return nil, fmt.Errorf("convert cpu_minutes: %w", err)
+			}
+			ram, err := r.RamMbMinutes.Float64Value()
+			if err != nil {
+				return nil, fmt.Errorf("convert ram_mb_minutes: %w", err)
+			}
+			points = append(points, UsagePoint{
+				Day:          r.Day.Time,
+				CPUMinutes:   cpu.Float64,
+				RAMMBMinutes: ram.Float64,
+			})
+		}
+	}
+
+	// Compute today live from snapshots if the range includes today.
+	if !to.Before(today) && !from.After(today) {
+		todayEnd := today.Add(24 * time.Hour)
+		row, err := s.DB.ComputeDailyUsageForDay(ctx, db.ComputeDailyUsageForDayParams{
+			TeamID:      teamID,
+			SampledAt:   pgtype.Timestamptz{Time: today, Valid: true},
+			SampledAt_2: pgtype.Timestamptz{Time: todayEnd, Valid: true},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("compute today usage: %w", err)
+		}
+
+		cpu, err := row.CpuMinutes.Float64Value()
+		if err != nil {
+			return nil, fmt.Errorf("convert today cpu_minutes: %w", err)
+		}
+		ram, err := row.RamMbMinutes.Float64Value()
+		if err != nil {
+			return nil, fmt.Errorf("convert today ram_mb_minutes: %w", err)
+		}
+		points = append(points, UsagePoint{
+			Day:          today,
+			CPUMinutes:   cpu.Float64,
+			RAMMBMinutes: ram.Float64,
+		})
+	}
+
+	return points, nil
+}

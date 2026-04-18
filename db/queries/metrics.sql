@@ -73,3 +73,35 @@ SELECT
      + COALESCE(SUM(CEIL(memory_mb::NUMERIC / 2)) FILTER (WHERE status = 'paused'), 0))::INTEGER                     AS memory_mb_reserved
 FROM sandboxes
 GROUP BY team_id;
+
+-- name: GetTeamsWithSnapshots :many
+SELECT DISTINCT team_id
+FROM sandbox_metrics_snapshots
+WHERE sampled_at > NOW() - INTERVAL '93 days';
+
+-- name: ComputeDailyUsageForDay :one
+SELECT
+    COALESCE(SUM(vcpus_reserved     * 10.0 / 60.0), 0)::NUMERIC(18,4) AS cpu_minutes,
+    COALESCE(SUM(memory_mb_reserved * 10.0 / 60.0), 0)::NUMERIC(18,4) AS ram_mb_minutes
+FROM sandbox_metrics_snapshots
+WHERE team_id    = $1
+  AND sampled_at >= $2
+  AND sampled_at <  $3;
+
+-- name: UpsertDailyUsage :exec
+INSERT INTO daily_usage (team_id, day, cpu_minutes, ram_mb_minutes)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (team_id, day) DO UPDATE
+    SET cpu_minutes    = EXCLUDED.cpu_minutes,
+        ram_mb_minutes = EXCLUDED.ram_mb_minutes;
+
+-- name: GetDailyUsage :many
+SELECT day, cpu_minutes, ram_mb_minutes
+FROM daily_usage
+WHERE team_id = $1
+  AND day >= $2
+  AND day <= $3
+ORDER BY day ASC;
+
+-- name: DeleteDailyUsageByTeam :exec
+DELETE FROM daily_usage WHERE team_id = $1;
