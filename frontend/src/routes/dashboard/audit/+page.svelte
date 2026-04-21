@@ -192,8 +192,15 @@
 
 	// ─── UI helpers ───────────────────────────────────────────────────────────
 
+	const DELETED_BADGE = '\x00DELETED\x00';
+	const deletedBadgeHtml = '<span class="deleted-user-badge">deleted-user</span>';
+
+	function renderDeleted(text: string): string {
+		return text.replaceAll(DELETED_BADGE, deletedBadgeHtml);
+	}
+
 	function describeEvent(log: AuditLog): string {
-		const actor = log.actor_name || (log.actor_type === 'system' ? 'System' : 'Unknown');
+		const actor = log.actor_name === 'deleted-user' ? DELETED_BADGE : (log.actor_name || (log.actor_type === 'system' ? 'System' : 'Unknown'));
 		const meta = (log.metadata ?? {}) as Record<string, string>;
 		switch (`${log.resource_type}:${log.action}`) {
 			case 'sandbox:create':     return `${actor} created a capsule`;
@@ -205,8 +212,8 @@
 			case 'team:rename':        return `${actor} renamed the team from "${meta.old_name}" to "${meta.new_name}"`;
 			case 'api_key:create':     return `${actor} created API key "${meta.name}"`;
 			case 'api_key:revoke':     return `${actor} revoked an API key`;
-			case 'member:add':         return `${actor} added ${meta.email} as ${meta.role}`;
-			case 'member:remove':      return `${actor} removed ${meta.email ?? 'a member'}`;
+			case 'member:add':         return `${actor} added ${meta.email ?? DELETED_BADGE} as ${meta.role}`;
+			case 'member:remove':      return `${actor} removed ${meta.email ?? DELETED_BADGE}`;
 			case 'member:leave':       return `${actor} left the team`;
 			case 'member:role_update': return `${actor} changed a member's role to ${meta.new_role}`;
 			case 'host:create':        return `${actor} registered a host`;
@@ -219,6 +226,7 @@
 
 	function actorLabel(log: AuditLog): string {
 		if (log.actor_type === 'system') return 'System';
+		if (log.actor_name === 'deleted-user') return DELETED_BADGE;
 		return log.actor_name ?? '—';
 	}
 
@@ -498,7 +506,7 @@
 									<div class="min-w-0 px-4 py-4">
 										<div class="flex flex-col gap-1">
 											<span class="truncate text-ui font-medium text-[var(--color-text-bright)]">
-												{actorLabel(log)}
+												{@html renderDeleted(actorLabel(log))}
 											</span>
 											{#if log.actor_type === 'api_key'}
 												<span class="inline-flex w-fit items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-text-muted)]">key</span>
@@ -508,7 +516,7 @@
 
 									<!-- Event description + resource ID -->
 									<div class="min-w-0 px-4 py-4">
-										<p class="text-ui font-medium text-[var(--color-text-primary)]">{describeEvent(log)}</p>
+										<p class="text-ui font-medium text-[var(--color-text-primary)]">{@html renderDeleted(describeEvent(log))}</p>
 										{#if log.resource_id}
 											<span class="mt-1 inline-flex items-center rounded-sm border border-[var(--color-border-mid)] bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-badge text-[var(--color-text-muted)]">{log.resource_id}</span>
 										{/if}
@@ -566,5 +574,16 @@
 
 	.stripe-pulse {
 		animation: stripePulse 2.5s ease-in-out infinite;
+	}
+
+	:global(.deleted-user-badge) {
+		display: inline;
+		padding: 1px 5px;
+		border-radius: 3px;
+		font-family: 'JetBrains Mono Variable', monospace;
+		font-size: var(--text-badge);
+		color: var(--color-red);
+		background: rgba(207, 129, 114, 0.12);
+		border: 1px solid rgba(207, 129, 114, 0.25);
 	}
 </style>

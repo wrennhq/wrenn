@@ -465,13 +465,10 @@ func (l *AuditLogger) LogMemberRoleUpdate(ctx context.Context, ac auth.AuthConte
 
 func (l *AuditLogger) LogHostCreate(ctx context.Context, ac auth.AuthContext, hostID, teamID pgtype.UUID) {
 	actorType, actorID, actorName := actorFields(ac)
-	// For shared hosts with no owning team, use the caller's team.
+	// BYOC hosts log to the owning team; shared hosts log to the platform team.
 	logTeamID := teamID
 	if !logTeamID.Valid {
-		logTeamID = ac.TeamID
-	}
-	if !logTeamID.Valid {
-		return
+		logTeamID = id.PlatformTeamID
 	}
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),
@@ -490,12 +487,10 @@ func (l *AuditLogger) LogHostCreate(ctx context.Context, ac auth.AuthContext, ho
 
 func (l *AuditLogger) LogHostDelete(ctx context.Context, ac auth.AuthContext, hostID, teamID pgtype.UUID) {
 	actorType, actorID, actorName := actorFields(ac)
+	// BYOC hosts log to the owning team; shared hosts log to the platform team.
 	logTeamID := teamID
 	if !logTeamID.Valid {
-		logTeamID = ac.TeamID
-	}
-	if !logTeamID.Valid {
-		return
+		logTeamID = id.PlatformTeamID
 	}
 	l.write(ctx, db.InsertAuditLogParams{
 		ID:           id.NewAuditLogID(),

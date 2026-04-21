@@ -91,8 +91,8 @@ WHERE ut.user_id = $1
       WHERE ut2.team_id = ut.team_id AND ut2.user_id <> $1
   );
 
--- name: HardDeleteExpiredUsers :exec
-DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days';
+-- name: ListExpiredSoftDeletedUsers :many
+SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days';
 
 -- name: HardDeleteUser :exec
 DELETE FROM users WHERE id = $1;
