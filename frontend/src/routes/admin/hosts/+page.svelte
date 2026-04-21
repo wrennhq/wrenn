@@ -454,12 +454,9 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !creating) showCreate = false; }}
 		></div>
 		<div
-			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-dialog"
-			style="animation: fadeUp 0.18s cubic-bezier(0.25,1,0.5,1) both"
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
-			<!-- Top accent edge -->
-			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-accent)] to-transparent"></div>
-
 			<div class="p-6">
 			<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">
 				Add Platform Host
@@ -534,12 +531,9 @@
 	<div class="fixed inset-0 z-50 flex items-center justify-center">
 		<div class="absolute inset-0 bg-black/60"></div>
 		<div
-			class="relative w-full max-w-[500px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-dialog"
-			style="animation: fadeUp 0.18s cubic-bezier(0.25,1,0.5,1) both"
+			class="relative w-full max-w-[500px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
-			<!-- Success accent edge -->
-			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-accent-bright)] to-transparent"></div>
-
 			<div class="p-6">
 			<!-- Animated checkmark -->
 			<div class="mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-accent-glow-mid)]">
@@ -607,12 +601,9 @@
 			onkeydown={(e) => { if (e.key === 'Escape' && !deleting) deleteTarget = null; }}
 		></div>
 		<div
-			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] shadow-dialog"
-			style="animation: fadeUp 0.18s cubic-bezier(0.25,1,0.5,1) both"
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
 		>
-			<!-- Danger accent edge -->
-			<div class="h-[2px] rounded-t-[var(--radius-card)] bg-gradient-to-r from-transparent via-[var(--color-red)] to-transparent"></div>
-
 			<div class="p-6">
 			<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">
 				Delete Host
