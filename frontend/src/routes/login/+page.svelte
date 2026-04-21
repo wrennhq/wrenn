@@ -29,6 +29,7 @@
 		access_denied: 'Access was denied by the provider',
 		email_taken: 'An account with this email already exists',
 		exchange_failed: 'Authentication failed — please try again',
+		no_account: 'No GitHub account connected — sign up instead',
 	};
 
 	// Read OAuth error forwarded from /auth/github/callback
@@ -259,7 +260,7 @@
 
 				<!-- GitHub OAuth -->
 				<a
-					href="/api/auth/oauth/github"
+					href="/api/auth/oauth/github?intent={mode === 'signin' ? 'login' : 'signup'}"
 					class="flex w-full items-center justify-center gap-2.5 rounded-[var(--radius-button)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] px-4 py-3 text-body font-medium text-[var(--color-text-bright)] no-underline transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-text-bright)]"
 				>
 					<IconGithub size={16} />

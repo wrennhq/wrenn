@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { listAuditLogs, type AuditLog } from '$lib/api/audit';
+	import { listAdminAuditLogs, type AuditLog } from '$lib/api/admin-audit';
 
 	// ─── Data state ───────────────────────────────────────────────────────────
 
@@ -18,31 +18,37 @@
 	let filterDropdownEl = $state<HTMLElement | null>(null);
 
 	// ─── Filter state ─────────────────────────────────────────────────────────
-	// Map: resource_type → Set of selected actions for that resource.
-	// An empty set or absent key means no filter for that resource.
 
 	let selectedActions = $state<Map<string, Set<string>>>(new Map());
 
 	// ─── Constants ────────────────────────────────────────────────────────────
 
-	const RESOURCES = ['sandbox', 'snapshot', 'team', 'api_key', 'member', 'host'] as const;
+	const RESOURCES = ['sandbox', 'snapshot', 'template', 'build', 'team', 'api_key', 'member', 'host', 'user', 'channel'] as const;
 
 	const RESOURCE_LABELS: Record<string, string> = {
 		sandbox: 'Capsule',
-		snapshot: 'Template',
+		snapshot: 'Snapshot',
+		template: 'Template',
+		build: 'Build',
 		team: 'Team',
 		api_key: 'API Key',
 		member: 'Member',
-		host: 'Host'
+		host: 'Host',
+		user: 'User',
+		channel: 'Channel'
 	};
 
 	const ACTIONS_BY_RESOURCE: Record<string, string[]> = {
 		sandbox: ['create', 'pause', 'resume', 'destroy'],
 		snapshot: ['create', 'delete'],
-		team: ['rename'],
+		template: ['delete'],
+		build: ['create', 'cancel'],
+		team: ['rename', 'set_byoc', 'delete'],
 		api_key: ['create', 'revoke'],
 		member: ['add', 'remove', 'leave', 'role_update'],
-		host: ['create', 'delete', 'marked_down', 'marked_up']
+		host: ['create', 'delete', 'marked_down', 'marked_up'],
+		user: ['activate', 'deactivate'],
+		channel: ['create', 'update', 'rotate_config', 'delete']
 	};
 
 	const ACTION_LABELS: Record<string, string> = {
@@ -58,7 +64,13 @@
 		leave: 'Left',
 		role_update: 'Role updated',
 		marked_down: 'Marked down',
-		marked_up: 'Marked up'
+		marked_up: 'Marked up',
+		activate: 'Activated',
+		deactivate: 'Deactivated',
+		set_byoc: 'BYOC toggled',
+		cancel: 'Cancelled',
+		update: 'Updated',
+		rotate_config: 'Config rotated'
 	};
 
 	// ─── Derived ──────────────────────────────────────────────────────────────
@@ -153,7 +165,7 @@
 		hasMore = false;
 
 		const params = getApiParams(snap);
-		const result = await listAuditLogs(params);
+		const result = await listAdminAuditLogs(params);
 
 		if (id !== fetchId) return;
 
@@ -174,7 +186,7 @@
 		loadingMore = true;
 
 		const params = getApiParams(selectedActions);
-		const result = await listAuditLogs({
+		const result = await listAdminAuditLogs({
 			...params,
 			before: nextCursor.before,
 			before_id: nextCursor.before_id
@@ -203,24 +215,35 @@
 		const actor = log.actor_name === 'deleted-user' ? DELETED_BADGE : (log.actor_name || (log.actor_type === 'system' ? 'System' : 'Unknown'));
 		const meta = (log.metadata ?? {}) as Record<string, string>;
 		switch (`${log.resource_type}:${log.action}`) {
-			case 'sandbox:create':     return `${actor} created a capsule`;
-			case 'sandbox:pause':      return `${actor} paused a capsule`;
-			case 'sandbox:resume':     return `${actor} resumed a capsule`;
-			case 'sandbox:destroy':    return `${actor} destroyed a capsule`;
-			case 'snapshot:create':    return `${actor} created a template`;
-			case 'snapshot:delete':    return `${actor} deleted a template`;
-			case 'team:rename':        return `${actor} renamed the team from "${meta.old_name}" to "${meta.new_name}"`;
-			case 'api_key:create':     return `${actor} created API key "${meta.name}"`;
-			case 'api_key:revoke':     return `${actor} revoked an API key`;
-			case 'member:add':         return `${actor} added ${meta.email ?? DELETED_BADGE} as ${meta.role}`;
-			case 'member:remove':      return `${actor} removed ${meta.email ?? DELETED_BADGE}`;
-			case 'member:leave':       return `${actor} left the team`;
-			case 'member:role_update': return `${actor} changed a member's role to ${meta.new_role}`;
-			case 'host:create':        return `${actor} registered a host`;
-			case 'host:delete':        return `${actor} removed a host`;
-			case 'host:marked_down':   return `Host was marked as down`;
-			case 'host:marked_up':     return `Host was marked as up`;
-			default:                   return `${actor} performed ${log.action} on ${log.resource_type}`;
+			case 'sandbox:create':          return `${actor} created a capsule`;
+			case 'sandbox:pause':           return `${actor} paused a capsule`;
+			case 'sandbox:resume':          return `${actor} resumed a capsule`;
+			case 'sandbox:destroy':         return `${actor} destroyed a capsule`;
+			case 'snapshot:create':         return `${actor} created a snapshot`;
+			case 'snapshot:delete':         return `${actor} deleted a snapshot`;
+			case 'template:delete':         return `${actor} deleted template "${log.resource_id}"`;
+			case 'build:create':            return `${actor} started a build for "${meta.name}"`;
+			case 'build:cancel':            return `${actor} cancelled a build`;
+			case 'team:rename':             return `${actor} renamed a team from "${meta.old_name}" to "${meta.new_name}"`;
+			case 'team:set_byoc':           return `${actor} ${String(meta.enabled) === 'true' ? 'enabled' : 'disabled'} BYOC for a team`;
+			case 'team:delete':             return `${actor} deleted a team`;
+			case 'api_key:create':          return `${actor} created API key "${meta.name}"`;
+			case 'api_key:revoke':          return `${actor} revoked an API key`;
+			case 'member:add':              return `${actor} added ${meta.email ?? DELETED_BADGE} as ${meta.role}`;
+			case 'member:remove':           return `${actor} removed ${meta.email ?? DELETED_BADGE}`;
+			case 'member:leave':            return `${actor} left a team`;
+			case 'member:role_update':      return `${actor} changed a member's role to ${meta.new_role}`;
+			case 'host:create':             return `${actor} registered a host`;
+			case 'host:delete':             return `${actor} removed a host`;
+			case 'host:marked_down':        return `Host was marked as down`;
+			case 'host:marked_up':          return `Host was marked as up`;
+			case 'user:activate':           return `${actor} activated user ${meta.email ?? ''}`;
+			case 'user:deactivate':         return `${actor} deactivated user ${meta.email ?? ''}`;
+			case 'channel:create':          return `${actor} created channel "${meta.name}"`;
+			case 'channel:update':          return `${actor} updated a channel`;
+			case 'channel:rotate_config':   return `${actor} rotated channel config`;
+			case 'channel:delete':          return `${actor} deleted a channel`;
+			default:                        return `${actor} performed ${log.action} on ${log.resource_type}`;
 		}
 	}
 
@@ -280,7 +303,7 @@
 </script>
 
 <svelte:head>
-	<title>Wrenn — Audit Logs</title>
+	<title>Wrenn Admin — Audit Logs</title>
 </svelte:head>
 
 <main class="flex-1 overflow-y-auto bg-[var(--color-bg-0)]">
@@ -291,7 +314,7 @@
 					Audit Logs
 				</h1>
 				<p class="mt-2 text-ui text-[var(--color-text-secondary)]">
-					A complete record of activity across your team.
+					Platform-wide activity log for all admin actions.
 				</p>
 				<div class="mt-6 border-b border-[var(--color-border)]"></div>
 			</div>
@@ -457,7 +480,7 @@
 						<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
 							{activeFilterCount > 0
 								? 'Try adjusting or clearing the filters.'
-								: 'Events will appear here as your team takes actions.'}
+								: 'Admin events will appear here as actions are taken.'}
 						</p>
 						{#if activeFilterCount > 0}
 							<button
@@ -488,7 +511,7 @@
 									{log.status === 'warning' ? 'log-row-warning' : ''}"
 								style="animation: fadeUp 0.35s ease both; animation-delay: {Math.min(i, 10) * 30}ms"
 							>
-								<!-- Status stripe (absolutely positioned, independent of row animation) -->
+								<!-- Status stripe -->
 								<div
 									class="status-stripe pointer-events-none absolute inset-y-0 left-0 w-[3px] {log.status === 'error' ? 'stripe-pulse' : ''}"
 									style="background: {statusColor(log.status)}"
@@ -546,19 +569,7 @@
 			</div>
 		</main>
 
-<footer class="flex h-7 shrink-0 items-center justify-end border-t border-[var(--color-border)] bg-[var(--color-bg-1)] px-7">
-	<div class="flex items-center gap-1.5">
-		<span class="relative flex h-[5px] w-[5px]">
-			<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
-			<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
-		</span>
-		<span class="font-mono text-label uppercase tracking-[0.04em] text-[var(--color-text-secondary)]">All systems operational</span>
-	</div>
-</footer>
-
 <style>
-	/* fadeUp and iconFloat are defined globally in app.css — no need to redeclare them here */
-
 	@keyframes stripePulse {
 		0%, 100% { opacity: 1; }
 		50%       { opacity: 0.3; }

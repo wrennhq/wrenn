@@ -183,15 +183,6 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	return i, err
 }
 
-const hardDeleteExpiredUsers = `-- name: HardDeleteExpiredUsers :exec
-DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days'
-`
-
-func (q *Queries) HardDeleteExpiredUsers(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, hardDeleteExpiredUsers)
-	return err
-}
-
 const hardDeleteUser = `-- name: HardDeleteUser :exec
 DELETE FROM users WHERE id = $1
 `
@@ -332,6 +323,35 @@ func (q *Queries) InsertUserOAuth(ctx context.Context, arg InsertUserOAuthParams
 		&i.Status,
 	)
 	return i, err
+}
+
+const listExpiredSoftDeletedUsers = `-- name: ListExpiredSoftDeletedUsers :many
+SELECT id, email FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days'
+`
+
+type ListExpiredSoftDeletedUsersRow struct {
+	ID    pgtype.UUID `json:"id"`
+	Email string      `json:"email"`
+}
+
+func (q *Queries) ListExpiredSoftDeletedUsers(ctx context.Context) ([]ListExpiredSoftDeletedUsersRow, error) {
+	rows, err := q.db.Query(ctx, listExpiredSoftDeletedUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExpiredSoftDeletedUsersRow
+	for rows.Next() {
+		var i ListExpiredSoftDeletedUsersRow
+		if err := rows.Scan(&i.ID, &i.Email); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listUsersAdmin = `-- name: ListUsersAdmin :many

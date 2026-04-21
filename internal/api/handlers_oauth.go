@@ -55,8 +55,14 @@ func (h *oauthHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mac := computeHMAC(h.jwtSecret, state)
-	cookieVal := state + ":" + mac
+	// Persist intent (login|signup) in the state cookie so the callback can enforce it.
+	intent := r.URL.Query().Get("intent")
+	if intent != "signup" {
+		intent = "login"
+	}
+
+	mac := computeHMAC(h.jwtSecret, state+":"+intent)
+	cookieVal := state + ":" + mac + ":" + intent
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_state",
@@ -105,13 +111,17 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		Secure:   isSecure(r),
 	})
 
-	parts := strings.SplitN(stateCookie.Value, ":", 2)
-	if len(parts) != 2 {
+	parts := strings.SplitN(stateCookie.Value, ":", 3)
+	if len(parts) < 2 {
 		redirectWithError(w, r, redirectBase, "invalid_state")
 		return
 	}
 	nonce, expectedMAC := parts[0], parts[1]
-	if !hmac.Equal([]byte(computeHMAC(h.jwtSecret, nonce)), []byte(expectedMAC)) {
+	intent := "login"
+	if len(parts) == 3 && parts[2] == "signup" {
+		intent = "signup"
+	}
+	if !hmac.Equal([]byte(computeHMAC(h.jwtSecret, nonce+":"+intent)), []byte(expectedMAC)) {
 		redirectWithError(w, r, redirectBase, "invalid_state")
 		return
 	}
@@ -249,6 +259,12 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Block auto-registration when intent is login-only.
+	if intent == "login" {
+		redirectWithError(w, r, redirectBase, "no_account")
+		return
+	}
+
 	// New OAuth identity — check for email collision.
 	existingUser, err := h.db.GetUserByEmail(ctx, email)
 	if err == nil {
@@ -364,6 +380,17 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		redirectWithError(w, r, redirectBase, "internal_error")
 		return
 	}
+
+	// Signal frontend that this is a new signup so it can show the name confirmation dialog.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "wrenn_oauth_new_signup",
+		Value:    "1",
+		Path:     "/auth/",
+		MaxAge:   60,
+		HttpOnly: false,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecure(r),
+	})
 
 	redirectWithToken(w, r, redirectBase, token, id.FormatUserID(userID), id.FormatTeamID(teamID), email, profile.Name)
 }
