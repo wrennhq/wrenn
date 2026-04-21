@@ -35,64 +35,38 @@ type auditLogResponse struct {
 	CreatedAt    string         `json:"created_at"`
 }
 
-// List handles GET /v1/audit-logs.
-// Query params:
-//   - before: RFC3339 timestamp cursor (exclusive); omit to start from latest
-//   - limit:  page size, default 50, max 200
-//   - resource_type: filter by resource type (sandbox, snapshot, team, api_key, member, host)
-//   - action: filter by action verb
-//
-// Members see only team-scoped events; admins/owners see all.
-func (h *auditHandler) List(w http.ResponseWriter, r *http.Request) {
-	ac := auth.MustFromContext(r.Context())
+// parseAuditParams extracts common query parameters for audit log listing.
+func parseAuditParams(r *http.Request) (before time.Time, beforeID pgtype.UUID, limit int, err error) {
+	limit = 50
 
-	// Parse ?before cursor.
-	var before time.Time
 	if s := r.URL.Query().Get("before"); s != "" {
-		var err error
 		before, err = time.Parse(time.RFC3339, s)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "before must be an RFC3339 timestamp")
 			return
 		}
 	}
 
-	// Parse ?limit.
-	limit := 50
 	if s := r.URL.Query().Get("limit"); s != "" {
-		n, err := strconv.Atoi(s)
-		if err != nil || n < 1 {
-			writeError(w, http.StatusBadRequest, "invalid_request", "limit must be a positive integer")
+		n, parseErr := strconv.Atoi(s)
+		if parseErr != nil || n < 1 {
+			err = parseErr
 			return
 		}
 		limit = n
 	}
 
-	// Parse ?before_id cursor (UUID).
-	var beforeID pgtype.UUID
 	if s := r.URL.Query().Get("before_id"); s != "" {
-		parsed, err := id.ParseAuditLogID(s)
+		beforeID, err = id.ParseAuditLogID(s)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "before_id must be a valid audit log ID")
 			return
 		}
-		beforeID = parsed
 	}
 
-	entries, err := h.svc.List(r.Context(), service.AuditListParams{
-		TeamID:        ac.TeamID,
-		AdminScoped:   ac.Role == "owner" || ac.Role == "admin",
-		ResourceTypes: parseMultiParam(r.URL.Query()["resource_type"]),
-		Actions:       parseMultiParam(r.URL.Query()["action"]),
-		Before:        before,
-		BeforeID:      beforeID,
-		Limit:         limit,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list audit logs")
-		return
-	}
+	return
+}
 
+// writeAuditResponse serializes audit entries into a paginated JSON response.
+func writeAuditResponse(w http.ResponseWriter, entries []service.AuditEntry) {
 	items := make([]auditLogResponse, len(entries))
 	for i, e := range entries {
 		items[i] = auditLogResponse{
@@ -118,6 +92,67 @@ func (h *auditHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// List handles GET /v1/audit-logs.
+// Query params:
+//   - before: RFC3339 timestamp cursor (exclusive); omit to start from latest
+//   - limit:  page size, default 50, max 200
+//   - resource_type: filter by resource type (sandbox, snapshot, team, api_key, member, host)
+//   - action: filter by action verb
+//
+// Members see only team-scoped events; admins/owners see all.
+func (h *auditHandler) List(w http.ResponseWriter, r *http.Request) {
+	ac := auth.MustFromContext(r.Context())
+
+	before, beforeID, limit, err := parseAuditParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid query parameters")
+		return
+	}
+
+	entries, err := h.svc.List(r.Context(), service.AuditListParams{
+		TeamID:        ac.TeamID,
+		AdminScoped:   ac.Role == "owner" || ac.Role == "admin",
+		ResourceTypes: parseMultiParam(r.URL.Query()["resource_type"]),
+		Actions:       parseMultiParam(r.URL.Query()["action"]),
+		Before:        before,
+		BeforeID:      beforeID,
+		Limit:         limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to list audit logs")
+		return
+	}
+
+	writeAuditResponse(w, entries)
+}
+
+// AdminList handles GET /v1/admin/audit-logs.
+// Returns audit logs for the platform team (team 0) with both team and admin scopes.
+// Uses the same query params as List.
+func (h *auditHandler) AdminList(w http.ResponseWriter, r *http.Request) {
+	before, beforeID, limit, err := parseAuditParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid query parameters")
+		return
+	}
+
+	entries, err := h.svc.List(r.Context(), service.AuditListParams{
+		TeamID:        id.PlatformTeamID,
+		AdminScoped:   true,
+		ResourceTypes: parseMultiParam(r.URL.Query()["resource_type"]),
+		Actions:       parseMultiParam(r.URL.Query()["action"]),
+		Before:        before,
+		BeforeID:      beforeID,
+		Limit:         limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to list audit logs")
+		return
+	}
+
+	writeAuditResponse(w, entries)
 }
 
 // parseMultiParam flattens repeated params and comma-separated values into a

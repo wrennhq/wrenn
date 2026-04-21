@@ -13,6 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -22,13 +24,14 @@ import (
 )
 
 type buildHandler struct {
-	svc  *service.BuildService
-	db   *db.Queries
-	pool *lifecycle.HostClientPool
+	svc   *service.BuildService
+	db    *db.Queries
+	pool  *lifecycle.HostClientPool
+	audit *audit.AuditLogger
 }
 
-func newBuildHandler(svc *service.BuildService, db *db.Queries, pool *lifecycle.HostClientPool) *buildHandler {
-	return &buildHandler{svc: svc, db: db, pool: pool}
+func newBuildHandler(svc *service.BuildService, db *db.Queries, pool *lifecycle.HostClientPool, al *audit.AuditLogger) *buildHandler {
+	return &buildHandler{svc: svc, db: db, pool: pool, audit: al}
 }
 
 type createBuildRequest struct {
@@ -187,6 +190,8 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ac := auth.MustFromContext(r.Context())
+	h.audit.LogBuildCreate(r.Context(), ac, build.ID, req.Name)
 	writeJSON(w, http.StatusCreated, buildToResponse(build))
 }
 
@@ -305,6 +310,8 @@ func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ac := auth.MustFromContext(r.Context())
+	h.audit.LogTemplateDelete(r.Context(), ac, name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -323,5 +330,7 @@ func (h *buildHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ac := auth.MustFromContext(r.Context())
+	h.audit.LogBuildCancel(r.Context(), ac, buildID)
 	w.WriteHeader(http.StatusNoContent)
 }

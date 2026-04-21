@@ -82,6 +82,53 @@ func marshalMeta(meta map[string]any) []byte {
 	return b
 }
 
+// Entry describes a single audit log event. Extensions (e.g. the cloud repo)
+// use this with AuditLogger.Log to record custom events without modifying the
+// OSS typed methods.
+type Entry struct {
+	TeamID       pgtype.UUID
+	ActorType    string // "user", "api_key", "system"
+	ActorID      string // prefixed ID string; empty for system
+	ActorName    string // human-readable; empty for system
+	ResourceType string
+	ResourceID   string // prefixed ID or name; empty when not applicable
+	Action       string
+	Scope        string // "team" or "admin"
+	Status       string // "success", "info", "warning", "error"
+	Metadata     map[string]any
+}
+
+// Log writes a custom audit log entry. This is the extension point for the
+// cloud repo to record events with resource types and actions not covered by
+// the typed helpers (LogSandboxCreate, etc.). Fire-and-forget like all other
+// audit methods.
+func (l *AuditLogger) Log(ctx context.Context, e Entry) {
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       e.TeamID,
+		ActorType:    e.ActorType,
+		ActorID:      optText(e.ActorID),
+		ActorName:    e.ActorName,
+		ResourceType: e.ResourceType,
+		ResourceID:   optText(e.ResourceID),
+		Action:       e.Action,
+		Scope:        e.Scope,
+		Status:       e.Status,
+		Metadata:     MarshalMeta(e.Metadata),
+	})
+}
+
+// ActorFromContext extracts actor fields from an auth.AuthContext for use in
+// custom audit entries. Returns actor_type, actor_id, and actor_name.
+func ActorFromContext(ac auth.AuthContext) (actorType, actorID, actorName string) {
+	return actorFields(ac)
+}
+
+// MarshalMeta serializes metadata to JSON bytes. Returns "{}" for nil/empty maps.
+func MarshalMeta(meta map[string]any) []byte {
+	return marshalMeta(meta)
+}
+
 // optText returns a valid pgtype.Text if s is non-empty, otherwise an invalid (NULL) one.
 func optText(s string) pgtype.Text {
 	if s == "" {
@@ -501,6 +548,133 @@ func (l *AuditLogger) LogHostDelete(ctx context.Context, ac auth.AuthContext, ho
 		ResourceType: "host",
 		ResourceID:   optText(id.FormatHostID(hostID)),
 		Action:       "delete",
+		Scope:        "admin",
+		Status:       "warning",
+		Metadata:     []byte("{}"),
+	})
+}
+
+// --- User events (scope: admin) ---
+
+func (l *AuditLogger) LogUserActivate(ctx context.Context, ac auth.AuthContext, userID pgtype.UUID, email string) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       id.PlatformTeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "user",
+		ResourceID:   optText(id.FormatUserID(userID)),
+		Action:       "activate",
+		Scope:        "admin",
+		Status:       "success",
+		Metadata:     marshalMeta(map[string]any{"email": email}),
+	})
+}
+
+func (l *AuditLogger) LogUserDeactivate(ctx context.Context, ac auth.AuthContext, userID pgtype.UUID, email string) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       id.PlatformTeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "user",
+		ResourceID:   optText(id.FormatUserID(userID)),
+		Action:       "deactivate",
+		Scope:        "admin",
+		Status:       "warning",
+		Metadata:     marshalMeta(map[string]any{"email": email}),
+	})
+}
+
+// --- Team admin events (scope: admin) ---
+
+func (l *AuditLogger) LogTeamSetBYOC(ctx context.Context, ac auth.AuthContext, teamID pgtype.UUID, enabled bool) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       id.PlatformTeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "team",
+		ResourceID:   optText(id.FormatTeamID(teamID)),
+		Action:       "set_byoc",
+		Scope:        "admin",
+		Status:       "info",
+		Metadata:     marshalMeta(map[string]any{"enabled": enabled}),
+	})
+}
+
+func (l *AuditLogger) LogTeamDelete(ctx context.Context, ac auth.AuthContext, teamID pgtype.UUID) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       id.PlatformTeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "team",
+		ResourceID:   optText(id.FormatTeamID(teamID)),
+		Action:       "delete",
+		Scope:        "admin",
+		Status:       "warning",
+		Metadata:     []byte("{}"),
+	})
+}
+
+// --- Template events (scope: admin) ---
+
+func (l *AuditLogger) LogTemplateDelete(ctx context.Context, ac auth.AuthContext, name string) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       id.PlatformTeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "template",
+		ResourceID:   optText(name),
+		Action:       "delete",
+		Scope:        "admin",
+		Status:       "warning",
+		Metadata:     []byte("{}"),
+	})
+}
+
+// --- Build events (scope: admin) ---
+
+func (l *AuditLogger) LogBuildCreate(ctx context.Context, ac auth.AuthContext, buildID pgtype.UUID, name string) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       id.PlatformTeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "build",
+		ResourceID:   optText(id.FormatBuildID(buildID)),
+		Action:       "create",
+		Scope:        "admin",
+		Status:       "success",
+		Metadata:     marshalMeta(map[string]any{"name": name}),
+	})
+}
+
+func (l *AuditLogger) LogBuildCancel(ctx context.Context, ac auth.AuthContext, buildID pgtype.UUID) {
+	actorType, actorID, actorName := actorFields(ac)
+	l.write(ctx, db.InsertAuditLogParams{
+		ID:           id.NewAuditLogID(),
+		TeamID:       id.PlatformTeamID,
+		ActorType:    actorType,
+		ActorID:      optText(actorID),
+		ActorName:    actorName,
+		ResourceType: "build",
+		ResourceID:   optText(id.FormatBuildID(buildID)),
+		Action:       "cancel",
 		Scope:        "admin",
 		Status:       "warning",
 		Metadata:     []byte("{}"),

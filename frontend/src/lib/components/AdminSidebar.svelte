@@ -13,7 +13,8 @@
 		IconChevron,
 		IconShield,
 		IconMembers,
-		IconUser
+		IconUser,
+		IconAudit
 	} from './icons';
 
 	let { collapsed = $bindable(false) }: { collapsed: boolean } = $props();
@@ -26,7 +27,8 @@
 
 	const managementItems: NavItem[] = [
 		{ label: 'Users', icon: IconUser, href: '/admin/users' },
-		{ label: 'Teams', icon: IconMembers, href: '/admin/teams' }
+		{ label: 'Teams', icon: IconMembers, href: '/admin/teams' },
+		{ label: 'Audit', icon: IconAudit, href: '/admin/audit' }
 	];
 
 	const platformItems: NavItem[] = [

@@ -392,6 +392,7 @@ func (h *teamHandler) Leave(w http.ResponseWriter, r *http.Request) {
 // SetBYOC handles PUT /v1/admin/teams/{id}/byoc (admin only).
 // Enables or disables the BYOC feature flag for a team.
 func (h *teamHandler) SetBYOC(w http.ResponseWriter, r *http.Request) {
+	ac := auth.MustFromContext(r.Context())
 	teamIDStr := chi.URLParam(r, "id")
 
 	teamID, err := id.ParseTeamID(teamIDStr)
@@ -414,6 +415,7 @@ func (h *teamHandler) SetBYOC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogTeamSetBYOC(r.Context(), ac, teamID, req.Enabled)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -484,6 +486,7 @@ func (h *teamHandler) AdminListTeams(w http.ResponseWriter, r *http.Request) {
 // AdminDeleteTeam handles DELETE /v1/admin/teams/{id}
 // Soft-deletes a team and destroys all its active sandboxes.
 func (h *teamHandler) AdminDeleteTeam(w http.ResponseWriter, r *http.Request) {
+	ac := auth.MustFromContext(r.Context())
 	teamIDStr := chi.URLParam(r, "id")
 
 	teamID, err := id.ParseTeamID(teamIDStr)
@@ -498,5 +501,6 @@ func (h *teamHandler) AdminDeleteTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.LogTeamDelete(r.Context(), ac, teamID)
 	w.WriteHeader(http.StatusNoContent)
 }

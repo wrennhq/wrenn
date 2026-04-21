@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -16,12 +17,13 @@ import (
 )
 
 type usersHandler struct {
-	db  *db.Queries
-	svc *service.UserService
+	db    *db.Queries
+	svc   *service.UserService
+	audit *audit.AuditLogger
 }
 
-func newUsersHandler(db *db.Queries, svc *service.UserService) *usersHandler {
-	return &usersHandler{db: db, svc: svc}
+func newUsersHandler(db *db.Queries, svc *service.UserService, al *audit.AuditLogger) *usersHandler {
+	return &usersHandler{db: db, svc: svc, audit: al}
 }
 
 // Search handles GET /v1/users/search?email=<prefix>
@@ -140,11 +142,23 @@ func (h *usersHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 		newStatus = "disabled"
 	}
 
+	// Look up user email for audit log before changing status.
+	user, err := h.db.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+
 	if err := h.svc.SetUserStatus(r.Context(), userID, newStatus); err != nil {
 		httpStatus, code, msg := serviceErrToHTTP(err)
 		writeError(w, httpStatus, code, msg)
 		return
 	}
 
+	if req.Active {
+		h.audit.LogUserActivate(r.Context(), ac, userID, user.Email)
+	} else {
+		h.audit.LogUserDeactivate(r.Context(), ac, userID, user.Email)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
