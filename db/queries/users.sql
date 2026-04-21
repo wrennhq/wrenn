@@ -92,7 +92,7 @@ WHERE ut.user_id = $1
   );
 
 -- name: ListExpiredSoftDeletedUsers :many
-SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days';
+SELECT id, email FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days';
 
 -- name: HardDeleteUser :exec
 DELETE FROM users WHERE id = $1;

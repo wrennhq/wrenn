@@ -326,22 +326,27 @@ func (q *Queries) InsertUserOAuth(ctx context.Context, arg InsertUserOAuthParams
 }
 
 const listExpiredSoftDeletedUsers = `-- name: ListExpiredSoftDeletedUsers :many
-SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days'
+SELECT id, email FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '15 days'
 `
 
-func (q *Queries) ListExpiredSoftDeletedUsers(ctx context.Context) ([]pgtype.UUID, error) {
+type ListExpiredSoftDeletedUsersRow struct {
+	ID    pgtype.UUID `json:"id"`
+	Email string      `json:"email"`
+}
+
+func (q *Queries) ListExpiredSoftDeletedUsers(ctx context.Context) ([]ListExpiredSoftDeletedUsersRow, error) {
 	rows, err := q.db.Query(ctx, listExpiredSoftDeletedUsers)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []pgtype.UUID
+	var items []ListExpiredSoftDeletedUsersRow
 	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i ListExpiredSoftDeletedUsersRow
+		if err := rows.Scan(&i.ID, &i.Email); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -193,6 +193,7 @@ func Run(opts ...Option) {
 
 	// Hard-delete accounts that have been soft-deleted for more than 15 days (runs every 24h).
 	// Audit logs referencing deleted users are anonymized before the user row is removed.
+	// A notification email is sent to the user before their data is permanently removed.
 	go func() {
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
@@ -207,15 +208,23 @@ func Run(opts ...Option) {
 					continue
 				}
 				var deleted int
-				for _, userID := range expired {
-					prefixedID := id.FormatUserID(userID)
+				for _, row := range expired {
+					prefixedID := id.FormatUserID(row.ID)
 					if err := queries.AnonymizeAuditLogsByUserID(ctx, pgtype.Text{String: prefixedID, Valid: true}); err != nil {
 						slog.Error("account cleanup: failed to anonymize audit logs, skipping delete", "user_id", prefixedID, "error", err)
 						continue
 					}
-					if err := queries.HardDeleteUser(ctx, userID); err != nil {
+					if err := queries.HardDeleteUser(ctx, row.ID); err != nil {
 						slog.Error("account cleanup: failed to hard-delete user", "user_id", prefixedID, "error", err)
 						continue
+					}
+					if err := mailer.Send(ctx, row.Email, "Your Wrenn account has been deleted", email.EmailData{
+						Message: "Your Wrenn account and all associated data have been permanently deleted. " +
+							"This action was taken automatically because your account was scheduled for deletion more than 15 days ago.\n\n" +
+							"If you believe this was done in error, please contact support.",
+						Closing: "Thank you for using Wrenn.",
+					}); err != nil {
+						slog.Warn("account cleanup: failed to send deletion notification", "email", row.Email, "error", err)
 					}
 					deleted++
 				}
