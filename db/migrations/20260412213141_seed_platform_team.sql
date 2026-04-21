@@ -9,4 +9,10 @@ VALUES ('00000000-0000-0000-0000-000000000000', 'Platform', 'platform')
 ON CONFLICT (id) DO NOTHING;
 
 -- +goose Down
+-- Delete dependent rows that reference the platform team via foreign keys.
+-- Order matters: children before parent.
+DELETE FROM sandboxes WHERE team_id = '00000000-0000-0000-0000-000000000000';
+DELETE FROM team_api_keys WHERE team_id = '00000000-0000-0000-0000-000000000000';
+DELETE FROM users_teams WHERE team_id = '00000000-0000-0000-0000-000000000000';
+DELETE FROM hosts WHERE team_id = '00000000-0000-0000-0000-000000000000';
 DELETE FROM teams WHERE id = '00000000-0000-0000-0000-000000000000';

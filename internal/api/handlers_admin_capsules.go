@@ -55,6 +55,7 @@ func (h *adminCapsuleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ac.TeamID = id.PlatformTeamID
 	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, sb.Template)
 	writeJSON(w, http.StatusCreated, sandboxToResponse(sb))
 }

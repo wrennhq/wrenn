@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"git.omukk.dev/wrenn/wrenn/internal/api"
 	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
@@ -22,6 +24,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/channels"
 	"git.omukk.dev/wrenn/wrenn/pkg/config"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	"git.omukk.dev/wrenn/wrenn/pkg/logging"
 	"git.omukk.dev/wrenn/wrenn/pkg/scheduler"
@@ -185,10 +188,12 @@ func Run(opts ...Option) {
 	channelDispatcher.Start(ctx)
 
 	// Start host monitor (passive + active reconciliation every 30s).
-	monitor := api.NewHostMonitor(queries, hostPool, al, 30*time.Second)
+	monitor := api.NewHostMonitor(queries, hostPool, al, 15*time.Second)
 	monitor.Start(ctx)
 
 	// Hard-delete accounts that have been soft-deleted for more than 15 days (runs every 24h).
+	// Audit logs referencing deleted users are anonymized before the user row is removed.
+	// A notification email is sent to the user before their data is permanently removed.
 	go func() {
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
@@ -197,10 +202,34 @@ func Run(opts ...Option) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := queries.HardDeleteExpiredUsers(ctx); err != nil {
-					slog.Error("account cleanup: failed to hard-delete expired users", "error", err)
-				} else {
-					slog.Info("account cleanup: hard-deleted expired users")
+				expired, err := queries.ListExpiredSoftDeletedUsers(ctx)
+				if err != nil {
+					slog.Error("account cleanup: failed to list expired users", "error", err)
+					continue
+				}
+				var deleted int
+				for _, row := range expired {
+					prefixedID := id.FormatUserID(row.ID)
+					if err := queries.AnonymizeAuditLogsByUserID(ctx, pgtype.Text{String: prefixedID, Valid: true}); err != nil {
+						slog.Error("account cleanup: failed to anonymize audit logs, skipping delete", "user_id", prefixedID, "error", err)
+						continue
+					}
+					if err := queries.HardDeleteUser(ctx, row.ID); err != nil {
+						slog.Error("account cleanup: failed to hard-delete user", "user_id", prefixedID, "error", err)
+						continue
+					}
+					if err := mailer.Send(ctx, row.Email, "Your Wrenn account has been deleted", email.EmailData{
+						Message: "Your Wrenn account and all associated data have been permanently deleted. " +
+							"This action was taken automatically because your account was scheduled for deletion more than 15 days ago.\n\n" +
+							"If you believe this was done in error, please contact support.",
+						Closing: "Thank you for using Wrenn.",
+					}); err != nil {
+						slog.Warn("account cleanup: failed to send deletion notification", "email", row.Email, "error", err)
+					}
+					deleted++
+				}
+				if len(expired) > 0 {
+					slog.Info("account cleanup: processed expired users", "total", len(expired), "deleted", deleted)
 				}
 			}
 		}

@@ -32,7 +32,7 @@ type Server struct {
 }
 
 // New constructs the chi router and registers all routes.
-// Extensions are called after core routes are registered, allowing enterprise
+// Extensions are called after core routes are registered, allowing cloud
 // or third-party code to add routes and middleware.
 func New(
 	queries *db.Queries,
@@ -85,12 +85,12 @@ func New(
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
 	hostH := newHostHandler(hostSvc, queries, al)
 	teamH := newTeamHandler(teamSvc, al, mailer)
-	usersH := newUsersHandler(queries, userSvc)
+	usersH := newUsersHandler(queries, userSvc, al)
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)
 	usageH := newUsageHandler(usageSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
-	buildH := newBuildHandler(buildSvc, queries, pool)
+	buildH := newBuildHandler(buildSvc, queries, pool, al)
 	channelH := newChannelHandler(channelSvc, al)
 	ptyH := newPtyHandler(queries, pool, jwtSecret)
 	processH := newProcessHandler(queries, pool, jwtSecret)
@@ -255,6 +255,7 @@ func New(
 		r.Delete("/teams/{id}", teamH.AdminDeleteTeam)
 		r.Get("/users", usersH.AdminListUsers)
 		r.Put("/users/{id}/active", usersH.SetUserActive)
+		r.Get("/audit-logs", auditH.AdminList)
 		r.Get("/templates", buildH.ListTemplates)
 		r.Delete("/templates/{name}", buildH.DeleteTemplate)
 		r.Post("/builds", buildH.Create)

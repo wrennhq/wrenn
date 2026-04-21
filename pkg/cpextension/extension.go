@@ -36,7 +36,7 @@ type ServerContext struct {
 	Config    config.Config
 }
 
-// Extension allows enterprise (or any external) code to plug additional
+// Extension allows cloud (or any external) code to plug additional
 // routes and background workers into the control plane without modifying
 // the core server.
 type Extension interface {
