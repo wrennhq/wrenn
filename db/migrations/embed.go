@@ -1,5 +1,5 @@
 // Package migrations embeds the SQL migration files so that external modules
-// (such as the enterprise edition) can access them programmatically.
+// (such as the cloud edition) can access them programmatically.
 package migrations
 
 import "embed"
