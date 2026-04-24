@@ -48,6 +48,13 @@ func (c *Client) BaseURL() string {
 	return c.base
 }
 
+// HTTPClient returns the underlying http.Client used for envd requests.
+// Use this instead of http.DefaultClient when making direct HTTP calls to envd
+// (e.g. file streaming) to avoid sharing the global transport with proxy traffic.
+func (c *Client) HTTPClient() *http.Client {
+	return c.httpClient
+}
+
 // ExecResult holds the output of a command execution.
 type ExecResult struct {
 	Stdout   []byte
@@ -142,7 +149,7 @@ func (c *Client) ExecStream(ctx context.Context, cmd string, args ...string) (<-
 		return nil, fmt.Errorf("start process: %w", err)
 	}
 
-	ch := make(chan ExecStreamEvent, 16)
+	ch := make(chan ExecStreamEvent, 256)
 	go func() {
 		defer close(ch)
 		defer stream.Close()

@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -113,6 +114,34 @@ func (p *HostClientPool) Transport() http.RoundTripper {
 // the same thing, but ResolveAddr exposes it for callers that only need the URL.
 func (p *HostClientPool) ResolveAddr(addr string) string {
 	return p.ensureScheme(addr)
+}
+
+// NewProxyTransport returns a new http.RoundTripper configured for proxying
+// user traffic to sandbox services. It is intentionally separate from the RPC
+// transport returned by Transport() so that heavy proxy traffic (Jupyter
+// WebSocket, REST API polling) cannot interfere with Connect RPC streams (PTY,
+// exec) via HTTP/2 flow control or connection pool contention.
+func (p *HostClientPool) NewProxyTransport() http.RoundTripper {
+	t := &http.Transport{
+		ForceAttemptHTTP2:   false, // HTTP/1.1 only — avoids HTTP/2 HOL blocking
+		MaxIdleConnsPerHost: 20,
+		MaxIdleConns:        100,
+		IdleConnTimeout:     120 * time.Second,
+		DisableCompression:  true,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 20 * time.Second,
+		}).DialContext,
+	}
+
+	// If the pool uses TLS, the proxy transport must too.
+	if p.httpClient.Transport != nil {
+		if ht, ok := p.httpClient.Transport.(*http.Transport); ok && ht.TLSClientConfig != nil {
+			t.TLSClientConfig = ht.TLSClientConfig.Clone()
+		}
+	}
+
+	return t
 }
 
 // EnsureScheme adds "http://" if the address has no scheme.

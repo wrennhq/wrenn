@@ -161,35 +161,47 @@ func New(
 	r.With(requireJWT(jwtSecret, queries)).Get("/v1/users/search", usersH.Search)
 
 	// Capsule lifecycle: accepts API key or JWT bearer token.
-	// WebSocket upgrade requests without auth headers are passed through by
-	// requireAPIKeyOrJWT — the WS handlers authenticate via first message.
 	r.Route("/v1/capsules", func(r chi.Router) {
-		r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
-		r.Post("/", sandbox.Create)
-		r.Get("/", sandbox.List)
-		r.Get("/stats", statsH.GetStats)
-		r.Get("/usage", usageH.GetUsage)
+		// Auth-required routes.
+		r.Group(func(r chi.Router) {
+			r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
+			r.Post("/", sandbox.Create)
+			r.Get("/", sandbox.List)
+			r.Get("/stats", statsH.GetStats)
+			r.Get("/usage", usageH.GetUsage)
+		})
 
 		r.Route("/{id}", func(r chi.Router) {
-			r.Get("/", sandbox.Get)
-			r.Delete("/", sandbox.Destroy)
-			r.Post("/exec", exec.Exec)
-			r.Get("/exec/stream", execStream.ExecStream)
-			r.Post("/ping", sandbox.Ping)
-			r.Post("/pause", sandbox.Pause)
-			r.Post("/resume", sandbox.Resume)
-			r.Post("/files/write", files.Upload)
-			r.Post("/files/read", files.Download)
-			r.Post("/files/stream/write", filesStream.StreamUpload)
-			r.Post("/files/stream/read", filesStream.StreamDownload)
-			r.Post("/files/list", fsH.ListDir)
-			r.Post("/files/mkdir", fsH.MakeDir)
-			r.Post("/files/remove", fsH.Remove)
-			r.Get("/metrics", metricsH.GetMetrics)
-			r.Get("/pty", ptyH.PtySession)
-			r.Get("/processes", processH.ListProcesses)
-			r.Delete("/processes/{selector}", processH.KillProcess)
-			r.Get("/processes/{selector}/stream", processH.ConnectProcess)
+			// Auth-required non-WS routes.
+			r.Group(func(r chi.Router) {
+				r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
+				r.Get("/", sandbox.Get)
+				r.Delete("/", sandbox.Destroy)
+				r.Post("/exec", exec.Exec)
+				r.Post("/ping", sandbox.Ping)
+				r.Post("/pause", sandbox.Pause)
+				r.Post("/resume", sandbox.Resume)
+				r.Post("/files/write", files.Upload)
+				r.Post("/files/read", files.Download)
+				r.Post("/files/stream/write", filesStream.StreamUpload)
+				r.Post("/files/stream/read", filesStream.StreamDownload)
+				r.Post("/files/list", fsH.ListDir)
+				r.Post("/files/mkdir", fsH.MakeDir)
+				r.Post("/files/remove", fsH.Remove)
+				r.Get("/metrics", metricsH.GetMetrics)
+				r.Get("/processes", processH.ListProcesses)
+				r.Delete("/processes/{selector}", processH.KillProcess)
+			})
+
+			// WebSocket endpoints — handlers authenticate after upgrade.
+			// optionalAPIKeyOrJWT injects auth context from headers when
+			// present (SDK clients) but does not reject when absent (browsers).
+			r.Group(func(r chi.Router) {
+				r.Use(optionalAPIKeyOrJWT(queries, jwtSecret))
+				r.Get("/exec/stream", execStream.ExecStream)
+				r.Get("/pty", ptyH.PtySession)
+				r.Get("/processes/{selector}/stream", processH.ConnectProcess)
+			})
 		})
 	})
 
@@ -248,39 +260,55 @@ func New(
 
 	// Platform admin routes — require JWT + DB-validated admin status.
 	r.Route("/v1/admin", func(r chi.Router) {
-		r.Use(requireJWT(jwtSecret, queries))
-		r.Use(requireAdmin(queries))
-		r.Get("/teams", teamH.AdminListTeams)
-		r.Put("/teams/{id}/byoc", teamH.SetBYOC)
-		r.Delete("/teams/{id}", teamH.AdminDeleteTeam)
-		r.Get("/users", usersH.AdminListUsers)
-		r.Put("/users/{id}/active", usersH.SetUserActive)
-		r.Get("/audit-logs", auditH.AdminList)
-		r.Get("/templates", buildH.ListTemplates)
-		r.Delete("/templates/{name}", buildH.DeleteTemplate)
-		r.Post("/builds", buildH.Create)
-		r.Get("/builds", buildH.List)
-		r.Get("/builds/{id}", buildH.Get)
-		r.Post("/builds/{id}/cancel", buildH.Cancel)
-		r.Post("/capsules", adminCapsules.Create)
-		r.Get("/capsules", adminCapsules.List)
+		// Auth-required admin routes (non-capsule + capsule list/create).
+		r.Group(func(r chi.Router) {
+			r.Use(requireJWT(jwtSecret, queries))
+			r.Use(requireAdmin(queries))
+			r.Get("/teams", teamH.AdminListTeams)
+			r.Put("/teams/{id}/byoc", teamH.SetBYOC)
+			r.Delete("/teams/{id}", teamH.AdminDeleteTeam)
+			r.Get("/users", usersH.AdminListUsers)
+			r.Put("/users/{id}/active", usersH.SetUserActive)
+			r.Get("/audit-logs", auditH.AdminList)
+			r.Get("/templates", buildH.ListTemplates)
+			r.Delete("/templates/{name}", buildH.DeleteTemplate)
+			r.Post("/builds", buildH.Create)
+			r.Get("/builds", buildH.List)
+			r.Get("/builds/{id}", buildH.Get)
+			r.Post("/builds/{id}/cancel", buildH.Cancel)
+			r.Post("/capsules", adminCapsules.Create)
+			r.Get("/capsules", adminCapsules.List)
+		})
+
 		r.Route("/capsules/{id}", func(r chi.Router) {
-			r.Use(injectPlatformTeam())
-			r.Get("/", adminCapsules.Get)
-			r.Delete("/", adminCapsules.Destroy)
-			r.Post("/snapshot", adminCapsules.Snapshot)
-			r.Post("/exec", exec.Exec)
-			r.Get("/exec/stream", execStream.ExecStream)
-			r.Post("/files/write", files.Upload)
-			r.Post("/files/read", files.Download)
-			r.Post("/files/list", fsH.ListDir)
-			r.Post("/files/mkdir", fsH.MakeDir)
-			r.Post("/files/remove", fsH.Remove)
-			r.Get("/metrics", metricsH.GetMetrics)
-			r.Get("/pty", ptyH.PtySession)
-			r.Get("/processes", processH.ListProcesses)
-			r.Delete("/processes/{selector}", processH.KillProcess)
-			r.Get("/processes/{selector}/stream", processH.ConnectProcess)
+			// Auth-required non-WS admin capsule routes.
+			r.Group(func(r chi.Router) {
+				r.Use(requireJWT(jwtSecret, queries))
+				r.Use(requireAdmin(queries))
+				r.Use(injectPlatformTeam())
+				r.Get("/", adminCapsules.Get)
+				r.Delete("/", adminCapsules.Destroy)
+				r.Post("/snapshot", adminCapsules.Snapshot)
+				r.Post("/exec", exec.Exec)
+				r.Post("/files/write", files.Upload)
+				r.Post("/files/read", files.Download)
+				r.Post("/files/list", fsH.ListDir)
+				r.Post("/files/mkdir", fsH.MakeDir)
+				r.Post("/files/remove", fsH.Remove)
+				r.Get("/metrics", metricsH.GetMetrics)
+				r.Get("/processes", processH.ListProcesses)
+				r.Delete("/processes/{selector}", processH.KillProcess)
+			})
+
+			// Admin WebSocket endpoints — handlers authenticate after upgrade
+			// via wsAuthenticateAdmin. markAdminWS sets the context flag so
+			// handlers know to use admin auth instead of regular auth.
+			r.Group(func(r chi.Router) {
+				r.Use(markAdminWS)
+				r.Get("/exec/stream", execStream.ExecStream)
+				r.Get("/pty", ptyH.PtySession)
+				r.Get("/processes/{selector}/stream", processH.ConnectProcess)
+			})
 		})
 	})
 
