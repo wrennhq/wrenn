@@ -269,6 +269,7 @@ func CreateNetwork(slot *Slot) error {
 	// Create TAP device inside namespace.
 	tapAttrs := netlink.NewLinkAttrs()
 	tapAttrs.Name = tapName
+	tapAttrs.TxQLen = 5000 // Up from default 1000 to reduce drops under bursty traffic.
 	tap := &netlink.Tuntap{
 		LinkAttrs: tapAttrs,
 		Mode:      netlink.TUNTAP_MODE_TAP,
