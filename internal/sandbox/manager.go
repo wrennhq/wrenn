@@ -363,6 +363,11 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
 	}
 
+	// Stop the metrics sampler goroutine before tearing down any resources
+	// it reads (dm device, Firecracker PID). Without this, the sampler
+	// leaks on every successful pause.
+	m.stopSampler(sb)
+
 	// Step 0: Drain in-flight proxy connections before freezing vCPUs.
 	// This prevents Go runtime corruption inside the guest caused by stale
 	// TCP state from connections that were alive when the VM was snapshotted.

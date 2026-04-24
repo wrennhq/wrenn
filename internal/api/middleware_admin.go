@@ -15,7 +15,6 @@ func injectPlatformTeam() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if _, ok := auth.FromContext(r.Context()); !ok {
-				// No auth context yet (WS upgrade); handler will inject platform team after WS auth.
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -27,23 +26,24 @@ func injectPlatformTeam() func(http.Handler) http.Handler {
 	}
 }
 
+// markAdminWS flags the request context as an admin WebSocket route.
+// Applied to admin WS endpoints that sit outside the requireJWT/requireAdmin
+// middleware group. Handlers use isAdminWSRoute(ctx) to pick wsAuthenticateAdmin.
+func markAdminWS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(setAdminWSFlag(r.Context())))
+	})
+}
+
 // requireAdmin validates that the authenticated user is a platform admin.
 // Must run after requireJWT (depends on AuthContext being present).
 // Re-validates against the DB — the JWT is_admin claim is for UI only;
 // the DB is the source of truth for admin access.
-// WebSocket upgrade requests without auth context are passed through —
-// admin WS handlers verify admin status after upgrade via wsAuthenticateAdmin.
 func requireAdmin(queries *db.Queries) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ac, ok := auth.FromContext(r.Context())
 			if !ok {
-				if isWebSocketUpgrade(r) {
-					ctx := r.Context()
-					ctx = setAdminWSFlag(ctx)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
 				writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 				return
 			}

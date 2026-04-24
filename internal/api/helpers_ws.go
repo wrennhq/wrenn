@@ -3,8 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -13,11 +11,6 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
-
-// isWebSocketUpgrade returns true if the request is a WebSocket upgrade.
-func isWebSocketUpgrade(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
-}
 
 // ctxKeyAdminWS is a context key for flagging admin WS routes.
 type ctxKeyAdminWS struct{}

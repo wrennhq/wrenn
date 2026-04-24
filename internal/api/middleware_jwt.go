@@ -22,13 +22,6 @@ func requireJWT(secret []byte, queries *db.Queries) func(http.Handler) http.Hand
 				tokenStr = strings.TrimPrefix(header, "Bearer ")
 			}
 			if tokenStr == "" {
-				// WebSocket upgrade requests may not have an Authorization header
-				// (browsers cannot set custom headers on WS connections). Let them
-				// through — the handler authenticates via the first WS message.
-				if isWebSocketUpgrade(r) {
-					next.ServeHTTP(w, r)
-					return
-				}
 				writeError(w, http.StatusUnauthorized, "unauthorized", "Authorization: Bearer <token> required")
 				return
 			}
