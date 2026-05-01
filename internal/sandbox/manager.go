@@ -577,6 +577,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		// Record which base template this CoW was built against.
 		if err := snapshot.WriteMeta(pauseDir, "", &snapshot.RootfsMeta{
 			BaseTemplate: sb.baseImagePath,
+			TemplateID:   uuid.UUID(sb.TemplateID).String(),
 		}); err != nil {
 			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
 			// VM and dm-snapshot are already gone — clean up remaining resources.
@@ -731,6 +732,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 	// Restore VM from snapshot.
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
+		TemplateID:       meta.TemplateID,
 		KernelPath:       m.resolveKernelPath(kernelVersion),
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            1,                                         // Placeholder; overridden by snapshot.

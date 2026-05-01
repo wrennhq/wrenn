@@ -64,6 +64,7 @@ func MetaPath(baseDir, name string) string {
 // RootfsMeta records which base template a CoW file was created against.
 type RootfsMeta struct {
 	BaseTemplate string `json:"base_template"`
+	TemplateID   string `json:"template_id,omitempty"`
 }
 
 // WriteMeta writes rootfs metadata to the snapshot directory.
