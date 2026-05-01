@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -74,7 +73,7 @@ func NewSandboxProxyWrapper(inner http.Handler, queries *db.Queries, pool *lifec
 		inner:     inner,
 		db:        queries,
 		pool:      pool,
-		transport: pool.Transport(),
+		transport: pool.NewProxyTransport(),
 		cache:     make(map[pgtype.UUID]proxyCacheEntry),
 	}
 }
@@ -167,13 +166,28 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The host agent's proxy adds a /proxy/{id}/{port} prefix to Location
+	// headers for path-based routing. For subdomain routing the browser is at
+	// {port}-{id}.domain, so we strip the prefix back out.
+	agentProxyPrefix := "/proxy/" + sandboxIDStr + "/" + port
+
 	proxy := &httputil.ReverseProxy{
 		Transport: h.transport,
 		Director: func(req *http.Request) {
 			req.URL.Scheme = agentURL.Scheme
 			req.URL.Host = agentURL.Host
-			req.URL.Path = path.Join("/proxy", sandboxIDStr, port, path.Clean("/"+req.URL.Path))
+			// Use string concatenation instead of path.Join to preserve trailing
+			// slashes. path.Join strips them, causing redirect loops for directory
+			// listings in apps like python http.server and Jupyter.
+			req.URL.Path = "/proxy/" + sandboxIDStr + "/" + port + req.URL.Path
 			req.Host = agentURL.Host
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			if loc := resp.Header.Get("Location"); loc != "" {
+				loc = strings.TrimPrefix(loc, agentProxyPrefix)
+				resp.Header.Set("Location", loc)
+			}
+			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			slog.Debug("sandbox proxy error",

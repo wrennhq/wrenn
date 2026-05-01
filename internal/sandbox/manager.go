@@ -53,6 +53,15 @@ type Manager struct {
 
 	autoPausedMu  sync.Mutex
 	autoPausedIDs []string
+
+	// onDestroy is called with the sandbox ID after cleanup completes.
+	// Used by ProxyHandler to evict cached reverse proxies.
+	onDestroy func(sandboxID string)
+}
+
+// SetOnDestroy registers a callback invoked after each sandbox is cleaned up.
+func (m *Manager) SetOnDestroy(fn func(sandboxID string)) {
+	m.onDestroy = fn
 }
 
 // sandboxState holds the runtime state for a single sandbox.
@@ -314,6 +323,10 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 		slog.Warn("snapshot cleanup error", "id", sandboxID, "error", err)
 	}
 
+	if m.onDestroy != nil {
+		m.onDestroy(sandboxID)
+	}
+
 	slog.Info("sandbox destroyed", "id", sandboxID)
 	return nil
 }
@@ -362,6 +375,11 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	if sb.Status != models.StatusRunning {
 		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
 	}
+
+	// Stop the metrics sampler goroutine before tearing down any resources
+	// it reads (dm device, Firecracker PID). Without this, the sampler
+	// leaks on every successful pause.
+	m.stopSampler(sb)
 
 	// Step 0: Drain in-flight proxy connections before freezing vCPUs.
 	// This prevents Go runtime corruption inside the guest caused by stale

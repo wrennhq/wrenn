@@ -162,7 +162,7 @@ type eventProvider interface {
 // drainPtyStream reads events from either a Start or Connect stream and maps
 // them into PtyEvent values on a channel.
 func drainPtyStream(ctx context.Context, stream eventProvider, expectStart bool) <-chan PtyEvent {
-	ch := make(chan PtyEvent, 16)
+	ch := make(chan PtyEvent, 256)
 	go func() {
 		defer close(ch)
 		defer stream.Close()

@@ -404,10 +404,10 @@ func (h *meHandler) ConnectProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mac := computeHMAC(h.jwtSecret, state)
+	mac := computeHMAC(h.jwtSecret, state+":"+"login")
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_state",
-		Value:    state + ":" + mac,
+		Value:    state + ":" + mac + ":" + "login",
 		Path:     "/",
 		MaxAge:   600,
 		HttpOnly: true,

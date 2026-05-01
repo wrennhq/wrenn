@@ -84,11 +84,21 @@ func (c *fcClient) setRootfsDrive(ctx context.Context, driveID, path string, rea
 }
 
 // setNetworkInterface configures a network interface attached to a TAP device.
+// A tx_rate_limiter caps sustained guest→host throughput to prevent user
+// application traffic from completely saturating the TAP device and starving
+// envd control traffic (PTY, exec, file ops).
 func (c *fcClient) setNetworkInterface(ctx context.Context, ifaceID, tapName, macAddr string) error {
 	return c.do(ctx, http.MethodPut, "/network-interfaces/"+ifaceID, map[string]any{
 		"iface_id":      ifaceID,
 		"host_dev_name": tapName,
 		"guest_mac":     macAddr,
+		"tx_rate_limiter": map[string]any{
+			"bandwidth": map[string]any{
+				"size":           209715200, // 200 MB/s sustained
+				"refill_time":    1000,      // refill period: 1 second
+				"one_time_burst": 104857600, // 100 MB initial burst
+			},
+		},
 	})
 }
 

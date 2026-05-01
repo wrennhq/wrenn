@@ -148,7 +148,13 @@ func main() {
 	slog.Info("host registered", "host_id", creds.HostID)
 
 	// httpServer is declared here so the shutdown func can reference it.
-	httpServer := &http.Server{Addr: listenAddr}
+	// ReadTimeout/WriteTimeout are intentionally omitted — they would kill
+	// long-lived Connect RPC streams and WebSocket proxy connections.
+	httpServer := &http.Server{
+		Addr:              listenAddr,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       620 * time.Second, // > typical LB upstream timeout (600s)
+	}
 
 	// mTLS is mandatory — refuse to start without a valid certificate.
 	var certStore hostagent.CertStore
@@ -193,6 +199,7 @@ func main() {
 	path, handler := hostagentv1connect.NewHostAgentServiceHandler(srv)
 
 	proxyHandler := hostagent.NewProxyHandler(mgr)
+	mgr.SetOnDestroy(proxyHandler.EvictProxy)
 
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
