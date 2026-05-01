@@ -47,9 +47,10 @@ type API struct {
 	// long-lived goroutines after snapshot restore.
 	rootCtx       context.Context
 	portSubsystem *publicport.PortSubsystem
+	connTracker   *ServerConnTracker
 }
 
-func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, rootCtx context.Context, portSubsystem *publicport.PortSubsystem, version string) *API {
+func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, rootCtx context.Context, portSubsystem *publicport.PortSubsystem, connTracker *ServerConnTracker, version string) *API {
 	return &API{
 		logger:        l,
 		defaults:      defaults,
@@ -60,6 +61,7 @@ func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.
 		accessToken:   &SecureToken{},
 		rootCtx:       rootCtx,
 		portSubsystem: portSubsystem,
+		connTracker:   connTracker,
 		version:       version,
 	}
 }

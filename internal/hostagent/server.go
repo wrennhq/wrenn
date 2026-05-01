@@ -459,7 +459,7 @@ func (s *Server) WriteFileStream(
 	}
 	httpReq.Header.Set("Content-Type", mpWriter.FormDataContentType())
 
-	resp, err := client.HTTPClient().Do(httpReq)
+	resp, err := client.StreamingHTTPClient().Do(httpReq)
 	if err != nil {
 		pw.CloseWithError(err)
 		<-errCh
@@ -504,7 +504,7 @@ func (s *Server) ReadFileStream(
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("create request: %w", err))
 	}
 
-	resp, err := client.HTTPClient().Do(httpReq)
+	resp, err := client.StreamingHTTPClient().Do(httpReq)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("read file stream: %w", err))
 	}

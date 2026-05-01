@@ -387,9 +387,17 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	sb.connTracker.Drain(2 * time.Second)
 	slog.Debug("pause: proxy connections drained", "id", sandboxID)
 
-	// Step 0b: Signal envd to quiesce continuous goroutines (port scanner,
-	// forwarder) and run GC before freezing vCPUs. This prevents Go runtime
-	// page allocator corruption ("bad summary data") on snapshot restore.
+	// Step 0b: Close host-side idle connections to envd. Done before
+	// PrepareSnapshot so FIN packets propagate to the guest during the
+	// PrepareSnapshot window (no extra sleep needed).
+	sb.client.CloseIdleConnections()
+	slog.Debug("pause: envd client idle connections closed", "id", sandboxID)
+
+	// Step 0c: Signal envd to quiesce continuous goroutines (port scanner,
+	// forwarder), close idle HTTP connections, and run GC before freezing
+	// vCPUs. This prevents Go runtime page allocator corruption ("bad
+	// summary data") on snapshot restore. The 3s timeout also gives time
+	// for the FINs from Step 0b to be processed by the guest kernel.
 	// Best-effort: a failure is logged but does not abort the pause.
 	func() {
 		prepCtx, prepCancel := context.WithTimeout(ctx, 3*time.Second)

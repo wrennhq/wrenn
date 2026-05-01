@@ -197,7 +197,9 @@ func main() {
 	portSubsystem.Start(ctx)
 	defer portSubsystem.Stop()
 
-	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, ctx, portSubsystem, Version)
+	connTracker := api.NewServerConnTracker()
+
+	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, ctx, portSubsystem, connTracker, Version)
 	handler := api.HandlerFromMux(service, m)
 	middleware := authn.NewMiddleware(permissions.AuthenticateUsername)
 
@@ -212,7 +214,9 @@ func main() {
 		ReadTimeout:  0,
 		WriteTimeout: 0,
 		IdleTimeout:  idleTimeout,
+		ConnState:    connTracker.Track,
 	}
+	connTracker.SetServer(s)
 
 	// TODO: Not used anymore in template build, replaced by direct envd command call.
 	if startCmdFlag != "" {
