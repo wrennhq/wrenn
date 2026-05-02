@@ -23,8 +23,9 @@ func newHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: 2 * time.Minute,
 		Transport: &http.Transport{
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       90 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
 			DialContext: (&net.Dialer{
 				Timeout:   10 * time.Second,
 				KeepAlive: 30 * time.Second,
@@ -38,8 +39,9 @@ func newHTTPClient() *http.Client {
 func newStreamingHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       90 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
 			DialContext: (&net.Dialer{
 				Timeout:   10 * time.Second,
 				KeepAlive: 30 * time.Second,

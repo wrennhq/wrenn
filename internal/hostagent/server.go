@@ -109,16 +109,9 @@ func (s *Server) ResumeSandbox(
 	req *connect.Request[pb.ResumeSandboxRequest],
 ) (*connect.Response[pb.ResumeSandboxResponse], error) {
 	msg := req.Msg
-	sb, err := s.mgr.Resume(ctx, msg.SandboxId, int(msg.TimeoutSec), msg.KernelVersion)
+	sb, err := s.mgr.Resume(ctx, msg.SandboxId, int(msg.TimeoutSec), msg.KernelVersion, msg.DefaultUser, msg.DefaultEnv)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-
-	// Apply template defaults (user, env vars) if provided.
-	if msg.DefaultUser != "" || len(msg.DefaultEnv) > 0 {
-		if err := s.mgr.SetDefaults(ctx, sb.ID, msg.DefaultUser, msg.DefaultEnv); err != nil {
-			slog.Warn("failed to set sandbox defaults on resume", "sandbox", sb.ID, "error", err)
-		}
 	}
 
 	return connect.NewResponse(&pb.ResumeSandboxResponse{

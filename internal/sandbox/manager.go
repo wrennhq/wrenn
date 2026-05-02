@@ -626,7 +626,9 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 // Resume restores a paused sandbox from its snapshot using UFFD for
 // lazy memory loading. The sandbox gets a new network slot.
-func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, kernelVersion string) (*models.Sandbox, error) {
+// Optional defaultUser and defaultEnv are applied via a single PostInit
+// call so that template defaults are set without an extra round-trip.
+func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, kernelVersion string, defaultUser string, defaultEnv map[string]string) (*models.Sandbox, error) {
 	pauseDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sandboxID)
 	if _, err := os.Stat(pauseDir); err != nil {
 		return nil, fmt.Errorf("no snapshot found for sandbox %s", sandboxID)
@@ -783,8 +785,8 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
-	// Trigger envd to re-read MMDS so it picks up the new sandbox/template IDs.
-	if err := client.PostInit(waitCtx); err != nil {
+	// Trigger envd to re-read MMDS and apply template defaults in a single call.
+	if err := client.PostInitWithDefaults(waitCtx, defaultUser, defaultEnv); err != nil {
 		slog.Warn("post-init failed after resume, metadata files may be stale", "sandbox", sandboxID, "error", err)
 	}
 
