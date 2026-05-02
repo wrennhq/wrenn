@@ -3,17 +3,15 @@
 # ═══════════════════════════════════════════════════
 DATABASE_URL   ?= postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable
 BIN_DIR        := $(shell pwd)/builds
-ENVD_DIR       := envd
 COMMIT         := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 VERSION_CP     := $(shell cat VERSION_CP 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
 VERSION_AGENT  := $(shell cat VERSION_AGENT 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
-VERSION_ENVD   := $(shell cat envd/VERSION 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
 LDFLAGS        := -s -w
 
 # ═══════════════════════════════════════════════════
 #  Build
 # ═══════════════════════════════════════════════════
-.PHONY: build build-cp build-agent build-envd build-envd-go build-frontend
+.PHONY: build build-cp build-agent build-envd build-frontend
 
 build: build-cp build-agent build-envd
 
@@ -29,12 +27,8 @@ build-agent:
 build-envd:
 	cd envd-rs && ENVD_COMMIT=$(COMMIT) cargo build --release --target x86_64-unknown-linux-musl
 	@cp envd-rs/target/x86_64-unknown-linux-musl/release/envd $(BIN_DIR)/envd
-
-build-envd-go:
-	cd $(ENVD_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS) -X main.Version=$(VERSION_ENVD) -X main.commitSHA=$(COMMIT)" -o $(BIN_DIR)/envd-go .
-	@file $(BIN_DIR)/envd-go | grep -q "statically linked" || \
-		(echo "ERROR: envd-go is not statically linked!" && exit 1)
+	@file $(BIN_DIR)/envd | grep -q "statically linked" || \
+		(echo "ERROR: envd is not statically linked!" && exit 1)
 
 # ═══════════════════════════════════════════════════
 #  Development
@@ -65,10 +59,6 @@ dev-frontend:
 
 dev-envd:
 	cd envd-rs && cargo run -- --isnotfc --port 49983
-
-dev-envd-go:
-	cd $(ENVD_DIR) && go run . --debug --listen-tcp :3002
-
 
 # ═══════════════════════════════════════════════════
 #  Database (goose)
@@ -101,7 +91,6 @@ generate: proto sqlc
 proto:
 	cd proto/envd && buf generate
 	cd proto/hostagent && buf generate
-	cd $(ENVD_DIR)/spec && buf generate
 
 sqlc:
 	sqlc generate
@@ -113,14 +102,12 @@ sqlc:
 
 fmt:
 	gofmt -w .
-	cd $(ENVD_DIR) && gofmt -w .
 
 lint:
 	golangci-lint run ./...
 
 vet:
 	go vet ./...
-	cd $(ENVD_DIR) && go vet ./...
 
 test:
 	go test -race -v ./internal/...
@@ -132,7 +119,6 @@ test-all: test test-integration
 
 tidy:
 	go mod tidy
-	cd $(ENVD_DIR) && go mod tidy
 
 ## Run all quality checks in CI order
 check: fmt vet lint test
@@ -174,7 +160,6 @@ install: build
 
 clean:
 	rm -rf builds/
-	cd $(ENVD_DIR) && rm -f envd
 	cd envd-rs && cargo clean
 
 # ═══════════════════════════════════════════════════
@@ -191,13 +176,11 @@ help:
 	@echo "  make dev-cp         Control plane (hot reload if air installed)"
 	@echo "  make dev-frontend   Vite dev server with HMR (port 5173)"
 	@echo "  make dev-agent      Host agent (sudo required)"
-	@echo "  make dev-envd       envd Rust (--isnotfc, port 49983)"
-	@echo "  make dev-envd-go    envd Go (TCP debug mode)"
+	@echo "  make dev-envd       envd in debug mode (--isnotfc, port 49983)"
 	@echo ""
 	@echo "  make build          Build all binaries → builds/"
 	@echo "  make build-frontend Build SvelteKit dashboard → frontend/build/"
 	@echo "  make build-envd     Build envd static binary (Rust, musl)"
-	@echo "  make build-envd-go  Build envd Go binary"
 	@echo ""
 	@echo "  make migrate-up     Apply migrations"
 	@echo "  make migrate-create name=xxx  New migration"

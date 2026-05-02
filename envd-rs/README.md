@@ -103,7 +103,7 @@ src/
 ├── state.rs             # Shared AppState
 ├── config.rs            # Constants
 ├── conntracker.rs       # TCP connection tracking for snapshot/restore
-├─��� execcontext.rs       # Default user/workdir/env
+├── execcontext.rs       # Default user/workdir/env
 ├── logging.rs           # tracing-subscriber (JSON or pretty)
 ├── util.rs              # AtomicMax
 ├── auth/                # Token, signing, middleware

@@ -95,11 +95,9 @@ type snapshotParent struct {
 }
 
 // maxDiffGenerations caps how many incremental diff generations we chain
-// before falling back to a Full snapshot to collapse the chain. Firecracker
-// snapshot/restore of a Go process (envd) accumulates runtime memory state
-// drift; empirically, ~10 diff-based cycles corrupt the Go page allocator.
-// A Full snapshot resets the generation counter and produces a clean base,
-// preventing the crash.
+// before falling back to a Full snapshot to collapse the chain. Long diff
+// chains increase restore latency and snapshot directory size; a periodic
+// Full snapshot resets the counter and produces a clean base.
 const maxDiffGenerations = 8
 
 // buildMetadata constructs the metadata map with version information.
@@ -382,8 +380,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	m.stopSampler(sb)
 
 	// Step 0: Drain in-flight proxy connections before freezing vCPUs.
-	// This prevents Go runtime corruption inside the guest caused by stale
-	// TCP state from connections that were alive when the VM was snapshotted.
+	// Stale TCP state from mid-flight connections causes issues on restore.
 	sb.connTracker.Drain(2 * time.Second)
 	slog.Debug("pause: proxy connections drained", "id", sandboxID)
 
@@ -393,10 +390,8 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	sb.client.CloseIdleConnections()
 	slog.Debug("pause: envd client idle connections closed", "id", sandboxID)
 
-	// Step 0c: Signal envd to quiesce continuous goroutines (port scanner,
-	// forwarder), close idle HTTP connections, and run GC before freezing
-	// vCPUs. This prevents Go runtime page allocator corruption ("bad
-	// summary data") on snapshot restore. The 3s timeout also gives time
+	// Step 0c: Signal envd to quiesce (stop port scanner/forwarder, mark
+	// connections for post-restore cleanup). The 3s timeout also gives time
 	// for the FINs from Step 0b to be processed by the guest kernel.
 	// Best-effort: a failure is logged but does not abort the pause.
 	func() {
@@ -405,7 +400,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		if err := sb.client.PrepareSnapshot(prepCtx); err != nil {
 			slog.Warn("pause: pre-snapshot quiesce failed (best-effort)", "id", sandboxID, "error", err)
 		} else {
-			slog.Debug("pause: envd goroutines quiesced", "id", sandboxID)
+			slog.Debug("pause: envd quiesced", "id", sandboxID)
 		}
 	}()
 

@@ -14,7 +14,7 @@ All commands go through the Makefile. Never use raw `go build` or `go run`.
 make build              # Build all binaries → builds/
 make build-cp           # Control plane only
 make build-agent        # Host agent only
-make build-envd         # envd static binary (verified statically linked)
+make build-envd         # envd static binary (Rust, musl, verified statically linked)
 make build-frontend     # SvelteKit dashboard → frontend/build/ (served by Caddy)
 
 make dev                # Full local dev: infra + migrate + control plane
@@ -23,13 +23,13 @@ make dev-down           # Stop dev infra
 make dev-cp             # Control plane with hot reload (if air installed)
 make dev-frontend       # Vite dev server with HMR (port 5173)
 make dev-agent          # Host agent (sudo required)
-make dev-envd           # envd in TCP debug mode
+make dev-envd           # envd in debug mode (--isnotfc, port 49983)
 
 make check              # fmt + vet + lint + test (CI order)
 make test               # Unit tests: go test -race -v ./internal/...
 make test-integration   # Integration tests (require host agent + Firecracker)
-make fmt                # gofmt both modules
-make vet                # go vet both modules
+make fmt                # gofmt
+make vet                # go vet
 make lint               # golangci-lint
 
 make migrate-up         # Apply pending migrations
@@ -38,8 +38,8 @@ make migrate-create name=xxx  # Scaffold new goose migration (never create manua
 make migrate-reset      # Drop + re-apply all
 
 make generate           # Proto (buf) + sqlc codegen
-make proto              # buf generate for all proto dirs
-make tidy               # go mod tidy both modules
+make proto              # buf generate for proto dirs
+make tidy               # go mod tidy
 ```
 
 Run a single test: `go test -race -v -run TestName ./internal/path/...`
@@ -50,15 +50,15 @@ Run a single test: `go test -race -v -run TestName ./internal/path/...`
 User SDK → HTTPS/WS → Control Plane → Connect RPC → Host Agent → HTTP/Connect RPC over TAP → envd (inside VM)
 ```
 
-**Three binaries, two Go modules:**
+**Three binaries:**
 
-| Binary | Module | Entry point | Runs as |
-|--------|--------|-------------|---------|
-| wrenn-cp | `git.omukk.dev/wrenn/wrenn` | `cmd/control-plane/main.go` | Unprivileged |
-| wrenn-agent | `git.omukk.dev/wrenn/wrenn` | `cmd/host-agent/main.go` | `wrenn` user with capabilities (SYS_ADMIN, NET_ADMIN, NET_RAW, SYS_PTRACE, KILL, DAC_OVERRIDE, MKNOD) via setcap; also accepts root |
-| envd | `git.omukk.dev/wrenn/wrenn/envd` (standalone `envd/go.mod`) | `envd/main.go` | PID 1 inside guest VM |
+| Binary | Language | Entry point | Runs as |
+|--------|----------|-------------|---------|
+| wrenn-cp | Go (`git.omukk.dev/wrenn/wrenn`) | `cmd/control-plane/main.go` | Unprivileged |
+| wrenn-agent | Go (`git.omukk.dev/wrenn/wrenn`) | `cmd/host-agent/main.go` | `wrenn` user with capabilities (SYS_ADMIN, NET_ADMIN, NET_RAW, SYS_PTRACE, KILL, DAC_OVERRIDE, MKNOD) via setcap; also accepts root |
+| envd | Rust (`envd-rs/`) | `envd-rs/src/main.rs` | PID 1 inside guest VM |
 
-envd is a **completely independent Go module**. It is never imported by the main module. The only connection is the protobuf contract. It compiles to a static binary baked into rootfs images.
+envd is a standalone Rust binary (Tokio + Axum + connectrpc-rs). It is completely independent from the Go module — the only connection is the protobuf contract. It compiles to a statically linked musl binary baked into rootfs images.
 
 **Key architectural invariant:** The host agent is **stateful** (in-memory `boxes` map is the source of truth for running VMs). The control plane is **stateless** (all persistent state in PostgreSQL). The reconciler (`internal/api/reconciler.go`) bridges the gap — it periodically compares DB records against the host agent's live state and marks orphaned sandboxes as "stopped".
 
@@ -99,13 +99,17 @@ Startup (`cmd/host-agent/main.go`) wires: root/capabilities check → enable IP 
 
 ### envd (Guest Agent)
 
-**Module:** `envd/` with its own `go.mod` (`git.omukk.dev/wrenn/wrenn/envd`)
+**Directory:** `envd-rs/` — standalone Rust crate
 
-Runs as PID 1 inside the microVM via `wrenn-init.sh` (mounts procfs/sysfs/dev, sets hostname, writes resolv.conf, then execs envd). Extracted from E2B (Apache 2.0), with shared packages internalized into `envd/internal/shared/`. Listens on TCP `0.0.0.0:49983`.
+Runs as PID 1 inside the microVM via `wrenn-init.sh` (mounts procfs/sysfs/dev, sets hostname, writes resolv.conf, then execs envd via tini). Built with `cargo build --release --target x86_64-unknown-linux-musl`. Listens on TCP `0.0.0.0:49983`.
 
-- **ProcessService**: start processes, stream stdout/stderr, signal handling, PTY support
-- **FilesystemService**: stat/list/mkdir/move/remove/watch files
-- **Health**: GET `/health`
+- **Stack**: Tokio (async runtime) + Axum (HTTP) + connectrpc-rs (Connect protocol RPC)
+- **ProcessService** (Connect RPC): start/connect/list/signal processes, stream stdout/stderr, PTY support
+- **FilesystemService** (Connect RPC): stat/list/mkdir/move/remove/watch files
+- **HTTP endpoints**: GET `/health`, GET `/metrics`, POST `/init`, POST `/snapshot/prepare`, GET/POST `/files`
+- **Proto codegen**: `connectrpc-build` compiles `proto/envd/*.proto` at `cargo build` time via `build.rs` — no committed stubs
+- **Build**: `make build-envd` → static musl binary in `builds/envd`
+- **Dev**: `make dev-envd` → `cargo run -- --isnotfc --port 49983`
 
 ### Dashboard (Frontend)
 
@@ -185,17 +189,16 @@ Routes defined in `internal/api/server.go`, handlers in `internal/api/handlers_*
 
 ### Proto (Connect RPC)
 
-Proto source of truth is `proto/envd/*.proto` and `proto/hostagent/*.proto`. Run `make proto` to regenerate. Three `buf.gen.yaml` files control output:
+Proto source of truth is `proto/envd/*.proto` and `proto/hostagent/*.proto`. Run `make proto` to regenerate Go stubs. Two `buf.gen.yaml` files control Go output:
 
 | buf.gen.yaml location | Generates to | Used by |
 |---|---|---|
 | `proto/envd/buf.gen.yaml` | `proto/envd/gen/` | Main module (host agent's envd client) |
 | `proto/hostagent/buf.gen.yaml` | `proto/hostagent/gen/` | Main module (control plane ↔ host agent) |
-| `envd/spec/buf.gen.yaml` | `envd/internal/services/spec/` | envd module (guest agent server) |
 
-The envd `buf.gen.yaml` reads from `../../proto/envd/` (same source protos) but generates into envd's own module. This means the same `.proto` files produce two independent sets of Go stubs — one for each Go module.
+The Rust envd (`envd-rs/`) generates its own protobuf stubs at `cargo build` time via `connectrpc-build` in `envd-rs/build.rs`, reading from the same `proto/envd/*.proto` sources. No committed Rust stubs — they live in `OUT_DIR`.
 
-To add a new RPC method: edit the `.proto` file → `make proto` → implement the handler on both sides.
+To add a new RPC method: edit the `.proto` file → `make proto` (Go stubs) → rebuild envd-rs (Rust stubs generated automatically) → implement the handler on both sides.
 
 ### sqlc
 
@@ -206,7 +209,7 @@ To add a new query: add it to the appropriate `.sql` file in `db/queries/` → `
 ## Key Technical Decisions
 
 - **Connect RPC** (not gRPC) for all RPC communication between components
-- **Buf + protoc-gen-connect-go** for code generation (not protoc-gen-go-grpc)
+- **Buf + protoc-gen-connect-go** for Go code generation; **connectrpc-build** for Rust code generation in envd
 - **Raw Firecracker HTTP API** via Unix socket (not firecracker-go-sdk Machine type)
 - **TAP networking** (not vsock) for host-to-envd communication
 - **Device-mapper snapshots** for rootfs CoW — shared read-only loop device per base template, per-sandbox sparse CoW file, Firecracker gets `/dev/mapper/wrenn-{id}`
@@ -218,19 +221,15 @@ To add a new query: add it to the appropriate `.sql` file in `db/queries/` → `
 
 - **Go style**: `gofmt`, `go vet`, `context.Context` everywhere, errors wrapped with `fmt.Errorf("action: %w", err)`, `slog` for logging, no global state
 - **Naming**: Sandbox IDs `sb-` + 8 hex, API keys `wrn_` + 32 chars, Host IDs `host-` + 8 hex
-- **Dependencies**: Use `go get` to add deps, never hand-edit go.mod. For envd deps: `cd envd && go get ...` (separate module)
+- **Dependencies**: Use `go get` to add Go deps, never hand-edit go.mod. For envd-rs deps: edit `envd-rs/Cargo.toml`
 - **Generated code**: Always commit generated code (proto stubs, sqlc). Never add generated code to .gitignore
 - **Migrations**: Always use `make migrate-create name=xxx`, never create migration files manually
 - **Testing**: Table-driven tests for handlers and state machine transitions
 
-### Two-module gotcha
-
-The main module (`go.mod`) and envd (`envd/go.mod`) are fully independent. `make tidy`, `make fmt`, `make vet` already operate on both. But when adding dependencies manually, remember to target the correct module (`cd envd && go get ...` for envd deps). `make proto` also generates stubs for both modules from the same proto sources.
-
 ## Rootfs & Guest Init
 
 - **wrenn-init** (`images/wrenn-init.sh`): the PID 1 init script baked into every rootfs. Mounts virtual filesystems, sets hostname, writes `/etc/resolv.conf`, then execs envd.
-- **Updating the rootfs** after changing envd or wrenn-init: `bash scripts/update-debug-rootfs.sh [rootfs_path]`. This builds envd via `make build-envd`, mounts the rootfs image, copies in the new binaries, and unmounts. Defaults to `/var/lib/wrenn/images/minimal.ext4`.
+- **Updating the rootfs** after changing envd or wrenn-init: `bash scripts/update-minimal-rootfs.sh`. This builds envd via `make build-envd` (Rust → static musl binary), mounts the rootfs image, copies in the new binaries, and unmounts. Defaults to `/var/lib/wrenn/images/minimal.ext4`.
 - Rootfs images are minimal debootstrap — no systemd, no coreutils beyond busybox. Use `/bin/sh -c` for shell builtins inside the guest.
 
 ## Fixed Paths (on host machine)
