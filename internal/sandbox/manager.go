@@ -95,11 +95,9 @@ type snapshotParent struct {
 }
 
 // maxDiffGenerations caps how many incremental diff generations we chain
-// before falling back to a Full snapshot to collapse the chain. Firecracker
-// snapshot/restore of a Go process (envd) accumulates runtime memory state
-// drift; empirically, ~10 diff-based cycles corrupt the Go page allocator.
-// A Full snapshot resets the generation counter and produces a clean base,
-// preventing the crash.
+// before falling back to a Full snapshot to collapse the chain. Long diff
+// chains increase restore latency and snapshot directory size; a periodic
+// Full snapshot resets the counter and produces a clean base.
 const maxDiffGenerations = 8
 
 // buildMetadata constructs the metadata map with version information.
@@ -382,14 +380,19 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	m.stopSampler(sb)
 
 	// Step 0: Drain in-flight proxy connections before freezing vCPUs.
-	// This prevents Go runtime corruption inside the guest caused by stale
-	// TCP state from connections that were alive when the VM was snapshotted.
+	// Stale TCP state from mid-flight connections causes issues on restore.
 	sb.connTracker.Drain(2 * time.Second)
 	slog.Debug("pause: proxy connections drained", "id", sandboxID)
 
-	// Step 0b: Signal envd to quiesce continuous goroutines (port scanner,
-	// forwarder) and run GC before freezing vCPUs. This prevents Go runtime
-	// page allocator corruption ("bad summary data") on snapshot restore.
+	// Step 0b: Close host-side idle connections to envd. Done before
+	// PrepareSnapshot so FIN packets propagate to the guest during the
+	// PrepareSnapshot window (no extra sleep needed).
+	sb.client.CloseIdleConnections()
+	slog.Debug("pause: envd client idle connections closed", "id", sandboxID)
+
+	// Step 0c: Signal envd to quiesce (stop port scanner/forwarder, mark
+	// connections for post-restore cleanup). The 3s timeout also gives time
+	// for the FINs from Step 0b to be processed by the guest kernel.
 	// Best-effort: a failure is logged but does not abort the pause.
 	func() {
 		prepCtx, prepCancel := context.WithTimeout(ctx, 3*time.Second)
@@ -397,7 +400,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		if err := sb.client.PrepareSnapshot(prepCtx); err != nil {
 			slog.Warn("pause: pre-snapshot quiesce failed (best-effort)", "id", sandboxID, "error", err)
 		} else {
-			slog.Debug("pause: envd goroutines quiesced", "id", sandboxID)
+			slog.Debug("pause: envd quiesced", "id", sandboxID)
 		}
 	}()
 
@@ -577,6 +580,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		// Record which base template this CoW was built against.
 		if err := snapshot.WriteMeta(pauseDir, "", &snapshot.RootfsMeta{
 			BaseTemplate: sb.baseImagePath,
+			TemplateID:   uuid.UUID(sb.TemplateID).String(),
 		}); err != nil {
 			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
 			// VM and dm-snapshot are already gone — clean up remaining resources.
@@ -617,7 +621,9 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 // Resume restores a paused sandbox from its snapshot using UFFD for
 // lazy memory loading. The sandbox gets a new network slot.
-func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, kernelVersion string) (*models.Sandbox, error) {
+// Optional defaultUser and defaultEnv are applied via a single PostInit
+// call so that template defaults are set without an extra round-trip.
+func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, kernelVersion string, defaultUser string, defaultEnv map[string]string) (*models.Sandbox, error) {
 	pauseDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sandboxID)
 	if _, err := os.Stat(pauseDir); err != nil {
 		return nil, fmt.Errorf("no snapshot found for sandbox %s", sandboxID)
@@ -731,6 +737,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 	// Restore VM from snapshot.
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
+		TemplateID:       meta.TemplateID,
 		KernelPath:       m.resolveKernelPath(kernelVersion),
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            1,                                         // Placeholder; overridden by snapshot.
@@ -756,12 +763,17 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
 	}
 
+	// Start prefetching all guest memory pages in the background.
+	// This runs concurrently with envd startup and eliminates on-demand
+	// page fault latency for subsequent RPC calls.
+	uffdServer.Prefetch()
+
 	// Wait for envd to be ready.
 	client := envdclient.New(slot.HostIP.String())
 	waitCtx, waitCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-	defer waitCancel()
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
+		waitCancel()
 		warnErr("uffd server stop error", sandboxID, uffdServer.Stop())
 		source.Close()
 		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
@@ -772,9 +784,14 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		m.loops.Release(baseImagePath)
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
+	waitCancel()
 
-	// Trigger envd to re-read MMDS so it picks up the new sandbox/template IDs.
-	if err := client.PostInit(waitCtx); err != nil {
+	// PostInit gets its own timeout — WaitUntilReady may have consumed most
+	// of EnvdTimeout, starving PostInit of time for RestoreAfterSnapshot.
+	initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
+	defer initCancel()
+
+	if err := client.PostInitWithDefaults(initCtx, defaultUser, defaultEnv); err != nil {
 		slog.Warn("post-init failed after resume, metadata files may be stale", "sandbox", sandboxID, "error", err)
 	}
 
@@ -1188,12 +1205,15 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
 	}
 
+	// Start prefetching all guest memory pages in the background.
+	uffdServer.Prefetch()
+
 	// Wait for envd.
 	client := envdclient.New(slot.HostIP.String())
 	waitCtx, waitCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-	defer waitCancel()
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
+		waitCancel()
 		warnErr("uffd server stop error", sandboxID, uffdServer.Stop())
 		source.Close()
 		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
@@ -1204,9 +1224,14 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
+	waitCancel()
 
-	// Trigger envd to re-read MMDS so it picks up the new sandbox/template IDs.
-	if err := client.PostInit(waitCtx); err != nil {
+	// PostInit gets its own timeout — WaitUntilReady may have consumed most
+	// of EnvdTimeout, starving PostInit of time for RestoreAfterSnapshot.
+	initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
+	defer initCancel()
+
+	if err := client.PostInit(initCtx); err != nil {
 		slog.Warn("post-init failed after template restore, metadata files may be stale", "sandbox", sandboxID, "error", err)
 	}
 
