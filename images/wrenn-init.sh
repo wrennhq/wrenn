@@ -18,8 +18,8 @@ mount -t cgroup2 cgroup2 /sys/fs/cgroup 2>/dev/null || true
 echo "+cpu +memory +io" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
 
 # Set hostname and make it resolvable (sudo requires this).
-hostname sandbox
-echo "127.0.0.1 sandbox" >> /etc/hosts
+hostname capsule
+echo "127.0.0.1 capsule" >> /etc/hosts
 
 # Configure networking if the kernel ip= boot arg did not already set it up.
 if ! ip addr show eth0 2>/dev/null | grep -q "169.254.0.21"; then
