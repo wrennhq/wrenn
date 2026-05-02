@@ -27,7 +27,7 @@ build-agent:
 build-envd:
 	cd envd-rs && ENVD_COMMIT=$(COMMIT) cargo build --release --target x86_64-unknown-linux-musl
 	@cp envd-rs/target/x86_64-unknown-linux-musl/release/envd $(BIN_DIR)/envd
-	@file $(BIN_DIR)/envd | grep -q "statically linked" || \
+	@file $(BIN_DIR)/envd | grep -q "static-pie linked" || \
 		(echo "ERROR: envd is not statically linked!" && exit 1)
 
 # ═══════════════════════════════════════════════════
