@@ -768,12 +768,17 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
 	}
 
+	// Start prefetching all guest memory pages in the background.
+	// This runs concurrently with envd startup and eliminates on-demand
+	// page fault latency for subsequent RPC calls.
+	uffdServer.Prefetch()
+
 	// Wait for envd to be ready.
 	client := envdclient.New(slot.HostIP.String())
 	waitCtx, waitCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-	defer waitCancel()
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
+		waitCancel()
 		warnErr("uffd server stop error", sandboxID, uffdServer.Stop())
 		source.Close()
 		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
@@ -784,9 +789,14 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		m.loops.Release(baseImagePath)
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
+	waitCancel()
 
-	// Trigger envd to re-read MMDS and apply template defaults in a single call.
-	if err := client.PostInitWithDefaults(waitCtx, defaultUser, defaultEnv); err != nil {
+	// PostInit gets its own timeout — WaitUntilReady may have consumed most
+	// of EnvdTimeout, starving PostInit of time for RestoreAfterSnapshot.
+	initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
+	defer initCancel()
+
+	if err := client.PostInitWithDefaults(initCtx, defaultUser, defaultEnv); err != nil {
 		slog.Warn("post-init failed after resume, metadata files may be stale", "sandbox", sandboxID, "error", err)
 	}
 
@@ -1200,12 +1210,15 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
 	}
 
+	// Start prefetching all guest memory pages in the background.
+	uffdServer.Prefetch()
+
 	// Wait for envd.
 	client := envdclient.New(slot.HostIP.String())
 	waitCtx, waitCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-	defer waitCancel()
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
+		waitCancel()
 		warnErr("uffd server stop error", sandboxID, uffdServer.Stop())
 		source.Close()
 		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
@@ -1216,9 +1229,14 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		m.loops.Release(baseRootfs)
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
+	waitCancel()
 
-	// Trigger envd to re-read MMDS so it picks up the new sandbox/template IDs.
-	if err := client.PostInit(waitCtx); err != nil {
+	// PostInit gets its own timeout — WaitUntilReady may have consumed most
+	// of EnvdTimeout, starving PostInit of time for RestoreAfterSnapshot.
+	initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
+	defer initCancel()
+
+	if err := client.PostInit(initCtx); err != nil {
 		slog.Warn("post-init failed after template restore, metadata files may be stale", "sandbox", sandboxID, "error", err)
 	}
 

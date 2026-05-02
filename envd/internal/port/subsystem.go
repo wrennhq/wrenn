@@ -5,8 +5,6 @@ package port
 
 import (
 	"context"
-	"runtime"
-	"runtime/debug"
 	"sync"
 	"time"
 
@@ -72,9 +70,12 @@ func (p *PortSubsystem) Start(parentCtx context.Context) {
 	}()
 }
 
-// Stop quiesces the scanner and forwarder goroutines and forces a GC cycle
-// to put the Go runtime's page allocator in a consistent state before snapshot.
+// Stop quiesces the scanner and forwarder goroutines.
 // Blocks until both goroutines have exited. Safe to call if already stopped.
+//
+// GC is NOT run here — it is deferred to PostSnapshotPrepare so that the
+// GC happens after all allocations (connection cleanup, HTTP response) are
+// complete, minimizing the window where page allocator corruption can occur.
 func (p *PortSubsystem) Stop() {
 	p.mu.Lock()
 	if !p.running {
@@ -90,12 +91,6 @@ func (p *PortSubsystem) Stop() {
 
 	cancelFn()
 	wg.Wait()
-
-	// Force two GC cycles to ensure all spans are swept and the page
-	// allocator summary tree is fully consistent before the VM is frozen.
-	runtime.GC()
-	runtime.GC()
-	debug.FreeOSMemory()
 }
 
 // Restart stops the subsystem (if running) and starts it again with a fresh

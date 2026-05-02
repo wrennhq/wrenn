@@ -57,6 +57,17 @@ type Server struct {
 	// exitPipe signals the poll loop to stop.
 	exitR *os.File
 	exitW *os.File
+
+	// Set by handle() after Firecracker connects; read by Prefetch()
+	// after waiting on readyCh (which establishes happens-before).
+	uffdFd  fd
+	mapping *Mapping
+
+	// Prefetch lifecycle: cancel stops the goroutine, prefetchDone is
+	// closed when it exits. Stop() drains prefetchDone before returning
+	// so the caller can safely close diff file handles.
+	prefetchCancel context.CancelFunc
+	prefetchDone   chan struct{}
 }
 
 // NewServer creates a UFFD server that will listen on the given socket path
@@ -113,10 +124,17 @@ func (s *Server) Ready() <-chan struct{} {
 }
 
 // Stop signals the UFFD poll loop to exit and waits for it to finish.
+// Also cancels and waits for any running prefetch goroutine.
 func (s *Server) Stop() error {
+	if s.prefetchCancel != nil {
+		s.prefetchCancel()
+	}
 	// Write a byte to the exit pipe to wake the poll loop.
 	_, _ = s.exitW.Write([]byte{0})
 	<-s.doneCh
+	if s.prefetchDone != nil {
+		<-s.prefetchDone
+	}
 	return s.doneErr
 }
 
@@ -171,6 +189,10 @@ func (s *Server) handle(ctx context.Context) error {
 	defer uffdFd.close()
 
 	mapping := NewMapping(regions)
+
+	// Store for use by Prefetch().
+	s.uffdFd = uffdFd
+	s.mapping = mapping
 
 	slog.Info("uffd handler connected",
 		"regions", len(regions),
@@ -292,6 +314,66 @@ func (s *Server) faultPage(ctx context.Context, uffdFd fd, addr uintptr, offset 
 	}
 
 	return nil
+}
+
+// Prefetch proactively loads all guest memory pages in the background.
+// It iterates over every page in every UFFD region and copies it from the
+// diff file into guest memory via UFFDIO_COPY. Pages already loaded by
+// on-demand faults return nil from faultPage (EEXIST handled internally).
+// This eliminates the per-request latency caused by lazy page faulting
+// after snapshot restore.
+//
+// The goroutine blocks on readyCh before reading the uffd fd and mapping
+// fields (establishes happens-before with handle()). It uses an internal
+// context independent of the caller's RPC context so it survives after the
+// create/resume RPC returns. Stop() cancels and joins the goroutine.
+func (s *Server) Prefetch() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.prefetchCancel = cancel
+	s.prefetchDone = make(chan struct{})
+
+	go func() {
+		defer close(s.prefetchDone)
+
+		// Wait for Firecracker to connect and send the uffd fd.
+		select {
+		case <-s.readyCh:
+		case <-ctx.Done():
+			return
+		}
+
+		uffdFd := s.uffdFd
+		mapping := s.mapping
+		if mapping == nil {
+			return
+		}
+
+		var total, errored int
+		for _, region := range mapping.Regions {
+			pageSize := region.PageSize
+			if pageSize == 0 {
+				continue
+			}
+			for off := uintptr(0); off < region.Size; off += pageSize {
+				if ctx.Err() != nil {
+					slog.Debug("uffd prefetch cancelled",
+						"pages", total, "errors", errored)
+					return
+				}
+
+				addr := region.BaseHostVirtAddr + off
+				memOffset := int64(off) + int64(region.Offset)
+
+				if err := s.faultPage(ctx, uffdFd, addr, memOffset, pageSize); err != nil {
+					errored++
+				} else {
+					total++
+				}
+			}
+		}
+		slog.Info("uffd prefetch complete",
+			"pages", total, "errors", errored)
+	}()
 }
 
 // DiffFileSource serves pages from a snapshot's compact diff file using

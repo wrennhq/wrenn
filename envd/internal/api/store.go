@@ -7,7 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"runtime"
+	"runtime/debug"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rs/zerolog"
 
@@ -48,6 +51,12 @@ type API struct {
 	rootCtx       context.Context
 	portSubsystem *publicport.PortSubsystem
 	connTracker   *ServerConnTracker
+
+	// needsRestore is set by PostSnapshotPrepare and cleared on the first
+	// health check or PostInit after restore. While set, GOMAXPROCS is 1
+	// to prevent concurrent page allocator access during the freeze window.
+	needsRestore   atomic.Bool
+	prevGOMAXPROCS int // GOMAXPROCS value before PrepareSnapshot reduced it to 1
 }
 
 func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, rootCtx context.Context, portSubsystem *publicport.PortSubsystem, connTracker *ServerConnTracker, version string) *API {
@@ -69,6 +78,14 @@ func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.
 func (a *API) GetHealth(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
+	// On the first health check after snapshot restore, re-enable GC and
+	// clean up stale state. By this point, any goroutine that was mid-
+	// allocation when the VM was frozen has completed, so the page allocator
+	// summary tree is consistent and safe for GC to read.
+	if a.needsRestore.CompareAndSwap(true, false) {
+		a.postRestoreRecovery()
+	}
+
 	a.logger.Trace().Msg("Health check")
 
 	w.Header().Set("Cache-Control", "no-store")
@@ -77,6 +94,35 @@ func (a *API) GetHealth(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"version": a.version,
 	})
+}
+
+// postRestoreRecovery restores GOMAXPROCS, runs a clean GC cycle, closes
+// zombie TCP connections from before the snapshot, re-enables HTTP keep-alives,
+// and restarts the port subsystem. Called exactly once per restore cycle,
+// guarded by a CAS on needsRestore in both GetHealth and PostInit.
+func (a *API) postRestoreRecovery() {
+	// Restore parallelism first — any goroutine that was mid-allocation
+	// when the VM froze has already completed by the time a health check
+	// or PostInit request is being served, so the page allocator summary
+	// tree is consistent and safe for a full GC.
+	prev := a.prevGOMAXPROCS
+	if prev > 0 {
+		runtime.GOMAXPROCS(prev)
+	}
+	runtime.GC()
+	runtime.GC()
+	debug.FreeOSMemory()
+	a.logger.Info().Msg("restore: GOMAXPROCS restored, GC complete")
+
+	if a.connTracker != nil {
+		a.connTracker.RestoreAfterSnapshot()
+		a.logger.Info().Msg("restore: zombie connections closed, keep-alives re-enabled")
+	}
+
+	if a.portSubsystem != nil {
+		a.portSubsystem.Start(a.rootCtx)
+		a.logger.Info().Msg("restore: port subsystem restarted")
+	}
 }
 
 func (a *API) GetMetrics(w http.ResponseWriter, r *http.Request) {

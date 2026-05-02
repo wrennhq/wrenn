@@ -51,7 +51,7 @@ func (t *ServerConnTracker) Track(conn net.Conn, state http.ConnState) {
 // (with keep-alives disabled, the connection closes), RestoreAfterSnapshot
 // will close any that survived into the snapshot as zombie TCP sockets.
 //
-// GC cycles are handled by PortSubsystem.Stop() which runs before this.
+// GC is handled by PostSnapshotPrepare after this returns.
 func (t *ServerConnTracker) PrepareForSnapshot() {
 	t.mu.Lock()
 	defer t.mu.Unlock()

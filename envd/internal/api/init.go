@@ -150,15 +150,17 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 		host.PollForMMDSOpts(ctx, a.mmdsChan, a.defaults.EnvVars)
 	}()
 
-	// Close zombie connections from before the snapshot and re-enable
-	// keep-alives. On first boot this is a no-op (no zombie connections).
+	// Safety net: if the health check's postRestoreRecovery didn't run yet
+	// (e.g. PostInit arrived before the first health check), re-enable GC
+	// here. On first boot needsRestore is false so CAS is a no-op.
+	if a.needsRestore.CompareAndSwap(true, false) {
+		a.postRestoreRecovery()
+	}
+	// RestoreAfterSnapshot is idempotent (clears preSnapshot set), and
+	// Start is a no-op if already running.
 	if a.connTracker != nil {
 		a.connTracker.RestoreAfterSnapshot()
 	}
-
-	// Start the port scanner and forwarder if they were stopped by a
-	// pre-snapshot prepare call. Start is a no-op if already running,
-	// so this is safe on first boot and only takes effect after restore.
 	if a.portSubsystem != nil {
 		a.portSubsystem.Start(a.rootCtx)
 	}

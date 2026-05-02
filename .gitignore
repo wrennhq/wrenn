@@ -36,6 +36,7 @@ go.work.sum
 e2b/
 .impeccable.md
 .gstack
+.mcp.json
 
 ## Builds
 builds/
@@ -49,3 +50,5 @@ frontend/build/
 internal/dashboard/static/*
 !internal/dashboard/static/.gitkeep.dual-graph/
 .dual-graph/
+# Added by code-review-graph
+.code-review-graph/

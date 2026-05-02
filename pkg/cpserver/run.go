@@ -256,8 +256,10 @@ func Run(opts ...Option) {
 	proxyWrapper := api.NewSandboxProxyWrapper(srv.Handler(), queries, hostPool)
 
 	httpServer := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: proxyWrapper,
+		Addr:              cfg.ListenAddr,
+		Handler:           proxyWrapper,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       620 * time.Second, // > typical LB/Cloudflare upstream timeout
 	}
 
 	// Graceful shutdown on signal.
