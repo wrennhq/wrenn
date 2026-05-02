@@ -2,12 +2,10 @@
 #  Variables
 # ═══════════════════════════════════════════════════
 DATABASE_URL   ?= postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable
-GOBIN          := $(shell pwd)/builds
-ENVD_DIR       := envd
+BIN_DIR        := $(shell pwd)/builds
 COMMIT         := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 VERSION_CP     := $(shell cat VERSION_CP 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
 VERSION_AGENT  := $(shell cat VERSION_AGENT 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
-VERSION_ENVD   := $(shell cat envd/VERSION 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
 LDFLAGS        := -s -w
 
 # ═══════════════════════════════════════════════════
@@ -21,15 +19,15 @@ build-frontend:
 	cd frontend && pnpm install --frozen-lockfile && pnpm build
 
 build-cp:
-	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_CP) -X main.commit=$(COMMIT)" -o $(GOBIN)/wrenn-cp ./cmd/control-plane
+	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_CP) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/wrenn-cp ./cmd/control-plane
 
 build-agent:
-	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_AGENT) -X main.commit=$(COMMIT)" -o $(GOBIN)/wrenn-agent ./cmd/host-agent
+	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_AGENT) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/wrenn-agent ./cmd/host-agent
 
 build-envd:
-	cd $(ENVD_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS) -X main.Version=$(VERSION_ENVD) -X main.commitSHA=$(COMMIT)" -o $(GOBIN)/envd .
-	@file $(GOBIN)/envd | grep -q "statically linked" || \
+	cd envd-rs && ENVD_COMMIT=$(COMMIT) cargo build --release --target x86_64-unknown-linux-musl
+	@cp envd-rs/target/x86_64-unknown-linux-musl/release/envd $(BIN_DIR)/envd
+	@file $(BIN_DIR)/envd | grep -q "static-pie linked" || \
 		(echo "ERROR: envd is not statically linked!" && exit 1)
 
 # ═══════════════════════════════════════════════════
@@ -60,8 +58,7 @@ dev-frontend:
 	cd frontend && pnpm dev --port 5173 --host 0.0.0.0
 
 dev-envd:
-	cd $(ENVD_DIR) && go run . --debug --listen-tcp :3002
-
+	cd envd-rs && cargo run -- --isnotfc --port 49983
 
 # ═══════════════════════════════════════════════════
 #  Database (goose)
@@ -94,7 +91,6 @@ generate: proto sqlc
 proto:
 	cd proto/envd && buf generate
 	cd proto/hostagent && buf generate
-	cd $(ENVD_DIR)/spec && buf generate
 
 sqlc:
 	sqlc generate
@@ -106,14 +102,12 @@ sqlc:
 
 fmt:
 	gofmt -w .
-	cd $(ENVD_DIR) && gofmt -w .
 
 lint:
 	golangci-lint run ./...
 
 vet:
 	go vet ./...
-	cd $(ENVD_DIR) && go vet ./...
 
 test:
 	go test -race -v ./internal/...
@@ -125,7 +119,6 @@ test-all: test test-integration
 
 tidy:
 	go mod tidy
-	cd $(ENVD_DIR) && go mod tidy
 
 ## Run all quality checks in CI order
 check: fmt vet lint test
@@ -155,8 +148,8 @@ setup-host:
 	sudo bash scripts/setup-host.sh
 
 install: build
-	sudo cp $(GOBIN)/wrenn-cp /usr/local/bin/
-	sudo cp $(GOBIN)/wrenn-agent /usr/local/bin/
+	sudo cp $(BIN_DIR)/wrenn-cp /usr/local/bin/
+	sudo cp $(BIN_DIR)/wrenn-agent /usr/local/bin/
 	sudo cp deploy/systemd/*.service /etc/systemd/system/
 	sudo systemctl daemon-reload
 
@@ -167,7 +160,7 @@ install: build
 
 clean:
 	rm -rf builds/
-	cd $(ENVD_DIR) && rm -f envd
+	cd envd-rs && cargo clean
 
 # ═══════════════════════════════════════════════════
 #  Help
@@ -183,11 +176,11 @@ help:
 	@echo "  make dev-cp         Control plane (hot reload if air installed)"
 	@echo "  make dev-frontend   Vite dev server with HMR (port 5173)"
 	@echo "  make dev-agent      Host agent (sudo required)"
-	@echo "  make dev-envd       envd in TCP debug mode"
+	@echo "  make dev-envd       envd in debug mode (--isnotfc, port 49983)"
 	@echo ""
 	@echo "  make build          Build all binaries → builds/"
 	@echo "  make build-frontend Build SvelteKit dashboard → frontend/build/"
-	@echo "  make build-envd     Build envd static binary"
+	@echo "  make build-envd     Build envd static binary (Rust, musl)"
 	@echo ""
 	@echo "  make migrate-up     Apply migrations"
 	@echo "  make migrate-create name=xxx  New migration"

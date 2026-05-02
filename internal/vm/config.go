@@ -90,7 +90,7 @@ func (c *VMConfig) applyDefaults() {
 // kernelArgs builds the kernel command line for the VM.
 func (c *VMConfig) kernelArgs() string {
 	// ip= format: <client-ip>::<gw-ip>:<netmask>:<hostname>:<iface>:<autoconf>
-	ipArg := fmt.Sprintf("ip=%s::%s:%s:sandbox:eth0:off",
+	ipArg := fmt.Sprintf("ip=%s::%s:%s:capsule:eth0:off",
 		c.GuestIP, c.GatewayIP, c.NetMask,
 	)
 

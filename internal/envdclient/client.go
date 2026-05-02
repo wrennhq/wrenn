@@ -19,10 +19,11 @@ import (
 
 // Client wraps the Connect RPC client for envd's Process and Filesystem services.
 type Client struct {
-	hostIP     string
-	base       string
-	healthURL  string
-	httpClient *http.Client
+	hostIP          string
+	base            string
+	healthURL       string
+	httpClient      *http.Client
+	streamingClient *http.Client
 
 	process    genconnect.ProcessClient
 	filesystem genconnect.FilesystemClient
@@ -32,15 +33,25 @@ type Client struct {
 func New(hostIP string) *Client {
 	base := baseURL(hostIP)
 	httpClient := newHTTPClient()
+	streamingClient := newStreamingHTTPClient()
 
 	return &Client{
-		hostIP:     hostIP,
-		base:       base,
-		healthURL:  base + "/health",
-		httpClient: httpClient,
-		process:    genconnect.NewProcessClient(httpClient, base),
-		filesystem: genconnect.NewFilesystemClient(httpClient, base),
+		hostIP:          hostIP,
+		base:            base,
+		healthURL:       base + "/health",
+		httpClient:      httpClient,
+		streamingClient: streamingClient,
+		process:         genconnect.NewProcessClient(streamingClient, base),
+		filesystem:      genconnect.NewFilesystemClient(httpClient, base),
 	}
+}
+
+// CloseIdleConnections closes idle connections on both the unary and streaming
+// transports. Call this before taking a VM snapshot to remove stale TCP state
+// from the guest.
+func (c *Client) CloseIdleConnections() {
+	c.httpClient.CloseIdleConnections()
+	c.streamingClient.CloseIdleConnections()
 }
 
 // BaseURL returns the HTTP base URL for reaching envd.
@@ -48,11 +59,16 @@ func (c *Client) BaseURL() string {
 	return c.base
 }
 
-// HTTPClient returns the underlying http.Client used for envd requests.
-// Use this instead of http.DefaultClient when making direct HTTP calls to envd
-// (e.g. file streaming) to avoid sharing the global transport with proxy traffic.
+// HTTPClient returns the http.Client with a 2-minute request timeout.
+// Suitable for short-lived envd calls (health, init, snapshot/prepare).
 func (c *Client) HTTPClient() *http.Client {
 	return c.httpClient
+}
+
+// StreamingHTTPClient returns the http.Client without a request timeout.
+// Use for streaming file transfers or any request that may run indefinitely.
+func (c *Client) StreamingHTTPClient() *http.Client {
+	return c.streamingClient
 }
 
 // ExecResult holds the output of a command execution.
@@ -234,7 +250,7 @@ func (c *Client) WriteFile(ctx context.Context, path string, content []byte) err
 
 	respBody, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("write file %s: status %d: %s", path, resp.StatusCode, string(respBody))
 	}
 
@@ -276,10 +292,9 @@ func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	return data, nil
 }
 
-// PrepareSnapshot calls envd's POST /snapshot/prepare endpoint, which quiesces
-// continuous goroutines (port scanner, forwarder) and forces a GC cycle before
-// Firecracker takes a VM snapshot. This ensures the Go runtime's page allocator
-// is in a consistent state when vCPUs are frozen.
+// PrepareSnapshot calls envd's POST /snapshot/prepare endpoint, which stops
+// the port scanner/forwarder and marks active connections for post-restore
+// cleanup before Firecracker freezes vCPUs.
 //
 // Best-effort: the caller should log a warning on error but not abort the pause.
 func (c *Client) PrepareSnapshot(ctx context.Context) error {

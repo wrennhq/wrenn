@@ -154,6 +154,11 @@ func main() {
 		Addr:              listenAddr,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       620 * time.Second, // > typical LB upstream timeout (600s)
+		// Disable HTTP/2: empty non-nil map prevents Go from registering
+		// the h2 ALPN token. Connect RPC works over HTTP/1.1; HTTP/2
+		// multiplexing causes HOL blocking when a slow sandbox RPC stalls
+		// the shared connection.
+		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
 
 	// mTLS is mandatory — refuse to start without a valid certificate.

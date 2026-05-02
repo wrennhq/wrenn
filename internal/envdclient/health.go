@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -46,20 +45,15 @@ func (c *Client) FetchVersion(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("health check returned %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil || len(body) == 0 {
-		return "", nil // envd may not support version reporting yet
 	}
 
 	var data struct {
 		Version string `json:"version"`
 	}
-	if err := json.Unmarshal(body, &data); err != nil {
-		return "", nil // non-JSON response, old envd
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", fmt.Errorf("decode version response: %w", err)
 	}
 
 	return data.Version, nil
@@ -78,7 +72,7 @@ func (c *Client) healthCheck(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check returned %d", resp.StatusCode)
 	}
 

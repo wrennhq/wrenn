@@ -39,7 +39,19 @@ func NewHostClientPool() *HostClientPool {
 // (use auth.CPClientTLSConfig to construct it).
 func NewHostClientPoolTLS(tlsCfg *tls.Config) *HostClientPool {
 	transport := &http.Transport{
-		TLSClientConfig: tlsCfg,
+		TLSClientConfig:   tlsCfg,
+		ForceAttemptHTTP2: false,
+		// Empty non-nil map disables HTTP/2 ALPN negotiation, forcing HTTP/1.1.
+		// Connect RPC works over HTTP/1.1; HTTP/2 multiplexing causes HOL
+		// blocking when a single slow sandbox RPC stalls the shared connection.
+		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 45 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
 	}
 	return &HostClientPool{
 		clients: make(map[string]hostagentv1connect.HostAgentServiceClient),
