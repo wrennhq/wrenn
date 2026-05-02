@@ -36,7 +36,7 @@ impl FilesystemServiceImpl {
             ConnectError::new(ErrorCode::Unauthenticated, format!("invalid user: {e}"))
         })?;
 
-        let home_dir = format!("/home/{}", user.name);
+        let home_dir = user.dir.to_string_lossy().to_string();
         let default_workdir = self.state.defaults.workdir.as_deref();
 
         expand_and_resolve(path, &home_dir, default_workdir)

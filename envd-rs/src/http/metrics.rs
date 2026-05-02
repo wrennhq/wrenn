@@ -22,10 +22,10 @@ pub struct Metrics {
     disk_total: u64,
 }
 
-pub async fn get_metrics(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn get_metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     tracing::trace!("get metrics");
 
-    match collect_metrics() {
+    match collect_metrics(&state) {
         Ok(m) => (
             StatusCode::OK,
             [(header::CACHE_CONTROL, "no-store")],
@@ -39,26 +39,12 @@ pub async fn get_metrics(State(_state): State<Arc<AppState>>) -> impl IntoRespon
     }
 }
 
-fn collect_metrics() -> Result<Metrics, String> {
-    use sysinfo::System;
+fn collect_metrics(state: &AppState) -> Result<Metrics, String> {
+    let cpu_count = state.cpu_count();
+    let cpu_used_pct_rounded = state.cpu_used_pct();
 
-    let mut sys = System::new();
+    let mut sys = sysinfo::System::new();
     sys.refresh_memory();
-    sys.refresh_cpu_all();
-
-    // sysinfo needs a small delay for accurate CPU — first call returns 0.
-    // In a real daemon this would be cached; for now, report instantaneous.
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    sys.refresh_cpu_all();
-
-    let cpu_count = sys.cpus().len() as u32;
-    let cpu_used_pct = sys.global_cpu_usage();
-    let cpu_used_pct_rounded = if cpu_used_pct > 0.0 {
-        (cpu_used_pct * 100.0).round() / 100.0
-    } else {
-        0.0
-    };
-
     let mem_total = sys.total_memory();
     let mem_used = sys.used_memory();
     let mem_total_mib = mem_total / 1024 / 1024;

@@ -13,7 +13,7 @@ pub struct MMDSOpts {
     pub sandbox_id: String,
     #[serde(rename = "envID")]
     pub template_id: String,
-    #[serde(rename = "address")]
+    #[serde(rename = "address", default)]
     pub logs_collector_address: String,
     #[serde(rename = "accessTokenHash", default)]
     pub access_token_hash: String,
@@ -103,8 +103,15 @@ pub async fn poll_for_opts(
                 env_vars.insert("WRENN_TEMPLATE_ID".into(), opts.template_id.clone());
 
                 let run_dir = std::path::Path::new(WRENN_RUN_DIR);
-                let _ = std::fs::write(run_dir.join(".WRENN_SANDBOX_ID"), &opts.sandbox_id);
-                let _ = std::fs::write(run_dir.join(".WRENN_TEMPLATE_ID"), &opts.template_id);
+                if let Err(e) = std::fs::create_dir_all(run_dir) {
+                    tracing::error!(error = %e, "mmds: failed to create run dir");
+                }
+                if let Err(e) = std::fs::write(run_dir.join(".WRENN_SANDBOX_ID"), &opts.sandbox_id) {
+                    tracing::error!(error = %e, "mmds: failed to write .WRENN_SANDBOX_ID");
+                }
+                if let Err(e) = std::fs::write(run_dir.join(".WRENN_TEMPLATE_ID"), &opts.template_id) {
+                    tracing::error!(error = %e, "mmds: failed to write .WRENN_TEMPLATE_ID");
+                }
 
                 return Some(opts);
             }

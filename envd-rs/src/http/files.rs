@@ -95,7 +95,7 @@ pub async fn get_files(
         Err(e) => return json_error(StatusCode::UNAUTHORIZED, &e),
     };
 
-    let home_dir = format!("/home/{}", user.name);
+    let home_dir = user.dir.to_string_lossy().to_string();
     let resolved = match expand_and_resolve(path_str, &home_dir, state.defaults.workdir.as_deref())
     {
         Ok(p) => p,
@@ -246,7 +246,7 @@ pub async fn post_files(
         Err(e) => return json_error(StatusCode::UNAUTHORIZED, &e),
     };
 
-    let home_dir = format!("/home/{}", user.name);
+    let home_dir = user.dir.to_string_lossy().to_string();
     let uid = user.uid;
     let gid = user.gid;
 

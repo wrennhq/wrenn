@@ -83,7 +83,7 @@ impl ProcessServiceImpl {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
-        let home_dir = format!("/home/{}", user.name);
+        let home_dir = user.dir.to_string_lossy().to_string();
         let cwd_str: &str = proc_config.cwd.unwrap_or("");
         let cwd = expand_and_resolve(cwd_str, &home_dir, self.state.defaults.workdir.as_deref())
             .map_err(|e| ConnectError::new(ErrorCode::InvalidArgument, e))?;
@@ -104,6 +104,17 @@ impl ProcessServiceImpl {
 
         let enable_stdin = request.stdin.unwrap_or(true);
         let tag = request.tag.map(|s| s.to_string());
+
+        tracing::info!(
+            cmd = cmd,
+            has_pty = pty_opts.is_some(),
+            pty_size = ?pty_opts,
+            tag = ?tag,
+            stdin = enable_stdin,
+            cwd = effective_cwd,
+            user = %username,
+            "process.Start request"
+        );
 
         let handle = process_handler::spawn_process(
             cmd,

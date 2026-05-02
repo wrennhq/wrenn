@@ -141,7 +141,7 @@ pub fn spawn_process(
 ) -> Result<Arc<ProcessHandle>, ConnectError> {
     let mut env: Vec<(String, String)> = Vec::new();
     env.push(("PATH".into(), std::env::var("PATH").unwrap_or_default()));
-    let home = format!("/home/{}", user.name);
+    let home = user.dir.to_string_lossy().to_string();
     env.push(("HOME".into(), home));
     env.push(("USER".into(), user.name.clone()));
     env.push(("LOGNAME".into(), user.name.clone()));
@@ -206,7 +206,9 @@ pub fn spawn_process(
         unsafe {
             use std::os::unix::io::AsRawFd;
             let slave_raw = slave_fd.as_raw_fd();
+            let master_raw = master_fd.as_raw_fd();
             command.pre_exec(move || {
+                libc::close(master_raw);
                 nix::unistd::setsid()
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 libc::ioctl(slave_raw, libc::TIOCSCTTY, 0);

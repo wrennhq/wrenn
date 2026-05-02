@@ -196,7 +196,7 @@ fn spawn_initial_command(cmd: &str, state: &AppState) {
         }
     };
 
-    let home = format!("/home/{}", user.name);
+    let home = user.dir.to_string_lossy().to_string();
     let cwd = state
         .defaults
         .workdir
