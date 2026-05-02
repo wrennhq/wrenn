@@ -54,6 +54,8 @@ func agentErrToHTTP(err error) (int, string, string) {
 		return http.StatusConflict, "conflict", err.Error()
 	case connect.CodePermissionDenied:
 		return http.StatusForbidden, "forbidden", err.Error()
+	case connect.CodeUnavailable:
+		return http.StatusServiceUnavailable, "no_hosts_available", "no servers available — try again later"
 	case connect.CodeUnimplemented:
 		return http.StatusNotImplemented, "agent_error", err.Error()
 	default:
@@ -108,6 +110,9 @@ func serviceErrToHTTP(err error) (int, string, string) {
 		return http.StatusForbidden, "forbidden", "forbidden"
 	case strings.Contains(msg, "invalid or expired"):
 		return http.StatusUnauthorized, "unauthorized", "invalid or expired credentials"
+	case strings.Contains(msg, "no online") && strings.Contains(msg, "hosts available"),
+		strings.Contains(msg, "no host has sufficient resources"):
+		return http.StatusServiceUnavailable, "no_hosts_available", "no servers available — try again later"
 	case strings.Contains(msg, "invalid"):
 		return http.StatusBadRequest, "invalid_request", "invalid request"
 	default:

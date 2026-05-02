@@ -332,6 +332,7 @@
 
 			if (s.state === 'connected') {
 				updateSession(id, { state: 'disconnected' });
+				int.term.write('\r\n\x1b[38;2;107;104;98m[session disconnected]\x1b[0m\r\n');
 			}
 		};
 
