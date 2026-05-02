@@ -1,0 +1,12 @@
+[package]
+name = "buffa-types"
+version = "0.3.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+buffa = "0.3"
+serde = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+connectrpc-build = "0.3"

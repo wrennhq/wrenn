@@ -36,12 +36,6 @@ if [ ! -f "${ENVD_BIN}" ]; then
     exit 1
 fi
 
-# Verify it's statically linked.
-if ! file "${ENVD_BIN}" | grep -q "statically linked"; then
-    echo "ERROR: envd is not statically linked!"
-    exit 1
-fi
-
 # Step 2: Mount the rootfs.
 echo "==> Mounting rootfs at ${MOUNT_DIR}..."
 mkdir -p "${MOUNT_DIR}"

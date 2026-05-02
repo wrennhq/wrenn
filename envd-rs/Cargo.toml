@@ -1,0 +1,83 @@
+[package]
+name = "envd"
+version = "0.1.2"
+edition = "2024"
+rust-version = "1.88"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP framework
+axum = { version = "0.8", features = ["multipart"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-service = "0.3"
+
+# RPC (Connect protocol — serves Connect + gRPC + gRPC-Web on same port)
+connectrpc = { version = "0.3", features = ["axum"] }
+buffa-types = { path = "buffa-types-shim" }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# System metrics
+sysinfo = "0.33"
+
+# Unix syscalls
+nix = { version = "0.30", features = ["fs", "process", "signal", "user", "term", "mount", "ioctl"] }
+
+# Concurrent map
+dashmap = "6"
+
+# Crypto
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+base64 = "0.22"
+
+# Secure memory
+zeroize = { version = "1", features = ["derive"] }
+
+# File watching
+notify = "7"
+
+# Compression
+flate2 = "1"
+
+# HTTP client (MMDS polling)
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+
+# Directory walking
+walkdir = "2"
+
+# Misc
+libc = "0.2"
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+subtle = "2"
+http-body = "1.0.1"
+buffa = "0.3"
+async-stream = "0.3.6"
+mime_guess = "2"
+
+[build-dependencies]
+connectrpc-build = "0.3"
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "z"
+codegen-units = 1
+panic = "abort"

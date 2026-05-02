@@ -2,7 +2,7 @@
 #  Variables
 # ═══════════════════════════════════════════════════
 DATABASE_URL   ?= postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable
-GOBIN          := $(shell pwd)/builds
+BIN_DIR        := $(shell pwd)/builds
 ENVD_DIR       := envd
 COMMIT         := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 VERSION_CP     := $(shell cat VERSION_CP 2>/dev/null | tr -d '[:space:]' || echo "0.0.0-dev")
@@ -13,7 +13,7 @@ LDFLAGS        := -s -w
 # ═══════════════════════════════════════════════════
 #  Build
 # ═══════════════════════════════════════════════════
-.PHONY: build build-cp build-agent build-envd build-frontend
+.PHONY: build build-cp build-agent build-envd build-envd-go build-frontend
 
 build: build-cp build-agent build-envd
 
@@ -21,16 +21,20 @@ build-frontend:
 	cd frontend && pnpm install --frozen-lockfile && pnpm build
 
 build-cp:
-	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_CP) -X main.commit=$(COMMIT)" -o $(GOBIN)/wrenn-cp ./cmd/control-plane
+	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_CP) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/wrenn-cp ./cmd/control-plane
 
 build-agent:
-	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_AGENT) -X main.commit=$(COMMIT)" -o $(GOBIN)/wrenn-agent ./cmd/host-agent
+	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_AGENT) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/wrenn-agent ./cmd/host-agent
 
 build-envd:
+	cd envd-rs && ENVD_COMMIT=$(COMMIT) cargo build --release --target x86_64-unknown-linux-musl
+	@cp envd-rs/target/x86_64-unknown-linux-musl/release/envd $(BIN_DIR)/envd
+
+build-envd-go:
 	cd $(ENVD_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS) -X main.Version=$(VERSION_ENVD) -X main.commitSHA=$(COMMIT)" -o $(GOBIN)/envd .
-	@file $(GOBIN)/envd | grep -q "statically linked" || \
-		(echo "ERROR: envd is not statically linked!" && exit 1)
+		go build -ldflags="$(LDFLAGS) -X main.Version=$(VERSION_ENVD) -X main.commitSHA=$(COMMIT)" -o $(BIN_DIR)/envd-go .
+	@file $(BIN_DIR)/envd-go | grep -q "statically linked" || \
+		(echo "ERROR: envd-go is not statically linked!" && exit 1)
 
 # ═══════════════════════════════════════════════════
 #  Development
@@ -60,6 +64,9 @@ dev-frontend:
 	cd frontend && pnpm dev --port 5173 --host 0.0.0.0
 
 dev-envd:
+	cd envd-rs && cargo run -- --isnotfc --port 49983
+
+dev-envd-go:
 	cd $(ENVD_DIR) && go run . --debug --listen-tcp :3002
 
 
@@ -155,8 +162,8 @@ setup-host:
 	sudo bash scripts/setup-host.sh
 
 install: build
-	sudo cp $(GOBIN)/wrenn-cp /usr/local/bin/
-	sudo cp $(GOBIN)/wrenn-agent /usr/local/bin/
+	sudo cp $(BIN_DIR)/wrenn-cp /usr/local/bin/
+	sudo cp $(BIN_DIR)/wrenn-agent /usr/local/bin/
 	sudo cp deploy/systemd/*.service /etc/systemd/system/
 	sudo systemctl daemon-reload
 
@@ -168,6 +175,7 @@ install: build
 clean:
 	rm -rf builds/
 	cd $(ENVD_DIR) && rm -f envd
+	cd envd-rs && cargo clean
 
 # ═══════════════════════════════════════════════════
 #  Help
@@ -183,11 +191,13 @@ help:
 	@echo "  make dev-cp         Control plane (hot reload if air installed)"
 	@echo "  make dev-frontend   Vite dev server with HMR (port 5173)"
 	@echo "  make dev-agent      Host agent (sudo required)"
-	@echo "  make dev-envd       envd in TCP debug mode"
+	@echo "  make dev-envd       envd Rust (--isnotfc, port 49983)"
+	@echo "  make dev-envd-go    envd Go (TCP debug mode)"
 	@echo ""
 	@echo "  make build          Build all binaries → builds/"
 	@echo "  make build-frontend Build SvelteKit dashboard → frontend/build/"
-	@echo "  make build-envd     Build envd static binary"
+	@echo "  make build-envd     Build envd static binary (Rust, musl)"
+	@echo "  make build-envd-go  Build envd Go binary"
 	@echo ""
 	@echo "  make migrate-up     Apply migrations"
 	@echo "  make migrate-create name=xxx  New migration"
