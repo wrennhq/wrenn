@@ -365,6 +365,14 @@ func (l *AuditLogger) LogUserDeactivate(ctx context.Context, ac auth.AuthContext
 	l.Log(ctx, newAdminEntry(ac, "user", id.FormatUserID(userID), "deactivate", "warning", map[string]any{"email": email}))
 }
 
+func (l *AuditLogger) LogUserGrantAdmin(ctx context.Context, ac auth.AuthContext, userID pgtype.UUID, email string) {
+	l.Log(ctx, newAdminEntry(ac, "user", id.FormatUserID(userID), "grant_admin", "success", map[string]any{"email": email}))
+}
+
+func (l *AuditLogger) LogUserRevokeAdmin(ctx context.Context, ac auth.AuthContext, userID pgtype.UUID, email string) {
+	l.Log(ctx, newAdminEntry(ac, "user", id.FormatUserID(userID), "revoke_admin", "warning", map[string]any{"email": email}))
+}
+
 // --- Team admin events (scope: admin) ---
 
 func (l *AuditLogger) LogTeamSetBYOC(ctx context.Context, ac auth.AuthContext, teamID pgtype.UUID, enabled bool) {

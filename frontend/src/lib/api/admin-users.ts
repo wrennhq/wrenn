@@ -26,3 +26,7 @@ export async function listAdminUsers(page: number = 1): Promise<ApiResult<AdminU
 export async function setUserActive(id: string, active: boolean): Promise<ApiResult<void>> {
 	return apiFetch('PUT', `/api/v1/admin/users/${id}/active`, { active });
 }
+
+export async function setUserAdmin(id: string, admin: boolean): Promise<ApiResult<void>> {
+	return apiFetch('PUT', `/api/v1/admin/users/${id}/admin`, { admin });
+}
