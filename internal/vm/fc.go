@@ -136,6 +136,25 @@ func (c *fcClient) setMMDS(ctx context.Context, sandboxID, templateID string) er
 	})
 }
 
+// setBalloon configures the Firecracker balloon device for dynamic memory
+// management. deflateOnOom lets the guest reclaim balloon pages under memory
+// pressure. statsInterval enables periodic stats via GET /balloon/statistics.
+// Must be called before startVM.
+func (c *fcClient) setBalloon(ctx context.Context, amountMiB int, deflateOnOom bool, statsIntervalS int) error {
+	return c.do(ctx, http.MethodPut, "/balloon", map[string]any{
+		"amount_mib":             amountMiB,
+		"deflate_on_oom":         deflateOnOom,
+		"stats_polling_interval_s": statsIntervalS,
+	})
+}
+
+// updateBalloon adjusts the balloon target at runtime.
+func (c *fcClient) updateBalloon(ctx context.Context, amountMiB int) error {
+	return c.do(ctx, http.MethodPatch, "/balloon", map[string]any{
+		"amount_mib": amountMiB,
+	})
+}
+
 // startVM issues the InstanceStart action.
 func (c *fcClient) startVM(ctx context.Context) error {
 	return c.do(ctx, http.MethodPut, "/actions", map[string]string{

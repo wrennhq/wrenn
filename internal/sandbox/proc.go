@@ -1,11 +1,15 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
 )
 
 // cpuStat holds raw CPU jiffies read from /proc/{pid}/stat.
@@ -24,16 +28,11 @@ func readCPUStat(pid int) (cpuStat, error) {
 		return cpuStat{}, fmt.Errorf("read stat: %w", err)
 	}
 
-	// /proc/{pid}/stat format: pid (comm) state fields...
-	// The comm field may contain spaces and parens, so find the last ')' first.
 	content := string(data)
 	idx := strings.LastIndex(content, ")")
 	if idx < 0 {
 		return cpuStat{}, fmt.Errorf("malformed /proc/%d/stat: no closing paren", pid)
 	}
-	// After ")" there is " state field3 field4 ... fieldN"
-	// field1 after ')' is state (index 0), utime is field 11, stime is field 12
-	// (0-indexed from after the closing paren).
 	fields := strings.Fields(content[idx+2:])
 	if len(fields) < 13 {
 		return cpuStat{}, fmt.Errorf("malformed /proc/%d/stat: too few fields (%d)", pid, len(fields))
@@ -49,27 +48,34 @@ func readCPUStat(pid int) (cpuStat, error) {
 	return cpuStat{utime: utime, stime: stime}, nil
 }
 
-// readMemRSS reads VmRSS from /proc/{pid}/status and returns bytes.
-func readMemRSS(pid int) (int64, error) {
-	path := fmt.Sprintf("/proc/%d/status", pid)
-	data, err := os.ReadFile(path)
+// readEnvdMemUsed fetches mem_used from envd's /metrics endpoint. Returns
+// guest-side total - MemAvailable (actual process memory, excluding reclaimable
+// page cache). VmRSS of the Firecracker process includes guest page cache and
+// never decreases, so this is the accurate metric for dashboard display.
+func readEnvdMemUsed(client *envdclient.Client) (int64, error) {
+	resp, err := client.HTTPClient().Get(client.BaseURL() + "/metrics")
 	if err != nil {
-		return 0, fmt.Errorf("read status: %w", err)
+		return 0, fmt.Errorf("fetch envd metrics: %w", err)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "VmRSS:") {
-			fields := strings.Fields(line)
-			if len(fields) < 2 {
-				return 0, fmt.Errorf("malformed VmRSS line")
-			}
-			kb, err := strconv.ParseInt(fields[1], 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse VmRSS: %w", err)
-			}
-			return kb * 1024, nil
-		}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return 0, fmt.Errorf("envd metrics: status %d", resp.StatusCode)
 	}
-	return 0, fmt.Errorf("VmRSS not found in /proc/%d/status", pid)
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("read envd metrics body: %w", err)
+	}
+
+	var m struct {
+		MemUsed int64 `json:"mem_used"`
+	}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return 0, fmt.Errorf("decode envd metrics: %w", err)
+	}
+
+	return m.MemUsed, nil
 }
 
 // readDiskAllocated returns the actual allocated bytes (not apparent size)

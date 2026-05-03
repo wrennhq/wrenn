@@ -95,10 +95,10 @@ type snapshotParent struct {
 }
 
 // maxDiffGenerations caps how many incremental diff generations we chain
-// before falling back to a Full snapshot to collapse the chain. Long diff
-// chains increase restore latency and snapshot directory size; a periodic
-// Full snapshot resets the counter and produces a clean base.
-const maxDiffGenerations = 8
+// before merging diffs into a single file. Since UFFD lazy-loads memory
+// anyway, we merge on every re-pause to keep exactly 1 diff file per
+// snapshot — no accumulated chain, no extra restore overhead.
+const maxDiffGenerations = 1
 
 // buildMetadata constructs the metadata map with version information.
 func (m *Manager) buildMetadata(envdVersion string) map[string]string {
@@ -1720,12 +1720,12 @@ func (m *Manager) startSampler(sb *sandboxState) {
 	go m.samplerLoop(ctx, sb, fcPID, sb.VCPUs, initialCPU)
 }
 
-// samplerLoop samples /proc metrics at 500ms intervals.
+// samplerLoop samples metrics at 1s intervals.
 // lastCPU is goroutine-local to avoid shared-state races.
 func (m *Manager) samplerLoop(ctx context.Context, sb *sandboxState, fcPID, vcpus int, lastCPU cpuStat) {
 	defer close(sb.samplerDone)
 
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	clkTck := 100.0 // sysconf(_SC_CLK_TCK), almost always 100 on Linux
@@ -1758,8 +1758,11 @@ func (m *Manager) samplerLoop(ctx context.Context, sb *sandboxState, fcPID, vcpu
 				cpuInitialized = true
 			}
 
-			// Memory: VmRSS of the Firecracker process.
-			memBytes, _ := readMemRSS(fcPID)
+			// Memory: guest-reported used memory from envd /metrics.
+			// VmRSS of the Firecracker process includes guest page cache
+			// and never decreases, so we use the guest's own view which
+			// reports total - available (actual process memory).
+			memBytes, _ := readEnvdMemUsed(sb.client)
 
 			// Disk: allocated bytes of the CoW sparse file.
 			var diskBytes int64

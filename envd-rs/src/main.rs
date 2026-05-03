@@ -147,6 +147,14 @@ async fn main() {
         Some(Arc::clone(&port_subsystem)),
     );
 
+    // Memory reclaimer — drop page cache when available memory is low.
+    // Firecracker balloon device can only reclaim pages the guest kernel freed.
+    // Pauses during snapshot/prepare to avoid corrupting kernel page table state.
+    if !cli.is_not_fc {
+        let state_for_reclaimer = Arc::clone(&state);
+        std::thread::spawn(move || memory_reclaimer(state_for_reclaimer));
+    }
+
     // RPC services (Connect protocol — serves Connect + gRPC + gRPC-Web on same port)
     let connect_router = rpc::rpc_router(Arc::clone(&state));
 
@@ -219,6 +227,47 @@ fn spawn_initial_command(cmd: &str, state: &AppState) {
         }
         Err(e) => {
             tracing::error!(error = %e, cmd, "failed to spawn initial command");
+        }
+    }
+}
+
+fn memory_reclaimer(state: Arc<AppState>) {
+    use std::sync::atomic::Ordering;
+
+    const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+    const DROP_THRESHOLD_PCT: u64 = 80;
+
+    loop {
+        std::thread::sleep(CHECK_INTERVAL);
+
+        if state.snapshot_in_progress.load(Ordering::Acquire) {
+            continue;
+        }
+
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let total = sys.total_memory();
+        let available = sys.available_memory();
+
+        if total == 0 {
+            continue;
+        }
+
+        let used_pct = ((total - available) * 100) / total;
+        if used_pct >= DROP_THRESHOLD_PCT {
+            if state.snapshot_in_progress.load(Ordering::Acquire) {
+                continue;
+            }
+
+            if let Err(e) = std::fs::write("/proc/sys/vm/drop_caches", "3") {
+                tracing::debug!(error = %e, "drop_caches failed");
+            } else {
+                let mut sys2 = sysinfo::System::new();
+                sys2.refresh_memory();
+                let freed_mb =
+                    sys2.available_memory().saturating_sub(available) / (1024 * 1024);
+                tracing::info!(used_pct, freed_mb, "page cache dropped");
+            }
         }
     }
 }
