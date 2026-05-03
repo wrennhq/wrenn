@@ -213,6 +213,7 @@
 			},
 		});
 
+		lastDataKey = '';
 		updateCharts();
 	}
 
@@ -233,6 +234,7 @@
 
 	onMount(async () => {
 		if (!available) return;
+		loadMetrics();
 		const mod = await import('chart.js/auto');
 		ChartJS = mod.Chart;
 
