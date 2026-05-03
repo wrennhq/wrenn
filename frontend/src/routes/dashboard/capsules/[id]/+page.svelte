@@ -333,6 +333,7 @@
 			},
 		});
 
+		lastDataKey = '';
 		updateCharts();
 	}
 
@@ -376,6 +377,7 @@
 
 		if (!metricsAvailable) return;
 
+		loadMetrics();
 		const mod = await import('chart.js/auto');
 		ChartJS = mod.Chart;
 

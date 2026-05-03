@@ -415,6 +415,21 @@ func (q *Queries) ListUsersAdmin(ctx context.Context, arg ListUsersAdminParams) 
 	return items, nil
 }
 
+const revokeUserAdmin = `-- name: RevokeUserAdmin :execrows
+UPDATE users u SET is_admin = false, updated_at = NOW()
+WHERE u.id = $1
+  AND u.is_admin = true
+  AND (SELECT COUNT(*) FROM users WHERE is_admin = true AND status != 'deleted') > 1
+`
+
+func (q *Queries) RevokeUserAdmin(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeUserAdmin, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const searchUsersByEmailPrefix = `-- name: SearchUsersByEmailPrefix :many
 SELECT id, email FROM users WHERE email LIKE $1 || '%' ORDER BY email LIMIT 10
 `

@@ -2,6 +2,7 @@
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { toast } from '$lib/toast.svelte';
+	import { auth } from '$lib/auth.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
 	import {
 		listBuilds,
@@ -13,6 +14,7 @@
 		type BuildLogEntry,
 		type AdminTemplate
 	} from '$lib/api/builds';
+	import { listAdminTeams } from '$lib/api/team';
 
 	let activeTab = $state<'templates' | 'builds'>('templates');
 
@@ -34,6 +36,9 @@
 	// Build log expansion
 	let expandedBuildId = $state<string | null>(null);
 	let expandedSteps = $state<Set<number>>(new Set());
+
+	// Team name lookup
+	let teamNames = $state<Map<string, string>>(new Map());
 
 	// Delete template state
 	let deleteTarget = $state<AdminTemplate | null>(null);
@@ -63,6 +68,28 @@
 	let snapshotCount = $derived(templates.filter((t) => t.type === 'snapshot').length);
 	let baseCount = $derived(templates.filter((t) => t.type === 'base').length);
 	let runningBuilds = $derived(builds.filter((b) => b.status === 'running').length);
+
+	async function fetchTeamNames() {
+		const names = new Map<string, string>();
+		let page = 1;
+		while (true) {
+			const result = await listAdminTeams(page);
+			if (!result.ok) break;
+			for (const team of result.data.teams) {
+				names.set(team.id, team.name);
+			}
+			if (page >= result.data.total_pages) break;
+			page++;
+		}
+		teamNames = names;
+	}
+
+	const PLATFORM_TEAM_ID = 'team-0000000000000000000000000';
+
+	function canDeleteTemplate(tmpl: AdminTemplate): boolean {
+		if (tmpl.name === 'minimal') return false;
+		return tmpl.team_id === PLATFORM_TEAM_ID;
+	}
 
 	async function fetchTemplates() {
 		templatesLoading = true;
@@ -238,6 +265,7 @@
 	}
 
 	onMount(() => {
+		fetchTeamNames();
 		fetchTemplates();
 		fetchBuilds().then(startPolling);
 
@@ -339,7 +367,7 @@
 		<div class="flex-1 overflow-y-auto px-8 py-6">
 			{#if activeTab === 'templates'}
 				{#if templatesLoading}
-					{@render skeletonRows(5, ['Name', 'Type', 'Specs', 'Size', 'Created', ''])}
+					{@render skeletonRows(5, ['Name', 'Type', 'Owner', 'Specs', 'Size', 'Created', ''])}
 				{:else if templatesError}
 					<div class="rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-ui text-[var(--color-red)]">
 						{templatesError}
@@ -442,6 +470,7 @@
 				<tr class="border-b border-[var(--color-border)] bg-[var(--color-bg-0)]/40">
 					<th class="table-header">Name</th>
 					<th class="table-header">Type</th>
+					<th class="table-header hidden md:table-cell">Owner</th>
 					<th class="table-header hidden md:table-cell">Specs</th>
 					<th class="table-header hidden lg:table-cell">Size</th>
 					<th class="table-header hidden lg:table-cell">Created</th>
@@ -474,6 +503,13 @@
 							{/if}
 						</td>
 						<td class="hidden px-5 py-3.5 md:table-cell">
+							{#if tmpl.team_id === PLATFORM_TEAM_ID}
+								<span class="text-meta text-[var(--color-text-muted)]">Platform</span>
+							{:else}
+								<span class="text-meta text-[var(--color-text-secondary)]">{teamNames.get(tmpl.team_id) ?? tmpl.team_id}</span>
+							{/if}
+						</td>
+						<td class="hidden px-5 py-3.5 md:table-cell">
 							{#if tmpl.vcpus && tmpl.memory_mb}
 								<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">
 									{tmpl.vcpus} vCPU · {tmpl.memory_mb} MB
@@ -495,7 +531,11 @@
 						<td class="px-5 py-3.5 text-right">
 							<button
 								onclick={() => { deleteTarget = tmpl; deleteError = null; }}
-								class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta text-[var(--color-text-tertiary)] transition-all duration-150 hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]"
+								disabled={!canDeleteTemplate(tmpl)}
+								title={tmpl.name === 'minimal' ? 'The minimal template cannot be deleted' : !canDeleteTemplate(tmpl) ? 'Cannot delete templates owned by other teams' : undefined}
+								class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta transition-all duration-150 {canDeleteTemplate(tmpl)
+									? 'text-[var(--color-text-tertiary)] hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]'
+									: 'text-[var(--color-text-muted)] cursor-not-allowed opacity-40'}"
 							>
 								Delete
 							</button>
