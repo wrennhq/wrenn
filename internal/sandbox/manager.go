@@ -186,9 +186,12 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	}
 
 	// Create dm-snapshot with per-sandbox CoW file.
+	// CoW must be at least as large as the origin — if every block is
+	// rewritten, the CoW stores a full copy. Undersized CoW causes
+	// dm-snapshot invalidation → EIO on all guest I/O.
 	dmName := "wrenn-" + sandboxID
 	cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s.cow", sandboxID))
-	cowSize := int64(diskSizeMB) * 1024 * 1024
+	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
 	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
 		m.loops.Release(baseRootfs)
@@ -391,11 +394,13 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	slog.Debug("pause: envd client idle connections closed", "id", sandboxID)
 
 	// Step 0c: Signal envd to quiesce (stop port scanner/forwarder, mark
-	// connections for post-restore cleanup). The 3s timeout also gives time
-	// for the FINs from Step 0b to be processed by the guest kernel.
+	// connections for post-restore cleanup). Also drops page cache which
+	// can take significant time on large-memory VMs (20GB+). The timeout
+	// also gives time for the FINs from Step 0b to be processed by the
+	// guest kernel.
 	// Best-effort: a failure is logged but does not abort the pause.
 	func() {
-		prepCtx, prepCancel := context.WithTimeout(ctx, 3*time.Second)
+		prepCtx, prepCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer prepCancel()
 		if err := sb.client.PrepareSnapshot(prepCtx); err != nil {
 			slog.Warn("pause: pre-snapshot quiesce failed (best-effort)", "id", sandboxID, "error", err)
@@ -423,12 +428,24 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 	// resumeOnError unpauses the VM so the sandbox stays usable when a
 	// post-freeze step fails. If the resume itself fails, the sandbox is
-	// left frozen — the caller should destroy it. It also resets the
-	// connection tracker so the sandbox can accept proxy connections again.
+	// frozen and unrecoverable — destroy it to avoid a zombie that reports
+	// "running" but can't execute anything.
 	resumeOnError := func() {
 		sb.connTracker.Reset()
-		if err := m.vm.Resume(ctx, sandboxID); err != nil {
-			slog.Error("failed to resume VM after pause error — sandbox is frozen", "id", sandboxID, "error", err)
+		// Use a fresh context — the caller's ctx may already be cancelled
+		// (e.g. CP-side ResponseHeaderTimeout fired), which would make the
+		// resume fail immediately and destroy a perfectly resumable VM.
+		resumeCtx, resumeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer resumeCancel()
+		if err := m.vm.Resume(resumeCtx, sandboxID); err != nil {
+			slog.Error("failed to resume VM after pause error — destroying frozen sandbox", "id", sandboxID, "error", err)
+			m.cleanup(context.Background(), sb)
+			m.mu.Lock()
+			delete(m.boxes, sandboxID)
+			m.mu.Unlock()
+			if m.onDestroy != nil {
+				m.onDestroy(sandboxID)
+			}
 		}
 	}
 
@@ -444,6 +461,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 	snapshotStart := time.Now()
 	if err := m.vm.Snapshot(ctx, sandboxID, snapPath, rawMemPath, snapshotType); err != nil {
+		slog.Error("pause: snapshot failed", "id", sandboxID, "type", snapshotType, "elapsed", time.Since(snapshotStart), "error", err)
 		warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
 		resumeOnError()
 		return fmt.Errorf("create VM snapshot: %w", err)
@@ -1134,7 +1152,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 
 	dmName := "wrenn-" + sandboxID
 	cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s.cow", sandboxID))
-	cowSize := int64(diskSizeMB) * 1024 * 1024
+	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
 	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
 		source.Close()
