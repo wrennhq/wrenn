@@ -19,6 +19,7 @@ pub struct AppState {
     pub port_subsystem: Option<Arc<PortSubsystem>>,
     pub cpu_used_pct: AtomicU32,
     pub cpu_count: AtomicU32,
+    pub snapshot_in_progress: AtomicBool,
 }
 
 impl AppState {
@@ -41,6 +42,7 @@ impl AppState {
             port_subsystem,
             cpu_used_pct: AtomicU32::new(0),
             cpu_count: AtomicU32::new(0),
+            snapshot_in_progress: AtomicBool::new(false),
         });
 
         let state_clone = Arc::clone(&state);

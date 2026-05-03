@@ -14,6 +14,10 @@ use crate::state::AppState;
 /// 2. Close idle connections via conntracker
 /// 3. Set needs_restore flag
 pub async fn post_snapshot_prepare(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Block memory reclaimer before anything else — prevents drop_caches
+    // from running mid-freeze which would corrupt kernel page table state.
+    state.snapshot_in_progress.store(true, Ordering::Release);
+
     if let Some(ref ps) = state.port_subsystem {
         ps.stop();
         tracing::info!("snapshot/prepare: port subsystem stopped");
@@ -21,6 +25,9 @@ pub async fn post_snapshot_prepare(State(state): State<Arc<AppState>>) -> impl I
 
     state.conn_tracker.prepare_for_snapshot();
     tracing::info!("snapshot/prepare: connections prepared");
+
+    // Sync filesystem buffers so dirty pages are flushed before freeze.
+    unsafe { libc::sync(); }
 
     state.needs_restore.store(true, Ordering::Release);
     tracing::info!("snapshot/prepare: ready for freeze");

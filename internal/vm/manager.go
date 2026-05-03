@@ -119,6 +119,13 @@ func configureVM(ctx context.Context, client *fcClient, cfg *VMConfig) error {
 		return fmt.Errorf("set machine config: %w", err)
 	}
 
+	// Balloon device — allows the host to reclaim unused guest memory.
+	// Start with 0 (no inflation). deflate_on_oom lets the guest reclaim
+	// balloon pages under memory pressure. Stats interval enables monitoring.
+	if err := client.setBalloon(ctx, 0, true, 5); err != nil {
+		slog.Warn("set balloon failed (non-fatal, VM will run without memory reclaim)", "error", err)
+	}
+
 	// MMDS config — enable V2 token access on eth0 so that envd can read
 	// WRENN_SANDBOX_ID and WRENN_TEMPLATE_ID from inside the guest.
 	if err := client.setMMDSConfig(ctx, "eth0"); err != nil {
@@ -160,6 +167,19 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) error {
 
 	slog.Info("VM resumed", "sandbox", sandboxID)
 	return nil
+}
+
+// UpdateBalloon adjusts the balloon target for a running VM.
+// amountMiB is memory to take FROM the guest (0 = give all back).
+func (m *Manager) UpdateBalloon(ctx context.Context, sandboxID string, amountMiB int) error {
+	m.mu.RLock()
+	vm, ok := m.vms[sandboxID]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("VM not found: %s", sandboxID)
+	}
+
+	return vm.client.updateBalloon(ctx, amountMiB)
 }
 
 // Destroy stops and cleans up a VM.

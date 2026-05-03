@@ -147,6 +147,9 @@ async fn trigger_restore_and_respond(state: &AppState) -> axum::response::Respon
 
 fn post_restore_recovery(state: &AppState) {
     tracing::info!("restore: post-restore recovery (no GC needed in Rust)");
+
+    state.snapshot_in_progress.store(false, std::sync::atomic::Ordering::Release);
+
     state.conn_tracker.restore_after_snapshot();
 
     if let Some(ref ps) = state.port_subsystem {
