@@ -409,10 +409,42 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		}
 	}()
 
+	// Step 0d: Inflate balloon to reclaim free guest memory before snapshot.
+	// Freed pages become zero from FC's perspective, so ProcessMemfile can
+	// skip them → dramatically smaller memfile (e.g. 20GB → 1GB).
+	// Best-effort: balloon may not be available (e.g. snapshot-restored VMs
+	// from before balloon was configured).
+	func() {
+		memUsed, err := readEnvdMemUsed(sb.client)
+		if err != nil {
+			slog.Debug("pause: could not read guest memory, skipping balloon inflate", "id", sandboxID, "error", err)
+			return
+		}
+		usedMiB := int(memUsed / (1024 * 1024))
+		// Leave 2x used memory + 128MB headroom for kernel/envd.
+		keepMiB := max(usedMiB*2, 256) + 128
+		inflateMiB := sb.MemoryMB - keepMiB
+		if inflateMiB <= 0 {
+			slog.Debug("pause: not enough free memory for balloon inflate", "id", sandboxID, "used_mib", usedMiB, "total_mib", sb.MemoryMB)
+			return
+		}
+		balloonCtx, balloonCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer balloonCancel()
+		if err := m.vm.UpdateBalloon(balloonCtx, sandboxID, inflateMiB); err != nil {
+			slog.Debug("pause: balloon inflate failed (non-fatal)", "id", sandboxID, "error", err)
+			return
+		}
+		// Give guest kernel time to process balloon requests and release pages.
+		time.Sleep(2 * time.Second)
+		slog.Info("pause: balloon inflated", "id", sandboxID, "inflate_mib", inflateMiB, "guest_used_mib", usedMiB)
+	}()
+
 	pauseStart := time.Now()
 
 	// Step 1: Pause the VM (freeze vCPUs).
 	if err := m.vm.Pause(ctx, sandboxID); err != nil {
+		// Deflate balloon before returning so sandbox is usable.
+		_ = m.vm.UpdateBalloon(context.Background(), sandboxID, 0)
 		sb.connTracker.Reset()
 		return fmt.Errorf("pause VM: %w", err)
 	}
@@ -811,6 +843,12 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 
 	if err := client.PostInitWithDefaults(initCtx, defaultUser, defaultEnv); err != nil {
 		slog.Warn("post-init failed after resume, metadata files may be stale", "sandbox", sandboxID, "error", err)
+	}
+
+	// Deflate balloon — the snapshot was taken with an inflated balloon to
+	// reduce memfile size, so restore the guest's full memory allocation.
+	if err := m.vm.UpdateBalloon(ctx, sandboxID, 0); err != nil {
+		slog.Debug("resume: balloon deflate failed (non-fatal)", "id", sandboxID, "error", err)
 	}
 
 	// Fetch envd version (best-effort).
@@ -1251,6 +1289,11 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 
 	if err := client.PostInit(initCtx); err != nil {
 		slog.Warn("post-init failed after template restore, metadata files may be stale", "sandbox", sandboxID, "error", err)
+	}
+
+	// Deflate balloon — template snapshot was taken with an inflated balloon.
+	if err := m.vm.UpdateBalloon(ctx, sandboxID, 0); err != nil {
+		slog.Debug("create-from-snapshot: balloon deflate failed (non-fatal)", "id", sandboxID, "error", err)
 	}
 
 	// Fetch envd version (best-effort).
