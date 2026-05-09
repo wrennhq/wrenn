@@ -418,6 +418,13 @@ func runPtyLoop(
 		}
 	}()
 
+	// When any pump cancels the context, close the websocket to unblock
+	// the reader goroutine stuck in ReadMessage.
+	go func() {
+		<-ctx.Done()
+		ws.conn.Close()
+	}()
+
 	wg.Wait()
 }
 

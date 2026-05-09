@@ -253,8 +253,17 @@ func (s *Server) serve(ctx context.Context, uffdFd fd, mapping *Mapping) error {
 		}
 
 		msg := *(*uffdMsg)(unsafe.Pointer(&buf[0]))
-		if getMsgEvent(&msg) != UFFD_EVENT_PAGEFAULT {
-			return fmt.Errorf("unexpected uffd event type: %d", getMsgEvent(&msg))
+		event := getMsgEvent(&msg)
+
+		switch event {
+		case UFFD_EVENT_PAGEFAULT:
+			// Handled below.
+		case UFFD_EVENT_REMOVE, UFFD_EVENT_UNMAP, UFFD_EVENT_REMAP, UFFD_EVENT_FORK:
+			// Non-fatal lifecycle events from the guest kernel (e.g. balloon
+			// deflation, mmap/munmap). No action needed — continue polling.
+			continue
+		default:
+			return fmt.Errorf("unexpected uffd event type: %d", event)
 		}
 
 		arg := getMsgArg(&msg)
