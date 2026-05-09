@@ -37,6 +37,7 @@ pub struct ProcessHandle {
 
     data_tx: broadcast::Sender<DataEvent>,
     end_tx: broadcast::Sender<EndEvent>,
+    ended: Mutex<Option<EndEvent>>,
 
     stdin: Mutex<Option<std::process::ChildStdin>>,
     pty_master: Mutex<Option<std::fs::File>>,
@@ -49,6 +50,10 @@ impl ProcessHandle {
 
     pub fn subscribe_end(&self) -> broadcast::Receiver<EndEvent> {
         self.end_tx.subscribe()
+    }
+
+    pub fn cached_end(&self) -> Option<EndEvent> {
+        self.ended.lock().unwrap().clone()
     }
 
     pub fn send_signal(&self, sig: Signal) -> Result<(), ConnectError> {
@@ -250,6 +255,7 @@ pub fn spawn_process(
             pid,
             data_tx: data_tx.clone(),
             end_tx: end_tx.clone(),
+            ended: Mutex::new(None),
             stdin: Mutex::new(None),
             pty_master: Mutex::new(Some(master_file)),
         });
@@ -273,26 +279,25 @@ pub fn spawn_process(
         });
 
         let end_tx_clone = end_tx.clone();
+        let handle_for_waiter = Arc::clone(&handle);
         std::thread::spawn(move || {
             let mut child = child;
-            match child.wait() {
-                Ok(s) => {
-                    let _ = end_tx_clone.send(EndEvent {
-                        exit_code: s.code().unwrap_or(-1),
-                        exited: s.code().is_some(),
-                        status: format!("{s}"),
-                        error: None,
-                    });
-                }
-                Err(e) => {
-                    let _ = end_tx_clone.send(EndEvent {
-                        exit_code: -1,
-                        exited: false,
-                        status: "error".into(),
-                        error: Some(e.to_string()),
-                    });
-                }
-            }
+            let end_event = match child.wait() {
+                Ok(s) => EndEvent {
+                    exit_code: s.code().unwrap_or(-1),
+                    exited: s.code().is_some(),
+                    status: format!("{s}"),
+                    error: None,
+                },
+                Err(e) => EndEvent {
+                    exit_code: -1,
+                    exited: false,
+                    status: "error".into(),
+                    error: Some(e.to_string()),
+                },
+            };
+            *handle_for_waiter.ended.lock().unwrap() = Some(end_event.clone());
+            let _ = end_tx_clone.send(end_event);
         });
 
         tracing::info!(pid, cmd = cmd_str, "process started (pty)");
@@ -336,6 +341,7 @@ pub fn spawn_process(
             pid,
             data_tx: data_tx.clone(),
             end_tx: end_tx.clone(),
+            ended: Mutex::new(None),
             stdin: Mutex::new(stdin),
             pty_master: Mutex::new(None),
         });
@@ -376,25 +382,24 @@ pub fn spawn_process(
         }
 
         let end_tx_clone = end_tx.clone();
+        let handle_for_waiter = Arc::clone(&handle);
         std::thread::spawn(move || {
-            match child.wait() {
-                Ok(s) => {
-                    let _ = end_tx_clone.send(EndEvent {
-                        exit_code: s.code().unwrap_or(-1),
-                        exited: s.code().is_some(),
-                        status: format!("{s}"),
-                        error: None,
-                    });
-                }
-                Err(e) => {
-                    let _ = end_tx_clone.send(EndEvent {
-                        exit_code: -1,
-                        exited: false,
-                        status: "error".into(),
-                        error: Some(e.to_string()),
-                    });
-                }
-            }
+            let end_event = match child.wait() {
+                Ok(s) => EndEvent {
+                    exit_code: s.code().unwrap_or(-1),
+                    exited: s.code().is_some(),
+                    status: format!("{s}"),
+                    error: None,
+                },
+                Err(e) => EndEvent {
+                    exit_code: -1,
+                    exited: false,
+                    status: "error".into(),
+                    error: Some(e.to_string()),
+                },
+            };
+            *handle_for_waiter.ended.lock().unwrap() = Some(end_event.clone());
+            let _ = end_tx_clone.send(end_event);
         });
 
         tracing::info!(pid, cmd = cmd_str, "process started (pipe)");

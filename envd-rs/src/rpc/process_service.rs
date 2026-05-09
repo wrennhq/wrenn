@@ -237,6 +237,7 @@ impl Process for ProcessServiceImpl {
 
         let mut data_rx = handle.subscribe_data();
         let mut end_rx = handle.subscribe_end();
+        let cached_end = handle.cached_end();
 
         let stream = async_stream::stream! {
             yield Ok(ConnectResponse {
@@ -249,35 +250,42 @@ impl Process for ProcessServiceImpl {
                 ..Default::default()
             });
 
-            loop {
-                tokio::select! {
-                    biased;
-                    data = data_rx.recv() => {
-                        match data {
-                            Ok(ev) => {
+            if let Some(end) = cached_end {
+                yield Ok(ConnectResponse {
+                    event: buffa::MessageField::some(make_end_event(end)),
+                    ..Default::default()
+                });
+            } else {
+                loop {
+                    tokio::select! {
+                        biased;
+                        data = data_rx.recv() => {
+                            match data {
+                                Ok(ev) => {
+                                    yield Ok(ConnectResponse {
+                                        event: buffa::MessageField::some(make_data_event(ev)),
+                                        ..Default::default()
+                                    });
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            }
+                        }
+                        end = end_rx.recv() => {
+                            while let Ok(ev) = data_rx.try_recv() {
                                 yield Ok(ConnectResponse {
                                     event: buffa::MessageField::some(make_data_event(ev)),
                                     ..Default::default()
                                 });
                             }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            if let Ok(end) = end {
+                                yield Ok(ConnectResponse {
+                                    event: buffa::MessageField::some(make_end_event(end)),
+                                    ..Default::default()
+                                });
+                            }
+                            break;
                         }
-                    }
-                    end = end_rx.recv() => {
-                        while let Ok(ev) = data_rx.try_recv() {
-                            yield Ok(ConnectResponse {
-                                event: buffa::MessageField::some(make_data_event(ev)),
-                                ..Default::default()
-                            });
-                        }
-                        if let Ok(end) = end {
-                            yield Ok(ConnectResponse {
-                                event: buffa::MessageField::some(make_end_event(end)),
-                                ..Default::default()
-                            });
-                        }
-                        break;
                     }
                 }
             }

@@ -378,13 +378,18 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	}
 
 	// Mark sandbox as pausing to block new exec/file/PTY operations.
+	m.mu.Lock()
 	sb.Status = models.StatusPausing
+	m.mu.Unlock()
 
 	// restoreRunning reverts state if any pre-freeze step fails.
 	restoreRunning := func() {
 		_ = m.vm.UpdateBalloon(context.Background(), sandboxID, 0)
 		sb.connTracker.Reset()
+		m.mu.Lock()
 		sb.Status = models.StatusRunning
+		m.mu.Unlock()
+		m.startSampler(sb)
 	}
 
 	// Stop the metrics sampler goroutine before tearing down any resources
