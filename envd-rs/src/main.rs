@@ -222,8 +222,8 @@ fn spawn_initial_command(cmd: &str, state: &AppState) {
         &user,
         &state.defaults.env_vars,
     ) {
-        Ok(handle) => {
-            tracing::info!(pid = handle.pid, cmd, "initial command spawned");
+        Ok(spawned) => {
+            tracing::info!(pid = spawned.handle.pid, cmd, "initial command spawned");
         }
         Err(e) => {
             tracing::error!(error = %e, cmd, "failed to spawn initial command");

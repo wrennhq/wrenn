@@ -66,7 +66,7 @@ impl ProcessServiceImpl {
     fn spawn_from_request(
         &self,
         request: &StartRequestView<'_>,
-    ) -> Result<Arc<ProcessHandle>, ConnectError> {
+    ) -> Result<process_handler::SpawnedProcess, ConnectError> {
         let proc_config = request.process.as_option().ok_or_else(|| {
             ConnectError::new(ErrorCode::InvalidArgument, "process config required")
         })?;
@@ -117,7 +117,7 @@ impl ProcessServiceImpl {
             "process.Start request"
         );
 
-        let handle = process_handler::spawn_process(
+        let spawned = process_handler::spawn_process(
             cmd,
             &args,
             &envs,
@@ -129,17 +129,17 @@ impl ProcessServiceImpl {
             &self.state.defaults.env_vars,
         )?;
 
-        self.processes.insert(handle.pid, Arc::clone(&handle));
+        self.processes.insert(spawned.handle.pid, Arc::clone(&spawned.handle));
 
         let processes = self.processes.clone();
-        let pid = handle.pid;
-        let mut end_rx = handle.subscribe_end();
+        let pid = spawned.handle.pid;
+        let mut cleanup_end_rx = spawned.handle.subscribe_end();
         tokio::spawn(async move {
-            let _ = end_rx.recv().await;
+            let _ = cleanup_end_rx.recv().await;
             processes.remove(&pid);
         });
 
-        Ok(handle)
+        Ok(spawned)
     }
 }
 
@@ -183,11 +183,11 @@ impl Process for ProcessServiceImpl {
         ),
         ConnectError,
     > {
-        let handle = self.spawn_from_request(&request)?;
-        let pid = handle.pid;
+        let spawned = self.spawn_from_request(&request)?;
+        let pid = spawned.handle.pid;
 
-        let mut data_rx = handle.subscribe_data();
-        let mut end_rx = handle.subscribe_end();
+        let mut data_rx = spawned.data_rx;
+        let mut end_rx = spawned.end_rx;
 
         let stream = async_stream::stream! {
             yield Ok(make_start_response(pid));

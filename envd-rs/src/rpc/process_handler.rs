@@ -128,6 +128,12 @@ impl ProcessHandle {
     }
 }
 
+pub struct SpawnedProcess {
+    pub handle: Arc<ProcessHandle>,
+    pub data_rx: broadcast::Receiver<DataEvent>,
+    pub end_rx: broadcast::Receiver<EndEvent>,
+}
+
 pub fn spawn_process(
     cmd_str: &str,
     args: &[String],
@@ -138,7 +144,7 @@ pub fn spawn_process(
     tag: Option<String>,
     user: &nix::unistd::User,
     default_env_vars: &dashmap::DashMap<String, String>,
-) -> Result<Arc<ProcessHandle>, ConnectError> {
+) -> Result<SpawnedProcess, ConnectError> {
     let mut env: Vec<(String, String)> = Vec::new();
     env.push(("PATH".into(), std::env::var("PATH").unwrap_or_default()));
     let home = user.dir.to_string_lossy().to_string();
@@ -248,6 +254,9 @@ pub fn spawn_process(
             pty_master: Mutex::new(Some(master_file)),
         });
 
+        let data_rx = handle.subscribe_data();
+        let end_rx = handle.subscribe_end();
+
         let data_tx_clone = data_tx.clone();
         std::thread::spawn(move || {
             let mut master = master_clone;
@@ -287,7 +296,7 @@ pub fn spawn_process(
         });
 
         tracing::info!(pid, cmd = cmd_str, "process started (pty)");
-        Ok(handle)
+        Ok(SpawnedProcess { handle, data_rx, end_rx })
     } else {
         let mut command = std::process::Command::new("/bin/sh");
         command
@@ -330,6 +339,9 @@ pub fn spawn_process(
             stdin: Mutex::new(stdin),
             pty_master: Mutex::new(None),
         });
+
+        let data_rx = handle.subscribe_data();
+        let end_rx = handle.subscribe_end();
 
         if let Some(mut out) = stdout {
             let tx = data_tx.clone();
@@ -386,7 +398,7 @@ pub fn spawn_process(
         });
 
         tracing::info!(pid, cmd = cmd_str, "process started (pipe)");
-        Ok(handle)
+        Ok(SpawnedProcess { handle, data_rx, end_rx })
     }
 }
 
