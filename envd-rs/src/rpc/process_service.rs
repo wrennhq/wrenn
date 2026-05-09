@@ -71,7 +71,7 @@ impl ProcessServiceImpl {
             ConnectError::new(ErrorCode::InvalidArgument, "process config required")
         })?;
 
-        let username = self.state.defaults.user.clone();
+        let username = self.state.defaults.user();
         let user =
             lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
@@ -85,7 +85,8 @@ impl ProcessServiceImpl {
 
         let home_dir = user.dir.to_string_lossy().to_string();
         let cwd_str: &str = proc_config.cwd.unwrap_or("");
-        let cwd = expand_and_resolve(cwd_str, &home_dir, self.state.defaults.workdir.as_deref())
+        let default_workdir = self.state.defaults.workdir();
+        let cwd = expand_and_resolve(cwd_str, &home_dir, default_workdir.as_deref())
             .map_err(|e| ConnectError::new(ErrorCode::InvalidArgument, e))?;
 
         let effective_cwd = if cwd.is_empty() { "/" } else { &cwd };
