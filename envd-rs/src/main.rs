@@ -196,7 +196,8 @@ fn spawn_initial_command(cmd: &str, state: &AppState) {
     use crate::rpc::process_handler;
     use std::collections::HashMap;
 
-    let user = match lookup_user(&state.defaults.user) {
+    let default_user = state.defaults.user();
+    let user = match lookup_user(&default_user) {
         Ok(u) => u,
         Err(e) => {
             tracing::error!(error = %e, "cmd: failed to lookup user");
@@ -205,9 +206,8 @@ fn spawn_initial_command(cmd: &str, state: &AppState) {
     };
 
     let home = user.dir.to_string_lossy().to_string();
-    let cwd = state
-        .defaults
-        .workdir
+    let default_workdir = state.defaults.workdir();
+    let cwd = default_workdir
         .as_deref()
         .unwrap_or(&home);
 
@@ -222,8 +222,8 @@ fn spawn_initial_command(cmd: &str, state: &AppState) {
         &user,
         &state.defaults.env_vars,
     ) {
-        Ok(handle) => {
-            tracing::info!(pid = handle.pid, cmd, "initial command spawned");
+        Ok(spawned) => {
+            tracing::info!(pid = spawned.handle.pid, cmd, "initial command spawned");
         }
         Err(e) => {
             tracing::error!(error = %e, cmd, "failed to spawn initial command");

@@ -239,12 +239,26 @@ func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID pgtype.UUI
 	if _, err := agent.PauseSandbox(ctx, connect.NewRequest(&pb.PauseSandboxRequest{
 		SandboxId: sandboxIDStr,
 	})); err != nil {
-		// Revert status on failure.
-		if _, dbErr := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
-			ID: sandboxID, Status: "running",
+		// Check if the agent still has this sandbox. If it was destroyed
+		// (e.g. frozen VM couldn't be resumed), mark as "error" instead of
+		// reverting to "running" — which would create a ghost record.
+		// Use a fresh context since the original ctx may already be expired.
+		revertStatus := "running"
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if _, pingErr := agent.PingSandbox(pingCtx, connect.NewRequest(&pb.PingSandboxRequest{
+			SandboxId: sandboxIDStr,
+		})); pingErr != nil {
+			revertStatus = "error"
+			slog.Warn("sandbox gone from agent after failed pause, marking as error", "sandbox_id", sandboxIDStr)
+		}
+		pingCancel()
+		dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if _, dbErr := s.DB.UpdateSandboxStatus(dbCtx, db.UpdateSandboxStatusParams{
+			ID: sandboxID, Status: revertStatus,
 		}); dbErr != nil {
 			slog.Warn("failed to revert sandbox status after pause error", "sandbox_id", sandboxIDStr, "error", dbErr)
 		}
+		dbCancel()
 		return db.Sandbox{}, fmt.Errorf("agent pause: %w", err)
 	}
 

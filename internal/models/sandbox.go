@@ -11,6 +11,7 @@ type SandboxStatus string
 const (
 	StatusPending SandboxStatus = "pending"
 	StatusRunning SandboxStatus = "running"
+	StatusPausing SandboxStatus = "pausing"
 	StatusPaused  SandboxStatus = "paused"
 	StatusStopped SandboxStatus = "stopped"
 	StatusError   SandboxStatus = "error"

@@ -186,9 +186,12 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	}
 
 	// Create dm-snapshot with per-sandbox CoW file.
+	// CoW must be at least as large as the origin — if every block is
+	// rewritten, the CoW stores a full copy. Undersized CoW causes
+	// dm-snapshot invalidation → EIO on all guest I/O.
 	dmName := "wrenn-" + sandboxID
 	cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s.cow", sandboxID))
-	cowSize := int64(diskSizeMB) * 1024 * 1024
+	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
 	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
 		m.loops.Release(baseRootfs)
@@ -374,28 +377,43 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
 	}
 
+	// Mark sandbox as pausing to block new exec/file/PTY operations.
+	m.mu.Lock()
+	sb.Status = models.StatusPausing
+	m.mu.Unlock()
+
+	// restoreRunning reverts state if any pre-freeze step fails.
+	restoreRunning := func() {
+		_ = m.vm.UpdateBalloon(context.Background(), sandboxID, 0)
+		sb.connTracker.Reset()
+		m.mu.Lock()
+		sb.Status = models.StatusRunning
+		m.mu.Unlock()
+		m.startSampler(sb)
+	}
+
 	// Stop the metrics sampler goroutine before tearing down any resources
 	// it reads (dm device, Firecracker PID). Without this, the sampler
 	// leaks on every successful pause.
 	m.stopSampler(sb)
 
-	// Step 0: Drain in-flight proxy connections before freezing vCPUs.
-	// Stale TCP state from mid-flight connections causes issues on restore.
-	sb.connTracker.Drain(2 * time.Second)
-	slog.Debug("pause: proxy connections drained", "id", sandboxID)
+	// ── Step 1: Isolate from external traffic ─────────────────────────
+	// Drain in-flight proxy connections (grace period for clean shutdown).
+	sb.connTracker.Drain(5 * time.Second)
+	// Force-close any connections that didn't finish during grace period.
+	sb.connTracker.ForceClose()
+	slog.Debug("pause: external connections closed", "id", sandboxID)
 
-	// Step 0b: Close host-side idle connections to envd. Done before
-	// PrepareSnapshot so FIN packets propagate to the guest during the
-	// PrepareSnapshot window (no extra sleep needed).
+	// Close host-side idle connections to envd so FIN packets propagate
+	// to the guest kernel before snapshot.
 	sb.client.CloseIdleConnections()
-	slog.Debug("pause: envd client idle connections closed", "id", sandboxID)
 
-	// Step 0c: Signal envd to quiesce (stop port scanner/forwarder, mark
-	// connections for post-restore cleanup). The 3s timeout also gives time
-	// for the FINs from Step 0b to be processed by the guest kernel.
-	// Best-effort: a failure is logged but does not abort the pause.
+	// ── Step 2: Drop page cache ──────────────────────────────────────
+	// Signal envd to quiesce: drops page cache, stops port subsystem,
+	// marks connections for post-restore cleanup. Page cache drop can
+	// take significant time on large-memory VMs (20GB+).
 	func() {
-		prepCtx, prepCancel := context.WithTimeout(ctx, 3*time.Second)
+		prepCtx, prepCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer prepCancel()
 		if err := sb.client.PrepareSnapshot(prepCtx); err != nil {
 			slog.Warn("pause: pre-snapshot quiesce failed (best-effort)", "id", sandboxID, "error", err)
@@ -404,11 +422,37 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		}
 	}()
 
+	// ── Step 3: Inflate balloon to reclaim free guest memory ─────────
+	// Freed pages become zero from FC's perspective, so ProcessMemfile
+	// skips them → dramatically smaller memfile (e.g. 20GB → 1GB).
+	func() {
+		memUsed, err := readEnvdMemUsed(sb.client)
+		if err != nil {
+			slog.Debug("pause: could not read guest memory, skipping balloon inflate", "id", sandboxID, "error", err)
+			return
+		}
+		usedMiB := int(memUsed / (1024 * 1024))
+		keepMiB := max(usedMiB*2, 256) + 128
+		inflateMiB := sb.MemoryMB - keepMiB
+		if inflateMiB <= 0 {
+			slog.Debug("pause: not enough free memory for balloon inflate", "id", sandboxID, "used_mib", usedMiB, "total_mib", sb.MemoryMB)
+			return
+		}
+		balloonCtx, balloonCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer balloonCancel()
+		if err := m.vm.UpdateBalloon(balloonCtx, sandboxID, inflateMiB); err != nil {
+			slog.Debug("pause: balloon inflate failed (non-fatal)", "id", sandboxID, "error", err)
+			return
+		}
+		time.Sleep(2 * time.Second)
+		slog.Info("pause: balloon inflated", "id", sandboxID, "inflate_mib", inflateMiB, "guest_used_mib", usedMiB)
+	}()
+
+	// ── Step 4: Freeze vCPUs ─────────────────────────────────────────
 	pauseStart := time.Now()
 
-	// Step 1: Pause the VM (freeze vCPUs).
 	if err := m.vm.Pause(ctx, sandboxID); err != nil {
-		sb.connTracker.Reset()
+		restoreRunning()
 		return fmt.Errorf("pause VM: %w", err)
 	}
 	slog.Debug("pause: VM paused", "id", sandboxID, "elapsed", time.Since(pauseStart))
@@ -423,13 +467,23 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 	// resumeOnError unpauses the VM so the sandbox stays usable when a
 	// post-freeze step fails. If the resume itself fails, the sandbox is
-	// left frozen — the caller should destroy it. It also resets the
-	// connection tracker so the sandbox can accept proxy connections again.
+	// frozen and unrecoverable — destroy it to avoid a zombie.
 	resumeOnError := func() {
-		sb.connTracker.Reset()
-		if err := m.vm.Resume(ctx, sandboxID); err != nil {
-			slog.Error("failed to resume VM after pause error — sandbox is frozen", "id", sandboxID, "error", err)
+		// Use a fresh context — the caller's ctx may already be cancelled.
+		resumeCtx, resumeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer resumeCancel()
+		if err := m.vm.Resume(resumeCtx, sandboxID); err != nil {
+			slog.Error("failed to resume VM after pause error — destroying frozen sandbox", "id", sandboxID, "error", err)
+			m.cleanup(context.Background(), sb)
+			m.mu.Lock()
+			delete(m.boxes, sandboxID)
+			m.mu.Unlock()
+			if m.onDestroy != nil {
+				m.onDestroy(sandboxID)
+			}
+			return
 		}
+		restoreRunning()
 	}
 
 	// Step 2: Take VM state snapshot (snapfile + memfile).
@@ -444,6 +498,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 	snapshotStart := time.Now()
 	if err := m.vm.Snapshot(ctx, sandboxID, snapPath, rawMemPath, snapshotType); err != nil {
+		slog.Error("pause: snapshot failed", "id", sandboxID, "type", snapshotType, "elapsed", time.Since(snapshotStart), "error", err)
 		warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
 		resumeOnError()
 		return fmt.Errorf("create VM snapshot: %w", err)
@@ -795,6 +850,12 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		slog.Warn("post-init failed after resume, metadata files may be stale", "sandbox", sandboxID, "error", err)
 	}
 
+	// Deflate balloon — the snapshot was taken with an inflated balloon to
+	// reduce memfile size, so restore the guest's full memory allocation.
+	if err := m.vm.UpdateBalloon(ctx, sandboxID, 0); err != nil {
+		slog.Debug("resume: balloon deflate failed (non-fatal)", "id", sandboxID, "error", err)
+	}
+
 	// Fetch envd version (best-effort).
 	envdVersion, _ := client.FetchVersion(ctx)
 
@@ -1134,7 +1195,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 
 	dmName := "wrenn-" + sandboxID
 	cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s.cow", sandboxID))
-	cowSize := int64(diskSizeMB) * 1024 * 1024
+	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
 	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
 		source.Close()
@@ -1233,6 +1294,11 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 
 	if err := client.PostInit(initCtx); err != nil {
 		slog.Warn("post-init failed after template restore, metadata files may be stale", "sandbox", sandboxID, "error", err)
+	}
+
+	// Deflate balloon — template snapshot was taken with an inflated balloon.
+	if err := m.vm.UpdateBalloon(ctx, sandboxID, 0); err != nil {
+		slog.Debug("create-from-snapshot: balloon deflate failed (non-fatal)", "id", sandboxID, "error", err)
 	}
 
 	// Fetch envd version (best-effort).

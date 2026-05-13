@@ -1,20 +1,35 @@
 use dashmap::DashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-#[derive(Clone)]
 pub struct Defaults {
     pub env_vars: Arc<DashMap<String, String>>,
-    pub user: String,
-    pub workdir: Option<String>,
+    user: RwLock<String>,
+    workdir: RwLock<Option<String>>,
 }
 
 impl Defaults {
     pub fn new(user: &str) -> Self {
         Self {
             env_vars: Arc::new(DashMap::new()),
-            user: user.to_string(),
-            workdir: None,
+            user: RwLock::new(user.to_string()),
+            workdir: RwLock::new(None),
         }
+    }
+
+    pub fn user(&self) -> String {
+        self.user.read().unwrap().clone()
+    }
+
+    pub fn set_user(&self, user: String) {
+        *self.user.write().unwrap() = user;
+    }
+
+    pub fn workdir(&self) -> Option<String> {
+        self.workdir.read().unwrap().clone()
+    }
+
+    pub fn set_workdir(&self, workdir: Option<String>) {
+        *self.workdir.write().unwrap() = workdir;
     }
 }
 

@@ -27,8 +27,12 @@ build-agent:
 build-envd:
 	cd envd-rs && ENVD_COMMIT=$(COMMIT) cargo build --release --target x86_64-unknown-linux-musl
 	@cp envd-rs/target/x86_64-unknown-linux-musl/release/envd $(BIN_DIR)/envd
-	@file $(BIN_DIR)/envd | grep -q "static-pie linked" || \
-		(echo "ERROR: envd is not statically linked!" && exit 1)
+	@readelf -h $(BIN_DIR)/envd | grep -q 'Type:.*DYN' && \
+	 readelf -d $(BIN_DIR)/envd | grep -q 'FLAGS_1.*PIE' && \
+	 ! readelf -d $(BIN_DIR)/envd | grep -q '(NEEDED)' && \
+	 { ! readelf -lW $(BIN_DIR)/envd | grep -q 'Requesting program interpreter' || \
+	   readelf -lW $(BIN_DIR)/envd | grep -Fq '[Requesting program interpreter: /lib/ld-musl-x86_64.so.1]'; } || \
+		(echo "ERROR: envd must be PIE, have no DT_NEEDED shared libs, and either have no interpreter or use /lib/ld-musl-x86_64.so.1" && exit 1)
 
 # ═══════════════════════════════════════════════════
 #  Development

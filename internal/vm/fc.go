@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"time"
 )
 
 // fcClient talks to the Firecracker HTTP API over a Unix socket.
@@ -27,7 +26,9 @@ func newFCClient(socketPath string) *fcClient {
 					return d.DialContext(ctx, "unix", socketPath)
 				},
 			},
-			Timeout: 10 * time.Second,
+			// No global timeout — callers pass context.Context with appropriate
+			// deadlines. A fixed 10s timeout was too short for snapshot/resume
+			// operations on large-memory VMs (20GB+ memfiles).
 		},
 	}
 }
