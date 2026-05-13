@@ -80,6 +80,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Register with the control plane before touching rootfs images. If the
+	// agent can't reach the CP there's no point inflating images (and crashing
+	// afterward would leave them in the expanded state).
+	creds, err := hostagent.Register(ctx, hostagent.RegistrationConfig{
+		CPURL:             cpURL,
+		RegistrationToken: *registrationToken,
+		TokenFile:         credsFile,
+		Address:           *advertiseAddr,
+	})
+	if err != nil {
+		slog.Error("host registration failed", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("host registered", "host_id", creds.HostID)
+
 	// Parse default rootfs size from env (e.g. "5G", "2Gi", "1000M").
 	defaultRootfsSizeMB := sandbox.DefaultDiskSizeMB
 	if sizeStr := os.Getenv("WRENN_DEFAULT_ROOTFS_SIZE"); sizeStr != "" {
@@ -128,24 +147,7 @@ func main() {
 
 	mgr := sandbox.New(cfg)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	mgr.StartTTLReaper(ctx)
-
-	// Register with the control plane and start heartbeating.
-	creds, err := hostagent.Register(ctx, hostagent.RegistrationConfig{
-		CPURL:             cpURL,
-		RegistrationToken: *registrationToken,
-		TokenFile:         credsFile,
-		Address:           *advertiseAddr,
-	})
-	if err != nil {
-		slog.Error("host registration failed", "error", err)
-		os.Exit(1)
-	}
-
-	slog.Info("host registered", "host_id", creds.HostID)
 
 	// httpServer is declared here so the shutdown func can reference it.
 	// ReadTimeout/WriteTimeout are intentionally omitted — they would kill

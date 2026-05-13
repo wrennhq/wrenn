@@ -66,12 +66,12 @@ impl ProcessServiceImpl {
     fn spawn_from_request(
         &self,
         request: &StartRequestView<'_>,
-    ) -> Result<Arc<ProcessHandle>, ConnectError> {
+    ) -> Result<process_handler::SpawnedProcess, ConnectError> {
         let proc_config = request.process.as_option().ok_or_else(|| {
             ConnectError::new(ErrorCode::InvalidArgument, "process config required")
         })?;
 
-        let username = self.state.defaults.user.clone();
+        let username = self.state.defaults.user();
         let user =
             lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
@@ -85,7 +85,8 @@ impl ProcessServiceImpl {
 
         let home_dir = user.dir.to_string_lossy().to_string();
         let cwd_str: &str = proc_config.cwd.unwrap_or("");
-        let cwd = expand_and_resolve(cwd_str, &home_dir, self.state.defaults.workdir.as_deref())
+        let default_workdir = self.state.defaults.workdir();
+        let cwd = expand_and_resolve(cwd_str, &home_dir, default_workdir.as_deref())
             .map_err(|e| ConnectError::new(ErrorCode::InvalidArgument, e))?;
 
         let effective_cwd = if cwd.is_empty() { "/" } else { &cwd };
@@ -116,7 +117,7 @@ impl ProcessServiceImpl {
             "process.Start request"
         );
 
-        let handle = process_handler::spawn_process(
+        let spawned = process_handler::spawn_process(
             cmd,
             &args,
             &envs,
@@ -128,17 +129,17 @@ impl ProcessServiceImpl {
             &self.state.defaults.env_vars,
         )?;
 
-        self.processes.insert(handle.pid, Arc::clone(&handle));
+        self.processes.insert(spawned.handle.pid, Arc::clone(&spawned.handle));
 
         let processes = self.processes.clone();
-        let pid = handle.pid;
-        let mut end_rx = handle.subscribe_end();
+        let pid = spawned.handle.pid;
+        let mut cleanup_end_rx = spawned.handle.subscribe_end();
         tokio::spawn(async move {
-            let _ = end_rx.recv().await;
+            let _ = cleanup_end_rx.recv().await;
             processes.remove(&pid);
         });
 
-        Ok(handle)
+        Ok(spawned)
     }
 }
 
@@ -182,25 +183,35 @@ impl Process for ProcessServiceImpl {
         ),
         ConnectError,
     > {
-        let handle = self.spawn_from_request(&request)?;
-        let pid = handle.pid;
+        let spawned = self.spawn_from_request(&request)?;
+        let pid = spawned.handle.pid;
 
-        let mut data_rx = handle.subscribe_data();
-        let mut end_rx = handle.subscribe_end();
+        let mut data_rx = spawned.data_rx;
+        let mut end_rx = spawned.end_rx;
 
         let stream = async_stream::stream! {
             yield Ok(make_start_response(pid));
 
             loop {
-                match data_rx.recv().await {
-                    Ok(ev) => yield Ok(make_data_start_response(ev)),
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                tokio::select! {
+                    biased;
+                    data = data_rx.recv() => {
+                        match data {
+                            Ok(ev) => yield Ok(make_data_start_response(ev)),
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                    end = end_rx.recv() => {
+                        while let Ok(ev) = data_rx.try_recv() {
+                            yield Ok(make_data_start_response(ev));
+                        }
+                        if let Ok(end) = end {
+                            yield Ok(make_end_start_response(end));
+                        }
+                        break;
+                    }
                 }
-            }
-
-            if let Ok(end) = end_rx.recv().await {
-                yield Ok(make_end_start_response(end));
             }
         };
 
@@ -226,6 +237,7 @@ impl Process for ProcessServiceImpl {
 
         let mut data_rx = handle.subscribe_data();
         let mut end_rx = handle.subscribe_end();
+        let cached_end = handle.cached_end();
 
         let stream = async_stream::stream! {
             yield Ok(ConnectResponse {
@@ -238,24 +250,44 @@ impl Process for ProcessServiceImpl {
                 ..Default::default()
             });
 
-            loop {
-                match data_rx.recv().await {
-                    Ok(ev) => {
-                        yield Ok(ConnectResponse {
-                            event: buffa::MessageField::some(make_data_event(ev)),
-                            ..Default::default()
-                        });
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-            }
-
-            if let Ok(end) = end_rx.recv().await {
+            if let Some(end) = cached_end {
                 yield Ok(ConnectResponse {
                     event: buffa::MessageField::some(make_end_event(end)),
                     ..Default::default()
                 });
+            } else {
+                loop {
+                    tokio::select! {
+                        biased;
+                        data = data_rx.recv() => {
+                            match data {
+                                Ok(ev) => {
+                                    yield Ok(ConnectResponse {
+                                        event: buffa::MessageField::some(make_data_event(ev)),
+                                        ..Default::default()
+                                    });
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            }
+                        }
+                        end = end_rx.recv() => {
+                            while let Ok(ev) = data_rx.try_recv() {
+                                yield Ok(ConnectResponse {
+                                    event: buffa::MessageField::some(make_data_event(ev)),
+                                    ..Default::default()
+                                });
+                            }
+                            if let Ok(end) = end {
+                                yield Ok(ConnectResponse {
+                                    event: buffa::MessageField::some(make_end_event(end)),
+                                    ..Default::default()
+                                });
+                            }
+                            break;
+                        }
+                    }
+                }
             }
         };
 

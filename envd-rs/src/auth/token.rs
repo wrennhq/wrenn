@@ -125,3 +125,132 @@ impl SecureToken {
         Ok(token)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_is_unset() {
+        let t = SecureToken::new();
+        assert!(!t.is_set());
+        assert!(!t.equals("anything"));
+    }
+
+    #[test]
+    fn set_and_equals() {
+        let t = SecureToken::new();
+        t.set(b"secret").unwrap();
+        assert!(t.is_set());
+        assert!(t.equals("secret"));
+        assert!(!t.equals("wrong"));
+    }
+
+    #[test]
+    fn set_empty_errors() {
+        let t = SecureToken::new();
+        assert!(t.set(b"").is_err());
+        assert!(!t.is_set());
+    }
+
+    #[test]
+    fn set_overwrites_previous() {
+        let t = SecureToken::new();
+        t.set(b"first").unwrap();
+        t.set(b"second").unwrap();
+        assert!(!t.equals("first"));
+        assert!(t.equals("second"));
+    }
+
+    #[test]
+    fn destroy_clears() {
+        let t = SecureToken::new();
+        t.set(b"secret").unwrap();
+        t.destroy();
+        assert!(!t.is_set());
+        assert!(!t.equals("secret"));
+    }
+
+    #[test]
+    fn bytes_returns_copy() {
+        let t = SecureToken::new();
+        assert!(t.bytes().is_none());
+        t.set(b"hello").unwrap();
+        assert_eq!(t.bytes().unwrap(), b"hello");
+    }
+
+    #[test]
+    fn take_from_transfers_and_clears_source() {
+        let src = SecureToken::new();
+        src.set(b"token").unwrap();
+        let dst = SecureToken::new();
+        dst.take_from(&src);
+        assert!(!src.is_set());
+        assert!(dst.equals("token"));
+    }
+
+    #[test]
+    fn take_from_overwrites_existing() {
+        let src = SecureToken::new();
+        src.set(b"new").unwrap();
+        let dst = SecureToken::new();
+        dst.set(b"old").unwrap();
+        dst.take_from(&src);
+        assert!(dst.equals("new"));
+        assert!(!dst.equals("old"));
+    }
+
+    #[test]
+    fn equals_secure_matching() {
+        let a = SecureToken::new();
+        a.set(b"same").unwrap();
+        let b = SecureToken::new();
+        b.set(b"same").unwrap();
+        assert!(a.equals_secure(&b));
+    }
+
+    #[test]
+    fn equals_secure_different() {
+        let a = SecureToken::new();
+        a.set(b"one").unwrap();
+        let b = SecureToken::new();
+        b.set(b"two").unwrap();
+        assert!(!a.equals_secure(&b));
+    }
+
+    #[test]
+    fn equals_secure_unset() {
+        let a = SecureToken::new();
+        let b = SecureToken::new();
+        assert!(!a.equals_secure(&b));
+    }
+
+    #[test]
+    fn from_json_bytes_valid() {
+        let mut data = b"\"mysecret\"".to_vec();
+        let t = SecureToken::from_json_bytes(&mut data).unwrap();
+        assert!(t.equals("mysecret"));
+        assert!(data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn from_json_bytes_rejects_missing_quotes() {
+        let mut data = b"noquotes".to_vec();
+        assert!(SecureToken::from_json_bytes(&mut data).is_err());
+        assert!(data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn from_json_bytes_rejects_escape_sequences() {
+        let mut data = b"\"has\\nescapes\"".to_vec();
+        assert!(SecureToken::from_json_bytes(&mut data).is_err());
+        assert!(data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn from_json_bytes_rejects_empty_content() {
+        let mut data = b"\"\"".to_vec();
+        assert!(SecureToken::from_json_bytes(&mut data).is_err());
+        assert!(data.iter().all(|&b| b == 0));
+    }
+}

@@ -78,11 +78,15 @@ pub async fn post_init(
     if let Some(ref user) = init_req.default_user {
         if !user.is_empty() {
             tracing::debug!(user = %user, "setting default user");
-            let mut defaults = state.defaults.clone();
-            defaults.user = user.clone();
-            // Note: In Rust we'd need interior mutability for this.
-            // For now, env_vars (DashMap) handles concurrent access.
-            // User/workdir mutation deferred to full state refactor.
+            state.defaults.set_user(user.clone());
+        }
+    }
+
+    // Set default workdir
+    if let Some(ref workdir) = init_req.default_workdir {
+        if !workdir.is_empty() {
+            tracing::debug!(workdir = %workdir, "setting default workdir");
+            state.defaults.set_workdir(Some(workdir.clone()));
         }
     }
 
@@ -147,6 +151,9 @@ async fn trigger_restore_and_respond(state: &AppState) -> axum::response::Respon
 
 fn post_restore_recovery(state: &AppState) {
     tracing::info!("restore: post-restore recovery (no GC needed in Rust)");
+
+    state.snapshot_in_progress.store(false, std::sync::atomic::Ordering::Release);
+
     state.conn_tracker.restore_after_snapshot();
 
     if let Some(ref ps) = state.port_subsystem {

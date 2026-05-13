@@ -71,9 +71,10 @@ pub async fn get_files(
     let path_str = params.path.as_deref().unwrap_or("");
     let header_token = extract_header_token(&req);
 
+    let default_user = state.defaults.user();
     let username = match execcontext::resolve_default_username(
         params.username.as_deref(),
-        &state.defaults.user,
+        &default_user,
     ) {
         Ok(u) => u.to_string(),
         Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
@@ -96,7 +97,8 @@ pub async fn get_files(
     };
 
     let home_dir = user.dir.to_string_lossy().to_string();
-    let resolved = match expand_and_resolve(path_str, &home_dir, state.defaults.workdir.as_deref())
+    let default_workdir = state.defaults.workdir();
+    let resolved = match expand_and_resolve(path_str, &home_dir, default_workdir.as_deref())
     {
         Ok(p) => p,
         Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
@@ -222,9 +224,10 @@ pub async fn post_files(
     let path_str = params.path.as_deref().unwrap_or("");
     let header_token = extract_header_token(&req);
 
+    let default_user = state.defaults.user();
     let username = match execcontext::resolve_default_username(
         params.username.as_deref(),
-        &state.defaults.user,
+        &default_user,
     ) {
         Ok(u) => u.to_string(),
         Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
@@ -266,6 +269,7 @@ pub async fn post_files(
     };
 
     let mut uploaded: Vec<EntryInfo> = Vec::new();
+    let default_workdir = state.defaults.workdir();
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let field_name = field.name().unwrap_or("").to_string();
@@ -274,7 +278,7 @@ pub async fn post_files(
         }
 
         let file_path = if !path_str.is_empty() {
-            match expand_and_resolve(path_str, &home_dir, state.defaults.workdir.as_deref()) {
+            match expand_and_resolve(path_str, &home_dir, default_workdir.as_deref()) {
                 Ok(p) => p,
                 Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
             }
@@ -283,7 +287,7 @@ pub async fn post_files(
                 .file_name()
                 .unwrap_or("upload")
                 .to_string();
-            match expand_and_resolve(&fname, &home_dir, state.defaults.workdir.as_deref()) {
+            match expand_and_resolve(&fname, &home_dir, default_workdir.as_deref()) {
                 Ok(p) => p,
                 Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
             }

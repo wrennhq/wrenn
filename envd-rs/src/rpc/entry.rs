@@ -140,3 +140,92 @@ fn format_permissions(mode: u32) -> String {
     }
     s
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // format_permissions
+
+    #[test]
+    fn regular_file_755() {
+        assert_eq!(format_permissions(libc::S_IFREG | 0o755), "-rwxr-xr-x");
+    }
+
+    #[test]
+    fn directory_755() {
+        assert_eq!(format_permissions(libc::S_IFDIR | 0o755), "drwxr-xr-x");
+    }
+
+    #[test]
+    fn symlink_777() {
+        assert_eq!(format_permissions(libc::S_IFLNK | 0o777), "Lrwxrwxrwx");
+    }
+
+    #[test]
+    fn regular_file_000() {
+        assert_eq!(format_permissions(libc::S_IFREG | 0o000), "----------");
+    }
+
+    #[test]
+    fn regular_file_644() {
+        assert_eq!(format_permissions(libc::S_IFREG | 0o644), "-rw-r--r--");
+    }
+
+    #[test]
+    fn block_device() {
+        assert_eq!(format_permissions(libc::S_IFBLK | 0o660), "brw-rw----");
+    }
+
+    #[test]
+    fn char_device() {
+        assert_eq!(format_permissions(libc::S_IFCHR | 0o666), "crw-rw-rw-");
+    }
+
+    #[test]
+    fn fifo() {
+        assert_eq!(format_permissions(libc::S_IFIFO | 0o644), "prw-r--r--");
+    }
+
+    #[test]
+    fn socket() {
+        assert_eq!(format_permissions(libc::S_IFSOCK | 0o755), "Srwxr-xr-x");
+    }
+
+    #[test]
+    fn unknown_type() {
+        assert_eq!(format_permissions(0o755), "?rwxr-xr-x");
+    }
+
+    #[test]
+    fn setuid_in_mode_only_affects_lower_bits() {
+        // setuid (0o4755) — format_permissions masks with 0o777, so same as 0o755
+        assert_eq!(
+            format_permissions(libc::S_IFREG | 0o4755),
+            format_permissions(libc::S_IFREG | 0o755),
+        );
+    }
+
+    #[test]
+    fn output_always_10_chars() {
+        for mode in [0o000, 0o777, 0o644, 0o755, 0o4755] {
+            assert_eq!(format_permissions(libc::S_IFREG | mode).len(), 10);
+        }
+    }
+
+    // meta_to_file_type — needs real filesystem
+
+    #[test]
+    fn meta_regular_file() {
+        let f = tempfile::NamedTempFile::new().unwrap();
+        let meta = std::fs::metadata(f.path()).unwrap();
+        assert_eq!(meta_to_file_type(&meta), FileType::FILE_TYPE_FILE);
+    }
+
+    #[test]
+    fn meta_directory() {
+        let d = tempfile::TempDir::new().unwrap();
+        let meta = std::fs::metadata(d.path()).unwrap();
+        assert_eq!(meta_to_file_type(&meta), FileType::FILE_TYPE_DIRECTORY);
+    }
+}

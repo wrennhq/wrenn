@@ -57,7 +57,7 @@ if [ ! -f "${ENVD_BIN}" ]; then
     exit 1
 fi
 
-if ! file "${ENVD_BIN}" | grep -q "statically linked"; then
+if ! ldd "${ENVD_BIN}" | grep -q "statically linked"; then
     echo "ERROR: envd is not statically linked!"
     exit 1
 fi

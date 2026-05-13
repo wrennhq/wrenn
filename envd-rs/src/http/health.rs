@@ -29,6 +29,8 @@ pub async fn get_health(State(state): State<Arc<AppState>>) -> impl IntoResponse
 fn post_restore_recovery(state: &AppState) {
     tracing::info!("restore: post-restore recovery (no GC needed in Rust)");
 
+    state.snapshot_in_progress.store(false, std::sync::atomic::Ordering::Release);
+
     state.conn_tracker.restore_after_snapshot();
     tracing::info!("restore: zombie connections closed");
 

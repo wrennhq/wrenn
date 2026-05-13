@@ -31,15 +31,15 @@ impl FilesystemServiceImpl {
     }
 
     fn resolve_path(&self, path: &str, ctx: &Context) -> Result<String, ConnectError> {
-        let username = extract_username(ctx).unwrap_or_else(|| self.state.defaults.user.clone());
+        let username = extract_username(ctx).unwrap_or_else(|| self.state.defaults.user());
         let user = lookup_user(&username).map_err(|e| {
             ConnectError::new(ErrorCode::Unauthenticated, format!("invalid user: {e}"))
         })?;
 
         let home_dir = user.dir.to_string_lossy().to_string();
-        let default_workdir = self.state.defaults.workdir.as_deref();
+        let default_workdir = self.state.defaults.workdir();
 
-        expand_and_resolve(path, &home_dir, default_workdir)
+        expand_and_resolve(path, &home_dir, default_workdir.as_deref())
             .map_err(|e| ConnectError::new(ErrorCode::InvalidArgument, e))
     }
 }
@@ -97,7 +97,7 @@ impl Filesystem for FilesystemServiceImpl {
             }
         }
 
-        let username = extract_username(&ctx).unwrap_or_else(|| self.state.defaults.user.clone());
+        let username = extract_username(&ctx).unwrap_or_else(|| self.state.defaults.user());
         let user =
             lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
@@ -122,7 +122,7 @@ impl Filesystem for FilesystemServiceImpl {
         let source = self.resolve_path(request.source, &ctx)?;
         let destination = self.resolve_path(request.destination, &ctx)?;
 
-        let username = extract_username(&ctx).unwrap_or_else(|| self.state.defaults.user.clone());
+        let username = extract_username(&ctx).unwrap_or_else(|| self.state.defaults.user());
         let user =
             lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 

@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "envd"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-stream",
  "axum",
@@ -543,6 +543,7 @@ dependencies = [
  "sha2",
  "subtle",
  "sysinfo",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tower",

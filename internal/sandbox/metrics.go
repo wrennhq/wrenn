@@ -15,11 +15,11 @@ type MetricPoint struct {
 
 // Ring buffer capacity constants.
 const (
-	ring10mCap = 1200 // 500ms × 1200 = 10 min
-	ring2hCap  = 240  // 30s × 240 = 2 h
-	ring24hCap = 288  // 5min × 288 = 24 h
+	ring10mCap = 600 // 1s × 600 = 10 min
+	ring2hCap  = 240 // 30s × 240 = 2 h
+	ring24hCap = 288 // 5min × 288 = 24 h
 
-	downsample2hEvery  = 60 // 60 × 500ms = 30s
+	downsample2hEvery  = 30 // 30 × 1s = 30s
 	downsample24hEvery = 10 // 10 × 30s = 5min
 )
 
@@ -44,8 +44,8 @@ type metricsRing struct {
 	count24h int
 
 	// Accumulators for downsampling.
-	acc500ms  [downsample2hEvery]MetricPoint
-	acc500msN int
+	acc1s  [downsample2hEvery]MetricPoint
+	acc1sN int
 
 	acc30s  [downsample24hEvery]MetricPoint
 	acc30sN int
@@ -56,7 +56,7 @@ func newMetricsRing() *metricsRing {
 	return &metricsRing{}
 }
 
-// Push adds a 500ms sample to the finest tier and triggers downsampling
+// Push adds a 1s sample to the finest tier and triggers downsampling
 // into coarser tiers when enough samples have accumulated.
 func (r *metricsRing) Push(p MetricPoint) {
 	r.mu.Lock()
@@ -70,12 +70,12 @@ func (r *metricsRing) Push(p MetricPoint) {
 	}
 
 	// Accumulate for 2h downsample.
-	r.acc500ms[r.acc500msN] = p
-	r.acc500msN++
-	if r.acc500msN == downsample2hEvery {
-		avg := averagePoints(r.acc500ms[:downsample2hEvery])
+	r.acc1s[r.acc1sN] = p
+	r.acc1sN++
+	if r.acc1sN == downsample2hEvery {
+		avg := averagePoints(r.acc1s[:downsample2hEvery])
 		r.push2h(avg)
-		r.acc500msN = 0
+		r.acc1sN = 0
 	}
 }
 
@@ -138,7 +138,7 @@ func (r *metricsRing) Flush() (pts10m, pts2h, pts24h []MetricPoint) {
 	r.idx10m, r.count10m = 0, 0
 	r.idx2h, r.count2h = 0, 0
 	r.idx24h, r.count24h = 0, 0
-	r.acc500msN = 0
+	r.acc1sN = 0
 	r.acc30sN = 0
 
 	return pts10m, pts2h, pts24h

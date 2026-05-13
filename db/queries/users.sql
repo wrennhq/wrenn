@@ -22,6 +22,12 @@ RETURNING *;
 -- name: SetUserAdmin :exec
 UPDATE users SET is_admin = $2, updated_at = NOW() WHERE id = $1;
 
+-- name: RevokeUserAdmin :execrows
+UPDATE users u SET is_admin = false, updated_at = NOW()
+WHERE u.id = $1
+  AND u.is_admin = true
+  AND (SELECT COUNT(*) FROM users WHERE is_admin = true AND status != 'deleted') > 1;
+
 -- name: GetAdminUsers :many
 SELECT * FROM users WHERE is_admin = TRUE ORDER BY created_at;
 

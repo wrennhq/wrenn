@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"time"
 )
 
 // fcClient talks to the Firecracker HTTP API over a Unix socket.
@@ -27,7 +26,9 @@ func newFCClient(socketPath string) *fcClient {
 					return d.DialContext(ctx, "unix", socketPath)
 				},
 			},
-			Timeout: 10 * time.Second,
+			// No global timeout — callers pass context.Context with appropriate
+			// deadlines. A fixed 10s timeout was too short for snapshot/resume
+			// operations on large-memory VMs (20GB+ memfiles).
 		},
 	}
 }
@@ -133,6 +134,25 @@ func (c *fcClient) setMMDS(ctx context.Context, sandboxID, templateID string) er
 	return c.do(ctx, http.MethodPut, "/mmds", mmdsMetadata{
 		SandboxID:  sandboxID,
 		TemplateID: templateID,
+	})
+}
+
+// setBalloon configures the Firecracker balloon device for dynamic memory
+// management. deflateOnOom lets the guest reclaim balloon pages under memory
+// pressure. statsInterval enables periodic stats via GET /balloon/statistics.
+// Must be called before startVM.
+func (c *fcClient) setBalloon(ctx context.Context, amountMiB int, deflateOnOom bool, statsIntervalS int) error {
+	return c.do(ctx, http.MethodPut, "/balloon", map[string]any{
+		"amount_mib":             amountMiB,
+		"deflate_on_oom":         deflateOnOom,
+		"stats_polling_interval_s": statsIntervalS,
+	})
+}
+
+// updateBalloon adjusts the balloon target at runtime.
+func (c *fcClient) updateBalloon(ctx context.Context, amountMiB int) error {
+	return c.do(ctx, http.MethodPatch, "/balloon", map[string]any{
+		"amount_mib": amountMiB,
 	})
 }
 

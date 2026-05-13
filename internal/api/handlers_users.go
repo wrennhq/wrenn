@@ -162,3 +162,58 @@ func (h *usersHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// SetUserAdmin handles PUT /v1/admin/users/{id}/admin
+// Grants or revokes platform admin status. Cannot remove the last admin.
+func (h *usersHandler) SetUserAdmin(w http.ResponseWriter, r *http.Request) {
+	ac := auth.MustFromContext(r.Context())
+	userIDStr := chi.URLParam(r, "id")
+
+	userID, err := id.ParseUserID(userIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid user ID")
+		return
+	}
+
+	var req struct {
+		Admin bool `json:"admin"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+
+	user, err := h.db.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+
+	if user.IsAdmin == req.Admin {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if req.Admin {
+		if err := h.db.SetUserAdmin(r.Context(), db.SetUserAdminParams{
+			ID:      userID,
+			IsAdmin: true,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to update admin status")
+			return
+		}
+		h.audit.LogUserGrantAdmin(r.Context(), ac, userID, user.Email)
+	} else {
+		affected, err := h.db.RevokeUserAdmin(r.Context(), userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to update admin status")
+			return
+		}
+		if affected == 0 {
+			writeError(w, http.StatusBadRequest, "invalid_request", "cannot remove the last admin")
+			return
+		}
+		h.audit.LogUserRevokeAdmin(r.Context(), ac, userID, user.Email)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

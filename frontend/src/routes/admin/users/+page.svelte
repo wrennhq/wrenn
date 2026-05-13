@@ -5,8 +5,10 @@
 	import {
 		listAdminUsers,
 		setUserActive,
+		setUserAdmin,
 		type AdminUser,
 	} from '$lib/api/admin-users';
+	import { auth } from '$lib/auth.svelte';
 
 	// Data state
 	let users = $state<AdminUser[]>([]);
@@ -21,6 +23,11 @@
 
 	// Toggle state
 	let togglingId = $state<string | null>(null);
+
+	// Admin dialog state
+	let adminTarget = $state<AdminUser | null>(null);
+	let togglingAdmin = $state(false);
+	let adminError = $state<string | null>(null);
 
 	async function fetchUsers(page: number = 1) {
 		const wasEmpty = users.length === 0;
@@ -54,6 +61,23 @@
 			toast.error(result.error);
 		}
 		togglingId = null;
+	}
+
+	async function handleConfirmAdminToggle() {
+		if (!adminTarget) return;
+		togglingAdmin = true;
+		adminError = null;
+		const target = adminTarget;
+		const newAdmin = !target.is_admin;
+		const result = await setUserAdmin(target.id, newAdmin);
+		if (result.ok) {
+			adminTarget = null;
+			target.is_admin = newAdmin;
+			toast.success(`${target.email} ${newAdmin ? 'granted' : 'revoked'} admin`);
+		} else {
+			adminError = result.error;
+		}
+		togglingAdmin = false;
 	}
 
 	function goToPage(page: number) {
@@ -222,8 +246,18 @@
 							</div>
 
 							<!-- Role -->
-							<div class="px-5 py-4">
-								<span class="text-ui text-[var(--color-text-secondary)]">{user.is_admin ? 'Admin' : 'User'}</span>
+							<div class="flex items-center px-5 py-4">
+								<button
+									onclick={() => { adminError = null; adminTarget = user; }}
+									disabled={user.status !== 'active'}
+									aria-label="{user.is_admin ? 'Revoke admin for' : 'Grant admin to'} {user.name || user.email}"
+									class="rounded-[var(--radius-button)] border px-3 py-1.5 text-meta font-medium transition-all duration-150 disabled:opacity-50
+										{user.is_admin
+											? 'border-[var(--color-amber)]/30 bg-[var(--color-amber)]/10 text-[var(--color-amber)] hover:bg-[var(--color-amber)]/20 hover:border-[var(--color-amber)]/50'
+											: 'border-[var(--color-border)] text-[var(--color-text-tertiary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-secondary)]'}"
+								>
+									{user.is_admin ? 'Admin' : 'User'}
+								</button>
 							</div>
 
 							<!-- Joined -->
@@ -292,3 +326,72 @@
 			</div>
 		</footer>
 </main>
+
+<!-- Admin confirmation dialog -->
+{#if adminTarget}
+	<div class="fixed inset-0 z-50 flex items-center justify-center">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="absolute inset-0 bg-black/60"
+			onclick={() => { if (!togglingAdmin) adminTarget = null; }}
+			onkeydown={(e) => { if (e.key === 'Escape' && !togglingAdmin) adminTarget = null; }}
+		></div>
+		<div
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
+		>
+			<div class="p-6">
+				<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">
+					{adminTarget.is_admin ? 'Revoke Admin' : 'Grant Admin'}
+				</h2>
+				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
+					{adminTarget.is_admin ? 'Remove admin access from' : 'Grant admin access to'}
+					<code class="rounded bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-[0.8rem] text-[var(--color-text-primary)]">{adminTarget.email}</code>.
+					{adminTarget.is_admin
+						? 'They will lose access to the admin panel immediately.'
+						: 'They will be able to manage all platform resources.'}
+				</p>
+
+				{#if adminTarget.is_admin && adminTarget.id === auth.userId}
+					<div class="mt-3 flex items-start gap-2.5 rounded-[var(--radius-input)] border border-[var(--color-amber)]/30 bg-[var(--color-amber)]/5 px-3 py-2.5">
+						<svg class="mt-0.5 shrink-0 text-[var(--color-amber)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+						</svg>
+						<span class="text-meta text-[var(--color-amber)]">
+							You are removing your own admin access. You will lose access to this panel.
+						</span>
+					</div>
+				{/if}
+
+				{#if adminError}
+					<div class="mt-3 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
+						{adminError}
+					</div>
+				{/if}
+
+				<div class="mt-6 flex justify-end gap-3">
+					<button
+						onclick={() => (adminTarget = null)}
+						disabled={togglingAdmin}
+						class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					>
+						Cancel
+					</button>
+					<button
+						onclick={handleConfirmAdminToggle}
+						disabled={togglingAdmin}
+						class="flex items-center gap-2 rounded-[var(--radius-button)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-110 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0
+							{adminTarget.is_admin ? 'bg-[var(--color-red)]' : 'bg-[var(--color-accent)]'}"
+					>
+						{#if togglingAdmin}
+							<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+							{adminTarget.is_admin ? 'Revoking...' : 'Granting...'}
+						{:else}
+							{adminTarget.is_admin ? 'Revoke admin' : 'Grant admin'}
+						{/if}
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}

@@ -135,6 +135,20 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tracker.Release()
 
+	// Derive request context from the tracker's context so ForceClose()
+	// during pause aborts this proxied request.
+	trackerCtx := tracker.Context()
+	reqCtx, reqCancel := context.WithCancel(r.Context())
+	defer reqCancel()
+	go func() {
+		select {
+		case <-trackerCtx.Done():
+			reqCancel()
+		case <-reqCtx.Done():
+		}
+	}()
+	r = r.WithContext(reqCtx)
+
 	proxy := h.getOrCreateProxy(sandboxID, port, fmt.Sprintf("%s:%d", hostIP, portNum))
 	proxy.ServeHTTP(w, r)
 }

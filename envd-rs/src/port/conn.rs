@@ -110,3 +110,151 @@ fn parse_hex_addr(s: &str, family: u32) -> Option<(String, u32)> {
 
     Some((ip_str, port))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    // tcp_state_name
+
+    #[test]
+    fn state_all_known_codes() {
+        assert_eq!(tcp_state_name("01"), "ESTABLISHED");
+        assert_eq!(tcp_state_name("02"), "SYN_SENT");
+        assert_eq!(tcp_state_name("03"), "SYN_RECV");
+        assert_eq!(tcp_state_name("04"), "FIN_WAIT1");
+        assert_eq!(tcp_state_name("05"), "FIN_WAIT2");
+        assert_eq!(tcp_state_name("06"), "TIME_WAIT");
+        assert_eq!(tcp_state_name("07"), "CLOSE");
+        assert_eq!(tcp_state_name("08"), "CLOSE_WAIT");
+        assert_eq!(tcp_state_name("09"), "LAST_ACK");
+        assert_eq!(tcp_state_name("0A"), "LISTEN");
+        assert_eq!(tcp_state_name("0B"), "CLOSING");
+    }
+
+    #[test]
+    fn state_unknown_code() {
+        assert_eq!(tcp_state_name("FF"), "UNKNOWN");
+        assert_eq!(tcp_state_name("00"), "UNKNOWN");
+    }
+
+    // parse_hex_addr
+
+    #[test]
+    fn ipv4_localhost() {
+        let (ip, port) = parse_hex_addr("0100007F:0050", libc::AF_INET as u32).unwrap();
+        assert_eq!(ip, "127.0.0.1");
+        assert_eq!(port, 80);
+    }
+
+    #[test]
+    fn ipv4_any() {
+        let (ip, port) = parse_hex_addr("00000000:0035", libc::AF_INET as u32).unwrap();
+        assert_eq!(ip, "0.0.0.0");
+        assert_eq!(port, 53);
+    }
+
+    #[test]
+    fn ipv4_real_address() {
+        // 192.168.1.1 in little-endian = 0101A8C0
+        let (ip, port) = parse_hex_addr("0101A8C0:01BB", libc::AF_INET as u32).unwrap();
+        assert_eq!(ip, "192.168.1.1");
+        assert_eq!(port, 443);
+    }
+
+    #[test]
+    fn ipv4_wrong_byte_count_returns_none() {
+        assert!(parse_hex_addr("0100:0050", libc::AF_INET as u32).is_none());
+    }
+
+    #[test]
+    fn invalid_hex_returns_none() {
+        assert!(parse_hex_addr("ZZZZZZZZ:0050", libc::AF_INET as u32).is_none());
+    }
+
+    #[test]
+    fn no_colon_returns_none() {
+        assert!(parse_hex_addr("0100007F0050", libc::AF_INET as u32).is_none());
+    }
+
+    #[test]
+    fn ipv6_loopback() {
+        // ::1 in /proc/net/tcp6 format: 00000000000000000000000001000000
+        let (ip, port) = parse_hex_addr(
+            "00000000000000000000000001000000:0035",
+            libc::AF_INET6 as u32,
+        )
+        .unwrap();
+        assert_eq!(ip, "::1");
+        assert_eq!(port, 53);
+    }
+
+    #[test]
+    fn ipv6_wrong_byte_count_returns_none() {
+        assert!(parse_hex_addr("0100007F:0050", libc::AF_INET6 as u32).is_none());
+    }
+
+    // parse_proc_net_tcp
+
+    fn write_tcp_file(content: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn parse_empty_file() {
+        let f = write_tcp_file(
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n",
+        );
+        let conns = parse_proc_net_tcp(f.path().to_str().unwrap(), libc::AF_INET as u32).unwrap();
+        assert!(conns.is_empty());
+    }
+
+    #[test]
+    fn parse_single_entry() {
+        let content = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 00000000\n";
+        let f = write_tcp_file(content);
+        let conns = parse_proc_net_tcp(f.path().to_str().unwrap(), libc::AF_INET as u32).unwrap();
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].local_ip, "127.0.0.1");
+        assert_eq!(conns[0].local_port, 80);
+        assert_eq!(conns[0].status, "LISTEN");
+        assert_eq!(conns[0].inode, 12345);
+        assert_eq!(conns[0].family, libc::AF_INET as u32);
+    }
+
+    #[test]
+    fn parse_skips_malformed_rows() {
+        let content = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 00000000
+   bad line
+   1: short\n";
+        let f = write_tcp_file(content);
+        let conns = parse_proc_net_tcp(f.path().to_str().unwrap(), libc::AF_INET as u32).unwrap();
+        assert_eq!(conns.len(), 1);
+    }
+
+    #[test]
+    fn parse_multiple_entries() {
+        let content = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 100 1 00000000
+   1: 00000000:01BB 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 200 1 00000000\n";
+        let f = write_tcp_file(content);
+        let conns = parse_proc_net_tcp(f.path().to_str().unwrap(), libc::AF_INET as u32).unwrap();
+        assert_eq!(conns.len(), 2);
+        assert_eq!(conns[0].local_port, 80);
+        assert_eq!(conns[1].local_port, 443);
+    }
+
+    #[test]
+    fn parse_nonexistent_file_errors() {
+        assert!(parse_proc_net_tcp("/nonexistent/path", libc::AF_INET as u32).is_err());
+    }
+}

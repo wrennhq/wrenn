@@ -350,9 +350,23 @@ func runPtyLoop(
 		defer wg.Done()
 		defer cancel()
 
-		for msg := range inputCh {
-			// Use a background context for unary RPCs so they complete
-			// even if the stream context is being cancelled.
+		// pending holds a non-input message dequeued during coalescing
+		// that must be processed on the next iteration.
+		var pending *wsPtyIn
+
+		for {
+			var msg wsPtyIn
+			if pending != nil {
+				msg = *pending
+				pending = nil
+			} else {
+				var ok bool
+				msg, ok = <-inputCh
+				if !ok {
+					break
+				}
+			}
+
 			rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 5*time.Second)
 
 			switch msg.Type {
@@ -364,7 +378,7 @@ func runPtyLoop(
 				}
 
 				// Coalesce: drain any queued input messages into a single RPC.
-				data = coalescePtyInput(inputCh, data)
+				data, pending = coalescePtyInput(inputCh, data)
 
 				if _, err := agent.PtySendInput(rpcCtx, connect.NewRequest(&pb.PtySendInputRequest{
 					SandboxId: sandboxID,
@@ -418,24 +432,29 @@ func runPtyLoop(
 		}
 	}()
 
+	// When any pump cancels the context, close the websocket to unblock
+	// the reader goroutine stuck in ReadMessage.
+	go func() {
+		<-ctx.Done()
+		ws.conn.Close()
+	}()
+
 	wg.Wait()
 }
 
 // coalescePtyInput drains any immediately-available "input" messages from the
 // channel and appends their decoded data to buf, reducing RPC call volume
-// during bursts of fast typing.
-func coalescePtyInput(ch <-chan wsPtyIn, buf []byte) []byte {
+// during bursts of fast typing. Returns the coalesced buffer and any
+// non-input message that was dequeued (must be processed by the caller).
+func coalescePtyInput(ch <-chan wsPtyIn, buf []byte) ([]byte, *wsPtyIn) {
 	for {
 		select {
 		case msg, ok := <-ch:
 			if !ok {
-				return buf
+				return buf, nil
 			}
 			if msg.Type != "input" {
-				// Non-input message — can't coalesce. Put-back isn't possible
-				// with channels, but resize/kill during a typing burst is rare
-				// enough that dropping one is acceptable.
-				return buf
+				return buf, &msg
 			}
 			data, err := base64.StdEncoding.DecodeString(msg.Data)
 			if err != nil {
@@ -443,7 +462,7 @@ func coalescePtyInput(ch <-chan wsPtyIn, buf []byte) []byte {
 			}
 			buf = append(buf, data...)
 		default:
-			return buf
+			return buf, nil
 		}
 	}
 }

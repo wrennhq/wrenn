@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,20 @@ type ConnTracker struct {
 	// goroutine to exit, preventing goroutine leaks on repeated pause failures.
 	cancelMu    sync.Mutex
 	cancelDrain chan struct{}
+
+	// ctx is cancelled by ForceClose to abort all in-flight proxy requests.
+	// Initialized lazily on first Acquire; replaced by Reset after a failed
+	// pause so new connections get a fresh, non-cancelled context.
+	ctxMu  sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// ensureCtx lazily initializes the cancellable context.
+func (t *ConnTracker) ensureCtx() {
+	if t.ctx == nil {
+		t.ctx, t.cancel = context.WithCancel(context.Background())
+	}
 }
 
 // Acquire registers one in-flight connection. Returns false if the tracker
@@ -33,6 +48,16 @@ func (t *ConnTracker) Acquire() bool {
 		return false
 	}
 	return true
+}
+
+// Context returns a context that is cancelled when ForceClose is called.
+// Proxy handlers should derive their request context from this so that
+// force-close during pause aborts in-flight proxied requests.
+func (t *ConnTracker) Context() context.Context {
+	t.ctxMu.Lock()
+	defer t.ctxMu.Unlock()
+	t.ensureCtx()
+	return t.ctx
 }
 
 // Release marks one connection as complete. Must be called exactly once
@@ -65,9 +90,33 @@ func (t *ConnTracker) Drain(timeout time.Duration) {
 	}
 }
 
+// ForceClose cancels all in-flight proxy connections by cancelling the
+// shared context. Connections whose request context derives from Context()
+// will see their requests aborted, causing the proxy handler to return
+// and call Release(). Waits briefly for connections to actually release.
+func (t *ConnTracker) ForceClose() {
+	t.ctxMu.Lock()
+	if t.cancel != nil {
+		t.cancel()
+	}
+	t.ctxMu.Unlock()
+
+	// Wait briefly for force-closed connections to call Release().
+	done := make(chan struct{})
+	go func() {
+		t.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+	}
+}
+
 // Reset re-enables the tracker after a failed drain. This allows the
 // sandbox to accept proxy connections again if the pause operation fails
-// and the VM is resumed. It also cancels any lingering Drain goroutine.
+// and the VM is resumed. It also cancels any lingering Drain goroutine
+// and creates a fresh context for new connections.
 func (t *ConnTracker) Reset() {
 	t.cancelMu.Lock()
 	if t.cancelDrain != nil {
@@ -80,6 +129,11 @@ func (t *ConnTracker) Reset() {
 		t.cancelDrain = nil
 	}
 	t.cancelMu.Unlock()
+
+	// Replace the cancelled context with a fresh one.
+	t.ctxMu.Lock()
+	t.ctx, t.cancel = context.WithCancel(context.Background())
+	t.ctxMu.Unlock()
 
 	t.draining.Store(false)
 }

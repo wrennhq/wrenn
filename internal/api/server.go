@@ -269,6 +269,7 @@ func New(
 			r.Delete("/teams/{id}", teamH.AdminDeleteTeam)
 			r.Get("/users", usersH.AdminListUsers)
 			r.Put("/users/{id}/active", usersH.SetUserActive)
+			r.Put("/users/{id}/admin", usersH.SetUserAdmin)
 			r.Get("/audit-logs", auditH.AdminList)
 			r.Get("/templates", buildH.ListTemplates)
 			r.Delete("/templates/{name}", buildH.DeleteTemplate)

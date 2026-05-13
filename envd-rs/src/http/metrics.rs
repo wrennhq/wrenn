@@ -46,7 +46,8 @@ fn collect_metrics(state: &AppState) -> Result<Metrics, String> {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
     let mem_total = sys.total_memory();
-    let mem_used = sys.used_memory();
+    let mem_available = sys.available_memory();
+    let mem_used = mem_total.saturating_sub(mem_available);
     let mem_total_mib = mem_total / 1024 / 1024;
     let mem_used_mib = mem_used / 1024 / 1024;
 

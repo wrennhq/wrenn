@@ -17,7 +17,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ROOTFS="${1:-/var/lib/wrenn/images/minimal/rootfs.ext4}"
+WRENN_DIR="${WRENN_DIR:-/var/lib/wrenn}"
+ROOTFS="${1:-${WRENN_DIR}/images/minimal/rootfs.ext4}"
 MOUNT_DIR="/tmp/wrenn-rootfs-update"
 
 if [ ! -f "${ROOTFS}" ]; then
@@ -33,6 +34,11 @@ ENVD_BIN="${PROJECT_ROOT}/builds/envd"
 
 if [ ! -f "${ENVD_BIN}" ]; then
     echo "ERROR: envd binary not found at ${ENVD_BIN}"
+    exit 1
+fi
+
+if ! ldd "${ENVD_BIN}" | grep -q "statically linked"; then
+    echo "ERROR: envd is not statically linked!"
     exit 1
 fi
 

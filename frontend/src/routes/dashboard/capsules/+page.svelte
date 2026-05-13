@@ -120,6 +120,25 @@
 		}
 	}
 
+	function mergeCapsuleData(incoming: Capsule[]) {
+		const existingMap = new Map(capsules.map((c) => [c.id, c]));
+		const merged: Capsule[] = [];
+		for (const fresh of incoming) {
+			const existing = existingMap.get(fresh.id);
+			if (existing) {
+				for (const key of Object.keys(fresh) as (keyof Capsule)[]) {
+					if (existing[key] !== fresh[key]) {
+						(existing as any)[key] = fresh[key];
+					}
+				}
+				merged.push(existing);
+			} else {
+				merged.push(fresh);
+			}
+		}
+		capsules = merged;
+	}
+
 	async function fetchCapsules(manual = false) {
 		const wasEmpty = capsules.length === 0;
 		if (wasEmpty) loading = true;
@@ -131,7 +150,11 @@
 
 		const result = await listCapsules();
 		if (result.ok) {
-			capsules = result.data;
+			if (wasEmpty) {
+				capsules = result.data;
+			} else {
+				mergeCapsuleData(result.data);
+			}
 			error = null;
 		} else {
 			error = result.error;
