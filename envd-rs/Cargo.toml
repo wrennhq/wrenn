@@ -72,6 +72,9 @@ buffa = "0.3"
 async-stream = "0.3.6"
 mime_guess = "2"
 
+[dev-dependencies]
+tempfile = "3"
+
 [build-dependencies]
 connectrpc-build = "0.3"
 
