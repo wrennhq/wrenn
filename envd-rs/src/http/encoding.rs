@@ -145,3 +145,192 @@ pub fn parse_content_encoding<B>(r: &Request<B>) -> Result<&'static str, String>
 
     Err(format!("unsupported Content-Encoding: {header}, supported: {SUPPORTED_ENCODINGS:?}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Request;
+
+    fn req_with_accept(v: &str) -> Request<()> {
+        Request::builder()
+            .header("accept-encoding", v)
+            .body(())
+            .unwrap()
+    }
+
+    fn req_with_content(v: &str) -> Request<()> {
+        Request::builder()
+            .header("content-encoding", v)
+            .body(())
+            .unwrap()
+    }
+
+    fn req_no_headers() -> Request<()> {
+        Request::builder().body(()).unwrap()
+    }
+
+    // parse_encoding_with_quality
+
+    #[test]
+    fn encoding_quality_default_1() {
+        let eq = parse_encoding_with_quality("gzip");
+        assert_eq!(eq.encoding, "gzip");
+        assert_eq!(eq.quality, 1.0);
+    }
+
+    #[test]
+    fn encoding_quality_explicit() {
+        let eq = parse_encoding_with_quality("gzip;q=0.8");
+        assert_eq!(eq.encoding, "gzip");
+        assert_eq!(eq.quality, 0.8);
+    }
+
+    #[test]
+    fn encoding_quality_case_insensitive() {
+        let eq = parse_encoding_with_quality("GZIP;Q=0.5");
+        assert_eq!(eq.encoding, "gzip");
+        assert_eq!(eq.quality, 0.5);
+    }
+
+    #[test]
+    fn encoding_quality_zero() {
+        let eq = parse_encoding_with_quality("gzip;q=0");
+        assert_eq!(eq.quality, 0.0);
+    }
+
+    #[test]
+    fn encoding_quality_whitespace_trimmed() {
+        let eq = parse_encoding_with_quality("  gzip ; q=0.9  ");
+        assert_eq!(eq.encoding, "gzip");
+        assert_eq!(eq.quality, 0.9);
+    }
+
+    // parse_accept_encoding_header
+
+    #[test]
+    fn accept_header_empty() {
+        let (encs, rejected) = parse_accept_encoding_header("");
+        assert!(encs.is_empty());
+        assert!(!rejected);
+    }
+
+    #[test]
+    fn accept_header_identity_q0_rejects() {
+        let (_, rejected) = parse_accept_encoding_header("identity;q=0");
+        assert!(rejected);
+    }
+
+    #[test]
+    fn accept_header_wildcard_q0_rejects_identity() {
+        let (_, rejected) = parse_accept_encoding_header("*;q=0");
+        assert!(rejected);
+    }
+
+    #[test]
+    fn accept_header_wildcard_q0_but_identity_explicit_accepted() {
+        let (_, rejected) = parse_accept_encoding_header("*;q=0, identity");
+        assert!(!rejected);
+    }
+
+    // parse_accept_encoding (full)
+
+    #[test]
+    fn accept_encoding_no_header_returns_identity() {
+        assert_eq!(parse_accept_encoding(&req_no_headers()).unwrap(), "identity");
+    }
+
+    #[test]
+    fn accept_encoding_gzip() {
+        assert_eq!(parse_accept_encoding(&req_with_accept("gzip")).unwrap(), "gzip");
+    }
+
+    #[test]
+    fn accept_encoding_identity_explicit() {
+        assert_eq!(parse_accept_encoding(&req_with_accept("identity")).unwrap(), "identity");
+    }
+
+    #[test]
+    fn accept_encoding_gzip_higher_quality() {
+        assert_eq!(
+            parse_accept_encoding(&req_with_accept("identity;q=0.1, gzip;q=0.9")).unwrap(),
+            "gzip"
+        );
+    }
+
+    #[test]
+    fn accept_encoding_wildcard_returns_identity() {
+        assert_eq!(parse_accept_encoding(&req_with_accept("*")).unwrap(), "identity");
+    }
+
+    #[test]
+    fn accept_encoding_wildcard_identity_rejected_returns_gzip() {
+        assert_eq!(
+            parse_accept_encoding(&req_with_accept("identity;q=0, *")).unwrap(),
+            "gzip"
+        );
+    }
+
+    #[test]
+    fn accept_encoding_all_rejected_errors() {
+        assert!(parse_accept_encoding(&req_with_accept("identity;q=0, *;q=0")).is_err());
+    }
+
+    #[test]
+    fn accept_encoding_unsupported_only_falls_to_identity() {
+        assert_eq!(parse_accept_encoding(&req_with_accept("br")).unwrap(), "identity");
+    }
+
+    // is_identity_acceptable
+
+    #[test]
+    fn identity_acceptable_no_header() {
+        assert!(is_identity_acceptable(&req_no_headers()));
+    }
+
+    #[test]
+    fn identity_acceptable_gzip_only() {
+        assert!(is_identity_acceptable(&req_with_accept("gzip")));
+    }
+
+    #[test]
+    fn identity_not_acceptable_identity_q0() {
+        assert!(!is_identity_acceptable(&req_with_accept("identity;q=0")));
+    }
+
+    #[test]
+    fn identity_not_acceptable_wildcard_q0() {
+        assert!(!is_identity_acceptable(&req_with_accept("*;q=0")));
+    }
+
+    #[test]
+    fn identity_acceptable_wildcard_q0_but_identity_explicit() {
+        assert!(is_identity_acceptable(&req_with_accept("*;q=0, identity")));
+    }
+
+    // parse_content_encoding
+
+    #[test]
+    fn content_encoding_empty_returns_identity() {
+        assert_eq!(parse_content_encoding(&req_no_headers()).unwrap(), "identity");
+    }
+
+    #[test]
+    fn content_encoding_gzip() {
+        assert_eq!(parse_content_encoding(&req_with_content("gzip")).unwrap(), "gzip");
+    }
+
+    #[test]
+    fn content_encoding_identity_explicit() {
+        assert_eq!(parse_content_encoding(&req_with_content("identity")).unwrap(), "identity");
+    }
+
+    #[test]
+    fn content_encoding_unsupported_errors() {
+        assert!(parse_content_encoding(&req_with_content("br")).is_err());
+    }
+
+    #[test]
+    fn content_encoding_case_insensitive() {
+        assert_eq!(parse_content_encoding(&req_with_content("GZIP")).unwrap(), "gzip");
+    }
+}

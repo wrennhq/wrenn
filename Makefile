@@ -115,6 +115,7 @@ vet:
 
 test:
 	go test -race -v ./internal/...
+	cd envd-rs && cargo test
 
 test-integration:
 	go test -race -v -tags=integration ./tests/integration/...

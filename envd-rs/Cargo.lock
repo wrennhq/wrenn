@@ -543,6 +543,7 @@ dependencies = [
  "sha2",
  "subtle",
  "sysinfo",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tower",
