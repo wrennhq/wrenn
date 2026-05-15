@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"net/http"
@@ -63,6 +64,17 @@ func New(
 
 	// Shared service layer.
 	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
+	sandboxSvc.PublishEvent = func(ctx context.Context, event service.SandboxStateEvent) {
+		PublishSandboxEvent(ctx, rdb, SandboxEvent{
+			Event:     event.Event,
+			SandboxID: event.SandboxID,
+			HostID:    event.HostID,
+			HostIP:    event.HostIP,
+			Metadata:  event.Metadata,
+			Error:     event.Error,
+			Timestamp: event.Timestamp,
+		})
+	}
 	apiKeySvc := &service.APIKeyService{DB: queries}
 	templateSvc := &service.TemplateService{DB: queries}
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
@@ -95,6 +107,7 @@ func New(
 	ptyH := newPtyHandler(queries, pool, jwtSecret)
 	processH := newProcessHandler(queries, pool, jwtSecret)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
+	sandboxEvtH := newSandboxEventHandler(queries, rdb)
 	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, mailer, oauthRegistry, oauthRedirectURL, teamSvc)
 
 	// Health check.
@@ -221,8 +234,9 @@ func New(
 		// Unauthenticated: refresh token exchange.
 		r.Post("/auth/refresh", hostH.RefreshToken)
 
-		// Host-token-authenticated: heartbeat.
+		// Host-token-authenticated: heartbeat and lifecycle callbacks.
 		r.With(requireHostToken(jwtSecret)).Post("/{id}/heartbeat", hostH.Heartbeat)
+		r.With(requireHostToken(jwtSecret)).Post("/sandbox-events", sandboxEvtH.Handle)
 
 		// JWT-authenticated: host CRUD and tags.
 		r.Group(func(r chi.Router) {

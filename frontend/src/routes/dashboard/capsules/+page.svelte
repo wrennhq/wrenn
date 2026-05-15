@@ -470,7 +470,8 @@
 			</div>
 		{:else}
 			{#each filteredCapsules as capsule, i (capsule.id)}
-				{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : capsule.status === 'paused' ? 'bg-[var(--color-amber)]' : 'bg-[var(--color-text-muted)]'}
+				{@const isTransient = ['starting', 'resuming', 'pausing', 'stopping'].includes(capsule.status)}
+				{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : capsule.status === 'paused' ? 'bg-[var(--color-amber)]' : isTransient ? 'bg-[var(--color-blue)]' : 'bg-[var(--color-text-muted)]'}
 				<div
 					class="capsule-row relative grid grid-cols-[1.6fr_0.8fr_0.5fr_0.5fr_0.6fr_1fr_0.9fr] items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {newCapsuleId === capsule.id ? 'capsule-born' : ''}"
 					style={initialAnimationDone ? '' : `animation: fadeUp 0.35s ease both; animation-delay: ${i * 40}ms`}
@@ -487,6 +488,11 @@
 							</span>
 						{:else if capsule.status === 'paused'}
 							<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-amber)]"></span>
+						{:else if isTransient}
+							<span class="relative flex h-[6px] w-[6px] shrink-0">
+								<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-blue)]"></span>
+								<span class="relative inline-flex h-[6px] w-[6px] rounded-full bg-[var(--color-blue)]"></span>
+							</span>
 						{:else}
 							<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-text-muted)]"></span>
 						{/if}
@@ -556,7 +562,7 @@
 										openMenuId = capsule.id;
 									}
 								}}
-								class="inline-flex items-center gap-1.5 rounded-[var(--radius-button)] border px-2.5 py-1 text-label font-semibold uppercase tracking-[0.04em] transition-colors duration-150 {capsule.status === 'running' ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow)] text-[var(--color-accent-mid)] hover:border-[var(--color-accent)]/70 hover:text-[var(--color-accent-bright)]' : capsule.status === 'paused' ? 'border-[var(--color-amber)]/30 bg-[var(--color-amber)]/5 text-[var(--color-amber)] hover:border-[var(--color-amber)]/60' : 'border-[var(--color-border)] bg-[var(--color-bg-2)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
+								class="inline-flex items-center gap-1.5 rounded-[var(--radius-button)] border px-2.5 py-1 text-label font-semibold uppercase tracking-[0.04em] transition-colors duration-150 {capsule.status === 'running' ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow)] text-[var(--color-accent-mid)] hover:border-[var(--color-accent)]/70 hover:text-[var(--color-accent-bright)]' : capsule.status === 'paused' ? 'border-[var(--color-amber)]/30 bg-[var(--color-amber)]/5 text-[var(--color-amber)] hover:border-[var(--color-amber)]/60' : isTransient ? 'border-[var(--color-blue)]/30 bg-[var(--color-blue)]/5 text-[var(--color-blue)]' : 'border-[var(--color-border)] bg-[var(--color-bg-2)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
 							>
 								{capsule.status}
 								<svg

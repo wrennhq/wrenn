@@ -57,7 +57,7 @@ func (h *adminCapsuleHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	ac.TeamID = id.PlatformTeamID
 	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, sb.Template)
-	writeJSON(w, http.StatusCreated, sandboxToResponse(sb))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
 // List handles GET /v1/admin/capsules.
@@ -113,7 +113,7 @@ func (h *adminCapsuleHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID)
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 type adminSnapshotRequest struct {

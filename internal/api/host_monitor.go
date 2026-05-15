@@ -213,4 +213,49 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 			slog.Warn("host monitor: failed to mark stopped", "host_id", id.FormatHostID(host.ID), "error", err)
 		}
 	}
+
+	// --- Reconcile transient statuses (starting, resuming, pausing, stopping) ---
+	// These represent in-flight operations. If the sandbox is no longer alive on
+	// the host, infer the final state based on the transient status.
+
+	transientSandboxes, err := m.db.ListSandboxesByHostAndStatus(ctx, db.ListSandboxesByHostAndStatusParams{
+		HostID:  host.ID,
+		Column2: []string{"starting", "resuming", "pausing", "stopping"},
+	})
+	if err != nil {
+		slog.Warn("host monitor: failed to list transient sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
+		return
+	}
+
+	for _, sb := range transientSandboxes {
+		sbIDStr := id.FormatSandboxID(sb.ID)
+		if _, ok := alive[sbIDStr]; ok {
+			// Sandbox is alive on host — the background goroutine should
+			// finalize the transition. For starting/resuming, if the sandbox
+			// is alive it means creation/resume succeeded.
+			if sb.Status == "starting" || sb.Status == "resuming" {
+				if _, err := m.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+					ID: sb.ID, Status: sb.Status, Status_2: "running",
+				}); err == nil {
+					slog.Info("host monitor: promoted transient sandbox to running", "sandbox_id", sbIDStr, "from", sb.Status)
+				}
+			}
+			continue
+		}
+		// Sandbox is not alive on host — infer final state.
+		var finalStatus string
+		switch sb.Status {
+		case "starting", "resuming":
+			finalStatus = "error"
+		case "pausing":
+			finalStatus = "paused"
+		case "stopping":
+			finalStatus = "stopped"
+		}
+		if _, err := m.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+			ID: sb.ID, Status: sb.Status, Status_2: finalStatus,
+		}); err == nil {
+			slog.Info("host monitor: resolved transient sandbox", "sandbox_id", sbIDStr, "from", sb.Status, "to", finalStatus)
+		}
+	}
 }

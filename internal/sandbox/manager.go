@@ -41,6 +41,17 @@ type Config struct {
 	AgentVersion       string // host agent version (injected via ldflags)
 }
 
+// LifecycleEvent describes an autonomous state change initiated by the agent.
+type LifecycleEvent struct {
+	Event     string
+	SandboxID string
+}
+
+// EventSender sends autonomous lifecycle events to the control plane.
+type EventSender interface {
+	SendAsync(event LifecycleEvent)
+}
+
 // Manager orchestrates sandbox lifecycle: VM, network, filesystem, envd.
 type Manager struct {
 	cfg    Config
@@ -57,11 +68,21 @@ type Manager struct {
 	// onDestroy is called with the sandbox ID after cleanup completes.
 	// Used by ProxyHandler to evict cached reverse proxies.
 	onDestroy func(sandboxID string)
+
+	// eventSender sends autonomous lifecycle events (auto-pause, auto-destroy)
+	// to the CP via HTTP callback. Optional — nil means events are only
+	// propagated through the HostMonitor reconciler.
+	eventSender EventSender
 }
 
 // SetOnDestroy registers a callback invoked after each sandbox is cleaned up.
 func (m *Manager) SetOnDestroy(fn func(sandboxID string)) {
 	m.onDestroy = fn
+}
+
+// SetEventSender registers the callback sender for autonomous lifecycle events.
+func (m *Manager) SetEventSender(sender EventSender) {
+	m.eventSender = sender
 }
 
 // sandboxState holds the runtime state for a single sandbox.
@@ -1681,6 +1702,13 @@ func (m *Manager) reapExpired(_ context.Context) {
 		m.autoPausedMu.Lock()
 		m.autoPausedIDs = append(m.autoPausedIDs, id)
 		m.autoPausedMu.Unlock()
+
+		if m.eventSender != nil {
+			m.eventSender.SendAsync(LifecycleEvent{
+				Event:     "sandbox.auto_paused",
+				SandboxID: id,
+			})
+		}
 	}
 }
 

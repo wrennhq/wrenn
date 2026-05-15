@@ -187,8 +187,13 @@ func Run(opts ...Option) {
 	// Start channel event dispatcher.
 	channelDispatcher.Start(ctx)
 
-	// Start host monitor (passive + active reconciliation every 30s).
-	monitor := api.NewHostMonitor(queries, hostPool, al, 15*time.Second)
+	// Start sandbox event consumer (processes lifecycle events from Redis stream).
+	sandboxEventConsumer := api.NewSandboxEventConsumer(rdb, queries, al)
+	sandboxEventConsumer.Start(ctx)
+
+	// Start host monitor (passive + active reconciliation every 60s).
+	// Reduced from 15s since async events handle the normal case.
+	monitor := api.NewHostMonitor(queries, hostPool, al, 60*time.Second)
 	monitor.Start(ctx)
 
 	// Hard-delete accounts that have been soft-deleted for more than 15 days (runs every 24h).

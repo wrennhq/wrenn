@@ -149,6 +149,8 @@
 			case 'running': return 'var(--color-accent)';
 			case 'paused':  return 'var(--color-amber)';
 			case 'error':   return 'var(--color-red)';
+			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+				return 'var(--color-blue)';
 			default:        return 'var(--color-text-muted)';
 		}
 	}
@@ -158,6 +160,8 @@
 			case 'running': return 'rgba(94,140,88,0.12)';
 			case 'paused':  return 'rgba(212,167,60,0.12)';
 			case 'error':   return 'rgba(207,129,114,0.12)';
+			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+				return 'rgba(90,159,212,0.12)';
 			default:        return 'rgba(255,255,255,0.05)';
 		}
 	}
@@ -167,6 +171,8 @@
 			case 'running': return 'rgba(94,140,88,0.3)';
 			case 'paused':  return 'rgba(212,167,60,0.3)';
 			case 'error':   return 'rgba(207,129,114,0.3)';
+			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+				return 'rgba(90,159,212,0.3)';
 			default:        return 'rgba(255,255,255,0.08)';
 		}
 	}
@@ -418,7 +424,8 @@
 					</div>
 				{:else}
 					{#each filteredCapsules as capsule, i (capsule.id)}
-						{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : capsule.status === 'paused' ? 'bg-[var(--color-amber)]' : capsule.status === 'error' ? 'bg-[var(--color-red)]' : 'bg-[var(--color-text-muted)]'}
+						{@const isTransient = ['starting', 'resuming', 'pausing', 'stopping'].includes(capsule.status)}
+						{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : capsule.status === 'paused' ? 'bg-[var(--color-amber)]' : capsule.status === 'error' ? 'bg-[var(--color-red)]' : isTransient ? 'bg-[var(--color-blue)]' : 'bg-[var(--color-text-muted)]'}
 						<div
 							class="capsule-row relative grid grid-cols-[1.6fr_0.9fr_0.5fr_0.5fr_1fr_0.7fr_0.8fr] items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {newCapsuleId === capsule.id ? 'capsule-born' : ''}"
 							style={initialAnimationDone ? '' : `animation: fadeUp 0.35s ease both; animation-delay: ${i * 40}ms`}
@@ -437,6 +444,11 @@
 									<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-amber)]"></span>
 								{:else if capsule.status === 'error'}
 									<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-red)]"></span>
+								{:else if isTransient}
+									<span class="relative flex h-[6px] w-[6px] shrink-0">
+										<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-blue)]"></span>
+										<span class="relative inline-flex h-[6px] w-[6px] rounded-full bg-[var(--color-blue)]"></span>
+									</span>
 								{:else}
 									<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-text-muted)]"></span>
 								{/if}
