@@ -72,13 +72,37 @@ ORDER BY created_at DESC;
 UPDATE sandboxes
 SET status       = 'missing',
     last_updated = NOW()
-WHERE host_id = $1 AND status IN ('running', 'starting', 'pending');
+WHERE host_id = $1 AND status IN ('running', 'starting', 'pending', 'pausing', 'resuming', 'stopping');
 
 -- name: UpdateSandboxMetadata :exec
 UPDATE sandboxes
 SET metadata = $2,
     last_updated = NOW()
 WHERE id = $1;
+
+-- name: UpdateSandboxRunningIf :one
+-- Conditionally transition a sandbox to running only if the current status
+-- matches the expected value. Prevents races where a user destroys a sandbox
+-- while the create/resume goroutine is still in-flight.
+UPDATE sandboxes
+SET status = 'running',
+    host_ip = $3,
+    guest_ip = $4,
+    started_at = $5,
+    last_active_at = $5,
+    last_updated = NOW()
+WHERE id = $1 AND status = $2
+RETURNING *;
+
+-- name: UpdateSandboxStatusIf :one
+-- Atomically update status only when the current status matches the expected value.
+-- Prevents background goroutines from overwriting a status that has since changed
+-- (e.g. user destroyed a sandbox while Create was in-flight).
+UPDATE sandboxes
+SET status       = $3,
+    last_updated = NOW()
+WHERE id = $1 AND status = $2
+RETURNING *;
 
 -- name: BulkRestoreRunning :exec
 -- Called by the reconciler when a host comes back online and its sandboxes are

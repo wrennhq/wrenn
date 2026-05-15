@@ -143,8 +143,8 @@ func (c *fcClient) setMMDS(ctx context.Context, sandboxID, templateID string) er
 // Must be called before startVM.
 func (c *fcClient) setBalloon(ctx context.Context, amountMiB int, deflateOnOom bool, statsIntervalS int) error {
 	return c.do(ctx, http.MethodPut, "/balloon", map[string]any{
-		"amount_mib":             amountMiB,
-		"deflate_on_oom":         deflateOnOom,
+		"amount_mib":               amountMiB,
+		"deflate_on_oom":           deflateOnOom,
 		"stats_polling_interval_s": statsIntervalS,
 	})
 }

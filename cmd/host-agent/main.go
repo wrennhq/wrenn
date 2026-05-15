@@ -147,6 +147,11 @@ func main() {
 
 	mgr := sandbox.New(cfg)
 
+	// Set up lifecycle event callback sender so autonomous events
+	// (auto-pause, auto-destroy) are pushed to the CP proactively.
+	cb := hostagent.NewCallbackSender(cpURL, credsFile, creds.HostID)
+	mgr.SetEventSender(hostagent.NewEventSender(cb))
+
 	mgr.StartTTLReaper(ctx)
 
 	// httpServer is declared here so the shutdown func can reference it.
@@ -226,8 +231,9 @@ func main() {
 		func() {
 			doShutdown("host deleted from CP")
 		},
-		// onCredsRefreshed: hot-swap the TLS certificate after a JWT refresh.
+		// onCredsRefreshed: hot-swap the TLS certificate and update callback JWT.
 		func(tf *hostagent.TokenFile) {
+			cb.UpdateJWT(tf.JWT)
 			if tf.CertPEM == "" || tf.KeyPEM == "" {
 				return
 			}

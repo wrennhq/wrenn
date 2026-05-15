@@ -9,7 +9,7 @@ Secure infrastructure for AI
 - PostgreSQL
 - Go 1.25+
 - Rust 1.88+ with `x86_64-unknown-linux-musl` target (`rustup target add x86_64-unknown-linux-musl`)
-- pnpm (for frontend)
+- Bun (for frontend)
 - Docker (for dev infra and rootfs builds)
 
 ## Build

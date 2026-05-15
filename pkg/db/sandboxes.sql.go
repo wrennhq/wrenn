@@ -375,7 +375,7 @@ const markSandboxesMissingByHost = `-- name: MarkSandboxesMissingByHost :exec
 UPDATE sandboxes
 SET status       = 'missing',
     last_updated = NOW()
-WHERE host_id = $1 AND status IN ('running', 'starting', 'pending')
+WHERE host_id = $1 AND status IN ('running', 'starting', 'pending', 'pausing', 'resuming', 'stopping')
 `
 
 // Called when the host monitor marks a host unreachable.
@@ -470,6 +470,61 @@ func (q *Queries) UpdateSandboxRunning(ctx context.Context, arg UpdateSandboxRun
 	return i, err
 }
 
+const updateSandboxRunningIf = `-- name: UpdateSandboxRunningIf :one
+UPDATE sandboxes
+SET status = 'running',
+    host_ip = $3,
+    guest_ip = $4,
+    started_at = $5,
+    last_active_at = $5,
+    last_updated = NOW()
+WHERE id = $1 AND status = $2
+RETURNING id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id, metadata
+`
+
+type UpdateSandboxRunningIfParams struct {
+	ID        pgtype.UUID        `json:"id"`
+	Status    string             `json:"status"`
+	HostIp    string             `json:"host_ip"`
+	GuestIp   string             `json:"guest_ip"`
+	StartedAt pgtype.Timestamptz `json:"started_at"`
+}
+
+// Conditionally transition a sandbox to running only if the current status
+// matches the expected value. Prevents races where a user destroys a sandbox
+// while the create/resume goroutine is still in-flight.
+func (q *Queries) UpdateSandboxRunningIf(ctx context.Context, arg UpdateSandboxRunningIfParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, updateSandboxRunningIf,
+		arg.ID,
+		arg.Status,
+		arg.HostIp,
+		arg.GuestIp,
+		arg.StartedAt,
+	)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.HostID,
+		&i.Template,
+		&i.Status,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.TimeoutSec,
+		&i.DiskSizeMb,
+		&i.GuestIp,
+		&i.HostIp,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.LastActiveAt,
+		&i.LastUpdated,
+		&i.TemplateID,
+		&i.TemplateTeamID,
+		&i.Metadata,
+	)
+	return i, err
+}
+
 const updateSandboxStatus = `-- name: UpdateSandboxStatus :one
 UPDATE sandboxes
 SET status = $2,
@@ -485,6 +540,49 @@ type UpdateSandboxStatusParams struct {
 
 func (q *Queries) UpdateSandboxStatus(ctx context.Context, arg UpdateSandboxStatusParams) (Sandbox, error) {
 	row := q.db.QueryRow(ctx, updateSandboxStatus, arg.ID, arg.Status)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.HostID,
+		&i.Template,
+		&i.Status,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.TimeoutSec,
+		&i.DiskSizeMb,
+		&i.GuestIp,
+		&i.HostIp,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.LastActiveAt,
+		&i.LastUpdated,
+		&i.TemplateID,
+		&i.TemplateTeamID,
+		&i.Metadata,
+	)
+	return i, err
+}
+
+const updateSandboxStatusIf = `-- name: UpdateSandboxStatusIf :one
+UPDATE sandboxes
+SET status       = $3,
+    last_updated = NOW()
+WHERE id = $1 AND status = $2
+RETURNING id, team_id, host_id, template, status, vcpus, memory_mb, timeout_sec, disk_size_mb, guest_ip, host_ip, created_at, started_at, last_active_at, last_updated, template_id, template_team_id, metadata
+`
+
+type UpdateSandboxStatusIfParams struct {
+	ID       pgtype.UUID `json:"id"`
+	Status   string      `json:"status"`
+	Status_2 string      `json:"status_2"`
+}
+
+// Atomically update status only when the current status matches the expected value.
+// Prevents background goroutines from overwriting a status that has since changed
+// (e.g. user destroyed a sandbox while Create was in-flight).
+func (q *Queries) UpdateSandboxStatusIf(ctx context.Context, arg UpdateSandboxStatusIfParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, updateSandboxStatusIf, arg.ID, arg.Status, arg.Status_2)
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,

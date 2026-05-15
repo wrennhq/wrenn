@@ -108,7 +108,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, sb.Template)
-	writeJSON(w, http.StatusCreated, sandboxToResponse(sb))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
 // List handles GET /v1/capsules.
@@ -167,7 +167,7 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit.LogSandboxPause(r.Context(), ac, sandboxID)
-	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
 // Resume handles POST /v1/capsules/{id}/resume.
@@ -189,7 +189,7 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit.LogSandboxResume(r.Context(), ac, sandboxID)
-	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
 // Ping handles POST /v1/capsules/{id}/ping.
@@ -230,5 +230,5 @@ func (h *sandboxHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID)
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusAccepted)
 }

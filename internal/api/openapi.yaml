@@ -1,8 +1,8 @@
 openapi: "3.1.0"
 info:
   title: Wrenn API
-  description: MicroVM-based code execution platform API.
-  version: "0.1.4"
+  description: AI agent execution platform API.
+  version: "0.2.0"
 
 servers:
   - url: http://localhost:8080
@@ -866,8 +866,8 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateCapsuleRequest"
       responses:
-        "201":
-          description: Capsule created
+        "202":
+          description: Capsule creation initiated (status will be "starting")
           content:
             application/json:
               schema:
@@ -988,8 +988,8 @@ paths:
       security:
         - apiKeyAuth: []
       responses:
-        "204":
-          description: Capsule destroyed
+        "202":
+          description: Capsule destruction initiated
 
   /v1/capsules/{id}/exec:
     parameters:
@@ -1260,8 +1260,8 @@ paths:
         destroys all running resources. The capsule exists only as files on
         disk and can be resumed later.
       responses:
-        "200":
-          description: Capsule paused (snapshot taken, resources released)
+        "202":
+          description: Capsule pause initiated (status will be "pausing")
           content:
             application/json:
               schema:
@@ -1292,8 +1292,8 @@ paths:
         memory loading. Boots a fresh Firecracker process, sets up a new
         network slot, and waits for envd to become ready.
       responses:
-        "200":
-          description: Capsule resumed (new VM booted from snapshot)
+        "202":
+          description: Capsule resume initiated (status will be "resuming")
           content:
             application/json:
               schema:
@@ -2035,6 +2035,51 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/hosts/sandbox-events:
+    post:
+      summary: Sandbox lifecycle event callback
+      operationId: sandboxEventCallback
+      tags: [hosts]
+      security:
+        - hostTokenAuth: []
+      description: |
+        Receives autonomous lifecycle events from host agents (e.g. auto-pause
+        from the TTL reaper). The event is published to an internal Redis stream
+        for the control plane's event consumer to process.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, sandbox_id, host_id]
+              properties:
+                event:
+                  type: string
+                  enum: [sandbox.auto_paused]
+                sandbox_id:
+                  type: string
+                host_id:
+                  type: string
+                timestamp:
+                  type: integer
+                  format: int64
+      responses:
+        "204":
+          description: Event accepted
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Host ID mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/hosts/auth/refresh:
     post:
       summary: Refresh host JWT
@@ -2592,7 +2637,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, starting, running, paused, hibernated, stopped, missing, error]
+          enum: [pending, starting, running, pausing, paused, resuming, stopping, hibernated, stopped, missing, error]
         template:
           type: string
         vcpus:
