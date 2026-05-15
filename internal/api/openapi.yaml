@@ -1,8 +1,8 @@
 openapi: "3.1.0"
 info:
   title: Wrenn API
-  description: MicroVM-based code execution platform API.
-  version: "0.1.4"
+  description: AI agent execution platform API.
+  version: "0.2.0"
 
 servers:
   - url: http://localhost:8080
