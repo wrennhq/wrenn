@@ -16,7 +16,7 @@ LDFLAGS        := -s -w
 build: build-cp build-agent build-envd
 
 build-frontend:
-	cd frontend && pnpm install --frozen-lockfile && pnpm build
+	cd frontend && bun install --frozen-lockfile && bun run build
 
 build-cp:
 	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_CP) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/wrenn-cp ./cmd/control-plane
@@ -59,7 +59,7 @@ dev-agent:
 	sudo go run ./cmd/host-agent
 
 dev-frontend:
-	cd frontend && pnpm dev --port 5173 --host 0.0.0.0
+	cd frontend && bun run dev --port 5173 --host 0.0.0.0
 
 dev-envd:
 	cd envd-rs && cargo run -- --isnotfc --port 49983

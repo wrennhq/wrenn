@@ -116,7 +116,7 @@ Runs as PID 1 inside the microVM via `wrenn-init.sh` (mounts procfs/sysfs/dev, s
 **Directory:** `frontend/` — standalone SvelteKit app (Svelte 5, runes mode)
 
 - **Stack**: SvelteKit + `adapter-static` + Tailwind CSS v4 + Bits UI (headless accessible components)
-- **Package manager**: pnpm
+- **Package manager**: Bun
 - **Routing**: SvelteKit file-based routing under `frontend/src/routes/`
 - **Routing layout**: `/login` and `/signup` at root, authenticated pages under `/dashboard/*` (e.g. `/dashboard/capsules`, `/dashboard/keys`)
 - **Build output**: `frontend/build/` — static files served by Caddy
