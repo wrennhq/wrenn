@@ -1,6 +1,6 @@
 [package]
 name = "envd"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 
@@ -52,9 +52,6 @@ notify = "7"
 
 # Compression
 flate2 = "1"
-
-# HTTP client (MMDS polling)
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
 
 # Directory walking
 walkdir = "2"

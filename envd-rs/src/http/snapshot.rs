@@ -7,7 +7,7 @@ use axum::response::IntoResponse;
 
 use crate::state::AppState;
 
-/// POST /snapshot/prepare — quiesce subsystems before Firecracker snapshot.
+/// POST /snapshot/prepare — quiesce subsystems before VM snapshot.
 ///
 /// In Rust there is no GC dance. We just:
 /// 1. Drop page cache to shrink snapshot size

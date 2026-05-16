@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use axum::Json;
 use axum::extract::State;
@@ -8,20 +7,25 @@ use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use serde::Deserialize;
 
-use crate::crypto;
-use crate::host::mmds;
 use crate::state::AppState;
 
 #[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct InitRequest {
+    #[serde(rename = "access_token")]
     pub access_token: Option<String>,
+    #[serde(rename = "defaultUser")]
     pub default_user: Option<String>,
+    #[serde(rename = "defaultWorkdir")]
     pub default_workdir: Option<String>,
+    #[serde(rename = "envVars")]
     pub env_vars: Option<HashMap<String, String>>,
+    #[serde(rename = "hyperloop_ip")]
     pub hyperloop_ip: Option<String>,
     pub timestamp: Option<String>,
+    #[serde(rename = "volume_mounts")]
     pub volume_mounts: Option<Vec<VolumeMount>>,
+    pub sandbox_id: Option<String>,
+    pub template_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -110,37 +114,27 @@ pub async fn post_init(
         }
     }
 
-    // Re-poll MMDS in background
-    if state.is_fc {
-        let env_vars = Arc::clone(&state.defaults.env_vars);
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let cancel_clone = cancel.clone();
-        tokio::spawn(async move {
-            tokio::time::timeout(std::time::Duration::from_secs(60), async {
-                mmds::poll_for_opts(env_vars, cancel_clone).await;
-            })
-            .await
-            .ok();
-        });
+    // Set sandbox/template metadata from request body.
+    if let Some(ref id) = init_req.sandbox_id {
+        tracing::debug!(sandbox_id = %id, "setting sandbox ID from init request");
+        // SAFETY: envd is single-threaded at init time; no concurrent env reads.
+        unsafe { std::env::set_var("WRENN_SANDBOX_ID", id) };
+        write_run_file(".WRENN_SANDBOX_ID", id);
+        state.defaults.env_vars.insert("WRENN_SANDBOX_ID".into(), id.clone());
+    }
+    if let Some(ref id) = init_req.template_id {
+        tracing::debug!(template_id = %id, "setting template ID from init request");
+        // SAFETY: envd is single-threaded at init time; no concurrent env reads.
+        unsafe { std::env::set_var("WRENN_TEMPLATE_ID", id) };
+        write_run_file(".WRENN_TEMPLATE_ID", id);
+        state.defaults.env_vars.insert("WRENN_TEMPLATE_ID".into(), id.clone());
     }
 
     trigger_restore_and_respond(&state).await
 }
 
 async fn trigger_restore_and_respond(state: &AppState) -> axum::response::Response {
-    // Safety net: if health check's postRestoreRecovery hasn't run yet
-    if state
-        .needs_restore
-        .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
-        .is_ok()
-    {
-        post_restore_recovery(state);
-    }
-
-    state.conn_tracker.restore_after_snapshot();
-    if let Some(ref ps) = state.port_subsystem {
-        ps.restart();
-    }
+    state.try_restore_recovery();
 
     (
         StatusCode::NO_CONTENT,
@@ -149,46 +143,13 @@ async fn trigger_restore_and_respond(state: &AppState) -> axum::response::Respon
         .into_response()
 }
 
-fn post_restore_recovery(state: &AppState) {
-    tracing::info!("restore: post-restore recovery (no GC needed in Rust)");
-
-    state.snapshot_in_progress.store(false, std::sync::atomic::Ordering::Release);
-
-    state.conn_tracker.restore_after_snapshot();
-
-    if let Some(ref ps) = state.port_subsystem {
-        ps.restart();
-        tracing::info!("restore: port subsystem restarted");
-    }
-}
-
 async fn validate_init_access_token(state: &AppState, request_token: &str) -> Result<(), String> {
     // Fast path: matches existing token
     if state.access_token.is_set() && !request_token.is_empty() && state.access_token.equals(request_token) {
         return Ok(());
     }
 
-    // Check MMDS hash
-    if state.is_fc {
-        if let Ok(mmds_hash) = mmds::get_access_token_hash().await {
-            if !mmds_hash.is_empty() {
-                if request_token.is_empty() {
-                    let empty_hash = crypto::sha512::hash_access_token("");
-                    if mmds_hash == empty_hash {
-                        return Ok(());
-                    }
-                } else {
-                    let token_hash = crypto::sha512::hash_access_token(request_token);
-                    if mmds_hash == token_hash {
-                        return Ok(());
-                    }
-                }
-                return Err("access token validation failed".into());
-            }
-        }
-    }
-
-    // First-time setup: no existing token and no MMDS
+    // First-time setup: no existing token
     if !state.access_token.is_set() {
         return Ok(());
     }
@@ -268,14 +229,21 @@ async fn setup_nfs(nfs_target: &str, path: &str) {
     }
 }
 
+fn write_run_file(name: &str, value: &str) {
+    let dir = std::path::Path::new("/run/wrenn");
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        tracing::warn!(error = %e, "failed to create /run/wrenn");
+        return;
+    }
+    if let Err(e) = std::fs::write(dir.join(name), value) {
+        tracing::warn!(error = %e, name, "failed to write run file");
+    }
+}
+
 fn chrono_parse_to_nanos(ts: &str) -> Result<i64, ()> {
-    // Parse RFC3339 timestamp to nanoseconds since epoch
-    // Simple approach: parse as seconds + fractional
     let secs = ts.parse::<f64>().ok();
     if let Some(s) = secs {
         return Ok((s * 1_000_000_000.0) as i64);
     }
-    // Try RFC3339 format
-    // For now, fall back to allowing the update
     Err(())
 }
