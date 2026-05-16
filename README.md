@@ -5,7 +5,7 @@ Secure infrastructure for AI
 ## Prerequisites
 
 - Linux host with `/dev/kvm` access (bare metal or nested virt)
-- Firecracker binary at `/usr/local/bin/firecracker`
+- Cloud Hypervisor binary at `/usr/local/bin/cloud-hypervisor`
 - PostgreSQL
 - Go 1.25+
 - Rust 1.88+ with `x86_64-unknown-linux-musl` target (`rustup target add x86_64-unknown-linux-musl`)

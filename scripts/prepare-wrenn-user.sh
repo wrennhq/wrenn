@@ -22,7 +22,7 @@
 # Prerequisites:
 #   - wrenn-agent binary at /usr/local/bin/wrenn-agent
 #   - wrenn-cp binary at /usr/local/bin/wrenn-cp
-#   - firecracker binary at /usr/local/bin/firecracker
+#   - cloud-hypervisor binary at /usr/local/bin/cloud-hypervisor
 #   - libcap2-bin installed (for setcap)
 
 set -euo pipefail
@@ -41,7 +41,7 @@ WRENN_GROUP="wrenn"
 WRENN_DIR="/var/lib/wrenn"
 AGENT_BIN="/usr/local/bin/wrenn-agent"
 CP_BIN="/usr/local/bin/wrenn-cp"
-FC_BIN="/usr/local/bin/firecracker"
+CH_BIN="/usr/local/bin/cloud-hypervisor"
 RESTORE_CAPS_SCRIPT="/etc/wrenn/restore-caps.sh"
 
 # ── 1. Create system user ───────────────────────────────────────────────────
@@ -100,7 +100,7 @@ done
 #                     routing table manipulation
 #   CAP_NET_RAW     — raw socket access (needed by iptables internally)
 #   CAP_SYS_PTRACE  — reading /proc/self/ns/net (netns.Get)
-#   CAP_KILL        — sending SIGTERM/SIGKILL to Firecracker processes
+#   CAP_KILL        — sending SIGTERM/SIGKILL to Cloud Hypervisor processes
 #   CAP_DAC_OVERRIDE — accessing /dev/loop*, /dev/mapper/*, /dev/net/tun,
 #                      /proc/sys/net/ipv4/ip_forward
 #   CAP_MKNOD       — creating device nodes (dm-snapshot)
@@ -120,12 +120,12 @@ else
     getcap "${AGENT_BIN}"
 fi
 
-# Firecracker also needs capabilities when spawned by a non-root parent.
+# Cloud Hypervisor also needs capabilities when spawned by a non-root parent.
 # CAP_NET_ADMIN is required for network device access inside the netns.
-if [[ -f "${FC_BIN}" ]]; then
-    setcap cap_net_admin,cap_sys_admin,cap_dac_override+ep "${FC_BIN}"
-    echo "    Capabilities set on ${FC_BIN}:"
-    getcap "${FC_BIN}"
+if [[ -f "${CH_BIN}" ]]; then
+    setcap cap_net_admin,cap_sys_admin,cap_dac_override+ep "${CH_BIN}"
+    echo "    Capabilities set on ${CH_BIN}:"
+    getcap "${CH_BIN}"
 fi
 
 # ── Helper: resolve binary path and apply setcap ────────────────────────────
@@ -191,13 +191,13 @@ setcap_binary() {
     setcap "$caps" "$bin" 2>/dev/null || true
 }
 
-# wrenn-agent and firecracker (only if present — they aren't package-managed).
+# wrenn-agent and cloud-hypervisor (only if present — they aren't package-managed).
 [[ -f /usr/local/bin/wrenn-agent ]] && \
     setcap cap_sys_admin,cap_net_admin,cap_net_raw,cap_sys_ptrace,cap_kill,cap_dac_override,cap_mknod+ep \
         /usr/local/bin/wrenn-agent 2>/dev/null || true
-[[ -f /usr/local/bin/firecracker ]] && \
+[[ -f /usr/local/bin/cloud-hypervisor ]] && \
     setcap cap_net_admin,cap_sys_admin,cap_dac_override+ep \
-        /usr/local/bin/firecracker 2>/dev/null || true
+        /usr/local/bin/cloud-hypervisor 2>/dev/null || true
 
 # Child binaries (these are the ones wiped by apt).
 setcap_binary iptables      "cap_net_admin,cap_net_raw+ep"
@@ -315,14 +315,14 @@ ExecStart=/usr/local/bin/wrenn-agent --address ${WRENN_ADVERTISE_ADDR}
 Restart=on-failure
 RestartSec=5
 
-# File descriptor limits (Firecracker + loop devices + sockets).
+# File descriptor limits (Cloud Hypervisor + loop devices + sockets).
 LimitNOFILE=65536
 LimitNPROC=4096
 
 # Protect host filesystem — only allow access to what's needed.
 ProtectHome=true
 ReadWritePaths=/var/lib/wrenn /tmp /run/netns /dev/mapper
-ReadOnlyPaths=/usr/local/bin/firecracker
+ReadOnlyPaths=/usr/local/bin/cloud-hypervisor
 
 [Install]
 WantedBy=multi-user.target

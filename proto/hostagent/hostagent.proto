@@ -146,7 +146,7 @@ message CreateSandboxResponse {
   string host_ip = 3;
 
   // Runtime metadata collected during sandbox creation (e.g. envd_version,
-  // kernel_version, firecracker_version, agent_version).
+  // kernel_version, vmm_version, agent_version).
   map<string, string> metadata = 4;
 }
 

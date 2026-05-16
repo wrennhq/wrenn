@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Wrenn Sandbox is a microVM-based code execution platform. Users create isolated sandboxes (Firecracker microVMs), run code inside them, and get output back via SDKs. Think E2B but with persistent sandboxes, pool-based pricing, and a single-binary deployment story.
+Wrenn Sandbox is a microVM-based code execution platform. Users create isolated sandboxes (Cloud Hypervisor microVMs), run code inside them, and get output back via SDKs. Think E2B but with persistent sandboxes, pool-based pricing, and a single-binary deployment story.
 
 ## Build & Development Commands
 
@@ -23,11 +23,11 @@ make dev-down           # Stop dev infra
 make dev-cp             # Control plane with hot reload (if air installed)
 make dev-frontend       # Vite dev server with HMR (port 5173)
 make dev-agent          # Host agent (sudo required)
-make dev-envd           # envd in debug mode (--isnotfc, port 49983)
+make dev-envd           # envd in debug mode (port 49983)
 
 make check              # fmt + vet + lint + test (CI order)
 make test               # Unit tests: go test -race -v ./internal/...
-make test-integration   # Integration tests (require host agent + Firecracker)
+make test-integration   # Integration tests (require host agent + Cloud Hypervisor)
 make fmt                # gofmt
 make vet                # go vet
 make lint               # golangci-lint
@@ -92,7 +92,7 @@ Startup (`cmd/host-agent/main.go`) wires: root/capabilities check → enable IP 
 
 - **RPC Server** (`internal/hostagent/server.go`): implements `hostagentv1connect.HostAgentServiceHandler`. Thin wrapper — every method delegates to `sandbox.Manager`. Maps Connect error codes on return.
 - **Sandbox Manager** (`internal/sandbox/manager.go`): the core orchestration layer. Maintains in-memory state in `boxes map[string]*sandboxState` (protected by `sync.RWMutex`). Each `sandboxState` holds a `models.Sandbox`, a `*network.Slot`, and an `*envdclient.Client`. Runs a TTL reaper (every 10s) that auto-destroys timed-out sandboxes.
-- **VM Manager** (`internal/vm/manager.go`, `fc.go`, `config.go`): manages Firecracker processes. Uses raw HTTP API over Unix socket (`/tmp/fc-{sandboxID}.sock`), not the firecracker-go-sdk Machine type. Launches Firecracker via `unshare -m` + `ip netns exec`. Configures VM via PUT to `/boot-source`, `/drives/rootfs`, `/network-interfaces/eth0`, `/machine-config`, then starts with PUT `/actions`.
+- **VM Manager** (`internal/vm/manager.go`, `ch.go`, `config.go`): manages Cloud Hypervisor processes. Uses raw HTTP API over Unix socket (`/tmp/ch-{sandboxID}.sock`). Launches Cloud Hypervisor via `unshare -m` + `ip netns exec` with `--api-socket path=...`. Configures and boots VM via `PUT /vm.create` + `PUT /vm.boot`. Snapshot restore uses `--restore source_url=file://...`.
 - **Network** (`internal/network/setup.go`, `allocator.go`): per-sandbox network namespace with veth pair + TAP device. See Networking section below.
 - **Device Mapper** (`internal/devicemapper/devicemapper.go`): CoW rootfs via device-mapper snapshots. Shared read-only loop devices per base template (refcounted `LoopRegistry`), per-sandbox sparse CoW files, dm-snapshot create/restore/remove/flatten operations.
 - **envd Client** (`internal/envdclient/client.go`, `health.go`): dual interface to the guest agent. Connect RPC for streaming process exec (`process.Start()` bidirectional stream). Plain HTTP for file operations (POST/GET `/files?path=...&username=root`). Health check polls `GET /health` every 100ms until ready (30s timeout).
@@ -109,7 +109,7 @@ Runs as PID 1 inside the microVM via `wrenn-init.sh` (mounts procfs/sysfs/dev, s
 - **HTTP endpoints**: GET `/health`, GET `/metrics`, POST `/init`, POST `/snapshot/prepare`, GET/POST `/files`
 - **Proto codegen**: `connectrpc-build` compiles `proto/envd/*.proto` at `cargo build` time via `build.rs` — no committed stubs
 - **Build**: `make build-envd` → static musl binary in `builds/envd`
-- **Dev**: `make dev-envd` → `cargo run -- --isnotfc --port 49983`
+- **Dev**: `make dev-envd` → `cargo run -- --port 49983`
 
 ### Dashboard (Frontend)
 
@@ -164,7 +164,7 @@ HIBERNATED → RUNNING (cold snapshot resume, slower)
 **Sandbox creation** (`POST /v1/capsules`):
 1. API handler generates sandbox ID, inserts into DB as "pending"
 2. RPC `CreateSandbox` → host agent → `sandbox.Manager.Create()`
-3. Manager: resolve base rootfs → acquire shared loop device → create dm-snapshot (sparse CoW file) → allocate network slot → `CreateNetwork()` (netns + veth + tap + NAT) → `vm.Create()` (start Firecracker with `/dev/mapper/wrenn-{id}`, configure via HTTP API, boot) → `envdclient.WaitUntilReady()` (poll /health) → store in-memory state
+3. Manager: resolve base rootfs → acquire shared loop device → create dm-snapshot (sparse CoW file) → allocate network slot → `CreateNetwork()` (netns + veth + tap + NAT) → `vm.Create()` (start Cloud Hypervisor with `/dev/mapper/wrenn-{id}`, configure via `PUT /vm.create` + `PUT /vm.boot`) → `envdclient.WaitUntilReady()` (poll /health) → store in-memory state
 4. API handler updates DB to "running" with host_ip
 
 **Command execution** (`POST /v1/capsules/{id}/exec`):
@@ -210,9 +210,9 @@ To add a new query: add it to the appropriate `.sql` file in `db/queries/` → `
 
 - **Connect RPC** (not gRPC) for all RPC communication between components
 - **Buf + protoc-gen-connect-go** for Go code generation; **connectrpc-build** for Rust code generation in envd
-- **Raw Firecracker HTTP API** via Unix socket (not firecracker-go-sdk Machine type)
+- **Raw Cloud Hypervisor HTTP API** via Unix socket (`PUT /vm.create` + `PUT /vm.boot`)
 - **TAP networking** (not vsock) for host-to-envd communication
-- **Device-mapper snapshots** for rootfs CoW — shared read-only loop device per base template, per-sandbox sparse CoW file, Firecracker gets `/dev/mapper/wrenn-{id}`
+- **Device-mapper snapshots** for rootfs CoW — shared read-only loop device per base template, per-sandbox sparse CoW file, Cloud Hypervisor gets `/dev/mapper/wrenn-{id}`
 - **PostgreSQL** via pgx/v5 + sqlc (type-safe query generation). Goose for migrations (plain SQL, up/down)
 - **Dashboard**: SvelteKit (Svelte 5, adapter-static) + Tailwind CSS v4 + Bits UI. Built to static files in `frontend/build/`, served by Caddy (not embedded in the Go binary)
 - **Lago** for billing (external service, not in this codebase)
@@ -237,19 +237,19 @@ To add a new query: add it to the appropriate `.sql` file in `db/queries/` → `
 - Kernel: `/var/lib/wrenn/kernels/vmlinux`
 - Base rootfs images: `/var/lib/wrenn/images/{template}.ext4`
 - Sandbox clones: `/var/lib/wrenn/sandboxes/`
-- Firecracker: `/usr/local/bin/firecracker` (e2b's fork of firecracker)
+- Cloud Hypervisor: `/usr/local/bin/cloud-hypervisor`
 
 ## Design Context
 
 ### Users
-Developers across the full spectrum — solo engineers building side projects, startup teams integrating sandboxed execution into products, and platform/infra engineers at larger organizations running production workloads on Firecracker microVMs. They arrive with context: they know what a process is, what a rootfs is, what a TTY means. The interface must feel at home for all three: approachable enough not to intimidate a hacker, precise enough to earn the trust of a production ops team. Never condescend, never oversimplify. Trust the user to understand what they're looking at.
+Developers across the full spectrum — solo engineers building side projects, startup teams integrating sandboxed execution into products, and platform/infra engineers at larger organizations running production workloads on Cloud Hypervisor microVMs. They arrive with context: they know what a process is, what a rootfs is, what a TTY means. The interface must feel at home for all three: approachable enough not to intimidate a hacker, precise enough to earn the trust of a production ops team. Never condescend, never oversimplify. Trust the user to understand what they're looking at.
 
 **Primary job to be done:** Understand what's running, act on it confidently, and get back to code.
 
 ### Brand Personality
 **Precise. Warm. Uncompromising.**
 
-Wrenn is an engineer's favorite tool — built with visible care, not assembled from defaults. It runs real infrastructure (Firecracker microVMs), so the UI should reflect that seriousness without becoming cold or corporate. The warmth comes from the typography and color palette; the precision comes from hierarchy, density, and data fidelity.
+Wrenn is an engineer's favorite tool — built with visible care, not assembled from defaults. It runs real infrastructure (Cloud Hypervisor microVMs), so the UI should reflect that seriousness without becoming cold or corporate. The warmth comes from the typography and color palette; the precision comes from hierarchy, density, and data fidelity.
 
 Emotional goal: **in control.** Users leave a session with full confidence in what's running, what happened, and what comes next. Nothing is hidden, nothing is ambiguous.
 

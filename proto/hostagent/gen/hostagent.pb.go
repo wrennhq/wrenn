@@ -155,7 +155,7 @@ type CreateSandboxResponse struct {
 	Status    string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
 	HostIp    string                 `protobuf:"bytes,3,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
 	// Runtime metadata collected during sandbox creation (e.g. envd_version,
-	// kernel_version, firecracker_version, agent_version).
+	// kernel_version, vmm_version, agent_version).
 	Metadata      map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
