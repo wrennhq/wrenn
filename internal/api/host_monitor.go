@@ -77,6 +77,21 @@ func (m *HostMonitor) run(ctx context.Context) {
 	}
 }
 
+// ReconcileHost triggers immediate active reconciliation for a single host.
+// Called when a host transitions from unreachable → online so sandboxes marked
+// "missing" are resolved without waiting for the next monitor tick.
+func (m *HostMonitor) ReconcileHost(ctx context.Context, hostID pgtype.UUID) {
+	host, err := m.db.GetHost(ctx, hostID)
+	if err != nil {
+		slog.Warn("host monitor: reconcile-on-connect: failed to get host", "error", err)
+		return
+	}
+	if host.Status != "online" {
+		return
+	}
+	m.checkHost(ctx, host)
+}
+
 func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 	// --- Passive phase: check heartbeat staleness ---
 

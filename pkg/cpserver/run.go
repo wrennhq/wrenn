@@ -177,8 +177,13 @@ func Run(opts ...Option) {
 		Config:    cfg,
 	}
 
+	// Host monitor (passive + active reconciliation every 60s).
+	// Created before API server so the heartbeat handler can trigger immediate
+	// reconciliation when a host recovers from unreachable.
+	monitor := api.NewHostMonitor(queries, hostPool, al, 60*time.Second)
+
 	// API server.
-	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelSvc, mailer, o.extensions, sctx, o.version)
+	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelSvc, mailer, o.extensions, sctx, monitor, o.version)
 
 	// Start template build workers (2 concurrent).
 	stopBuildWorkers := srv.BuildSvc.StartWorkers(ctx, 2)
@@ -191,9 +196,7 @@ func Run(opts ...Option) {
 	sandboxEventConsumer := api.NewSandboxEventConsumer(rdb, queries, al)
 	sandboxEventConsumer.Start(ctx)
 
-	// Start host monitor (passive + active reconciliation every 60s).
-	// Reduced from 15s since async events handle the normal case.
-	monitor := api.NewHostMonitor(queries, hostPool, al, 60*time.Second)
+	// Start host monitor loop.
 	monitor.Start(ctx)
 
 	// Hard-delete accounts that have been soft-deleted for more than 15 days (runs every 24h).

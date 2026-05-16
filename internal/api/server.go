@@ -50,6 +50,7 @@ func New(
 	mailer email.Mailer,
 	extensions []cpextension.Extension,
 	sctx cpextension.ServerContext,
+	monitor *HostMonitor,
 	version string,
 ) *Server {
 	r := chi.NewRouter()
@@ -95,7 +96,7 @@ func New(
 	authH := newAuthHandler(queries, pgPool, jwtSecret, mailer, rdb, oauthRedirectURL)
 	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, oauthRegistry, oauthRedirectURL)
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
-	hostH := newHostHandler(hostSvc, queries, al)
+	hostH := newHostHandler(hostSvc, queries, al, monitor)
 	teamH := newTeamHandler(teamSvc, al, mailer)
 	usersH := newUsersHandler(queries, userSvc, al)
 	auditH := newAuditHandler(auditSvc)
