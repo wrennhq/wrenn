@@ -30,7 +30,7 @@ type process struct {
 //  4. symlink kernel and rootfs into SandboxDir
 //  5. ip netns exec <ns>: enters the network namespace where TAP is configured
 //  6. exec cloud-hypervisor with the API socket path
-func startProcess(ctx context.Context, cfg *VMConfig) (*process, error) {
+func startProcess(cfg *VMConfig) (*process, error) {
 	script := buildStartScript(cfg)
 	return launchScript(script, cfg)
 }
@@ -38,7 +38,7 @@ func startProcess(ctx context.Context, cfg *VMConfig) (*process, error) {
 // startProcessForRestore launches a bare Cloud Hypervisor process (no --restore).
 // The restore is performed via the API after the socket is ready, which allows
 // passing memory_restore_mode=OnDemand for UFFD lazy paging.
-func startProcessForRestore(ctx context.Context, cfg *VMConfig) (*process, error) {
+func startProcessForRestore(cfg *VMConfig) (*process, error) {
 	script := buildRestoreScript(cfg)
 	return launchScript(script, cfg)
 }

@@ -282,69 +282,11 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		return
 	}
 
-	// Pick a platform host and create a sandbox.
-	host, err := s.Scheduler.SelectHost(buildCtx, id.PlatformTeamID, false, build.MemoryMb, 5120)
+	agent, sandboxIDStr, sandboxMetadata, err := s.provisionBuildSandbox(buildCtx, buildID, buildIDStr, build, log)
 	if err != nil {
-		s.failBuild(buildCtx, buildID, fmt.Sprintf("no host available: %v", err))
 		return
 	}
-
-	agent, err := s.Pool.GetForHost(host)
-	if err != nil {
-		s.failBuild(buildCtx, buildID, fmt.Sprintf("agent client error: %v", err))
-		return
-	}
-
-	sandboxID := id.NewSandboxID()
-	sandboxIDStr := id.FormatSandboxID(sandboxID)
-	log = log.With("sandbox_id", sandboxIDStr, "host_id", id.FormatHostID(host.ID))
-
-	// Resolve the base template to UUIDs. "minimal" is the zero sentinel.
-	baseTeamID := id.PlatformTeamID
-	baseTemplateID := id.MinimalTemplateID
-	if build.BaseTemplate != "minimal" {
-		baseTmpl, err := s.DB.GetPlatformTemplateByName(buildCtx, build.BaseTemplate)
-		if err != nil {
-			s.failBuild(buildCtx, buildID, fmt.Sprintf("base template %q not found: %v", build.BaseTemplate, err))
-			return
-		}
-		baseTeamID = baseTmpl.TeamID
-		baseTemplateID = baseTmpl.ID
-	}
-
-	resp, err := agent.CreateSandbox(buildCtx, connect.NewRequest(&pb.CreateSandboxRequest{
-		SandboxId:  sandboxIDStr,
-		Template:   build.BaseTemplate,
-		TeamId:     id.UUIDString(baseTeamID),
-		TemplateId: id.UUIDString(baseTemplateID),
-		Vcpus:      build.Vcpus,
-		MemoryMb:   build.MemoryMb,
-		TimeoutSec: 0,    // no auto-pause for builds
-		DiskSizeMb: 5120, // 5 GB for template builds
-	}))
-	if err != nil {
-		s.failBuild(buildCtx, buildID, fmt.Sprintf("create sandbox failed: %v", err))
-		return
-	}
-	// Capture sandbox metadata (envd/kernel/vmm/agent versions).
-	sandboxMetadata := resp.Msg.Metadata
-
-	// Record sandbox/host association.
-	_ = s.DB.UpdateBuildSandbox(buildCtx, db.UpdateBuildSandboxParams{
-		ID:        buildID,
-		SandboxID: sandboxID,
-		HostID:    host.ID,
-	})
-
-	// Upload and extract build archive if provided.
-	archive := s.takeArchive(buildIDStr)
-	if len(archive) > 0 {
-		if err := s.uploadAndExtractArchive(buildCtx, agent, sandboxIDStr, archive, buildIDStr); err != nil {
-			s.destroySandbox(buildCtx, agent, sandboxIDStr)
-			s.failBuild(buildCtx, buildID, fmt.Sprintf("archive upload failed: %v", err))
-			return
-		}
-	}
+	log = log.With("sandbox_id", sandboxIDStr)
 
 	// Parse recipe steps. preBuildCmds and postBuildCmds are hardcoded and always
 	// valid; panic on error is appropriate here since it would be a programmer mistake.
@@ -435,81 +377,162 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		}
 	}
 
-	// Healthcheck or direct snapshot.
+	// Finalize: healthcheck/snapshot/flatten → persist template → mark success.
+	s.finalizeBuild(buildCtx, buildID, build, agent, sandboxIDStr, templateDefaultUser, templateDefaultEnv, sandboxMetadata, log)
+}
+
+// provisionBuildSandbox picks a host, creates a sandbox, and uploads the build
+// archive. On failure it calls failBuild and returns an error.
+func (s *BuildService) provisionBuildSandbox(
+	ctx context.Context,
+	buildID pgtype.UUID,
+	buildIDStr string,
+	build db.TemplateBuild,
+	log *slog.Logger,
+) (buildAgentClient, string, map[string]string, error) {
+	host, err := s.Scheduler.SelectHost(ctx, id.PlatformTeamID, false, build.MemoryMb, 5120)
+	if err != nil {
+		s.failBuild(ctx, buildID, fmt.Sprintf("no host available: %v", err))
+		return nil, "", nil, err
+	}
+
+	agent, err := s.Pool.GetForHost(host)
+	if err != nil {
+		s.failBuild(ctx, buildID, fmt.Sprintf("agent client error: %v", err))
+		return nil, "", nil, err
+	}
+
+	sandboxID := id.NewSandboxID()
+	sandboxIDStr := id.FormatSandboxID(sandboxID)
+	log.Info("provisioning build sandbox", "sandbox_id", sandboxIDStr, "host_id", id.FormatHostID(host.ID))
+
+	baseTeamID := id.PlatformTeamID
+	baseTemplateID := id.MinimalTemplateID
+	if build.BaseTemplate != "minimal" {
+		baseTmpl, err := s.DB.GetPlatformTemplateByName(ctx, build.BaseTemplate)
+		if err != nil {
+			s.failBuild(ctx, buildID, fmt.Sprintf("base template %q not found: %v", build.BaseTemplate, err))
+			return nil, "", nil, err
+		}
+		baseTeamID = baseTmpl.TeamID
+		baseTemplateID = baseTmpl.ID
+	}
+
+	resp, err := agent.CreateSandbox(ctx, connect.NewRequest(&pb.CreateSandboxRequest{
+		SandboxId:  sandboxIDStr,
+		Template:   build.BaseTemplate,
+		TeamId:     id.UUIDString(baseTeamID),
+		TemplateId: id.UUIDString(baseTemplateID),
+		Vcpus:      build.Vcpus,
+		MemoryMb:   build.MemoryMb,
+		TimeoutSec: 0,
+		DiskSizeMb: 5120,
+	}))
+	if err != nil {
+		s.failBuild(ctx, buildID, fmt.Sprintf("create sandbox failed: %v", err))
+		return nil, "", nil, err
+	}
+	sandboxMetadata := resp.Msg.Metadata
+
+	_ = s.DB.UpdateBuildSandbox(ctx, db.UpdateBuildSandboxParams{
+		ID:        buildID,
+		SandboxID: sandboxID,
+		HostID:    host.ID,
+	})
+
+	archive := s.takeArchive(buildIDStr)
+	if len(archive) > 0 {
+		if err := s.uploadAndExtractArchive(ctx, agent, sandboxIDStr, archive, buildIDStr); err != nil {
+			s.destroySandbox(ctx, agent, sandboxIDStr)
+			s.failBuild(ctx, buildID, fmt.Sprintf("archive upload failed: %v", err))
+			return nil, "", nil, err
+		}
+	}
+
+	return agent, sandboxIDStr, sandboxMetadata, nil
+}
+
+// finalizeBuild handles the healthcheck/snapshot/flatten step and persists the
+// template record. Called after all recipe phases complete successfully.
+func (s *BuildService) finalizeBuild(
+	ctx context.Context,
+	buildID pgtype.UUID,
+	build db.TemplateBuild,
+	agent buildAgentClient,
+	sandboxIDStr string,
+	defaultUser string,
+	defaultEnv map[string]string,
+	sandboxMetadata map[string]string,
+	log *slog.Logger,
+) {
 	var sizeBytes int64
 	if build.Healthcheck != "" {
 		hc, err := recipe.ParseHealthcheck(build.Healthcheck)
 		if err != nil {
-			s.destroySandbox(buildCtx, agent, sandboxIDStr)
-			s.failBuild(buildCtx, buildID, fmt.Sprintf("invalid healthcheck: %v", err))
+			s.destroySandbox(ctx, agent, sandboxIDStr)
+			s.failBuild(ctx, buildID, fmt.Sprintf("invalid healthcheck: %v", err))
 			return
 		}
 		log.Info("running healthcheck", "cmd", hc.Cmd, "interval", hc.Interval, "timeout", hc.Timeout, "start_period", hc.StartPeriod, "retries", hc.Retries)
-		if err := s.waitForHealthcheck(buildCtx, agent, sandboxIDStr, hc, templateDefaultUser); err != nil {
-			s.destroySandbox(buildCtx, agent, sandboxIDStr)
-			if buildCtx.Err() != nil {
+		if err := s.waitForHealthcheck(ctx, agent, sandboxIDStr, hc, defaultUser); err != nil {
+			s.destroySandbox(ctx, agent, sandboxIDStr)
+			if ctx.Err() != nil {
 				return
 			}
-			s.failBuild(buildCtx, buildID, fmt.Sprintf("healthcheck failed: %v", err))
+			s.failBuild(ctx, buildID, fmt.Sprintf("healthcheck failed: %v", err))
 			return
 		}
 
-		// Healthcheck passed → full snapshot (with memory/CPU state).
 		log.Info("healthcheck passed, creating snapshot")
-		snapResp, err := agent.CreateSnapshot(buildCtx, connect.NewRequest(&pb.CreateSnapshotRequest{
+		snapResp, err := agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
 			SandboxId:  sandboxIDStr,
 			Name:       build.Name,
 			TeamId:     id.UUIDString(build.TeamID),
 			TemplateId: id.UUIDString(build.TemplateID),
 		}))
 		if err != nil {
-			s.destroySandbox(buildCtx, agent, sandboxIDStr)
-			if buildCtx.Err() != nil {
+			s.destroySandbox(ctx, agent, sandboxIDStr)
+			if ctx.Err() != nil {
 				return
 			}
-			s.failBuild(buildCtx, buildID, fmt.Sprintf("create snapshot failed: %v", err))
+			s.failBuild(ctx, buildID, fmt.Sprintf("create snapshot failed: %v", err))
 			return
 		}
 		sizeBytes = snapResp.Msg.SizeBytes
 	} else {
-		// No healthcheck → image-only template (rootfs only).
 		log.Info("no healthcheck, flattening rootfs")
-		flatResp, err := agent.FlattenRootfs(buildCtx, connect.NewRequest(&pb.FlattenRootfsRequest{
+		flatResp, err := agent.FlattenRootfs(ctx, connect.NewRequest(&pb.FlattenRootfsRequest{
 			SandboxId:  sandboxIDStr,
 			Name:       build.Name,
 			TeamId:     id.UUIDString(build.TeamID),
 			TemplateId: id.UUIDString(build.TemplateID),
 		}))
 		if err != nil {
-			s.destroySandbox(buildCtx, agent, sandboxIDStr)
-			if buildCtx.Err() != nil {
+			s.destroySandbox(ctx, agent, sandboxIDStr)
+			if ctx.Err() != nil {
 				return
 			}
-			s.failBuild(buildCtx, buildID, fmt.Sprintf("flatten rootfs failed: %v", err))
+			s.failBuild(ctx, buildID, fmt.Sprintf("flatten rootfs failed: %v", err))
 			return
 		}
 		sizeBytes = flatResp.Msg.SizeBytes
 	}
 
-	// Insert into templates table as a global (platform) template.
 	templateType := "base"
 	if build.Healthcheck != "" {
 		templateType = "snapshot"
 	}
 
-	// Serialize env vars for DB storage.
-	defaultEnvJSON, err := json.Marshal(templateDefaultEnv)
+	defaultEnvJSON, err := json.Marshal(defaultEnv)
 	if err != nil {
 		defaultEnvJSON = []byte("{}")
 	}
-
-	// Serialize sandbox metadata for DB storage.
 	metadataJSON, err := json.Marshal(sandboxMetadata)
 	if err != nil || len(sandboxMetadata) == 0 {
 		metadataJSON = []byte("{}")
 	}
 
-	if _, err := s.DB.InsertTemplate(buildCtx, db.InsertTemplateParams{
+	if _, err := s.DB.InsertTemplate(ctx, db.InsertTemplateParams{
 		ID:          build.TemplateID,
 		Name:        build.Name,
 		Type:        templateType,
@@ -517,28 +540,21 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		MemoryMb:    build.MemoryMb,
 		SizeBytes:   sizeBytes,
 		TeamID:      id.PlatformTeamID,
-		DefaultUser: templateDefaultUser,
+		DefaultUser: defaultUser,
 		DefaultEnv:  defaultEnvJSON,
 		Metadata:    metadataJSON,
 	}); err != nil {
 		log.Error("failed to insert template record", "error", err)
-		// Build succeeded on disk, just DB record failed — don't mark as failed.
 	}
 
-	// Record defaults and metadata on the build record for inspection.
-	_ = s.DB.UpdateBuildDefaults(buildCtx, db.UpdateBuildDefaultsParams{
+	_ = s.DB.UpdateBuildDefaults(ctx, db.UpdateBuildDefaultsParams{
 		ID:          buildID,
-		DefaultUser: templateDefaultUser,
+		DefaultUser: defaultUser,
 		DefaultEnv:  defaultEnvJSON,
 		Metadata:    metadataJSON,
 	})
 
-	// For CreateSnapshot, the sandbox is already destroyed by the snapshot process.
-	// For FlattenRootfs, the sandbox is already destroyed by the flatten process.
-	// No additional destroy needed.
-
-	// Mark build as success.
-	if _, err := s.DB.UpdateBuildStatus(buildCtx, db.UpdateBuildStatusParams{
+	if _, err := s.DB.UpdateBuildStatus(ctx, db.UpdateBuildStatusParams{
 		ID: buildID, Status: "success",
 	}); err != nil {
 		log.Error("failed to mark build as success", "error", err)

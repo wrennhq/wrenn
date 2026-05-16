@@ -130,30 +130,22 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 
 	updateLastActive(h.db, sandboxID, sandboxIDStr)
 
-	// Use base64 encoding if output contains non-UTF-8 bytes.
 	stdout := resp.Msg.Stdout
 	stderr := resp.Msg.Stderr
-	encoding := "utf-8"
 
+	encoding := "utf-8"
+	stdoutStr, stderrStr := string(stdout), string(stderr)
 	if !utf8.Valid(stdout) || !utf8.Valid(stderr) {
 		encoding = "base64"
-		writeJSON(w, http.StatusOK, execResponse{
-			SandboxID:  sandboxIDStr,
-			Cmd:        req.Cmd,
-			Stdout:     base64.StdEncoding.EncodeToString(stdout),
-			Stderr:     base64.StdEncoding.EncodeToString(stderr),
-			ExitCode:   resp.Msg.ExitCode,
-			DurationMs: duration.Milliseconds(),
-			Encoding:   encoding,
-		})
-		return
+		stdoutStr = base64.StdEncoding.EncodeToString(stdout)
+		stderrStr = base64.StdEncoding.EncodeToString(stderr)
 	}
 
 	writeJSON(w, http.StatusOK, execResponse{
 		SandboxID:  sandboxIDStr,
 		Cmd:        req.Cmd,
-		Stdout:     string(stdout),
-		Stderr:     string(stderr),
+		Stdout:     stdoutStr,
+		Stderr:     stderrStr,
 		ExitCode:   resp.Msg.ExitCode,
 		DurationMs: duration.Milliseconds(),
 		Encoding:   encoding,

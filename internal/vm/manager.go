@@ -47,7 +47,7 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 	)
 
 	// Step 1: Launch the Cloud Hypervisor process.
-	proc, err := startProcess(ctx, &cfg)
+	proc, err := startProcess(&cfg)
 	if err != nil {
 		return nil, fmt.Errorf("start process: %w", err)
 	}
@@ -220,7 +220,7 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapshot
 	)
 
 	// Step 1: Launch bare CH process (no --restore).
-	proc, err := startProcessForRestore(ctx, &cfg)
+	proc, err := startProcessForRestore(&cfg)
 	if err != nil {
 		return nil, fmt.Errorf("start process: %w", err)
 	}

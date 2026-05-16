@@ -359,6 +359,25 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 	}
 }
 
+// cleanupPauseFailure is best-effort teardown when a pause operation fails
+// after the VM has already been destroyed. It releases all resources and removes
+// the sandbox from the in-memory map.
+func (m *Manager) cleanupPauseFailure(sb *sandboxState, sandboxID string, pauseDir string) {
+	warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
+	warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
+	m.slots.Release(sb.SlotIndex)
+	if sb.dmDevice != nil {
+		warnErr("dm-snapshot remove error during pause", sandboxID, devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice))
+		os.Remove(sb.dmDevice.CowPath)
+	}
+	if sb.baseImagePath != "" {
+		m.loops.Release(sb.baseImagePath)
+	}
+	m.mu.Lock()
+	delete(m.boxes, sandboxID)
+	m.mu.Unlock()
+}
+
 // Pause takes a snapshot of a running sandbox, then destroys all resources.
 // The sandbox's snapshot files are stored at SnapshotsDir/{sandboxID}/.
 // After this call, the sandbox is no longer running but can be resumed.
@@ -513,45 +532,21 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		slog.Warn("pause: failed to remove old snapshot dir", "id", sandboxID, "error", err)
 	}
 	if err := os.Rename(tmpPauseDir, pauseDir); err != nil {
-		warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
-		m.slots.Release(sb.SlotIndex)
-		if sb.dmDevice != nil {
-			warnErr("dm-snapshot remove error during pause", sandboxID, devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice))
-			os.Remove(sb.dmDevice.CowPath)
-		}
-		if sb.baseImagePath != "" {
-			m.loops.Release(sb.baseImagePath)
-		}
-		m.mu.Lock()
-		delete(m.boxes, sandboxID)
-		m.mu.Unlock()
+		m.cleanupPauseFailure(sb, sandboxID, pauseDir)
 		return fmt.Errorf("rename snapshot dir: %w", err)
 	}
 
 	// ── Step 7: Remove dm-snapshot and save CoW ──────────────────────
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(ctx, sb.dmDevice); err != nil {
-			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
-			m.slots.Release(sb.SlotIndex)
-			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-			m.mu.Lock()
-			delete(m.boxes, sandboxID)
-			m.mu.Unlock()
+			m.cleanupPauseFailure(sb, sandboxID, pauseDir)
 			return fmt.Errorf("remove dm-snapshot: %w", err)
 		}
 
 		snapshotCow := snapshot.CowPath(pauseDir, "")
 		if err := os.Rename(sb.dmDevice.CowPath, snapshotCow); err != nil {
-			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
-			m.slots.Release(sb.SlotIndex)
 			os.Remove(sb.dmDevice.CowPath)
-			if sb.baseImagePath != "" {
-				m.loops.Release(sb.baseImagePath)
-			}
-			m.mu.Lock()
-			delete(m.boxes, sandboxID)
-			m.mu.Unlock()
+			m.cleanupPauseFailure(sb, sandboxID, pauseDir)
 			return fmt.Errorf("move cow file: %w", err)
 		}
 
@@ -561,15 +556,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 			VCPUs:        sb.VCPUs,
 			MemoryMB:     sb.MemoryMB,
 		}); err != nil {
-			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
-			m.slots.Release(sb.SlotIndex)
-			if sb.baseImagePath != "" {
-				m.loops.Release(sb.baseImagePath)
-			}
-			m.mu.Lock()
-			delete(m.boxes, sandboxID)
-			m.mu.Unlock()
+			m.cleanupPauseFailure(sb, sandboxID, pauseDir)
 			return fmt.Errorf("write rootfs meta: %w", err)
 		}
 	}

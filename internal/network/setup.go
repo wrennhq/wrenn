@@ -430,6 +430,9 @@ func CreateNetwork(slot *Slot) error {
 		rollback()
 		return fmt.Errorf("add masquerade rule: %w", err)
 	}
+	rollbacks = append(rollbacks, func() {
+		_ = iptablesHost("-t", "nat", "-D", "POSTROUTING", "-s", fmt.Sprintf("%s/32", slot.VpeerIP.String()), "-o", defaultIface, "-j", "MASQUERADE")
+	})
 
 	slog.Info("network created",
 		"ns", slot.NamespaceID,
