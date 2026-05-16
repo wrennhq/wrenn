@@ -7,11 +7,9 @@ import (
 	"net/http"
 
 	"connectrpc.com/connect"
-	"github.com/go-chi/chi/v5"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
-	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
@@ -30,23 +28,11 @@ func newFilesHandler(db *db.Queries, pool *lifecycle.HostClientPool) *filesHandl
 //   - "path" text field: absolute destination path inside the sandbox
 //   - "file" file field: binary content to write
 func (h *filesHandler) Upload(w http.ResponseWriter, r *http.Request) {
-	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
 
-	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
-		return
-	}
-
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+	sb, _, sandboxIDStr, ok := requireRunningSandbox(w, r, h.db, ac.TeamID)
+	if !ok {
 		return
 	}
 
@@ -108,23 +94,11 @@ type readFileRequest struct {
 // Download handles POST /v1/capsules/{id}/files/read.
 // Accepts JSON body with path, returns raw file content with Content-Disposition.
 func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
-	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
 
-	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
-		return
-	}
-
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+	sb, _, sandboxIDStr, ok := requireRunningSandbox(w, r, h.db, ac.TeamID)
+	if !ok {
 		return
 	}
 

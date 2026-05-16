@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,6 +24,9 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 )
+
+// ErrNotFound is returned when a sandbox is not present in the in-memory map.
+var ErrNotFound = errors.New("sandbox not found")
 
 // Config holds the paths and defaults for the sandbox manager.
 type Config struct {
@@ -904,7 +908,7 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 	m.mu.Unlock()
 
 	if !ok {
-		return 0, fmt.Errorf("sandbox %s not found", sandboxID)
+		return 0, fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 
 	// Flush guest page cache to disk before stopping the VM. Without this,
@@ -1395,7 +1399,7 @@ func (m *Manager) Ping(sandboxID string) error {
 
 	sb, ok := m.boxes[sandboxID]
 	if !ok {
-		return fmt.Errorf("sandbox not found: %s", sandboxID)
+		return fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 	if sb.Status != models.StatusRunning {
 		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
@@ -1421,7 +1425,7 @@ func (m *Manager) get(sandboxID string) (*sandboxState, error) {
 
 	sb, ok := m.boxes[sandboxID]
 	if !ok {
-		return nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 	return sb, nil
 }
@@ -1731,7 +1735,7 @@ func (m *Manager) GetMetrics(sandboxID, rangeTier string) ([]MetricPoint, error)
 	sb, ok := m.boxes[sandboxID]
 	m.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 	if sb.ring == nil {
 		return nil, nil
@@ -1784,7 +1788,7 @@ func (m *Manager) FlushMetrics(sandboxID string) (pts10m, pts2h, pts24h []Metric
 	sb, ok := m.boxes[sandboxID]
 	m.mu.RUnlock()
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+		return nil, nil, nil, fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 
 	m.stopSampler(sb)

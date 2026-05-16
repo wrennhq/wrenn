@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
@@ -59,37 +58,9 @@ func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authenticate: use context from middleware (API key) or WS first message (JWT).
-	ac, hasAuth := auth.FromContext(ctx)
-
-	if !hasAuth {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			slog.Error("websocket upgrade failed", "error", err)
-			return
-		}
-		defer conn.Close()
-
-		var wsAC auth.AuthContext
-		var authErr error
-		if isAdminWSRoute(ctx) {
-			wsAC, authErr = wsAuthenticateAdmin(ctx, conn, h.jwtSecret, h.db)
-		} else {
-			wsAC, authErr = wsAuthenticate(ctx, conn, h.jwtSecret, h.db)
-		}
-		if authErr != nil {
-			sendWSError(conn, "authentication failed")
-			return
-		}
-		ac = wsAC
-
-		h.runExecStream(ctx, conn, ac, sandboxID, sandboxIDStr)
-		return
-	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, ac, err := upgradeAndAuthenticate(w, r, h.jwtSecret, h.db)
 	if err != nil {
-		slog.Error("websocket upgrade failed", "error", err)
+		slog.Error("websocket upgrade/auth failed", "error", err)
 		return
 	}
 	defer conn.Close()
@@ -186,18 +157,7 @@ func (h *execStreamHandler) runExecStream(ctx context.Context, conn *websocket.C
 		}
 	}
 
-	// Update last active using a fresh context (the request context may be cancelled).
-	updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer updateCancel()
-	if err := h.db.UpdateLastActive(updateCtx, db.UpdateLastActiveParams{
-		ID: sandboxID,
-		LastActiveAt: pgtype.Timestamptz{
-			Time:  time.Now(),
-			Valid: true,
-		},
-	}); err != nil {
-		slog.Warn("failed to update last active after stream exec", "sandbox_id", sandboxIDStr, "error", err)
-	}
+	updateLastActive(h.db, sandboxID, sandboxIDStr)
 }
 
 func sendWSError(conn *websocket.Conn, msg string) {

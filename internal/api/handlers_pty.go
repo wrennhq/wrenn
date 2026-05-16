@@ -90,40 +90,9 @@ func (h *ptyHandler) PtySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// API key auth is handled by middleware (sets context).
-	// For browser JWT auth, we authenticate after upgrade via first WS message.
-	ac, hasAuth := auth.FromContext(ctx)
-
-	if !hasAuth {
-		// No pre-upgrade auth — upgrade first, then authenticate via WS message.
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			slog.Error("pty websocket upgrade failed", "error", err)
-			return
-		}
-		defer conn.Close()
-
-		ws := &wsWriter{conn: conn}
-
-		var wsAC auth.AuthContext
-		if isAdminWSRoute(ctx) {
-			wsAC, err = wsAuthenticateAdmin(ctx, conn, h.jwtSecret, h.db)
-		} else {
-			wsAC, err = wsAuthenticate(ctx, conn, h.jwtSecret, h.db)
-		}
-		if err != nil {
-			ws.writeJSON(wsPtyOut{Type: "error", Data: "authentication failed", Fatal: true})
-			return
-		}
-		ac = wsAC
-
-		h.runPtySession(ctx, ws, conn, ac, sandboxID, sandboxIDStr)
-		return
-	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, ac, err := upgradeAndAuthenticate(w, r, h.jwtSecret, h.db)
 	if err != nil {
-		slog.Error("pty websocket upgrade failed", "error", err)
+		slog.Error("pty websocket upgrade/auth failed", "error", err)
 		return
 	}
 	defer conn.Close()
@@ -168,18 +137,7 @@ func (h *ptyHandler) runPtySession(ctx context.Context, ws *wsWriter, conn *webs
 		ws.writeJSON(wsPtyOut{Type: "error", Data: "first message must be type 'start' or 'connect'", Fatal: true})
 	}
 
-	// Update last active using a fresh context.
-	updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer updateCancel()
-	if err := h.db.UpdateLastActive(updateCtx, db.UpdateLastActiveParams{
-		ID: sandboxID,
-		LastActiveAt: pgtype.Timestamptz{
-			Time:  time.Now(),
-			Valid: true,
-		},
-	}); err != nil {
-		slog.Warn("failed to update last active after pty session", "sandbox_id", sandboxIDStr, "error", err)
-	}
+	updateLastActive(h.db, sandboxID, sandboxIDStr)
 }
 
 func (h *ptyHandler) handleStart(

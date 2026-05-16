@@ -2,6 +2,7 @@ package hostagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -193,7 +194,7 @@ func (s *Server) PingSandbox(
 	req *connect.Request[pb.PingSandboxRequest],
 ) (*connect.Response[pb.PingSandboxResponse], error) {
 	if err := s.mgr.Ping(req.Msg.SandboxId); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
@@ -590,7 +591,7 @@ func (s *Server) GetSandboxMetrics(
 
 	points, err := s.mgr.GetMetrics(msg.SandboxId, msg.Range)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		if strings.Contains(err.Error(), "invalid range") {
@@ -608,7 +609,7 @@ func (s *Server) FlushSandboxMetrics(
 ) (*connect.Response[pb.FlushSandboxMetricsResponse], error) {
 	pts10m, pts2h, pts24h, err := s.mgr.FlushMetrics(req.Msg.SandboxId)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -761,7 +762,7 @@ func (s *Server) StartBackground(
 
 	pid, err := s.mgr.StartBackground(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Envs, msg.Cwd)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("start background: %w", err))
@@ -779,7 +780,7 @@ func (s *Server) ListProcesses(
 ) (*connect.Response[pb.ListProcessesResponse], error) {
 	procs, err := s.mgr.ListProcesses(ctx, req.Msg.SandboxId)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list processes: %w", err))
@@ -830,7 +831,7 @@ func (s *Server) KillProcess(
 	}
 
 	if err := s.mgr.KillProcess(ctx, msg.SandboxId, pid, tag, signal); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("kill process: %w", err))
@@ -859,7 +860,7 @@ func (s *Server) ConnectProcess(
 
 	events, err := s.mgr.ConnectProcess(ctx, msg.SandboxId, pid, tag)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return connect.NewError(connect.CodeNotFound, err)
 		}
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("connect process: %w", err))

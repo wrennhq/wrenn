@@ -3,14 +3,11 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"time"
 	"unicode/utf8"
 
 	"connectrpc.com/connect"
-	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -58,23 +55,11 @@ type backgroundExecResponse struct {
 
 // Exec handles POST /v1/capsules/{id}/exec.
 func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
-	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
 
-	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
-		return
-	}
-
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running (status: "+sb.Status+")")
+	sb, sandboxID, sandboxIDStr, ok := requireRunningSandbox(w, r, h.db, ac.TeamID)
+	if !ok {
 		return
 	}
 
@@ -116,15 +101,7 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.db.UpdateLastActive(ctx, db.UpdateLastActiveParams{
-			ID: sandboxID,
-			LastActiveAt: pgtype.Timestamptz{
-				Time:  time.Now(),
-				Valid: true,
-			},
-		}); err != nil {
-			slog.Warn("failed to update last_active_at", "id", sandboxIDStr, "error", err)
-		}
+		updateLastActive(h.db, sandboxID, sandboxIDStr)
 
 		writeJSON(w, http.StatusAccepted, backgroundExecResponse{
 			SandboxID: sandboxIDStr,
@@ -151,16 +128,7 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 
 	duration := time.Since(start)
 
-	// Update last active.
-	if err := h.db.UpdateLastActive(ctx, db.UpdateLastActiveParams{
-		ID: sandboxID,
-		LastActiveAt: pgtype.Timestamptz{
-			Time:  time.Now(),
-			Valid: true,
-		},
-	}); err != nil {
-		slog.Warn("failed to update last_active_at", "id", sandboxIDStr, "error", err)
-	}
+	updateLastActive(h.db, sandboxID, sandboxIDStr)
 
 	// Use base64 encoding if output contains non-UTF-8 bytes.
 	stdout := resp.Msg.Stdout
