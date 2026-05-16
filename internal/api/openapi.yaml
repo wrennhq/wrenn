@@ -1289,7 +1289,7 @@ paths:
         - apiKeyAuth: []
       description: |
         Restores a paused capsule from its snapshot using UFFD for lazy
-        memory loading. Boots a fresh Firecracker process, sets up a new
+        memory loading. Boots a fresh Cloud Hypervisor process, sets up a new
         network slot, and waits for envd to become ready.
       responses:
         "202":
@@ -2440,6 +2440,14 @@ paths:
                 $ref: "#/components/schemas/Error"
 
 components:
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
   securitySchemes:
     apiKeyAuth:
       type: apiKey
@@ -3104,7 +3112,7 @@ components:
         mem_bytes:
           type: integer
           format: int64
-          description: "Resident memory in bytes (VmRSS of Firecracker process)"
+          description: "Resident memory in bytes (VmRSS of Cloud Hypervisor process)"
         disk_bytes:
           type: integer
           format: int64
