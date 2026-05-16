@@ -143,7 +143,6 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("VM not found: %s", sandboxID)
 	}
-	delete(m.vms, sandboxID)
 	m.mu.Unlock()
 
 	slog.Info("destroying VM", "sandbox", sandboxID)
@@ -160,6 +159,10 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 	}
 
 	os.Remove(vm.Config.SocketPath)
+
+	m.mu.Lock()
+	delete(m.vms, sandboxID)
+	m.mu.Unlock()
 
 	slog.Info("VM destroyed", "sandbox", sandboxID)
 	return nil

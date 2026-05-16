@@ -379,5 +379,9 @@ func createSparseFile(path string, sizeBytes int64) error {
 		os.Remove(path)
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return err
+	}
+	return nil
 }

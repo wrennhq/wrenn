@@ -301,7 +301,7 @@ func (s *Server) MakeDir(
 
 	resp, err := client.MakeDir(ctx, msg.Path)
 	if err != nil {
-		return nil, fmt.Errorf("make dir: %w", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("make dir: %w", err))
 	}
 
 	return connect.NewResponse(&pb.MakeDirResponse{
@@ -373,6 +373,8 @@ func (s *Server) ExecStream(
 					Error:    ev.Error,
 				},
 			}
+		default:
+			continue
 		}
 		if err := stream.Send(&resp); err != nil {
 			return err
@@ -889,6 +891,8 @@ func (s *Server) ConnectProcess(
 					Error:    ev.Error,
 				},
 			}
+		default:
+			continue
 		}
 		if err := stream.Send(&resp); err != nil {
 			return err

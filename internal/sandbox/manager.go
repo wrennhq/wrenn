@@ -541,6 +541,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
 			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
 			m.slots.Release(sb.SlotIndex)
+			os.Remove(sb.dmDevice.CowPath)
 			if sb.baseImagePath != "" {
 				m.loops.Release(sb.baseImagePath)
 			}

@@ -255,7 +255,7 @@ func Run(opts ...Option) {
 	// Start extension background workers.
 	for _, ext := range o.extensions {
 		for _, worker := range ext.BackgroundWorkers(sctx) {
-			worker(ctx)
+			go worker(ctx)
 		}
 	}
 
