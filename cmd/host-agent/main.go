@@ -126,22 +126,22 @@ func main() {
 	}
 	slog.Info("resolved kernel", "version", kernelVersion, "path", kernelPath)
 
-	// Detect firecracker version.
-	fcBin := envOrDefault("WRENN_FIRECRACKER_BIN", "/usr/local/bin/firecracker")
-	fcVersion, err := sandbox.DetectFirecrackerVersion(fcBin)
+	// Detect cloud-hypervisor version.
+	chBin := envOrDefault("WRENN_CH_BIN", "/usr/local/bin/cloud-hypervisor")
+	chVersion, err := sandbox.DetectCHVersion(chBin)
 	if err != nil {
-		slog.Error("failed to detect firecracker version", "error", err)
+		slog.Error("failed to detect cloud-hypervisor version", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("resolved firecracker", "version", fcVersion, "path", fcBin)
+	slog.Info("resolved cloud-hypervisor", "version", chVersion, "path", chBin)
 
 	cfg := sandbox.Config{
 		WrennDir:            rootDir,
 		DefaultRootfsSizeMB: defaultRootfsSizeMB,
 		KernelPath:          kernelPath,
 		KernelVersion:       kernelVersion,
-		FirecrackerBin:      fcBin,
-		FirecrackerVersion:  fcVersion,
+		VMMBin:              chBin,
+		VMMVersion:          chVersion,
 		AgentVersion:        version,
 	}
 
@@ -245,12 +245,16 @@ func main() {
 		},
 	)
 
-	// Graceful shutdown on SIGINT/SIGTERM.
+	// Graceful shutdown on SIGINT/SIGTERM. A second signal force-exits
+	// so the operator can always kill the process if shutdown hangs.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		doShutdown("signal: " + sig.String())
+		go doShutdown("signal: " + sig.String())
+		sig = <-sigCh
+		slog.Error("received second signal, force exiting", "signal", sig.String())
+		os.Exit(1)
 	}()
 
 	slog.Info("host agent starting", "addr", listenAddr, "host_id", creds.HostID, "version", version, "commit", commit)
@@ -292,7 +296,7 @@ func checkPrivileges() error {
 		name string
 	}{
 		{1, "CAP_DAC_OVERRIDE"}, // /dev/loop*, /dev/mapper/*, /dev/net/tun
-		{5, "CAP_KILL"},         // SIGTERM/SIGKILL to Firecracker processes
+		{5, "CAP_KILL"},         // SIGTERM/SIGKILL to cloud-hypervisor processes
 		{12, "CAP_NET_ADMIN"},   // netlink, iptables, routing, TAP/veth
 		{13, "CAP_NET_RAW"},     // raw sockets (iptables)
 		{19, "CAP_SYS_PTRACE"},  // reading /proc/self/ns/net (netns.Get)

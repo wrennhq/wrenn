@@ -80,8 +80,8 @@ func (r *LoopRegistry) Release(imagePath string) {
 
 	e.refcount--
 	if e.refcount <= 0 {
-		if err := losetupDetach(e.device); err != nil {
-			slog.Warn("losetup detach failed", "device", e.device, "error", err)
+		if err := losetupDetachRetry(e.device); err != nil {
+			slog.Error("losetup detach failed, loop device leaked", "device", e.device, "image", imagePath, "error", err)
 		}
 		delete(r.entries, imagePath)
 		slog.Info("loop device released", "image", imagePath, "device", e.device)
@@ -94,8 +94,8 @@ func (r *LoopRegistry) ReleaseAll() {
 	defer r.mu.Unlock()
 
 	for path, e := range r.entries {
-		if err := losetupDetach(e.device); err != nil {
-			slog.Warn("losetup detach failed", "device", e.device, "error", err)
+		if err := losetupDetachRetry(e.device); err != nil {
+			slog.Error("losetup detach failed during shutdown", "device", e.device, "image", path, "error", err)
 		}
 		delete(r.entries, path)
 	}
@@ -134,8 +134,8 @@ func CreateSnapshot(name, originLoopDev, cowPath string, originSizeBytes, cowSiz
 	// space to store all modified blocks (it's sparse, so 20GB costs nothing).
 	sectors := originSizeBytes / 512
 	if err := dmsetupCreate(name, originLoopDev, cowLoopDev, sectors); err != nil {
-		if detachErr := losetupDetach(cowLoopDev); detachErr != nil {
-			slog.Warn("cow losetup detach failed during cleanup", "device", cowLoopDev, "error", detachErr)
+		if detachErr := losetupDetachRetry(cowLoopDev); detachErr != nil {
+			slog.Error("cow losetup detach failed during cleanup, loop device leaked", "device", cowLoopDev, "error", detachErr)
 		}
 		os.Remove(cowPath)
 		return nil, fmt.Errorf("dmsetup create: %w", err)
@@ -178,8 +178,8 @@ func RestoreSnapshot(ctx context.Context, name, originLoopDev, cowPath string, o
 
 	sectors := originSizeBytes / 512
 	if err := dmsetupCreate(name, originLoopDev, cowLoopDev, sectors); err != nil {
-		if detachErr := losetupDetach(cowLoopDev); detachErr != nil {
-			slog.Warn("cow losetup detach failed during cleanup", "device", cowLoopDev, "error", detachErr)
+		if detachErr := losetupDetachRetry(cowLoopDev); detachErr != nil {
+			slog.Error("cow losetup detach failed during cleanup, loop device leaked", "device", cowLoopDev, "error", detachErr)
 		}
 		return nil, fmt.Errorf("dmsetup create: %w", err)
 	}
@@ -208,8 +208,8 @@ func RemoveSnapshot(ctx context.Context, dev *SnapshotDevice) error {
 		return fmt.Errorf("dmsetup remove %s: %w", dev.Name, err)
 	}
 
-	if err := losetupDetach(dev.CowLoopDev); err != nil {
-		slog.Warn("cow losetup detach failed", "device", dev.CowLoopDev, "error", err)
+	if err := losetupDetachRetry(dev.CowLoopDev); err != nil {
+		return fmt.Errorf("detach cow loop %s: %w", dev.CowLoopDev, err)
 	}
 
 	slog.Info("dm-snapshot removed", "name", dev.Name)
@@ -297,6 +297,24 @@ func losetupDetach(dev string) error {
 	return exec.Command("losetup", "-d", dev).Run()
 }
 
+// losetupDetachRetry detaches a loop device with retries for transient
+// "device busy" errors (kernel may still hold references briefly after
+// dm-snapshot removal).
+func losetupDetachRetry(dev string) error {
+	var lastErr error
+	for attempt := range 5 {
+		if attempt > 0 {
+			time.Sleep(200 * time.Millisecond)
+		}
+		if err := losetupDetach(dev); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("after 5 attempts: %w", lastErr)
+}
+
 // dmsetupCreate creates a dm-snapshot device with persistent metadata.
 func dmsetupCreate(name, originDev, cowDev string, sectors int64) error {
 	// Table format: <start> <size> snapshot <origin> <cow> P <chunk_size>
@@ -316,7 +334,7 @@ func dmDeviceExists(name string) bool {
 
 // dmsetupRemove removes a device-mapper device, retrying on transient
 // "device busy" errors that occur when the kernel hasn't fully released
-// the device after a Firecracker process exits.
+// the device after a VMM process exits.
 func dmsetupRemove(ctx context.Context, name string) error {
 	var lastErr error
 	for attempt := range 5 {

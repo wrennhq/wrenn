@@ -176,7 +176,7 @@ func NewSlot(index int) *Slot {
 // CreateNetwork sets up the full network topology for a sandbox:
 //   - Named network namespace
 //   - Veth pair bridging host and namespace
-//   - TAP device inside namespace for Firecracker
+//   - TAP device inside namespace for Cloud Hypervisor
 //   - Routes and NAT rules for connectivity
 //
 // On error, all partially created resources are rolled back.

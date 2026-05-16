@@ -2,13 +2,12 @@ package vm
 
 import "fmt"
 
-// VMConfig holds the configuration for creating a Firecracker microVM.
+// VMConfig holds the configuration for creating a Cloud Hypervisor microVM.
 type VMConfig struct {
 	// SandboxID is the unique identifier for this sandbox (e.g., "cl-a1b2c3d4").
 	SandboxID string
 
-	// TemplateID is the template UUID string used to populate MMDS metadata
-	// so that envd can read WRENN_TEMPLATE_ID from inside the guest.
+	// TemplateID is the template UUID string, passed to envd via PostInit.
 	TemplateID string
 
 	// KernelPath is the path to the uncompressed Linux kernel (vmlinux).
@@ -25,12 +24,12 @@ type VMConfig struct {
 	MemoryMB int
 
 	// NetworkNamespace is the name of the network namespace to launch
-	// Firecracker inside (e.g., "ns-1"). The namespace must already exist
+	// Cloud Hypervisor inside (e.g., "ns-1"). The namespace must already exist
 	// with a TAP device configured.
 	NetworkNamespace string
 
 	// TapDevice is the name of the TAP device inside the network namespace
-	// that Firecracker will attach to (e.g., "tap0").
+	// that Cloud Hypervisor will attach to (e.g., "tap0").
 	TapDevice string
 
 	// TapMAC is the MAC address for the TAP device.
@@ -45,19 +44,23 @@ type VMConfig struct {
 	// NetMask is the subnet mask for the guest network (e.g., "255.255.255.252").
 	NetMask string
 
-	// FirecrackerBin is the path to the firecracker binary.
-	FirecrackerBin string
+	// VMMBin is the path to the cloud-hypervisor binary.
+	VMMBin string
 
-	// SocketPath is the path for the Firecracker API Unix socket.
+	// SocketPath is the path for the Cloud Hypervisor API Unix socket.
 	SocketPath string
 
 	// SandboxDir is the tmpfs mount point for per-sandbox files inside the
-	// mount namespace (e.g., "/fc-vm").
+	// mount namespace (e.g., "/ch-vm").
 	SandboxDir string
 
 	// InitPath is the path to the init process inside the guest.
 	// Defaults to "/sbin/init" if empty.
 	InitPath string
+
+	// SnapshotDir is the path to the snapshot directory for restore.
+	// Only set when restoring from a snapshot.
+	SnapshotDir string
 }
 
 func (c *VMConfig) applyDefaults() {
@@ -67,14 +70,14 @@ func (c *VMConfig) applyDefaults() {
 	if c.MemoryMB == 0 {
 		c.MemoryMB = 512
 	}
-	if c.FirecrackerBin == "" {
-		c.FirecrackerBin = "/usr/local/bin/firecracker"
+	if c.VMMBin == "" {
+		c.VMMBin = "/usr/local/bin/cloud-hypervisor"
 	}
 	if c.SocketPath == "" {
-		c.SocketPath = fmt.Sprintf("/tmp/fc-%s.sock", c.SandboxID)
+		c.SocketPath = fmt.Sprintf("/tmp/ch-%s.sock", c.SandboxID)
 	}
 	if c.SandboxDir == "" {
-		c.SandboxDir = "/tmp/fc-vm"
+		c.SandboxDir = "/tmp/ch-vm"
 	}
 	if c.TapDevice == "" {
 		c.TapDevice = "tap0"
@@ -95,7 +98,7 @@ func (c *VMConfig) kernelArgs() string {
 	)
 
 	return fmt.Sprintf(
-		"console=ttyS0 reboot=k panic=1 pci=off quiet loglevel=1 clocksource=kvm-clock init=%s %s",
+		"console=ttyS0 root=/dev/vda rw reboot=k panic=1 quiet loglevel=1 init_on_free=1 clocksource=kvm-clock init=%s %s",
 		c.InitPath, ipArg,
 	)
 }

@@ -326,7 +326,7 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		s.failBuild(buildCtx, buildID, fmt.Sprintf("create sandbox failed: %v", err))
 		return
 	}
-	// Capture sandbox metadata (envd/kernel/firecracker/agent versions).
+	// Capture sandbox metadata (envd/kernel/vmm/agent versions).
 	sandboxMetadata := resp.Msg.Metadata
 
 	// Record sandbox/host association.
@@ -768,7 +768,7 @@ var runtimeEnvVars = map[string]bool{
 	"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true,
 	"PWD": true, "OLDPWD": true, "HOSTNAME": true, "TERM": true,
 	"SHLVL": true, "_": true,
-	// Per-sandbox identifiers set by envd at boot via MMDS.
+	// Per-sandbox identifiers set by envd at boot via PostInit.
 	"WRENN_SANDBOX_ID": true, "WRENN_TEMPLATE_ID": true,
 }
 

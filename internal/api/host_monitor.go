@@ -19,6 +19,12 @@ import (
 // it is considered unreachable (3 missed 30-second heartbeats).
 const unreachableThreshold = 90 * time.Second
 
+// transientGracePeriod is how long a sandbox is allowed to stay in a transient
+// status (starting, resuming, pausing, stopping) before the monitor infers a
+// final state. This prevents the monitor from racing against in-flight RPCs
+// that may not have registered the sandbox on the host agent yet.
+const transientGracePeriod = 2 * time.Minute
+
 // HostMonitor runs on a fixed interval and performs two duties:
 //
 //  1. Passive check: marks hosts whose last_heartbeat_at is stale as
@@ -257,7 +263,16 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 			}
 			continue
 		}
-		// Sandbox is not alive on host — infer final state.
+		// Sandbox is not alive on host. If the transition is recent, give the
+		// in-flight RPC time to finish before declaring a final state.
+		if sb.LastUpdated.Valid && time.Since(sb.LastUpdated.Time) < transientGracePeriod {
+			slog.Debug("host monitor: transient sandbox still within grace period",
+				"sandbox_id", sbIDStr, "status", sb.Status,
+				"age", time.Since(sb.LastUpdated.Time).Round(time.Second))
+			continue
+		}
+
+		// Grace period expired — infer final state.
 		var finalStatus string
 		switch sb.Status {
 		case "starting", "resuming":

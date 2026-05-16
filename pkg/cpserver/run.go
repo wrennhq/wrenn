@@ -177,10 +177,11 @@ func Run(opts ...Option) {
 		Config:    cfg,
 	}
 
-	// Host monitor (passive + active reconciliation every 60s).
-	// Created before API server so the heartbeat handler can trigger immediate
-	// reconciliation when a host recovers from unreachable.
-	monitor := api.NewHostMonitor(queries, hostPool, al, 60*time.Second)
+	// Host monitor (safety-net reconciliation every 5 minutes).
+	// Primary state sync is push-based (host agent callbacks + CP background
+	// goroutines). The monitor acts as a fallback for missed events, host death
+	// detection, and transient status resolution.
+	monitor := api.NewHostMonitor(queries, hostPool, al, 5*time.Minute)
 
 	// API server.
 	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelSvc, mailer, o.extensions, sctx, monitor, o.version)

@@ -42,6 +42,7 @@ const (
 	SandboxEventResumed    = "sandbox.resumed"
 	SandboxEventStopped    = "sandbox.stopped"
 	SandboxEventFailed     = "sandbox.failed"
+	SandboxEventError      = "sandbox.error"
 	SandboxEventAutoPaused = "sandbox.auto_paused"
 )
 
@@ -141,7 +142,7 @@ func (c *SandboxEventConsumer) handleMessage(ctx context.Context, msg redis.XMes
 		c.handlePaused(ctx, sandboxID, event)
 	case SandboxEventStopped:
 		c.handleStopped(ctx, sandboxID, event)
-	case SandboxEventFailed:
+	case SandboxEventFailed, SandboxEventError:
 		c.handleFailed(ctx, sandboxID)
 	case SandboxEventAutoPaused:
 		c.handleAutoPaused(ctx, sandboxID, event)
@@ -187,20 +188,39 @@ func (c *SandboxEventConsumer) handlePaused(ctx context.Context, sandboxID pgtyp
 }
 
 func (c *SandboxEventConsumer) handleStopped(ctx context.Context, sandboxID pgtype.UUID, event SandboxEvent) {
+	// Try stopping → stopped (CP-initiated destroy completed).
 	if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 		ID:       sandboxID,
 		Status:   "stopping",
+		Status_2: "stopped",
+	}); err == nil {
+		return
+	}
+	// Try running → stopped (autonomous destroy, e.g. TTL auto-destroy).
+	if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+		ID:       sandboxID,
+		Status:   "running",
 		Status_2: "stopped",
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		slog.Warn("sandbox event consumer: failed to update sandbox to stopped", "sandbox_id", event.SandboxID, "error", err)
 	}
 }
 
-// handleFailed is a no-op fallback — the background goroutine already
-// performed the conditional DB update before publishing this event.
-// We keep the case arm so unknown event types are flagged, but avoid
-// an unconditional status write that could clobber concurrent operations.
-func (c *SandboxEventConsumer) handleFailed(_ context.Context, _ pgtype.UUID) {}
+// handleFailed marks a sandbox as "error" when the host agent reports a crash
+// or the CP's background goroutine publishes a failure. Uses conditional update
+// to avoid clobbering concurrent operations.
+func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtype.UUID) {
+	// Try running → error (VM crash pushed by host agent).
+	if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+		ID: sandboxID, Status: "running", Status_2: "error",
+	}); err == nil {
+		return
+	}
+	// Try starting → error (create failed).
+	_, _ = c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+		ID: sandboxID, Status: "starting", Status_2: "error",
+	})
+}
 
 func (c *SandboxEventConsumer) handleAutoPaused(ctx context.Context, sandboxID pgtype.UUID, _ SandboxEvent) {
 	sb, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{

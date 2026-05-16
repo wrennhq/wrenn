@@ -294,7 +294,7 @@ func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
 
 // PrepareSnapshot calls envd's POST /snapshot/prepare endpoint, which stops
 // the port scanner/forwarder and marks active connections for post-restore
-// cleanup before Firecracker freezes vCPUs.
+// cleanup before the VMM freezes vCPUs.
 //
 // Best-effort: the caller should log a warning on error but not abort the pause.
 func (c *Client) PrepareSnapshot(ctx context.Context) error {
@@ -317,27 +317,33 @@ func (c *Client) PrepareSnapshot(ctx context.Context) error {
 	return nil
 }
 
-// PostInit calls envd's POST /init endpoint, which triggers a re-read of
-// Firecracker MMDS metadata. This updates WRENN_SANDBOX_ID, WRENN_TEMPLATE_ID
-// env vars and the corresponding files under /run/wrenn/ inside the guest.
-// Must be called after snapshot restore so envd picks up the new sandbox's metadata.
+// PostInit calls envd's POST /init endpoint to trigger post-boot or
+// post-restore initialization. sandbox_id and template_id are passed
+// so envd can set WRENN_SANDBOX_ID and WRENN_TEMPLATE_ID env vars.
 func (c *Client) PostInit(ctx context.Context) error {
-	return c.PostInitWithDefaults(ctx, "", nil)
+	return c.PostInitWithDefaults(ctx, "", nil, "", "")
 }
 
 // PostInitWithDefaults calls envd's POST /init endpoint with optional default
-// user and environment variables. These are applied to envd's defaults so all
-// subsequent process executions use them.
-func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, envVars map[string]string) error {
+// user, environment variables, and sandbox metadata. These are applied to
+// envd's defaults so all subsequent process executions use them.
+func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, envVars map[string]string, sandboxID, templateID string) error {
+	payload := make(map[string]any)
+	if defaultUser != "" {
+		payload["defaultUser"] = defaultUser
+	}
+	if len(envVars) > 0 {
+		payload["envVars"] = envVars
+	}
+	if sandboxID != "" {
+		payload["sandbox_id"] = sandboxID
+	}
+	if templateID != "" {
+		payload["template_id"] = templateID
+	}
+
 	var body io.Reader
-	if defaultUser != "" || len(envVars) > 0 {
-		payload := make(map[string]any)
-		if defaultUser != "" {
-			payload["defaultUser"] = defaultUser
-		}
-		if len(envVars) > 0 {
-			payload["envVars"] = envVars
-		}
+	if len(payload) > 0 {
 		data, err := json.Marshal(payload)
 		if err != nil {
 			return fmt.Errorf("marshal init body: %w", err)

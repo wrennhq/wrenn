@@ -46,7 +46,7 @@ func SandboxesDir(wrennDir string) string {
 	return filepath.Join(wrennDir, "sandboxes")
 }
 
-// KernelPath returns the path to the Firecracker kernel.
+// KernelPath returns the path to the VM kernel.
 func KernelPath(wrennDir string) string {
 	return filepath.Join(wrennDir, "kernels", "vmlinux")
 }
