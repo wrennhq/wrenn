@@ -119,6 +119,8 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 		Cmd:        req.Cmd,
 		Args:       req.Args,
 		TimeoutSec: req.TimeoutSec,
+		Envs:       req.Envs,
+		Cwd:        req.Cwd,
 	}))
 	if err != nil {
 		status, code, msg := agentErrToHTTP(err)

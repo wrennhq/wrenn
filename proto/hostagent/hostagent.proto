@@ -222,6 +222,10 @@ message ExecRequest {
   repeated string args = 3;
   // Timeout for the command in seconds (default: 30).
   int32 timeout_sec = 4;
+  // Environment variables to set for the command.
+  map<string, string> envs = 5;
+  // Working directory for the command.
+  string cwd = 6;
 }
 
 message ExecResponse {

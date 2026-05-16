@@ -210,16 +210,14 @@ func (c *SandboxEventConsumer) handleStopped(ctx context.Context, sandboxID pgty
 // or the CP's background goroutine publishes a failure. Uses conditional update
 // to avoid clobbering concurrent operations.
 func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtype.UUID) {
-	// Try running → error (VM crash pushed by host agent).
-	if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
-		ID: sandboxID, Status: "running", Status_2: "error",
-	}); err == nil {
-		return
+	// Try each possible pre-failure state until one matches.
+	for _, fromStatus := range []string{"running", "starting", "pausing", "resuming"} {
+		if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+			ID: sandboxID, Status: fromStatus, Status_2: "error",
+		}); err == nil {
+			return
+		}
 	}
-	// Try starting → error (create failed).
-	_, _ = c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
-		ID: sandboxID, Status: "starting", Status_2: "error",
-	})
 }
 
 func (c *SandboxEventConsumer) handleAutoPaused(ctx context.Context, sandboxID pgtype.UUID, _ SandboxEvent) {

@@ -206,8 +206,3 @@ func (c *chClient) resizeBalloon(ctx context.Context, sizeBytes int64) error {
 		"desired_balloon": sizeBytes,
 	})
 }
-
-// ping checks if the VMM is alive and ready to accept commands.
-func (c *chClient) ping(ctx context.Context) error {
-	return c.do(ctx, http.MethodGet, "/api/v1/vmm.ping", nil)
-}

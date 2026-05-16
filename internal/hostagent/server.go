@@ -20,6 +20,7 @@ import (
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 
+	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
 	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
 )
 
@@ -90,7 +91,10 @@ func (s *Server) DestroySandbox(
 	req *connect.Request[pb.DestroySandboxRequest],
 ) (*connect.Response[pb.DestroySandboxResponse], error) {
 	if err := s.mgr.Destroy(ctx, req.Msg.SandboxId); err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		if strings.Contains(err.Error(), "not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&pb.DestroySandboxResponse{}), nil
 }
@@ -216,7 +220,12 @@ func (s *Server) Exec(
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	result, err := s.mgr.Exec(execCtx, msg.SandboxId, msg.Cmd, msg.Args...)
+	var opts *envdclient.ExecOpts
+	if len(msg.Envs) > 0 || msg.Cwd != "" {
+		opts = &envdclient.ExecOpts{Envs: msg.Envs, Cwd: msg.Cwd}
+	}
+
+	result, err := s.mgr.Exec(execCtx, msg.SandboxId, msg.Cmd, msg.Args, opts)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("exec: %w", err))
 	}

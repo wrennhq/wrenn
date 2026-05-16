@@ -78,15 +78,30 @@ type ExecResult struct {
 	ExitCode int32
 }
 
+// ExecOpts holds optional parameters for Exec.
+type ExecOpts struct {
+	Envs map[string]string
+	Cwd  string
+}
+
 // Exec runs a command inside the sandbox and collects all stdout/stderr output.
 // It blocks until the command completes.
-func (c *Client) Exec(ctx context.Context, cmd string, args ...string) (*ExecResult, error) {
+func (c *Client) Exec(ctx context.Context, cmd string, args []string, opts *ExecOpts) (*ExecResult, error) {
 	stdin := false
+	proc := &envdpb.ProcessConfig{
+		Cmd:  cmd,
+		Args: args,
+	}
+	if opts != nil {
+		if len(opts.Envs) > 0 {
+			proc.Envs = opts.Envs
+		}
+		if opts.Cwd != "" {
+			proc.Cwd = &opts.Cwd
+		}
+	}
 	req := connect.NewRequest(&envdpb.StartRequest{
-		Process: &envdpb.ProcessConfig{
-			Cmd:  cmd,
-			Args: args,
-		},
+		Process: proc,
 		Stdin: &stdin,
 	})
 

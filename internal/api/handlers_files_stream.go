@@ -89,6 +89,12 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 
 	// Open client-streaming RPC to host agent.
 	stream := agent.WriteFileStream(ctx)
+	var streamClosed bool
+	defer func() {
+		if !streamClosed {
+			stream.CloseAndReceive()
+		}
+	}()
 
 	// Send metadata first.
 	if err := stream.Send(&pb.WriteFileStreamRequest{
@@ -127,6 +133,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	// Close and receive response.
+	streamClosed = true
 	if _, err := stream.CloseAndReceive(); err != nil {
 		status, code, msg := agentErrToHTTP(err)
 		writeError(w, status, code, msg)

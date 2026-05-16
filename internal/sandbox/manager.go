@@ -201,24 +201,30 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 		return nil, fmt.Errorf("create dm-snapshot: %w", err)
 	}
 
+	res := &createResources{
+		sandboxID: sandboxID,
+		loops:     m.loops,
+		loopImage: baseRootfs,
+		dmDevice:  dmDev,
+		cowPath:   cowPath,
+		slots:     m.slots,
+	}
+
 	// Allocate network slot.
 	slotIdx, err := m.slots.Allocate()
 	if err != nil {
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("allocate network slot: %w", err)
 	}
+	res.slotIdx = slotIdx
 	slot := network.NewSlot(slotIdx)
 
 	// Set up network.
 	if err := network.CreateNetwork(slot); err != nil {
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("create network: %w", err)
 	}
+	res.slot = slot
 
 	// Boot VM — CH gets the dm device path.
 	vmCfg := vm.VMConfig{
@@ -238,13 +244,10 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	}
 
 	if _, err := m.vm.Create(ctx, vmCfg); err != nil {
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("create VM: %w", err)
 	}
+	res.vm = m.vm
 
 	// Wait for envd to be ready.
 	client := envdclient.New(slot.HostIP.String())
@@ -252,12 +255,7 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	defer waitCancel()
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
-		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
@@ -538,14 +536,16 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 	// ── Step 7: Remove dm-snapshot and save CoW ──────────────────────
 	if sb.dmDevice != nil {
-		if err := devicemapper.RemoveSnapshot(ctx, sb.dmDevice); err != nil {
+		dmDev := sb.dmDevice
+		sb.dmDevice = nil
+		if err := devicemapper.RemoveSnapshot(ctx, dmDev); err != nil {
 			m.cleanupPauseFailure(sb, sandboxID, pauseDir)
 			return fmt.Errorf("remove dm-snapshot: %w", err)
 		}
 
 		snapshotCow := snapshot.CowPath(pauseDir, "")
-		if err := os.Rename(sb.dmDevice.CowPath, snapshotCow); err != nil {
-			os.Remove(sb.dmDevice.CowPath)
+		if err := os.Rename(dmDev.CowPath, snapshotCow); err != nil {
+			os.Remove(dmDev.CowPath)
 			m.cleanupPauseFailure(sb, sandboxID, pauseDir)
 			return fmt.Errorf("move cow file: %w", err)
 		}
@@ -616,38 +616,42 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		return nil, fmt.Errorf("move cow file: %w", err)
 	}
 
-	rollbackCow := func() {
-		if err := os.Rename(cowPath, savedCow); err != nil {
-			slog.Warn("failed to rollback cow file", "src", cowPath, "dst", savedCow, "error", err)
-		}
-	}
-
 	// Restore dm-snapshot from existing persistent CoW file.
 	dmName := "wrenn-" + sandboxID
 	dmDev, err := devicemapper.RestoreSnapshot(ctx, dmName, originLoop, cowPath, originSize)
 	if err != nil {
 		m.loops.Release(baseImagePath)
-		rollbackCow()
+		os.Rename(cowPath, savedCow)
 		return nil, fmt.Errorf("restore dm-snapshot: %w", err)
+	}
+
+	res := &createResources{
+		sandboxID: sandboxID,
+		loops:     m.loops,
+		loopImage: baseImagePath,
+		dmDevice:  dmDev,
+		slots:     m.slots,
+		rollCow: func() {
+			if err := os.Rename(cowPath, savedCow); err != nil {
+				slog.Warn("failed to rollback cow file", "src", cowPath, "dst", savedCow, "error", err)
+			}
+		},
 	}
 
 	// Allocate network slot.
 	slotIdx, err := m.slots.Allocate()
 	if err != nil {
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		rollbackCow()
-		m.loops.Release(baseImagePath)
+		res.rollback()
 		return nil, fmt.Errorf("allocate network slot: %w", err)
 	}
+	res.slotIdx = slotIdx
 	slot := network.NewSlot(slotIdx)
 
 	if err := network.CreateNetwork(slot); err != nil {
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		rollbackCow()
-		m.loops.Release(baseImagePath)
+		res.rollback()
 		return nil, fmt.Errorf("create network: %w", err)
 	}
+	res.slot = slot
 
 	// Restore VM from CH snapshot.
 	vmCfg := vm.VMConfig{
@@ -655,6 +659,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		TemplateID:       meta.TemplateID,
 		KernelPath:       m.resolveKernelPath(kernelVersion),
 		RootfsPath:       dmDev.DevicePath,
+		MemoryMB:         meta.MemoryMB,
 		NetworkNamespace: slot.NamespaceID,
 		TapDevice:        slot.TapName,
 		TapMAC:           slot.TapMAC,
@@ -665,13 +670,10 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 	}
 
 	if _, err := m.vm.CreateFromSnapshot(ctx, vmCfg, pauseDir); err != nil {
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		rollbackCow()
-		m.loops.Release(baseImagePath)
+		res.rollback()
 		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
 	}
+	res.vm = m.vm
 
 	// Wait for envd to be ready.
 	client := envdclient.New(slot.HostIP.String())
@@ -679,12 +681,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
 		waitCancel()
-		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		rollbackCow()
-		m.loops.Release(baseImagePath)
+		res.rollback()
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 	waitCancel()
@@ -905,7 +902,7 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 	func() {
 		syncCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		if _, err := sb.client.Exec(syncCtx, "/bin/sync"); err != nil {
+		if _, err := sb.client.Exec(syncCtx, "/bin/sync", nil, nil); err != nil {
 			slog.Warn("flatten: guest sync failed (non-fatal)", "id", sb.ID, "error", err)
 		}
 	}()
@@ -1001,7 +998,7 @@ func (m *Manager) DeleteSnapshot(teamID, templateID pgtype.UUID) error {
 // CH handles memory restore internally (with on-demand paging).
 // The template's rootfs.ext4 is a flattened standalone image — we create a
 // dm-snapshot on top of it just like a normal Create.
-func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID, vcpus, _, timeoutSec, diskSizeMB int) (*models.Sandbox, error) {
+func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID, vcpus, memoryMB, timeoutSec, diskSizeMB int) (*models.Sandbox, error) {
 	tmplDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
 
 	// Set up dm-snapshot on the template's flattened rootfs.
@@ -1026,23 +1023,29 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		return nil, fmt.Errorf("create dm-snapshot: %w", err)
 	}
 
+	res := &createResources{
+		sandboxID: sandboxID,
+		loops:     m.loops,
+		loopImage: baseRootfs,
+		dmDevice:  dmDev,
+		cowPath:   cowPath,
+		slots:     m.slots,
+	}
+
 	// Allocate network.
 	slotIdx, err := m.slots.Allocate()
 	if err != nil {
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("allocate network slot: %w", err)
 	}
+	res.slotIdx = slotIdx
 	slot := network.NewSlot(slotIdx)
 
 	if err := network.CreateNetwork(slot); err != nil {
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("create network: %w", err)
 	}
+	res.slot = slot
 
 	// Restore VM from CH snapshot.
 	vmCfg := vm.VMConfig{
@@ -1051,6 +1054,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 		KernelPath:       m.cfg.KernelPath,
 		RootfsPath:       dmDev.DevicePath,
 		VCPUs:            vcpus,
+		MemoryMB:         memoryMB,
 		NetworkNamespace: slot.NamespaceID,
 		TapDevice:        slot.TapName,
 		TapMAC:           slot.TapMAC,
@@ -1061,13 +1065,10 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 	}
 
 	if _, err := m.vm.CreateFromSnapshot(ctx, vmCfg, tmplDir); err != nil {
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
 	}
+	res.vm = m.vm
 
 	// Wait for envd.
 	client := envdclient.New(slot.HostIP.String())
@@ -1075,12 +1076,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
 		waitCancel()
-		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 	waitCancel()
@@ -1109,6 +1105,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 			TemplateTeamID: teamID.Bytes,
 			TemplateID:     templateID.Bytes,
 			VCPUs:          vcpus,
+			MemoryMB:       memoryMB,
 			TimeoutSec:     timeoutSec,
 			SlotIndex:      slotIdx,
 			HostIP:         slot.HostIP,
@@ -1143,7 +1140,7 @@ func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, team
 }
 
 // Exec runs a command inside a sandbox.
-func (m *Manager) Exec(ctx context.Context, sandboxID string, cmd string, args ...string) (*envdclient.ExecResult, error) {
+func (m *Manager) Exec(ctx context.Context, sandboxID string, cmd string, args []string, opts *envdclient.ExecOpts) (*envdclient.ExecResult, error) {
 	sb, err := m.get(sandboxID)
 	if err != nil {
 		return nil, err
@@ -1157,7 +1154,7 @@ func (m *Manager) Exec(ctx context.Context, sandboxID string, cmd string, args .
 	sb.LastActiveAt = time.Now()
 	m.mu.Unlock()
 
-	return sb.client.Exec(ctx, cmd, args...)
+	return sb.client.Exec(ctx, cmd, args, opts)
 }
 
 // ExecStream runs a command inside a sandbox and returns a channel of streaming events.
@@ -1535,6 +1532,44 @@ func (m *Manager) PauseAll(ctx context.Context) {
 func warnErr(msg string, id string, err error) {
 	if err != nil {
 		slog.Warn(msg, "id", id, "error", err)
+	}
+}
+
+// createResources tracks partially-acquired resources during sandbox creation
+// so they can be rolled back in reverse order on failure.
+type createResources struct {
+	sandboxID string
+	loops     *devicemapper.LoopRegistry
+	vm        *vm.Manager
+	loopImage string
+	dmDevice  *devicemapper.SnapshotDevice
+	cowPath   string
+	slotIdx   int
+	slots     *network.SlotAllocator
+	slot      *network.Slot
+	rollCow   func() // optional custom cow rollback (e.g. rename back)
+}
+
+func (r *createResources) rollback() {
+	if r.vm != nil && r.sandboxID != "" {
+		warnErr("vm destroy error", r.sandboxID, r.vm.Destroy(context.Background(), r.sandboxID))
+	}
+	if r.slot != nil {
+		warnErr("network cleanup error", r.sandboxID, network.RemoveNetwork(r.slot))
+	}
+	if r.slots != nil && r.slotIdx > 0 {
+		r.slots.Release(r.slotIdx)
+	}
+	if r.dmDevice != nil {
+		warnErr("dm-snapshot remove error", r.sandboxID, devicemapper.RemoveSnapshot(context.Background(), r.dmDevice))
+	}
+	if r.rollCow != nil {
+		r.rollCow()
+	} else if r.cowPath != "" {
+		os.Remove(r.cowPath)
+	}
+	if r.loopImage != "" {
+		r.loops.Release(r.loopImage)
 	}
 }
 
