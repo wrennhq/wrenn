@@ -183,7 +183,25 @@ HIBERNATED → RUNNING (cold snapshot resume, slower)
 
 ## REST API
 
-Routes defined in `internal/api/server.go`, handlers in `internal/api/handlers_*.go`. OpenAPI spec embedded via `//go:embed` and served at `/openapi.yaml` (Swagger UI at `/docs`). JSON request/response. API key auth via `X-API-Key` header. Error responses: `{"error": {"code": "...", "message": "..."}}`.
+Routes defined in `internal/api/server.go`, handlers in `internal/api/handlers_*.go`. OpenAPI spec embedded via `//go:embed` and served at `/openapi.yaml` (Swagger UI at `/docs`). JSON request/response. Error responses: `{"error": {"code": "...", "message": "..."}}`.
+
+### Authentication
+
+Two paths, no JWTs for user auth:
+
+- **SDK / server-to-server**: `X-API-Key: wrn_<32hex>` header. Keys are created via the dashboard or `POST /v1/api-keys`, SHA-256-hashed at rest, scoped to a single team. `requireSessionOrAPIKey` middleware accepts this on every capsule lifecycle route.
+- **Browser (dashboard)**: opaque cookie session. `POST /v1/auth/login` (or activate / oauth-callback) sets two cookies — `wrenn_sid` (HttpOnly+Secure+SameSite=Strict) and `wrenn_csrf` (readable by JS, SameSite=Strict). All non-GET requests must echo the CSRF token in an `X-CSRF-Token` header (double-submit). Sessions live in Postgres `sessions` plus a Redis cache (`wrenn:session:{sid}`) — see `pkg/auth/session/`.
+
+Session semantics:
+- **Idle**: 6h. Each request bumps the Redis TTL. Postgres `last_seen_at` is updated on a debounce.
+- **Absolute**: 24h from `created_at` (`expires_at`). Never extended.
+- **Rotation**: `POST /v1/auth/switch-team` issues a fresh SID and re-sets both cookies; old SID revoked.
+- **Revocation**: password change, password add, and password reset all call `RevokeAllForUser`. Self-service is at `GET /v1/me/sessions`, `DELETE /v1/me/sessions/{id}`, `POST /v1/auth/logout`, `POST /v1/auth/logout-all`.
+- **`is_admin` freshness**: the session blob caches it for display, but `requireAdmin` always re-reads Postgres so revoked admins lose access at the next admin request.
+
+Host JWTs (long-lived, signed by `JWT_SECRET`) are unchanged — that is the wrenn-cp ↔ wrenn-agent trust channel and has nothing to do with user auth.
+
+SSE / WebSocket auth: browsers send the `wrenn_sid` cookie automatically on `EventSource` and WS upgrades (same-origin via Caddy); SDKs set `X-API-Key`. No ticket exchange is involved.
 
 ## Code Generation
 

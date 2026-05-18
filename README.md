@@ -120,14 +120,7 @@ make check        # fmt + vet + lint + test
 
 Hosts must be registered with the control plane before they can serve sandboxes.
 
-1. **Create a host record** (via API or dashboard):
-   ```bash
-   curl -X POST http://localhost:8000/v1/hosts \
-     -H "Authorization: Bearer $JWT_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"type": "regular"}'
-   ```
-   This returns a `registration_token` (valid for 1 hour).
+1. **Create a host record** in the dashboard (admin only — host management is not exposed over the SDK / API keys). Sign in at `/login`, open the admin hosts page, and click **Add host**. The dashboard returns a `registration_token` valid for 1 hour.
 
 2. **Start the host agent** with the registration token and its externally-reachable address:
    ```bash
@@ -143,12 +136,7 @@ Hosts must be registered with the control plane before they can serve sandboxes.
    sudo ./builds/wrenn-agent --address <host-ip>:50051
    ```
 
-4. **If registration fails** (e.g., network error after token was consumed), regenerate a token:
-   ```bash
-   curl -X POST http://localhost:8000/v1/hosts/$HOST_ID/token \
-     -H "Authorization: Bearer $JWT_TOKEN"
-   ```
-   Then restart the agent with the new token.
+4. **If registration fails** (e.g., network error after token was consumed), regenerate a token from the dashboard host detail page, then restart the agent with the new token.
 
 The agent sends heartbeats to the control plane every 30 seconds.
 

@@ -19,13 +19,12 @@ import (
 )
 
 type processHandler struct {
-	db        *db.Queries
-	pool      *lifecycle.HostClientPool
-	jwtSecret []byte
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newProcessHandler(db *db.Queries, pool *lifecycle.HostClientPool, jwtSecret []byte) *processHandler {
-	return &processHandler{db: db, pool: pool, jwtSecret: jwtSecret}
+func newProcessHandler(db *db.Queries, pool *lifecycle.HostClientPool) *processHandler {
+	return &processHandler{db: db, pool: pool}
 }
 
 // processResponse is a single entry in the process list.
@@ -133,7 +132,7 @@ func (h *processHandler) ConnectProcess(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	conn, ac, err := upgradeAndAuthenticate(w, r, h.jwtSecret, h.db)
+	conn, ac, err := upgradeAndAuthenticate(w, r)
 	if err != nil {
 		slog.Error("process stream websocket upgrade/auth failed", "error", err)
 		return

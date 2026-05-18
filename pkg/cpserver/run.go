@@ -21,6 +21,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/channels"
 	"git.omukk.dev/wrenn/wrenn/pkg/config"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -163,6 +164,11 @@ func Run(opts ...Option) {
 		FromEmail: cfg.SMTPFromEmail,
 	})
 
+	// Session service backs cookie auth for the browser; exposed to
+	// extensions through ServerContext so cloud-repo code can revoke or
+	// invalidate sessions on identity events without re-implementing the store.
+	sessionSvc := session.NewService(queries, rdb)
+
 	// Build the server context that extensions receive.
 	sctx := ServerContext{
 		Queries:   queries,
@@ -174,6 +180,7 @@ func Run(opts ...Option) {
 		Audit:     al,
 		Mailer:    mailer,
 		JWTSecret: []byte(cfg.JWTSecret),
+		Sessions:  sessionSvc,
 		Config:    cfg,
 	}
 

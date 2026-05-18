@@ -1,32 +1,33 @@
-import { auth } from '$lib/auth.svelte';
 import type { Capsule } from '$lib/api/capsules';
 
 // Mirror the SSE event names emitted by pkg/events. Keep in sync with the
 // `SSEEvent.event` enum in internal/api/openapi.yaml.
 export type SSEEventKind =
 	| 'connected'
-	| 'capsule.created'
-	| 'capsule.running'
-	| 'capsule.paused'
-	| 'capsule.destroyed'
-	| 'capsule.error'
-	| 'template.snapshot.created'
-	| 'template.snapshot.deleted'
+	| 'capsule.create'
+	| 'capsule.pause'
+	| 'capsule.resume'
+	| 'capsule.destroy'
+	| 'capsule.state.changed'
+	| 'template.snapshot.create'
+	| 'template.snapshot.delete'
 	| 'host.up'
 	| 'host.down';
 
+export type SSEEventOutcome = 'success' | 'error';
+
 export type SSEEvent = {
 	event: SSEEventKind;
+	outcome?: SSEEventOutcome;
 	timestamp: string;
 	team_id: string;
 	actor: { type: string; id?: string; name?: string };
 	resource: { id: string; type: string };
+	metadata?: Record<string, string>;
+	error?: string;
 	sandbox?: Capsule | null;
 };
 
-// Narrow type guard so malformed wire payloads can't reach handlers via
-// blind casts. We accept anything with the structural minimum required for
-// handlers to operate; richer validation lives in the handlers themselves.
 function isSSEEvent(x: unknown): x is SSEEvent {
 	if (!x || typeof x !== 'object') return false;
 	const o = x as Record<string, unknown>;
@@ -43,31 +44,11 @@ export type EventStreamConnection = {
 	close: () => void;
 };
 
-async function fetchTicket(admin: boolean): Promise<string | null> {
-	const token = auth.token;
-	if (!token) return null;
-
-	const path = admin ? '/api/v1/admin/events/token' : '/api/v1/events/token';
-	try {
-		const res = await fetch(path, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${token}`
-			}
-		});
-		if (!res.ok) return null;
-		const data = await res.json();
-		return data.ticket ?? null;
-	} catch {
-		return null;
-	}
-}
-
 /**
  * Connects to the SSE event stream. Returns a handle to close the connection.
- * Automatically reconnects on disconnect with exponential backoff.
- * Uses a short-lived ticket (obtained via POST) to avoid exposing JWTs in URLs.
+ * Automatically reconnects on disconnect with exponential backoff. The
+ * browser sends the wrenn_sid cookie automatically on EventSource so no
+ * ticket exchange is required.
  */
 export function connectEventStream(
 	onEvent: SSEEventHandler,
@@ -100,23 +81,13 @@ export function connectEventStream(
 		connect();
 	}
 
-	async function connect() {
+	function connect() {
 		if (closed) return;
 
 		const isAdmin = opts?.admin ?? false;
-		const ticket = await fetchTicket(isAdmin);
-		if (closed) return;
-		if (!ticket) {
-			// Ticket fetch failed (401, network blip, etc.). Retry with backoff
-			// instead of giving up — token may come back, network may recover.
-			scheduleReconnect();
-			return;
-		}
+		const url = isAdmin ? '/api/v1/admin/events/stream' : '/api/v1/events/stream';
 
-		const basePath = isAdmin ? '/api/v1/admin/events/stream' : '/api/v1/events/stream';
-		const url = `${basePath}?ticket=${encodeURIComponent(ticket)}`;
-
-		eventSource = new EventSource(url);
+		eventSource = new EventSource(url, { withCredentials: true });
 
 		eventSource.onopen = () => {
 			backoff = 1000;
@@ -132,13 +103,13 @@ export function connectEventStream(
 			scheduleReconnect();
 		};
 
-		eventSource.addEventListener('capsule.created', handleEvent);
-		eventSource.addEventListener('capsule.running', handleEvent);
-		eventSource.addEventListener('capsule.paused', handleEvent);
-		eventSource.addEventListener('capsule.destroyed', handleEvent);
-		eventSource.addEventListener('capsule.error', handleEvent);
-		eventSource.addEventListener('template.snapshot.created', handleEvent);
-		eventSource.addEventListener('template.snapshot.deleted', handleEvent);
+		eventSource.addEventListener('capsule.create', handleEvent);
+		eventSource.addEventListener('capsule.pause', handleEvent);
+		eventSource.addEventListener('capsule.resume', handleEvent);
+		eventSource.addEventListener('capsule.destroy', handleEvent);
+		eventSource.addEventListener('capsule.state.changed', handleEvent);
+		eventSource.addEventListener('template.snapshot.create', handleEvent);
+		eventSource.addEventListener('template.snapshot.delete', handleEvent);
 		eventSource.addEventListener('host.up', handleEvent);
 		eventSource.addEventListener('host.down', handleEvent);
 	}

@@ -1,5 +1,5 @@
-import { auth } from '$lib/auth.svelte';
-import { type ApiResult } from '$lib/api/client';
+import { readCSRFToken } from '$lib/auth.svelte';
+import { apiFetch, type ApiResult } from '$lib/api/client';
 
 export type FileEntry = {
 	name: string;
@@ -20,10 +20,6 @@ export type ListDirResponse = {
 
 const MAX_READABLE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-/**
- * Whether a file can be previewed as text in the browser.
- * Binary/unreadable extensions and files > 10 MB should be downloaded instead.
- */
 const BINARY_EXTENSIONS = new Set([
 	'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.avif', '.svg',
 	'.mp3', '.mp4', '.wav', '.ogg', '.flac', '.avi', '.mkv', '.mov', '.webm',
@@ -53,23 +49,8 @@ export function formatFileSize(bytes: number): string {
 	return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`;
 }
 
-export async function listDir(capsuleId: string, path: string, depth = 1, basePath = '/api/v1/capsules'): Promise<ApiResult<ListDirResponse>> {
-	try {
-		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-		if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
-
-		const res = await fetch(`${basePath}/${capsuleId}/files/list`, {
-			method: 'POST',
-			headers,
-			body: JSON.stringify({ path, depth }),
-		});
-
-		const data = await res.json();
-		if (!res.ok) return { ok: false, error: data?.error?.message ?? 'Failed to list directory' };
-		return { ok: true, data: data as ListDirResponse };
-	} catch {
-		return { ok: false, error: 'Unable to connect to the server' };
-	}
+export function listDir(capsuleId: string, path: string, depth = 1, basePath = '/api/v1/capsules'): Promise<ApiResult<ListDirResponse>> {
+	return apiFetch<ListDirResponse>('POST', `${basePath}/${capsuleId}/files/list`, { path, depth });
 }
 
 export async function readFile(
@@ -78,13 +59,18 @@ export async function readFile(
 	signal?: AbortSignal,
 	basePath = '/api/v1/capsules',
 ): Promise<ApiResult<string>> {
+	// /files/read returns raw bytes (potentially binary) so we cannot route it
+	// through apiFetch which assumes JSON. We still inject the CSRF token via
+	// the shared cookie reader.
 	try {
 		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-		if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+		const csrf = readCSRFToken();
+		if (csrf) headers['X-CSRF-Token'] = csrf;
 
 		const res = await fetch(`${basePath}/${capsuleId}/files/read`, {
 			method: 'POST',
 			headers,
+			credentials: 'same-origin',
 			body: JSON.stringify({ path }),
 			signal,
 		});
@@ -117,11 +103,13 @@ export async function downloadFile(
 	basePath = '/api/v1/capsules',
 ): Promise<void> {
 	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-	if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+	const csrf = readCSRFToken();
+	if (csrf) headers['X-CSRF-Token'] = csrf;
 
 	const res = await fetch(`${basePath}/${capsuleId}/files/read`, {
 		method: 'POST',
 		headers,
+		credentials: 'same-origin',
 		body: JSON.stringify({ path }),
 		signal,
 	});
@@ -136,6 +124,5 @@ export async function downloadFile(
 	document.body.appendChild(a);
 	a.click();
 	a.remove();
-	// Delay revocation so the browser has time to start the download
 	setTimeout(() => URL.revokeObjectURL(url), 5000);
 }

@@ -23,12 +23,12 @@ function adminDispatch(event: SSEEvent) {
 }
 
 function ensureConnected() {
-	if (connection || !auth.token) return;
+	if (connection || !auth.isAuthenticated) return;
 	connection = connectEventStream(dispatch);
 }
 
 function ensureAdminConnected() {
-	if (adminConnection || !auth.token) return;
+	if (adminConnection || !auth.isAuthenticated) return;
 	adminConnection = connectEventStream(adminDispatch, { admin: true });
 }
 

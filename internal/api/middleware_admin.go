@@ -26,19 +26,10 @@ func injectPlatformTeam() func(http.Handler) http.Handler {
 	}
 }
 
-// markAdminWS flags the request context as an admin WebSocket route.
-// Applied to admin WS endpoints that sit outside the requireJWT/requireAdmin
-// middleware group. Handlers use isAdminWSRoute(ctx) to pick wsAuthenticateAdmin.
-func markAdminWS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r.WithContext(setAdminWSFlag(r.Context())))
-	})
-}
-
 // requireAdmin validates that the authenticated user is a platform admin.
-// Must run after requireJWT (depends on AuthContext being present).
-// Re-validates against the DB — the JWT is_admin claim is for UI only;
-// the DB is the source of truth for admin access.
+// Must run after requireSession (depends on AuthContext being present).
+// Re-validates against the DB — the session blob's is_admin flag is for
+// UI hints; the DB is the source of truth for admin access.
 func requireAdmin(queries *db.Queries) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

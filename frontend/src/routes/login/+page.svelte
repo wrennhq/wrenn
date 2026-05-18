@@ -145,7 +145,7 @@
 		}
 
 		teams.reset();
-		auth.login(result.data);
+		auth.setUser(result.data);
 		goto('/dashboard');
 	}
 </script>

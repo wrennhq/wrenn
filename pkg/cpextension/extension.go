@@ -13,6 +13,7 @@ import (
 
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/config"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/email"
@@ -32,7 +33,11 @@ type ServerContext struct {
 	CA        *auth.CA
 	Audit     *audit.AuditLogger
 	Mailer    email.Mailer
+	// JWTSecret signs host-agent tokens and HMACs OAuth state cookies. User
+	// auth uses cookie-backed sessions and does not depend on this value —
+	// extensions should not use it to verify user identity.
 	JWTSecret []byte
+	Sessions  *session.Service
 	Config    config.Config
 }
 

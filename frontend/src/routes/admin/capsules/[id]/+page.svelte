@@ -112,7 +112,7 @@
 
 	function handleSSEEvent(event: SSEEvent) {
 		if (!event.resource || event.resource.id !== capsuleId) return;
-		if (event.event === 'capsule.destroyed') {
+		if (event.event === 'capsule.destroy') {
 			goto('/admin/capsules');
 			return;
 		}

@@ -19,13 +19,12 @@ import (
 )
 
 type execStreamHandler struct {
-	db        *db.Queries
-	pool      *lifecycle.HostClientPool
-	jwtSecret []byte
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newExecStreamHandler(db *db.Queries, pool *lifecycle.HostClientPool, jwtSecret []byte) *execStreamHandler {
-	return &execStreamHandler{db: db, pool: pool, jwtSecret: jwtSecret}
+func newExecStreamHandler(db *db.Queries, pool *lifecycle.HostClientPool) *execStreamHandler {
+	return &execStreamHandler{db: db, pool: pool}
 }
 
 var upgrader = websocket.Upgrader{
@@ -58,7 +57,7 @@ func (h *execStreamHandler) ExecStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, ac, err := upgradeAndAuthenticate(w, r, h.jwtSecret, h.db)
+	conn, ac, err := upgradeAndAuthenticate(w, r)
 	if err != nil {
 		slog.Error("websocket upgrade/auth failed", "error", err)
 		return

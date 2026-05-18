@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { auth } from '$lib/auth.svelte';
 
 	type EndpointStatus = 'loading' | 'available' | 'not_available' | 'error';
 	let status = $state<EndpointStatus>('loading');
@@ -10,10 +9,7 @@
 		status = 'loading';
 		errorMsg = null;
 		try {
-			const headers: Record<string, string> = {};
-			if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
-
-			const res = await fetch('/api/v1/billing', { headers });
+			const res = await fetch('/api/v1/billing', { credentials: 'same-origin' });
 			if (res.status === 404) {
 				status = 'not_available';
 			} else if (!res.ok) {

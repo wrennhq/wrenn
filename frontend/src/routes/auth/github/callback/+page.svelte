@@ -12,59 +12,45 @@
 	let confirmEmail = $state('');
 	let saving = $state(false);
 	let nameError = $state('');
-	let pendingAuth: { token: string; user_id: string; team_id: string; email: string; name: string } | null = null;
 
 	function getCookie(name: string): string | null {
 		const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
 		return match ? decodeURIComponent(match[1]) : null;
 	}
 
-	function clearOAuthCookies() {
-		for (const name of [
-			'wrenn_oauth_token',
-			'wrenn_oauth_user_id',
-			'wrenn_oauth_team_id',
-			'wrenn_oauth_email',
-			'wrenn_oauth_name',
-			'wrenn_oauth_new_signup'
-		]) {
-			document.cookie = `${name}=; path=/auth/; max-age=0`;
-		}
+	function clearSignupCookie() {
+		document.cookie = `wrenn_oauth_new_signup=; path=/; max-age=0`;
 	}
 
-	function finishLogin() {
-		if (!pendingAuth) return;
+	async function finishLogin() {
 		teams.reset();
-		auth.login(pendingAuth);
-		goto('/dashboard');
+		await auth.init();
+		await goto('/dashboard');
 	}
 
 	async function handleConfirm() {
-		if (!pendingAuth) return;
 		saving = true;
 		nameError = '';
 
-		// Update name if user changed it.
-		if (confirmName.trim() && confirmName.trim() !== pendingAuth.name) {
-			// Log in first so the PATCH /v1/me request is authenticated.
-			teams.reset();
-			auth.login(pendingAuth);
+		// Hydrate auth state first so the PATCH /v1/me request is authenticated.
+		await auth.init();
 
+		if (confirmName.trim() && confirmName.trim() !== auth.name) {
 			const result = await updateName(confirmName.trim());
-			if (result.ok) {
-				// updateName returns refreshed auth data — re-login with updated info.
-				auth.login(result.data);
-				goto('/dashboard');
-			} else {
+			if (!result.ok) {
 				nameError = result.error;
 				saving = false;
+				return;
 			}
-		} else {
-			finishLogin();
+			// Re-hydrate to pick up the new name.
+			await auth.init();
 		}
+
+		teams.reset();
+		await goto('/dashboard');
 	}
 
-	onMount(() => {
+	onMount(async () => {
 		const params = $page.url.searchParams;
 		const error = params.get('error');
 
@@ -73,27 +59,24 @@
 			return;
 		}
 
-		const token = getCookie('wrenn_oauth_token');
-		const userId = getCookie('wrenn_oauth_user_id');
-		const teamId = getCookie('wrenn_oauth_team_id');
-		const email = getCookie('wrenn_oauth_email');
-		const name = getCookie('wrenn_oauth_name') ?? '';
 		const isNewSignup = getCookie('wrenn_oauth_new_signup') === '1';
+		clearSignupCookie();
 
-		clearOAuthCookies();
+		// Server has set the wrenn_sid cookie. Probe /v1/me to confirm and
+		// populate identity state.
+		await auth.init();
 
-		if (token && userId && teamId && email) {
-			pendingAuth = { token, user_id: userId, team_id: teamId, email, name };
+		if (!auth.isAuthenticated) {
+			goto('/login?error=session_failed');
+			return;
+		}
 
-			if (isNewSignup) {
-				confirmName = name;
-				confirmEmail = email;
-				showConfirmDialog = true;
-			} else {
-				finishLogin();
-			}
+		if (isNewSignup) {
+			confirmName = auth.name ?? '';
+			confirmEmail = auth.email ?? '';
+			showConfirmDialog = true;
 		} else {
-			goto('/login?error=missing_token');
+			finishLogin();
 		}
 	});
 </script>

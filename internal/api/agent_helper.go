@@ -54,40 +54,22 @@ func requireRunningSandbox(w http.ResponseWriter, r *http.Request, queries *db.Q
 	return sb, sandboxID, sandboxIDStr, true
 }
 
-// upgradeAndAuthenticate upgrades the HTTP connection to WebSocket and resolves
-// the auth context — either from middleware (API key) or from the first WS message (JWT).
-// Returns the connection and auth context, or an error if authentication fails.
-// The caller is responsible for closing the returned connection.
-func upgradeAndAuthenticate(w http.ResponseWriter, r *http.Request, jwtSecret []byte, queries *db.Queries) (*websocket.Conn, auth.AuthContext, error) {
-	ctx := r.Context()
-	ac, hasAuth := auth.FromContext(ctx)
-
-	if hasAuth {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return nil, auth.AuthContext{}, fmt.Errorf("websocket upgrade: %w", err)
-		}
-		return conn, ac, nil
+// upgradeAndAuthenticate upgrades the HTTP connection to WebSocket. The
+// auth context must already be populated by upstream middleware — browser
+// clients via the wrenn_sid cookie (sent automatically on WS upgrade),
+// SDK clients via X-API-Key. Requests without an auth context are rejected
+// with a 401 before the upgrade.
+func upgradeAndAuthenticate(w http.ResponseWriter, r *http.Request) (*websocket.Conn, auth.AuthContext, error) {
+	ac, hasAuth := auth.FromContext(r.Context())
+	if !hasAuth {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "session cookie or X-API-Key required")
+		return nil, auth.AuthContext{}, fmt.Errorf("unauthenticated")
 	}
-
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return nil, auth.AuthContext{}, fmt.Errorf("websocket upgrade: %w", err)
 	}
-
-	var wsAC auth.AuthContext
-	var authErr error
-	if isAdminWSRoute(ctx) {
-		wsAC, authErr = wsAuthenticateAdmin(ctx, conn, jwtSecret, queries)
-	} else {
-		wsAC, authErr = wsAuthenticate(ctx, conn, jwtSecret, queries)
-	}
-	if authErr != nil {
-		conn.Close()
-		return nil, auth.AuthContext{}, fmt.Errorf("authentication failed")
-	}
-
-	return conn, wsAC, nil
+	return conn, ac, nil
 }
 
 // updateLastActive updates the sandbox last_active_at timestamp.

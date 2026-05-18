@@ -233,7 +233,7 @@
 			if (remaining.length > 0) {
 				const switchResult = await switchTeam(remaining[0].id);
 				if (switchResult.ok) {
-					auth.login(switchResult.data);
+					auth.setUser(switchResult.data);
 					window.location.reload();
 					return;
 				}

@@ -17,9 +17,10 @@ type AuthContext struct {
 	Email      string      // empty when authenticated via API key
 	Name       string      // empty when authenticated via API key
 	Role       string      // owner, admin, or member; empty when authenticated via API key
-	IsAdmin    bool        // platform-level admin; always false when authenticated via API key
-	APIKeyID   pgtype.UUID // populated when authenticated via API key; zero value for JWT auth
-	APIKeyName string      // display name of the key, snapshotted at auth time; empty for JWT auth
+	IsAdmin    bool        // session-cached flag; admin gates always re-verify against the DB
+	APIKeyID   pgtype.UUID // populated when authenticated via API key; zero value for session auth
+	APIKeyName string      // display name of the key, snapshotted at auth time; empty for session auth
+	SessionID  string      // populated for cookie-session auth; empty for API key auth
 }
 
 // WithAuthContext returns a new context with the given AuthContext.

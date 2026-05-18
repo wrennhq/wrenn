@@ -30,13 +30,12 @@ const (
 )
 
 type ptyHandler struct {
-	db        *db.Queries
-	pool      *lifecycle.HostClientPool
-	jwtSecret []byte
+	db   *db.Queries
+	pool *lifecycle.HostClientPool
 }
 
-func newPtyHandler(db *db.Queries, pool *lifecycle.HostClientPool, jwtSecret []byte) *ptyHandler {
-	return &ptyHandler{db: db, pool: pool, jwtSecret: jwtSecret}
+func newPtyHandler(db *db.Queries, pool *lifecycle.HostClientPool) *ptyHandler {
+	return &ptyHandler{db: db, pool: pool}
 }
 
 // --- WebSocket message types ---
@@ -90,7 +89,7 @@ func (h *ptyHandler) PtySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, ac, err := upgradeAndAuthenticate(w, r, h.jwtSecret, h.db)
+	conn, ac, err := upgradeAndAuthenticate(w, r)
 	if err != nil {
 		slog.Error("pty websocket upgrade/auth failed", "error", err)
 		return

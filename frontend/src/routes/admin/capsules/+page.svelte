@@ -201,7 +201,7 @@
 
 		const sandboxId = event.resource.id;
 
-		if (event.event === 'capsule.destroyed') {
+		if (event.event === 'capsule.destroy') {
 			capsules = capsules.filter((c) => c.id !== sandboxId);
 			return;
 		}
@@ -211,7 +211,7 @@
 			if (idx >= 0) {
 				capsules[idx] = event.sandbox;
 				capsules = capsules;
-			} else if (event.event === 'capsule.created') {
+			} else if (event.event === 'capsule.create') {
 				capsules = [event.sandbox, ...capsules];
 				newCapsuleId = sandboxId;
 				setTimeout(() => { newCapsuleId = null; }, 1600);

@@ -16,22 +16,12 @@
 	import { subscribeSSE } from '$lib/sse.svelte';
 	import type { SSEEvent } from '$lib/api/events';
 
-	const REFRESH_INTERVAL = 30;
-	const SPIN_DURATION = 600;
-
 	// Capsule list state
 	let capsules = $state<Capsule[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let searchQuery = $state('');
 	let actionLoading = $state<string | null>(null);
-	let spinning = $state(false);
-
-	// Auto-refresh countdown state
-	let autoRefresh = $state(true);
-	let countdown = $state(REFRESH_INTERVAL);
-	let countdownInterval: ReturnType<typeof setInterval> | null = null;
-	let refreshInterval: ReturnType<typeof setInterval> | null = null;
 
 	// Sorting state
 	type SortKey = 'status' | 'vcpus' | 'memory_mb' | 'started_at' | 'timeout_sec';
@@ -96,32 +86,6 @@
 		}
 	}
 
-	function startAutoRefresh() {
-		stopAutoRefresh();
-		countdown = REFRESH_INTERVAL;
-		countdownInterval = setInterval(() => {
-			countdown--;
-			if (countdown <= 0) {
-				countdown = REFRESH_INTERVAL;
-			}
-		}, 1000);
-		refreshInterval = setInterval(fetchCapsules, REFRESH_INTERVAL * 1000);
-	}
-
-	function stopAutoRefresh() {
-		if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
-		if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
-	}
-
-	function toggleAutoRefresh() {
-		autoRefresh = !autoRefresh;
-		if (autoRefresh) {
-			startAutoRefresh();
-		} else {
-			stopAutoRefresh();
-		}
-	}
-
 	function mergeCapsuleData(incoming: Capsule[]) {
 		const existingMap = new Map(capsules.map((c) => [c.id, c]));
 		const merged: Capsule[] = [];
@@ -141,14 +105,9 @@
 		capsules = merged;
 	}
 
-	async function fetchCapsules(manual = false) {
+	async function fetchCapsules() {
 		const wasEmpty = capsules.length === 0;
 		if (wasEmpty) loading = true;
-
-		if (manual) {
-			spinning = true;
-			var spinTimer = new Promise<void>((resolve) => setTimeout(resolve, SPIN_DURATION));
-		}
 
 		const result = await listCapsules();
 		if (result.ok) {
@@ -163,16 +122,8 @@
 		}
 		loading = false;
 
-		// Mark initial entrance animation as done after first successful fetch
 		if (!initialAnimationDone) {
 			setTimeout(() => { initialAnimationDone = true; }, 400 + (capsules.length * 40));
-		}
-
-		if (autoRefresh) countdown = REFRESH_INTERVAL;
-
-		if (manual) {
-			await spinTimer!;
-			spinning = false;
 		}
 	}
 
@@ -258,7 +209,7 @@
 
 		const sandboxId = event.resource.id;
 
-		if (event.event === 'capsule.destroyed') {
+		if (event.event === 'capsule.destroy') {
 			capsules = capsules.filter((c) => c.id !== sandboxId);
 			return;
 		}
@@ -272,7 +223,7 @@
 					}
 				}
 				capsules = capsules;
-			} else if (event.event === 'capsule.created') {
+			} else if (event.event === 'capsule.create') {
 				capsules = [event.sandbox, ...capsules];
 				newCapsuleId = sandboxId;
 				setTimeout(() => { newCapsuleId = null; }, 1600);
@@ -287,21 +238,16 @@
 	}
 
 	function handleVisibility() {
-		if (document.hidden) {
-			stopAutoRefresh();
-		} else if (autoRefresh) {
+		if (!document.hidden) {
 			fetchCapsules();
-			startAutoRefresh();
 		}
 	}
 
 	onMount(() => {
 		fetchCapsules();
-		startAutoRefresh();
 		const unsubscribe = subscribeSSE(handleSSEEvent);
 		document.addEventListener('visibilitychange', handleVisibility);
 		return () => {
-			stopAutoRefresh();
 			unsubscribe();
 			document.removeEventListener('visibilitychange', handleVisibility);
 		};
@@ -309,10 +255,6 @@
 </script>
 
 <style>
-	.refresh-spin {
-		animation: spin-once 0.6s ease-in-out;
-	}
-
 	@keyframes capsule-born {
 		0%, 25% { background-color: rgba(94, 140, 88, 0.1); }
 		100% { background-color: transparent; }
@@ -351,51 +293,6 @@
 		<span class="text-ui text-[var(--color-text-secondary)]">{filteredCapsules.length} capsule{filteredCapsules.length !== 1 ? 's' : ''}</span>
 
 		<div class="flex-1"></div>
-
-		<!-- Refresh button -->
-		<button
-			onclick={() => fetchCapsules(true)}
-			disabled={spinning}
-			class="flex h-8 w-8 items-center justify-center rounded-[var(--radius-button)] border border-[var(--color-border)] text-[var(--color-text-tertiary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-secondary)] disabled:opacity-50"
-			title="Refresh"
-		>
-			<svg
-				class={spinning ? 'refresh-spin' : ''}
-				width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-			>
-				<polyline points="23 4 23 10 17 10" />
-				<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-			</svg>
-		</button>
-
-		<!-- Auto-refresh countdown toggle -->
-		<button
-			onclick={toggleAutoRefresh}
-			class="flex items-center gap-1.5 rounded-[var(--radius-button)] border px-2.5 py-1.5 font-mono text-label transition-colors duration-150
-				{autoRefresh
-					? 'border-[var(--color-accent)]/30 text-[var(--color-accent-mid)] hover:border-[var(--color-accent)]/50'
-					: 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-secondary)]'}"
-			title={autoRefresh ? 'Click to disable auto-refresh' : 'Click to enable auto-refresh (30s)'}
-		>
-			{#if autoRefresh}
-				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-					<circle cx="8" cy="8" r="5" stroke="var(--color-accent-glow-mid)" stroke-width="1.5" />
-					<circle
-						cx="8" cy="8" r="5"
-						stroke="var(--color-accent)"
-						stroke-width="1.5"
-						stroke-linecap="round"
-						stroke-dasharray="31.416"
-						stroke-dashoffset={31.416 * (1 - countdown / REFRESH_INTERVAL)}
-						transform="rotate(-90 8 8)"
-						style="transition: stroke-dashoffset 1s linear"
-					/>
-				</svg>
-				{countdown}s
-			{:else}
-				Off
-			{/if}
-		</button>
 
 		<button
 			onclick={() => { showCreateDialog = true; }}
