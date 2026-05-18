@@ -139,6 +139,18 @@ type SandboxMetricsSnapshot struct {
 	MemoryMbReserved int32              `json:"memory_mb_reserved"`
 }
 
+type Session struct {
+	ID         string             `json:"id"`
+	UserID     pgtype.UUID        `json:"user_id"`
+	TeamID     pgtype.UUID        `json:"team_id"`
+	CsrfToken  string             `json:"csrf_token"`
+	UserAgent  string             `json:"user_agent"`
+	IpAddress  string             `json:"ip_address"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+}
+
 type Team struct {
 	ID        pgtype.UUID        `json:"id"`
 	Name      string             `json:"name"`

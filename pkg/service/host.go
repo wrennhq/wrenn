@@ -94,6 +94,31 @@ type regTokenPayload struct {
 
 const regTokenTTL = time.Hour
 
+func (s *HostService) issueRegistrationToken(ctx context.Context, hostID, createdBy pgtype.UUID) (string, error) {
+	token := id.NewRegistrationToken()
+	tokenID := id.NewHostTokenID()
+
+	payload, _ := json.Marshal(regTokenPayload{
+		HostID:  id.FormatHostID(hostID),
+		TokenID: id.FormatHostTokenID(tokenID),
+	})
+	if err := s.Redis.Set(ctx, "host:reg:"+token, payload, regTokenTTL).Err(); err != nil {
+		return "", fmt.Errorf("store registration token: %w", err)
+	}
+
+	now := time.Now()
+	if _, err := s.DB.InsertHostToken(ctx, db.InsertHostTokenParams{
+		ID:        tokenID,
+		HostID:    hostID,
+		CreatedBy: createdBy,
+		ExpiresAt: pgtype.Timestamptz{Time: now.Add(regTokenTTL), Valid: true},
+	}); err != nil {
+		slog.Warn("failed to insert host token audit record", "host_id", id.FormatHostID(hostID), "error", err)
+	}
+
+	return token, nil
+}
+
 // requireAdminOrOwner returns nil iff the role is "owner" or "admin".
 func requireAdminOrOwner(role string) error {
 	if role == "owner" || role == "admin" {
@@ -159,26 +184,9 @@ func (s *HostService) Create(ctx context.Context, p HostCreateParams) (HostCreat
 		return HostCreateResult{}, fmt.Errorf("insert host: %w", err)
 	}
 
-	// Generate registration token and store in Redis + Postgres audit trail.
-	token := id.NewRegistrationToken()
-	tokenID := id.NewHostTokenID()
-
-	payload, _ := json.Marshal(regTokenPayload{
-		HostID:  id.FormatHostID(hostID),
-		TokenID: id.FormatHostTokenID(tokenID),
-	})
-	if err := s.Redis.Set(ctx, "host:reg:"+token, payload, regTokenTTL).Err(); err != nil {
-		return HostCreateResult{}, fmt.Errorf("store registration token: %w", err)
-	}
-
-	now := time.Now()
-	if _, err := s.DB.InsertHostToken(ctx, db.InsertHostTokenParams{
-		ID:        tokenID,
-		HostID:    hostID,
-		CreatedBy: p.RequestingUserID,
-		ExpiresAt: pgtype.Timestamptz{Time: now.Add(regTokenTTL), Valid: true},
-	}); err != nil {
-		slog.Warn("failed to insert host token audit record", "host_id", id.FormatHostID(hostID), "error", err)
+	token, err := s.issueRegistrationToken(ctx, hostID, p.RequestingUserID)
+	if err != nil {
+		return HostCreateResult{}, err
 	}
 
 	return HostCreateResult{Host: host, RegistrationToken: token}, nil
@@ -218,25 +226,9 @@ func (s *HostService) RegenerateToken(ctx context.Context, hostID, userID, teamI
 		}
 	}
 
-	token := id.NewRegistrationToken()
-	tokenID := id.NewHostTokenID()
-
-	payload, _ := json.Marshal(regTokenPayload{
-		HostID:  id.FormatHostID(hostID),
-		TokenID: id.FormatHostTokenID(tokenID),
-	})
-	if err := s.Redis.Set(ctx, "host:reg:"+token, payload, regTokenTTL).Err(); err != nil {
-		return HostCreateResult{}, fmt.Errorf("store registration token: %w", err)
-	}
-
-	now := time.Now()
-	if _, err := s.DB.InsertHostToken(ctx, db.InsertHostTokenParams{
-		ID:        tokenID,
-		HostID:    hostID,
-		CreatedBy: userID,
-		ExpiresAt: pgtype.Timestamptz{Time: now.Add(regTokenTTL), Valid: true},
-	}); err != nil {
-		slog.Warn("failed to insert host token audit record", "host_id", id.FormatHostID(hostID), "error", err)
+	token, err := s.issueRegistrationToken(ctx, hostID, userID)
+	if err != nil {
+		return HostCreateResult{}, err
 	}
 
 	return HostCreateResult{Host: host, RegistrationToken: token}, nil

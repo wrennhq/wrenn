@@ -39,3 +39,19 @@ func (a *SlotAllocator) Release(index int) {
 	defer a.mu.Unlock()
 	delete(a.inUse, index)
 }
+
+// Reserve marks a specific slot index as in use. Returns an error if the
+// index is out of range or already taken. Used on resume to re-acquire the
+// slot a sandbox previously held so its host-reachable IP stays stable.
+func (a *SlotAllocator) Reserve(index int) error {
+	if index < 1 || index > 32767 {
+		return fmt.Errorf("slot index out of range: %d", index)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.inUse[index] {
+		return fmt.Errorf("slot %d already in use", index)
+	}
+	a.inUse[index] = true
+	return nil
+}

@@ -5,7 +5,7 @@ Secure infrastructure for AI
 ## Prerequisites
 
 - Linux host with `/dev/kvm` access (bare metal or nested virt)
-- Firecracker binary at `/usr/local/bin/firecracker`
+- Cloud Hypervisor binary at `/usr/local/bin/cloud-hypervisor`
 - PostgreSQL
 - Go 1.25+
 - Rust 1.88+ with `x86_64-unknown-linux-musl` target (`rustup target add x86_64-unknown-linux-musl`)
@@ -120,14 +120,7 @@ make check        # fmt + vet + lint + test
 
 Hosts must be registered with the control plane before they can serve sandboxes.
 
-1. **Create a host record** (via API or dashboard):
-   ```bash
-   curl -X POST http://localhost:8000/v1/hosts \
-     -H "Authorization: Bearer $JWT_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"type": "regular"}'
-   ```
-   This returns a `registration_token` (valid for 1 hour).
+1. **Create a host record** in the dashboard (admin only — host management is not exposed over the SDK / API keys). Sign in at `/login`, open the admin hosts page, and click **Add host**. The dashboard returns a `registration_token` valid for 1 hour.
 
 2. **Start the host agent** with the registration token and its externally-reachable address:
    ```bash
@@ -143,13 +136,152 @@ Hosts must be registered with the control plane before they can serve sandboxes.
    sudo ./builds/wrenn-agent --address <host-ip>:50051
    ```
 
-4. **If registration fails** (e.g., network error after token was consumed), regenerate a token:
-   ```bash
-   curl -X POST http://localhost:8000/v1/hosts/$HOST_ID/token \
-     -H "Authorization: Bearer $JWT_TOKEN"
-   ```
-   Then restart the agent with the new token.
+4. **If registration fails** (e.g., network error after token was consumed), regenerate a token from the dashboard host detail page, then restart the agent with the new token.
 
 The agent sends heartbeats to the control plane every 30 seconds.
+
+## Notification channels
+
+Teams can subscribe to lifecycle events via webhook, Discord, Slack, Teams, Google Chat, Telegram, or Matrix. All providers consume the same event stream (durable Redis stream `wrenn:events`, consumer group `wrenn-channels-v1`, at-least-once delivery with two retries at 10s / 30s).
+
+### Subscribable event types
+
+| Event | Emitted on | Has outcome |
+|-------|-----------|-------------|
+| `capsule.create` | First boot of a sandbox | yes |
+| `capsule.pause` | Manual pause, TTL auto-pause, or reconciler-detected pause | yes |
+| `capsule.resume` | Unpause (any subsequent boot after `capsule.create`) | yes |
+| `capsule.destroy` | Stop / destroy, including system cleanup-on-error | yes |
+| `template.snapshot.create` | Snapshot taken from a running sandbox | yes |
+| `template.snapshot.delete` | Snapshot deletion (including cleanup-on-error) | yes |
+| `host.up` | Host agent comes online | no |
+| `host.down` | Host agent crashes or misses heartbeats | no |
+
+Subscribing to an event type delivers **both success and failure**. The `outcome` field on the payload (`success` or `error`) distinguishes them. `error` events carry an `error` string with the failure reason.
+
+The transient `capsule.state.changed` event (intermediate transitions like `starting`, `pausing`, `resuming`) is **not** subscribable — it is delivered to the dashboard via SSE only and never written to the durable stream.
+
+### Event payload
+
+All channels receive the same canonical JSON shape:
+
+```json
+{
+  "event": "capsule.pause",
+  "outcome": "success",
+  "timestamp": "2026-05-19T14:23:01Z",
+  "team_id": "tm_...",
+  "actor": {
+    "type": "user",
+    "id": "usr_...",
+    "name": "alice@example.com"
+  },
+  "resource": {
+    "id": "sb_a1b2c3d4",
+    "type": "sandbox"
+  },
+  "metadata": {
+    "reason": "ttl_expired"
+  },
+  "error": ""
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `event` | string | Event type (see table above) |
+| `outcome` | `"success"` \| `"error"` \| `""` | Omitted for host.up/host.down |
+| `timestamp` | RFC3339 UTC | When the event was published |
+| `team_id` | string | Owning team |
+| `actor.type` | `"user"` \| `"api_key"` \| `"system"` | System = TTL reaper, reconciler, cleanup-on-error |
+| `actor.id` | string | User ID, API key ID, or empty for system |
+| `actor.name` | string | Display name (email for user, label for api_key) |
+| `resource.id` | string | Sandbox ID, snapshot ID, or host ID |
+| `resource.type` | `"sandbox"` \| `"snapshot"` \| `"host"` | |
+| `metadata` | object\<string,string\> | Event-specific context (e.g., `reason`, `from`/`to`, `inferred`) |
+| `error` | string | Failure reason when `outcome == "error"` |
+
+`metadata` keys you may observe:
+
+- `reason` — `ttl_expired` (auto-pause), `orphaned` (reconciler cleanup), `cleanup_after_create_error`, `restored_after_host_recovery`, `host_state_sync`, `transient_timeout`, `transient_timeout_inferred`
+- `inferred` — `"true"` when the reconciler derived the event from host state, not a direct host callback
+
+### Webhook delivery
+
+Webhook channels receive a raw `POST` with the JSON payload as the body.
+
+Headers:
+
+| Header | Value |
+|--------|-------|
+| `Content-Type` | `application/json` |
+| `X-Wrenn-Delivery` | UUID, unique per delivery attempt |
+| `X-Wrenn-Timestamp` | RFC3339 UTC, used for signature verification |
+| `X-WRENN-SIGNATURE` | `sha256=<hex>` HMAC over `<timestamp>.<body>` using the channel's signing secret |
+
+The signing secret is shown **once** at channel creation. Verify signatures by computing `HMAC-SHA256(secret, timestamp + "." + body)` and comparing to the header (constant-time compare). Reject deliveries where `X-Wrenn-Timestamp` is outside your acceptable clock skew window. Redirects are not followed.
+
+Any non-2xx response triggers retry (10s, then 30s). After three total failures the event is dropped (logged on the control plane).
+
+### Other providers
+
+Discord, Slack, Teams, Google Chat, Telegram, and Matrix receive a formatted text message — the same fields, rendered as human-readable text — not the JSON payload. Use webhook if you need the structured event.
+
+## Extending the control plane
+
+The OSS control plane is designed to be embedded by a private cloud distribution without forking. Import this module, implement the `Extension` interface from `pkg/cpextension`, and pass it to `cpserver.Run`:
+
+```go
+import (
+    "git.omukk.dev/wrenn/wrenn/pkg/cpextension"
+    "git.omukk.dev/wrenn/wrenn/pkg/cpserver"
+)
+
+func main() {
+    cpserver.Run(
+        cpserver.WithVersion("cloud-1.0.0"),
+        cpserver.WithExtensions(&myExtension{}),
+    )
+}
+```
+
+Every extension implements two methods:
+
+```go
+RegisterRoutes(r chi.Router, sctx cpextension.ServerContext)
+BackgroundWorkers(sctx cpextension.ServerContext) []func(context.Context)
+```
+
+`ServerContext` exposes the initialized OSS services so extensions never re-implement them: `Queries`, `PgPool`, `Redis`, `HostPool`, `Scheduler`, `CA`, `Audit`, `Mailer`, `OAuthRegistry`, `Channels`, `ChannelPub`, `JWTSecret`, `Sessions`, `Config`.
+
+### Optional hook interfaces
+
+An extension can also implement any subset of these — the OSS server type-asserts at startup:
+
+| Interface | When it fires | Failure semantics |
+|---|---|---|
+| `MiddlewareProvider` | Wraps every OSS route before registration | n/a |
+| `AuthHook.OnSignup(ctx, userID, teamID, email)` | After team provisioning on email-activate or OAuth-new-signup | Error aborts signup with 500 `signup_hook_failed` (billing customer creation must succeed) |
+| `AuthHook.OnLogin(ctx, userID)` | After a successful login or OAuth callback | Error logged, login still succeeds |
+| `AuthHook.OnAccountSoftDelete(ctx, userID)` | After `DELETE /v1/me` commits | Error logged, request still succeeds |
+| `AuthHook.OnAccountHardDelete(ctx, userID)` | After the 15-day cleanup goroutine purges a soft-deleted account | Error logged, cleanup continues |
+| `SandboxEventHook.OnSandboxEvent(ctx, ev)` | Capsule create/pause/resume/destroy success, from the Redis stream consumer | Error leaves the message un-acked — hooks **must** be idempotent |
+| `LimitsProvider.EffectiveLimits(ctx, teamID)` | `POST /v1/capsules` consults before scheduling | Returns 402 (`concurrent_sandbox_limit` / `vcpu_limit` / `memory_limit`) when over |
+| `UsageProvider.CurrentUsage(ctx, teamID)` | Feeds `LimitsProvider` checks; falls back to OSS DB-backed default | Error → 402 `usage_unavailable` |
+
+### Auth middleware helpers
+
+For extensions that gate their own routes:
+
+```go
+r.With(cpextension.RequireSession(sctx)).Get("/billing", handler)
+r.With(cpextension.RequireSessionOrAPIKey(sctx)).Get("/usage", handler)
+r.With(cpextension.RequireSession(sctx), cpextension.RequireAdmin(sctx)).Get("/admin/exports", handler)
+
+// Issue a session from a custom flow (e.g. invite-accept):
+sess, err := cpextension.IssueSession(w, r, sctx, userID, teamID)
+```
+
+Cookie/header names are exported as `cpextension.SessionCookieName`, `CSRFCookieName`, `CSRFHeaderName`.
 
 See `CLAUDE.md` for full architecture documentation.

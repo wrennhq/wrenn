@@ -11,17 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const bulkRestoreRunning = `-- name: BulkRestoreRunning :exec
+const bulkRestoreMissingToStatus = `-- name: BulkRestoreMissingToStatus :exec
 UPDATE sandboxes
-SET status       = 'running',
+SET status       = $2,
     last_updated = NOW()
 WHERE id = ANY($1::uuid[]) AND status = 'missing'
 `
 
+type BulkRestoreMissingToStatusParams struct {
+	Column1 []pgtype.UUID `json:"column_1"`
+	Status  string        `json:"status"`
+}
+
 // Called by the reconciler when a host comes back online and its sandboxes are
-// confirmed alive. Restores only sandboxes that are in 'missing' state.
-func (q *Queries) BulkRestoreRunning(ctx context.Context, dollar_1 []pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, bulkRestoreRunning, dollar_1)
+// confirmed alive. Restores only sandboxes currently in 'missing' state to the
+// given target status (typically 'running' or 'paused' based on the live state
+// reported by the host agent's ListSandboxes RPC).
+func (q *Queries) BulkRestoreMissingToStatus(ctx context.Context, arg BulkRestoreMissingToStatusParams) error {
+	_, err := q.db.Exec(ctx, bulkRestoreMissingToStatus, arg.Column1, arg.Status)
 	return err
 }
 

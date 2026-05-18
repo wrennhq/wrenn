@@ -57,7 +57,9 @@ impl Scanner {
 
     pub async fn scan_and_broadcast(&self, cancel: CancellationToken) {
         loop {
-            let conns = read_tcp_connections();
+            let conns = tokio::task::spawn_blocking(read_tcp_connections)
+                .await
+                .unwrap_or_default();
 
             {
                 let subs = self.subs.read().unwrap();

@@ -10,8 +10,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"time"
 
 	"connectrpc.com/connect"
+
+	"github.com/google/uuid"
 
 	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 	"git.omukk.dev/wrenn/wrenn/proto/envd/gen/genconnect"
@@ -78,16 +81,31 @@ type ExecResult struct {
 	ExitCode int32
 }
 
+// ExecOpts holds optional parameters for Exec.
+type ExecOpts struct {
+	Envs map[string]string
+	Cwd  string
+}
+
 // Exec runs a command inside the sandbox and collects all stdout/stderr output.
 // It blocks until the command completes.
-func (c *Client) Exec(ctx context.Context, cmd string, args ...string) (*ExecResult, error) {
+func (c *Client) Exec(ctx context.Context, cmd string, args []string, opts *ExecOpts) (*ExecResult, error) {
 	stdin := false
+	proc := &envdpb.ProcessConfig{
+		Cmd:  cmd,
+		Args: args,
+	}
+	if opts != nil {
+		if len(opts.Envs) > 0 {
+			proc.Envs = opts.Envs
+		}
+		if opts.Cwd != "" {
+			proc.Cwd = &opts.Cwd
+		}
+	}
 	req := connect.NewRequest(&envdpb.StartRequest{
-		Process: &envdpb.ProcessConfig{
-			Cmd:  cmd,
-			Args: args,
-		},
-		Stdin: &stdin,
+		Process: proc,
+		Stdin:   &stdin,
 	})
 
 	stream, err := c.process.Start(ctx, req)
@@ -294,7 +312,7 @@ func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
 
 // PrepareSnapshot calls envd's POST /snapshot/prepare endpoint, which stops
 // the port scanner/forwarder and marks active connections for post-restore
-// cleanup before Firecracker freezes vCPUs.
+// cleanup before the VMM freezes vCPUs.
 //
 // Best-effort: the caller should log a warning on error but not abort the pause.
 func (c *Client) PrepareSnapshot(ctx context.Context) error {
@@ -317,27 +335,135 @@ func (c *Client) PrepareSnapshot(ctx context.Context) error {
 	return nil
 }
 
-// PostInit calls envd's POST /init endpoint, which triggers a re-read of
-// Firecracker MMDS metadata. This updates WRENN_SANDBOX_ID, WRENN_TEMPLATE_ID
-// env vars and the corresponding files under /run/wrenn/ inside the guest.
-// Must be called after snapshot restore so envd picks up the new sandbox's metadata.
+// MemoryPreloadStatus mirrors envd's /memory/preload response.
+//
+// State values: "idle", "running", "done", "failed", "cancelled".
+type MemoryPreloadStatus struct {
+	State      string  `json:"state"`
+	Regions    uint64  `json:"regions"`
+	Pages      uint64  `json:"pages"`
+	Bytes      uint64  `json:"bytes"`
+	ElapsedSec float64 `json:"elapsed_sec"`
+	Source     string  `json:"source"`
+	Error      string  `json:"error,omitempty"`
+}
+
+// StartMemoryPreload posts to envd's /memory/preload to spawn a guest-side
+// loader that reads every physical RAM page. The request returns immediately
+// after the loader is queued — the actual materialisation runs in a detached
+// thread inside envd. Required after a snapshot restore with
+// memory_restore_mode=ondemand so the next ch.snapshot writes a
+// self-contained memory-ranges file.
+//
+// Use WaitMemoryPreload to block on completion or GetMemoryPreloadStatus to
+// query progress.
+func (c *Client) StartMemoryPreload(ctx context.Context) (MemoryPreloadStatus, error) {
+	return c.memoryPreloadRequest(ctx, http.MethodPost)
+}
+
+// GetMemoryPreloadStatus reads envd's /memory/preload status without
+// starting a new loader.
+func (c *Client) GetMemoryPreloadStatus(ctx context.Context) (MemoryPreloadStatus, error) {
+	return c.memoryPreloadRequest(ctx, http.MethodGet)
+}
+
+func (c *Client) memoryPreloadRequest(ctx context.Context, method string) (MemoryPreloadStatus, error) {
+	var status MemoryPreloadStatus
+	req, err := http.NewRequestWithContext(ctx, method, c.base+"/memory/preload", nil)
+	if err != nil {
+		return status, fmt.Errorf("create request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return status, fmt.Errorf("memory preload %s: %w", method, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return status, fmt.Errorf("memory preload %s: status %d: %s", method, resp.StatusCode, string(body))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return status, fmt.Errorf("memory preload %s: decode: %w", method, err)
+	}
+	return status, nil
+}
+
+// WaitMemoryPreload polls envd until the loader is no longer running or ctx
+// is cancelled. Returns the final status. Polling interval is fixed at 1s —
+// the loader runs for many seconds to minutes, so finer polling wastes RPCs.
+func (c *Client) WaitMemoryPreload(ctx context.Context) (MemoryPreloadStatus, error) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	for {
+		status, err := c.GetMemoryPreloadStatus(ctx)
+		if err != nil {
+			return status, err
+		}
+		if status.State != "running" {
+			return status, nil
+		}
+		select {
+		case <-ctx.Done():
+			return status, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// CancelMemoryPreload signals the in-guest memory preloader to stop early.
+// Used during teardown so a pause/destroy doesn't have to wait for a
+// multi-hundred-MiB read to finish.
+func (c *Client) CancelMemoryPreload(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/memory/preload/cancel", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("preload cancel: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("preload cancel: status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// PostInit calls envd's POST /init endpoint to trigger post-boot or
+// post-restore initialization. sandbox_id and template_id are passed
+// so envd can set WRENN_SANDBOX_ID and WRENN_TEMPLATE_ID env vars.
 func (c *Client) PostInit(ctx context.Context) error {
-	return c.PostInitWithDefaults(ctx, "", nil)
+	return c.PostInitWithDefaults(ctx, "", nil, "", "")
 }
 
 // PostInitWithDefaults calls envd's POST /init endpoint with optional default
-// user and environment variables. These are applied to envd's defaults so all
-// subsequent process executions use them.
-func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, envVars map[string]string) error {
+// user, environment variables, and sandbox metadata. These are applied to
+// envd's defaults so all subsequent process executions use them.
+//
+// timestamp and lifecycle_id are always populated: envd uses them to snap
+// the guest clock to the host's wall time and to detect post-resume calls
+// (which trigger port-forwarder restart + NFS remount).
+func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, envVars map[string]string, sandboxID, templateID string) error {
+	payload := map[string]any{
+		"timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
+		"lifecycle_id": uuid.NewString(),
+	}
+	if defaultUser != "" {
+		payload["defaultUser"] = defaultUser
+	}
+	if len(envVars) > 0 {
+		payload["envVars"] = envVars
+	}
+	if sandboxID != "" {
+		payload["sandbox_id"] = sandboxID
+	}
+	if templateID != "" {
+		payload["template_id"] = templateID
+	}
+
 	var body io.Reader
-	if defaultUser != "" || len(envVars) > 0 {
-		payload := make(map[string]any)
-		if defaultUser != "" {
-			payload["defaultUser"] = defaultUser
-		}
-		if len(envVars) > 0 {
-			payload["envVars"] = envVars
-		}
+	if len(payload) > 0 {
 		data, err := json.Marshal(payload)
 		if err != nil {
 			return fmt.Errorf("marshal init body: %w", err)

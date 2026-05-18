@@ -104,10 +104,12 @@ SET status       = $3,
 WHERE id = $1 AND status = $2
 RETURNING *;
 
--- name: BulkRestoreRunning :exec
+-- name: BulkRestoreMissingToStatus :exec
 -- Called by the reconciler when a host comes back online and its sandboxes are
--- confirmed alive. Restores only sandboxes that are in 'missing' state.
+-- confirmed alive. Restores only sandboxes currently in 'missing' state to the
+-- given target status (typically 'running' or 'paused' based on the live state
+-- reported by the host agent's ListSandboxes RPC).
 UPDATE sandboxes
-SET status       = 'running',
+SET status       = $2,
     last_updated = NOW()
 WHERE id = ANY($1::uuid[]) AND status = 'missing';

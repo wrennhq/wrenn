@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,60 +13,41 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/events"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
 const (
-	sandboxEventStream   = "wrenn:sandbox-events"
-	sandboxEventGroup    = "wrenn-sandbox-events-v1"
-	sandboxEventConsumer = "cp-0"
+	unifiedEventStream    = "wrenn:events"
+	reconcilerConsumerGrp = "wrenn-sandbox-reconciler-v1"
+	reconcilerConsumer    = "cp-0"
 )
 
-// SandboxEvent is the canonical event payload published to the Redis stream
-// by both the CP background goroutines (for explicit lifecycle ops) and
-// the agent callback endpoint (for autonomous events like auto-pause).
-type SandboxEvent struct {
-	Event     string            `json:"event"`
-	SandboxID string            `json:"sandbox_id"`
-	HostID    string            `json:"host_id"`
-	HostIP    string            `json:"host_ip,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
-	Error     string            `json:"error,omitempty"`
-	Timestamp int64             `json:"timestamp"`
-}
-
-// Sandbox event type constants.
-const (
-	SandboxEventStarted    = "sandbox.started"
-	SandboxEventPaused     = "sandbox.paused"
-	SandboxEventResumed    = "sandbox.resumed"
-	SandboxEventStopped    = "sandbox.stopped"
-	SandboxEventFailed     = "sandbox.failed"
-	SandboxEventAutoPaused = "sandbox.auto_paused"
-)
-
-// SandboxEventConsumer reads sandbox lifecycle events from the Redis stream
-// and updates database state accordingly. It follows the same XREADGROUP
-// pattern as pkg/channels/dispatcher.go.
+// SandboxEventConsumer reads capsule lifecycle events from the unified Redis
+// stream and drives DB state reconciliation. Uses an independent consumer
+// group so its cursor is separate from the channels dispatcher.
 type SandboxEventConsumer struct {
 	rdb   *redis.Client
 	db    *db.Queries
 	audit *audit.AuditLogger
+	hooks []cpextension.SandboxEventHook
 }
 
 // NewSandboxEventConsumer creates a consumer.
-func NewSandboxEventConsumer(rdb *redis.Client, queries *db.Queries, al *audit.AuditLogger) *SandboxEventConsumer {
-	return &SandboxEventConsumer{rdb: rdb, db: queries, audit: al}
+func NewSandboxEventConsumer(rdb *redis.Client, queries *db.Queries, al *audit.AuditLogger, hooks []cpextension.SandboxEventHook) *SandboxEventConsumer {
+	return &SandboxEventConsumer{rdb: rdb, db: queries, audit: al, hooks: hooks}
 }
 
-// Start launches the consumer goroutine.
+// Start launches the consumer goroutine. Reads from "$" so prior history
+// is not replayed.
 func (c *SandboxEventConsumer) Start(ctx context.Context) {
 	go c.run(ctx)
 }
 
 func (c *SandboxEventConsumer) run(ctx context.Context) {
-	err := c.rdb.XGroupCreateMkStream(ctx, sandboxEventStream, sandboxEventGroup, "$").Err()
+	err := c.rdb.XGroupCreateMkStream(ctx, unifiedEventStream, reconcilerConsumerGrp, "$").Err()
 	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
 		slog.Error("sandbox event consumer: failed to create consumer group", "error", err)
 		return
@@ -79,9 +61,9 @@ func (c *SandboxEventConsumer) run(ctx context.Context) {
 		}
 
 		streams, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    sandboxEventGroup,
-			Consumer: sandboxEventConsumer,
-			Streams:  []string{sandboxEventStream, ">"},
+			Group:    reconcilerConsumerGrp,
+			Consumer: reconcilerConsumer,
+			Streams:  []string{unifiedEventStream, ">"},
 			Count:    10,
 			Block:    5 * time.Second,
 		}).Result()
@@ -104,12 +86,14 @@ func (c *SandboxEventConsumer) run(ctx context.Context) {
 }
 
 func (c *SandboxEventConsumer) handleMessage(ctx context.Context, msg redis.XMessage) {
-	// Use a non-cancellable context for XAck so shutdown doesn't leave
-	// messages permanently stuck in the pending entries list.
+	ack := true
 	defer func() {
+		if !ack {
+			return
+		}
 		ackCtx, ackCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer ackCancel()
-		if err := c.rdb.XAck(ackCtx, sandboxEventStream, sandboxEventGroup, msg.ID).Err(); err != nil {
+		if err := c.rdb.XAck(ackCtx, unifiedEventStream, reconcilerConsumerGrp, msg.ID).Err(); err != nil {
 			slog.Warn("sandbox event consumer: xack failed", "id", msg.ID, "error", err)
 		}
 	}()
@@ -120,45 +104,119 @@ func (c *SandboxEventConsumer) handleMessage(ctx context.Context, msg redis.XMes
 		return
 	}
 
-	var event SandboxEvent
+	var event events.Event
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
 		slog.Warn("sandbox event consumer: failed to unmarshal event", "id", msg.ID, "error", err)
 		return
 	}
 
-	sandboxID, err := id.ParseSandboxID(event.SandboxID)
+	// Only capsule.* events drive sandbox reconciliation.
+	if !strings.HasPrefix(event.Event, "capsule.") || event.Event == events.CapsuleStateChanged {
+		return
+	}
+	// Only system-actor events represent host-side state we need to reflect
+	// in the DB; user-actor events are already mirrored by the handler that
+	// produced them.
+	if event.Actor.Type != events.ActorSystem {
+		// Exception: handlers publish capsule.create with user actor before
+		// the host has reported back. Those are owned by the service goroutine.
+		return
+	}
+
+	sandboxID, err := id.ParseSandboxID(event.Resource.ID)
 	if err != nil {
-		slog.Warn("sandbox event consumer: invalid sandbox ID", "sandbox_id", event.SandboxID, "error", err)
+		slog.Warn("sandbox event consumer: invalid sandbox ID", "sandbox_id", event.Resource.ID, "error", err)
 		return
 	}
 
 	switch event.Event {
-	case SandboxEventStarted:
-		c.handleStarted(ctx, sandboxID, event, "starting")
-	case SandboxEventResumed:
-		c.handleStarted(ctx, sandboxID, event, "resuming")
-	case SandboxEventPaused:
-		c.handlePaused(ctx, sandboxID, event)
-	case SandboxEventStopped:
-		c.handleStopped(ctx, sandboxID, event)
-	case SandboxEventFailed:
-		c.handleFailed(ctx, sandboxID)
-	case SandboxEventAutoPaused:
-		c.handleAutoPaused(ctx, sandboxID, event)
-	default:
-		slog.Warn("sandbox event consumer: unknown event type", "event", event.Event)
+	case events.CapsuleCreate:
+		if event.Outcome == events.OutcomeSuccess {
+			c.handleStarted(ctx, sandboxID, event, "starting")
+		} else {
+			c.handleFailed(ctx, sandboxID)
+		}
+	case events.CapsuleResume:
+		if event.Outcome == events.OutcomeSuccess {
+			c.handleStarted(ctx, sandboxID, event, "resuming")
+		} else {
+			c.handleFailed(ctx, sandboxID)
+		}
+	case events.CapsulePause:
+		if event.Outcome == events.OutcomeSuccess {
+			c.handleAutoPaused(ctx, sandboxID)
+		}
+	case events.CapsuleDestroy:
+		if event.Outcome == events.OutcomeSuccess {
+			c.handleStopped(ctx, sandboxID)
+		}
+	}
+
+	// Dispatch to extension hooks (cloud billing, audit shipping, etc.). Any
+	// hook error suppresses the ack so the message will be redelivered. Hooks
+	// MUST be idempotent — duplicate deliveries are expected on transient
+	// failures.
+	if len(c.hooks) > 0 && event.Outcome == events.OutcomeSuccess {
+		if verb, ok := canonicalSandboxVerb(event.Event); ok {
+			teamID, _ := id.ParseTeamID(event.TeamID)
+			meta := map[string]any{}
+			for k, v := range event.Metadata {
+				meta[k] = v
+			}
+			ev := cpextension.SandboxEvent{
+				SandboxID:  sandboxID,
+				TeamID:     teamID,
+				Type:       verb,
+				OccurredAt: parseEventTimestamp(event.Timestamp),
+				Metadata:   meta,
+			}
+			for _, h := range c.hooks {
+				if err := h.OnSandboxEvent(ctx, ev); err != nil {
+					slog.Warn("sandbox event hook failed; leaving message un-acked", "id", msg.ID, "event", event.Event, "error", err)
+					ack = false
+					return
+				}
+			}
+		}
 	}
 }
 
-// handleStarted is a fallback writer for sandbox.started and sandbox.resumed
-// events. The background goroutine in SandboxService is the primary writer;
-// this only succeeds if the goroutine's conditional update was missed.
-func (c *SandboxEventConsumer) handleStarted(ctx context.Context, sandboxID pgtype.UUID, event SandboxEvent, fromStatus string) {
+func canonicalSandboxVerb(event string) (string, bool) {
+	switch event {
+	case events.CapsuleCreate:
+		return "created", true
+	case events.CapsuleResume:
+		return "resumed", true
+	case events.CapsulePause:
+		return "paused", true
+	case events.CapsuleDestroy:
+		return "destroyed", true
+	}
+	return "", false
+}
+
+func parseEventTimestamp(s string) time.Time {
+	if s == "" {
+		return time.Now().UTC()
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Now().UTC()
+	}
+	return t
+}
+
+// handleStarted is a fallback writer for capsule.create.success and
+// capsule.resume.success. The background goroutine in SandboxService is the
+// primary writer; this only succeeds if the goroutine's conditional update
+// was missed.
+func (c *SandboxEventConsumer) handleStarted(ctx context.Context, sandboxID pgtype.UUID, event events.Event, fromStatus string) {
+	hostIP := event.Metadata["host_ip"]
 	now := time.Now()
 	if _, err := c.db.UpdateSandboxRunningIf(ctx, db.UpdateSandboxRunningIfParams{
 		ID:     sandboxID,
 		Status: fromStatus,
-		HostIp: event.HostIP,
+		HostIp: hostIP,
 		StartedAt: pgtype.Timestamptz{
 			Time:  now,
 			Valid: true,
@@ -166,71 +224,46 @@ func (c *SandboxEventConsumer) handleStarted(ctx context.Context, sandboxID pgty
 	}); err != nil {
 		return
 	}
+}
 
-	if len(event.Metadata) > 0 {
-		metaJSON, _ := json.Marshal(event.Metadata)
-		_ = c.db.UpdateSandboxMetadata(ctx, db.UpdateSandboxMetadataParams{
-			ID:       sandboxID,
-			Metadata: metaJSON,
-		})
+func (c *SandboxEventConsumer) handleAutoPaused(ctx context.Context, sandboxID pgtype.UUID) {
+	for _, fromStatus := range []string{"running", "pausing"} {
+		if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+			ID: sandboxID, Status: fromStatus, Status_2: "paused",
+		}); err == nil {
+			slog.Debug("sandbox event consumer: auto-paused fallback applied", "sandbox_id", id.FormatSandboxID(sandboxID), "from", fromStatus)
+			return
+		}
 	}
 }
 
-func (c *SandboxEventConsumer) handlePaused(ctx context.Context, sandboxID pgtype.UUID, event SandboxEvent) {
-	if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
-		ID:       sandboxID,
-		Status:   "pausing",
-		Status_2: "paused",
-	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		slog.Warn("sandbox event consumer: failed to update sandbox to paused", "sandbox_id", event.SandboxID, "error", err)
-	}
-}
-
-func (c *SandboxEventConsumer) handleStopped(ctx context.Context, sandboxID pgtype.UUID, event SandboxEvent) {
+func (c *SandboxEventConsumer) handleStopped(ctx context.Context, sandboxID pgtype.UUID) {
+	// stopping → stopped (CP-initiated destroy completed). No audit row here;
+	// the handler that issued the destroy already wrote one.
 	if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 		ID:       sandboxID,
 		Status:   "stopping",
 		Status_2: "stopped",
-	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		slog.Warn("sandbox event consumer: failed to update sandbox to stopped", "sandbox_id", event.SandboxID, "error", err)
+	}); err == nil {
+		return
 	}
-}
-
-// handleFailed is a no-op fallback — the background goroutine already
-// performed the conditional DB update before publishing this event.
-// We keep the case arm so unknown event types are flagged, but avoid
-// an unconditional status write that could clobber concurrent operations.
-func (c *SandboxEventConsumer) handleFailed(_ context.Context, _ pgtype.UUID) {}
-
-func (c *SandboxEventConsumer) handleAutoPaused(ctx context.Context, sandboxID pgtype.UUID, _ SandboxEvent) {
-	sb, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+	// running → stopped (autonomous destroy, e.g. TTL destroy fallback).
+	if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 		ID:       sandboxID,
 		Status:   "running",
-		Status_2: "paused",
-	})
-	if err != nil {
-		return
+		Status_2: "stopped",
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("sandbox event consumer: failed to update sandbox to stopped", "sandbox_id", id.FormatSandboxID(sandboxID), "error", err)
 	}
-	c.audit.LogSandboxAutoPause(ctx, sb.TeamID, sandboxID)
 }
 
-// PublishSandboxEvent writes a sandbox lifecycle event to the Redis stream.
-// Used by both the SandboxService background goroutines and the callback endpoint.
-func PublishSandboxEvent(ctx context.Context, rdb *redis.Client, event SandboxEvent) {
-	payload, err := json.Marshal(event)
-	if err != nil {
-		slog.Warn("sandbox event: failed to marshal", "event", event.Event, "error", err)
-		return
-	}
-
-	if err := rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: sandboxEventStream,
-		MaxLen: 50000,
-		Approx: true,
-		Values: map[string]any{
-			"payload": string(payload),
-		},
-	}).Err(); err != nil {
-		slog.Warn("sandbox event: failed to publish", "event", event.Event, "error", err)
+// handleFailed marks a sandbox as "error" when a verb event reports failure.
+func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtype.UUID) {
+	for _, fromStatus := range []string{"running", "starting", "pausing", "resuming"} {
+		if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+			ID: sandboxID, Status: fromStatus, Status_2: "error",
+		}); err == nil {
+			return
+		}
 	}
 }

@@ -6,7 +6,6 @@ mod config;
 mod conntracker;
 mod crypto;
 mod execcontext;
-mod host;
 mod http;
 mod logging;
 mod permissions;
@@ -22,7 +21,6 @@ use std::sync::Arc;
 
 use clap::Parser;
 use tokio::net::TcpListener;
-use tokio_util::sync::CancellationToken;
 
 use config::{DEFAULT_PORT, DEFAULT_USER, WRENN_RUN_DIR};
 use execcontext::Defaults;
@@ -43,9 +41,6 @@ const COMMIT: &str = {
 struct Cli {
     #[arg(long, default_value_t = DEFAULT_PORT)]
     port: u16,
-
-    #[arg(long = "isnotfc", default_value_t = false)]
-    is_not_fc: bool,
 
     #[arg(long)]
     version: bool,
@@ -73,33 +68,20 @@ async fn main() {
         return;
     }
 
-    let use_json = !cli.is_not_fc;
-    logging::init(use_json);
+    logging::init(true);
 
     if let Err(e) = fs::create_dir_all(WRENN_RUN_DIR) {
         tracing::error!(error = %e, "failed to create wrenn run directory");
     }
 
     let defaults = Defaults::new(DEFAULT_USER);
-    let is_fc_str = if cli.is_not_fc { "false" } else { "true" };
     defaults
         .env_vars
-        .insert("WRENN_SANDBOX".into(), is_fc_str.into());
+        .insert("WRENN_SANDBOX".into(), "true".into());
 
     let wrenn_sandbox_path = Path::new(WRENN_RUN_DIR).join(".WRENN_SANDBOX");
-    if let Err(e) = fs::write(&wrenn_sandbox_path, is_fc_str.as_bytes()) {
+    if let Err(e) = fs::write(&wrenn_sandbox_path, b"true") {
         tracing::error!(error = %e, "failed to write sandbox file");
-    }
-
-    let cancel = CancellationToken::new();
-
-    // MMDS polling (only in FC mode)
-    if !cli.is_not_fc {
-        let env_vars = Arc::clone(&defaults.env_vars);
-        let cancel_clone = cancel.clone();
-        tokio::spawn(async move {
-            host::mmds::poll_for_opts(env_vars, cancel_clone).await;
-        });
     }
 
     // Cgroup manager
@@ -143,14 +125,12 @@ async fn main() {
         defaults,
         VERSION.to_string(),
         COMMIT.to_string(),
-        !cli.is_not_fc,
         Some(Arc::clone(&port_subsystem)),
     );
 
     // Memory reclaimer — drop page cache when available memory is low.
-    // Firecracker balloon device can only reclaim pages the guest kernel freed.
-    // Pauses during snapshot/prepare to avoid corrupting kernel page table state.
-    if !cli.is_not_fc {
+    // The balloon device can only reclaim pages the guest kernel freed.
+    {
         let state_for_reclaimer = Arc::clone(&state);
         std::thread::spawn(move || memory_reclaimer(state_for_reclaimer));
     }
@@ -188,7 +168,6 @@ async fn main() {
     }
 
     port_subsystem.stop();
-    cancel.cancel();
 }
 
 fn spawn_initial_command(cmd: &str, state: &AppState) {
@@ -231,18 +210,14 @@ fn spawn_initial_command(cmd: &str, state: &AppState) {
     }
 }
 
-fn memory_reclaimer(state: Arc<AppState>) {
-    use std::sync::atomic::Ordering;
+fn memory_reclaimer(_state: Arc<AppState>) {
+    use std::time::Duration;
 
-    const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+    const CHECK_INTERVAL: Duration = Duration::from_secs(10);
     const DROP_THRESHOLD_PCT: u64 = 80;
 
     loop {
         std::thread::sleep(CHECK_INTERVAL);
-
-        if state.snapshot_in_progress.load(Ordering::Acquire) {
-            continue;
-        }
 
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
@@ -255,10 +230,6 @@ fn memory_reclaimer(state: Arc<AppState>) {
 
         let used_pct = ((total - available) * 100) / total;
         if used_pct >= DROP_THRESHOLD_PCT {
-            if state.snapshot_in_progress.load(Ordering::Acquire) {
-                continue;
-            }
-
             if let Err(e) = std::fs::write("/proc/sys/vm/drop_caches", "3") {
                 tracing::debug!(error = %e, "drop_caches failed");
             } else {

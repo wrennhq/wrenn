@@ -4,6 +4,7 @@ pub mod error;
 pub mod files;
 pub mod health;
 pub mod init;
+pub mod memory;
 pub mod metrics;
 pub mod snapshot;
 
@@ -50,6 +51,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/envs", get(envs::get_envs))
         .route("/init", post(init::post_init))
         .route("/snapshot/prepare", post(snapshot::post_snapshot_prepare))
+        .route(
+            "/memory/preload",
+            get(memory::get_memory_preload).post(memory::post_memory_preload),
+        )
+        .route(
+            "/memory/preload/cancel",
+            post(memory::post_memory_preload_cancel),
+        )
         .route("/files", get(files::get_files).post(files::post_files))
         .layer(cors)
         .with_state(state)

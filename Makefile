@@ -62,7 +62,7 @@ dev-frontend:
 	cd frontend && bun run dev --port 5173 --host 0.0.0.0
 
 dev-envd:
-	cd envd-rs && cargo run -- --isnotfc --port 49983
+	cd envd-rs && cargo run -- --port 49983
 
 # ═══════════════════════════════════════════════════
 #  Database (goose)
@@ -181,7 +181,7 @@ help:
 	@echo "  make dev-cp         Control plane (hot reload if air installed)"
 	@echo "  make dev-frontend   Vite dev server with HMR (port 5173)"
 	@echo "  make dev-agent      Host agent (sudo required)"
-	@echo "  make dev-envd       envd in debug mode (--isnotfc, port 49983)"
+	@echo "  make dev-envd       envd in debug mode (port 49983)"
 	@echo ""
 	@echo "  make build          Build all binaries → builds/"
 	@echo "  make build-frontend Build SvelteKit dashboard → frontend/build/"

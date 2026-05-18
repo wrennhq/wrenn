@@ -4,11 +4,9 @@ import (
 	"net/http"
 
 	"connectrpc.com/connect"
-	"github.com/go-chi/chi/v5"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
-	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
@@ -58,23 +56,11 @@ type removeRequest struct {
 
 // ListDir handles POST /v1/capsules/{id}/files/list.
 func (h *fsHandler) ListDir(w http.ResponseWriter, r *http.Request) {
-	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
 
-	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
-		return
-	}
-
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+	sb, _, sandboxIDStr, ok := requireRunningSandbox(w, r, h.db, ac.TeamID)
+	if !ok {
 		return
 	}
 
@@ -115,23 +101,11 @@ func (h *fsHandler) ListDir(w http.ResponseWriter, r *http.Request) {
 
 // MakeDir handles POST /v1/capsules/{id}/files/mkdir.
 func (h *fsHandler) MakeDir(w http.ResponseWriter, r *http.Request) {
-	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
 
-	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
-		return
-	}
-
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+	sb, _, sandboxIDStr, ok := requireRunningSandbox(w, r, h.db, ac.TeamID)
+	if !ok {
 		return
 	}
 
@@ -166,23 +140,11 @@ func (h *fsHandler) MakeDir(w http.ResponseWriter, r *http.Request) {
 
 // Remove handles POST /v1/capsules/{id}/files/remove.
 func (h *fsHandler) Remove(w http.ResponseWriter, r *http.Request) {
-	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
 
-	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
-		return
-	}
-
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+	sb, _, sandboxIDStr, ok := requireRunningSandbox(w, r, h.db, ac.TeamID)
+	if !ok {
 		return
 	}
 

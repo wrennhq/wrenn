@@ -2,13 +2,25 @@ package vm
 
 import "fmt"
 
-// VMConfig holds the configuration for creating a Firecracker microVM.
+// SandboxTmpDir returns the per-sandbox tmpfs mount point used inside the
+// VMM's private mount namespace. Recorded as the disk path in CH's saved
+// config.json, so restore paths must reconstruct it exactly to make the
+// symlink prelude resolve.
+func SandboxTmpDir(sandboxID string) string {
+	return fmt.Sprintf("/tmp/ch-vm-%s", sandboxID)
+}
+
+// SandboxSocketPath returns the Cloud Hypervisor API socket path for a sandbox.
+func SandboxSocketPath(sandboxID string) string {
+	return fmt.Sprintf("/tmp/ch-%s.sock", sandboxID)
+}
+
+// VMConfig holds the configuration for creating a Cloud Hypervisor microVM.
 type VMConfig struct {
 	// SandboxID is the unique identifier for this sandbox (e.g., "cl-a1b2c3d4").
 	SandboxID string
 
-	// TemplateID is the template UUID string used to populate MMDS metadata
-	// so that envd can read WRENN_TEMPLATE_ID from inside the guest.
+	// TemplateID is the template UUID string, passed to envd via PostInit.
 	TemplateID string
 
 	// KernelPath is the path to the uncompressed Linux kernel (vmlinux).
@@ -25,12 +37,12 @@ type VMConfig struct {
 	MemoryMB int
 
 	// NetworkNamespace is the name of the network namespace to launch
-	// Firecracker inside (e.g., "ns-1"). The namespace must already exist
+	// Cloud Hypervisor inside (e.g., "ns-1"). The namespace must already exist
 	// with a TAP device configured.
 	NetworkNamespace string
 
 	// TapDevice is the name of the TAP device inside the network namespace
-	// that Firecracker will attach to (e.g., "tap0").
+	// that Cloud Hypervisor will attach to (e.g., "tap0").
 	TapDevice string
 
 	// TapMAC is the MAC address for the TAP device.
@@ -45,19 +57,34 @@ type VMConfig struct {
 	// NetMask is the subnet mask for the guest network (e.g., "255.255.255.252").
 	NetMask string
 
-	// FirecrackerBin is the path to the firecracker binary.
-	FirecrackerBin string
+	// VMMBin is the path to the cloud-hypervisor binary.
+	VMMBin string
 
-	// SocketPath is the path for the Firecracker API Unix socket.
+	// SocketPath is the path for the Cloud Hypervisor API Unix socket.
 	SocketPath string
 
 	// SandboxDir is the tmpfs mount point for per-sandbox files inside the
-	// mount namespace (e.g., "/fc-vm").
+	// mount namespace (e.g., "/ch-vm").
 	SandboxDir string
 
 	// InitPath is the path to the init process inside the guest.
 	// Defaults to "/sbin/init" if empty.
 	InitPath string
+
+	// RestoreFromDir, if non-empty, switches the process launcher into restore
+	// mode. CH is invoked with `--restore source_url=file://{dir}/` instead of
+	// the fresh-boot path. The directory must contain CH's snapshot artefacts
+	// (config.json, state.json, memory-ranges, memory file).
+	RestoreFromDir string
+
+	// RestoreLazyMemory enables `memory_restore_mode=ondemand` so guest pages
+	// fault in lazily via userfaultfd. Only honored when RestoreFromDir is set.
+	RestoreLazyMemory bool
+
+	// LogDir is the directory for Cloud Hypervisor log files. If set, CH
+	// stdout/stderr are written to {LogDir}/ch-{SandboxID}.log instead of
+	// the parent process's stdout/stderr.
+	LogDir string
 }
 
 func (c *VMConfig) applyDefaults() {
@@ -67,14 +94,14 @@ func (c *VMConfig) applyDefaults() {
 	if c.MemoryMB == 0 {
 		c.MemoryMB = 512
 	}
-	if c.FirecrackerBin == "" {
-		c.FirecrackerBin = "/usr/local/bin/firecracker"
+	if c.VMMBin == "" {
+		c.VMMBin = "/usr/local/bin/cloud-hypervisor"
 	}
 	if c.SocketPath == "" {
-		c.SocketPath = fmt.Sprintf("/tmp/fc-%s.sock", c.SandboxID)
+		c.SocketPath = SandboxSocketPath(c.SandboxID)
 	}
 	if c.SandboxDir == "" {
-		c.SandboxDir = "/tmp/fc-vm"
+		c.SandboxDir = SandboxTmpDir(c.SandboxID)
 	}
 	if c.TapDevice == "" {
 		c.TapDevice = "tap0"
@@ -95,7 +122,7 @@ func (c *VMConfig) kernelArgs() string {
 	)
 
 	return fmt.Sprintf(
-		"console=ttyS0 reboot=k panic=1 pci=off quiet loglevel=1 clocksource=kvm-clock init=%s %s",
+		"console=ttyS0 root=/dev/vda rw rootflags=nodiscard reboot=k panic=1 quiet loglevel=1 init_on_free=1 clocksource=kvm-clock init=%s %s",
 		c.InitPath, ipArg,
 	)
 }

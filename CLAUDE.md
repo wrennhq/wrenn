@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Wrenn Sandbox is a microVM-based code execution platform. Users create isolated sandboxes (Firecracker microVMs), run code inside them, and get output back via SDKs. Think E2B but with persistent sandboxes, pool-based pricing, and a single-binary deployment story.
+Wrenn Sandbox is a microVM-based code execution platform. Users create isolated sandboxes (Cloud Hypervisor microVMs), run code inside them, and get output back via SDKs. Think E2B but with persistent sandboxes, pool-based pricing, and a single-binary deployment story.
 
 ## Build & Development Commands
 
@@ -23,11 +23,11 @@ make dev-down           # Stop dev infra
 make dev-cp             # Control plane with hot reload (if air installed)
 make dev-frontend       # Vite dev server with HMR (port 5173)
 make dev-agent          # Host agent (sudo required)
-make dev-envd           # envd in debug mode (--isnotfc, port 49983)
+make dev-envd           # envd in debug mode (port 49983)
 
 make check              # fmt + vet + lint + test (CI order)
 make test               # Unit tests: go test -race -v ./internal/...
-make test-integration   # Integration tests (require host agent + Firecracker)
+make test-integration   # Integration tests (require host agent + Cloud Hypervisor)
 make fmt                # gofmt
 make vet                # go vet
 make lint               # golangci-lint
@@ -66,11 +66,24 @@ envd is a standalone Rust binary (Tokio + Axum + connectrpc-rs). It is completel
 
 **Internal packages:** `internal/api/`, `internal/email/`
 
-**Public packages (importable by cloud repo):** `pkg/config/`, `pkg/db/`, `pkg/auth/`, `pkg/auth/oauth/`, `pkg/scheduler/`, `pkg/lifecycle/`, `pkg/channels/`, `pkg/audit/`, `pkg/service/`, `pkg/events/`, `pkg/id/`, `pkg/validate/`
+**Public packages (importable by cloud repo):** `pkg/config/`, `pkg/db/`, `pkg/auth/`, `pkg/auth/oauth/`, `pkg/auth/session/`, `pkg/auth/session/middleware/`, `pkg/scheduler/`, `pkg/lifecycle/`, `pkg/channels/`, `pkg/audit/`, `pkg/service/`, `pkg/events/`, `pkg/id/`, `pkg/validate/`
 
-**Extension framework:** `pkg/cpextension/` (shared `Extension` interface + `ServerContext`), `pkg/cpserver/` (exported `Run()` entrypoint with functional options for cloud `main.go`)
+**Extension framework:** `pkg/cpextension/` (shared `Extension` interface + `ServerContext` + hook interfaces), `pkg/cpserver/` (exported `Run()` entrypoint with functional options for cloud `main.go`)
 
-The cloud repo imports this module as a Go dependency and calls `cpserver.Run(cpserver.WithExtensions(myExt))`. Each extension implements two methods: `RegisterRoutes(r chi.Router, sctx ServerContext)` to add HTTP routes, and `BackgroundWorkers(sctx ServerContext) []func(context.Context)` to add long-running goroutines. `ServerContext` carries all OSS services (DB, scheduler, auth, etc.) so extensions can use them without reimplementing anything. To expose a new OSS service to extensions, add it to `ServerContext` in `pkg/cpextension/extension.go` and populate it in `pkg/cpserver/run.go`.
+The cloud repo imports this module as a Go dependency and calls `cpserver.Run(cpserver.WithExtensions(myExt))`. An extension always implements:
+- `RegisterRoutes(r chi.Router, sctx ServerContext)` — adds HTTP routes.
+- `BackgroundWorkers(sctx ServerContext) []func(context.Context)` — starts long-running goroutines.
+
+It can optionally implement any of these hook interfaces (the OSS server type-asserts at startup):
+- `MiddlewareProvider` — `Middlewares(sctx) []func(http.Handler) http.Handler`, applied before OSS routes so cloud middleware can wrap them (e.g. billing gates).
+- `AuthHook` — `OnSignup` (synchronous, error aborts the request with 500 `signup_hook_failed`), `OnLogin`, `OnAccountSoftDelete`, `OnAccountHardDelete` (the last three log + ignore errors). OnSignup fires after team provisioning in both email-activate and OAuth-new-signup paths.
+- `SandboxEventHook` — `OnSandboxEvent(ctx, SandboxEvent)`, invoked from the unified Redis stream consumer for capsule create/pause/resume/destroy success events. Hook errors leave the message un-acked so it will be redelivered; hooks must be idempotent.
+- `LimitsProvider` — `EffectiveLimits(ctx, teamID) (Limits, error)`. When set, `POST /v1/capsules` consults it before scheduling and returns 402 (`concurrent_sandbox_limit` / `vcpu_limit` / `memory_limit`) on overage. With no provider the OSS deployment is unmetered.
+- `UsageProvider` — `CurrentUsage(ctx, teamID) (Usage, error)`. If absent but a LimitsProvider is set, an OSS default backed by `GetLiveMetrics` (sandbox count + reserved vCPU/RAM) is used.
+
+`ServerContext` carries the initialized OSS dependencies: `Queries`, `PgPool`, `Redis`, `HostPool`, `Scheduler`, `CA`, `Audit`, `Mailer`, `OAuthRegistry`, `Channels`, `ChannelPub`, `JWTSecret`, `Sessions`, `Config`. To expose a new OSS service to extensions, add it to `ServerContext` in `pkg/cpextension/extension.go` and populate it in `pkg/cpserver/run.go`.
+
+**Auth helpers for extensions** (`pkg/auth/session/middleware/`, re-exported via `cpextension`): `RequireSession(sctx)`, `RequireSessionOrAPIKey(sctx)`, `RequireAdmin(sctx)`, `RequireCSRF()`, `IssueSession(w, r, sctx, userID, teamID)`, `ClearSessionCookies(w, r)`. Cookie/header names are exported as `SessionCookieName`, `CSRFCookieName`, `CSRFHeaderName`. OSS handlers (`internal/api/middleware_session.go`) are thin shims over this package — single source of truth.
 
 **pkg/ vs internal/ decision rule:** A package belongs in `pkg/` only if the cloud repo needs to import it directly. Everything else stays in `internal/`. New OSS services (e.g. email, notifications) go in `internal/` — the cloud repo accesses them through `ServerContext`, not by importing the package. Do not put a service in `pkg/` just because the cloud repo uses it.
 
@@ -92,7 +105,7 @@ Startup (`cmd/host-agent/main.go`) wires: root/capabilities check → enable IP 
 
 - **RPC Server** (`internal/hostagent/server.go`): implements `hostagentv1connect.HostAgentServiceHandler`. Thin wrapper — every method delegates to `sandbox.Manager`. Maps Connect error codes on return.
 - **Sandbox Manager** (`internal/sandbox/manager.go`): the core orchestration layer. Maintains in-memory state in `boxes map[string]*sandboxState` (protected by `sync.RWMutex`). Each `sandboxState` holds a `models.Sandbox`, a `*network.Slot`, and an `*envdclient.Client`. Runs a TTL reaper (every 10s) that auto-destroys timed-out sandboxes.
-- **VM Manager** (`internal/vm/manager.go`, `fc.go`, `config.go`): manages Firecracker processes. Uses raw HTTP API over Unix socket (`/tmp/fc-{sandboxID}.sock`), not the firecracker-go-sdk Machine type. Launches Firecracker via `unshare -m` + `ip netns exec`. Configures VM via PUT to `/boot-source`, `/drives/rootfs`, `/network-interfaces/eth0`, `/machine-config`, then starts with PUT `/actions`.
+- **VM Manager** (`internal/vm/manager.go`, `ch.go`, `config.go`): manages Cloud Hypervisor processes. Uses raw HTTP API over Unix socket (`/tmp/ch-{sandboxID}.sock`). Launches Cloud Hypervisor via `unshare -m` + `ip netns exec` with `--api-socket path=...`. Configures and boots VM via `PUT /vm.create` + `PUT /vm.boot`. Snapshot restore uses `--restore source_url=file://...`.
 - **Network** (`internal/network/setup.go`, `allocator.go`): per-sandbox network namespace with veth pair + TAP device. See Networking section below.
 - **Device Mapper** (`internal/devicemapper/devicemapper.go`): CoW rootfs via device-mapper snapshots. Shared read-only loop devices per base template (refcounted `LoopRegistry`), per-sandbox sparse CoW files, dm-snapshot create/restore/remove/flatten operations.
 - **envd Client** (`internal/envdclient/client.go`, `health.go`): dual interface to the guest agent. Connect RPC for streaming process exec (`process.Start()` bidirectional stream). Plain HTTP for file operations (POST/GET `/files?path=...&username=root`). Health check polls `GET /health` every 100ms until ready (30s timeout).
@@ -109,7 +122,7 @@ Runs as PID 1 inside the microVM via `wrenn-init.sh` (mounts procfs/sysfs/dev, s
 - **HTTP endpoints**: GET `/health`, GET `/metrics`, POST `/init`, POST `/snapshot/prepare`, GET/POST `/files`
 - **Proto codegen**: `connectrpc-build` compiles `proto/envd/*.proto` at `cargo build` time via `build.rs` — no committed stubs
 - **Build**: `make build-envd` → static musl binary in `builds/envd`
-- **Dev**: `make dev-envd` → `cargo run -- --isnotfc --port 49983`
+- **Dev**: `make dev-envd` → `cargo run -- --port 49983`
 
 ### Dashboard (Frontend)
 
@@ -164,7 +177,7 @@ HIBERNATED → RUNNING (cold snapshot resume, slower)
 **Sandbox creation** (`POST /v1/capsules`):
 1. API handler generates sandbox ID, inserts into DB as "pending"
 2. RPC `CreateSandbox` → host agent → `sandbox.Manager.Create()`
-3. Manager: resolve base rootfs → acquire shared loop device → create dm-snapshot (sparse CoW file) → allocate network slot → `CreateNetwork()` (netns + veth + tap + NAT) → `vm.Create()` (start Firecracker with `/dev/mapper/wrenn-{id}`, configure via HTTP API, boot) → `envdclient.WaitUntilReady()` (poll /health) → store in-memory state
+3. Manager: resolve base rootfs → acquire shared loop device → create dm-snapshot (sparse CoW file) → allocate network slot → `CreateNetwork()` (netns + veth + tap + NAT) → `vm.Create()` (start Cloud Hypervisor with `/dev/mapper/wrenn-{id}`, configure via `PUT /vm.create` + `PUT /vm.boot`) → `envdclient.WaitUntilReady()` (poll /health) → store in-memory state
 4. API handler updates DB to "running" with host_ip
 
 **Command execution** (`POST /v1/capsules/{id}/exec`):
@@ -183,7 +196,25 @@ HIBERNATED → RUNNING (cold snapshot resume, slower)
 
 ## REST API
 
-Routes defined in `internal/api/server.go`, handlers in `internal/api/handlers_*.go`. OpenAPI spec embedded via `//go:embed` and served at `/openapi.yaml` (Swagger UI at `/docs`). JSON request/response. API key auth via `X-API-Key` header. Error responses: `{"error": {"code": "...", "message": "..."}}`.
+Routes defined in `internal/api/server.go`, handlers in `internal/api/handlers_*.go`. OpenAPI spec embedded via `//go:embed` and served at `/openapi.yaml` (Swagger UI at `/docs`). JSON request/response. Error responses: `{"error": {"code": "...", "message": "..."}}`.
+
+### Authentication
+
+Two paths, no JWTs for user auth:
+
+- **SDK / server-to-server**: `X-API-Key: wrn_<32hex>` header. Keys are created via the dashboard or `POST /v1/api-keys`, SHA-256-hashed at rest, scoped to a single team. `requireSessionOrAPIKey` middleware accepts this on every capsule lifecycle route.
+- **Browser (dashboard)**: opaque cookie session. `POST /v1/auth/login` (or activate / oauth-callback) sets two cookies — `wrenn_sid` (HttpOnly+Secure+SameSite=Strict) and `wrenn_csrf` (readable by JS, SameSite=Strict). All non-GET requests must echo the CSRF token in an `X-CSRF-Token` header (double-submit). Sessions live in Postgres `sessions` plus a Redis cache (`wrenn:session:{sid}`) — see `pkg/auth/session/`.
+
+Session semantics:
+- **Idle**: 6h. Each request bumps the Redis TTL. Postgres `last_seen_at` is updated on a debounce.
+- **Absolute**: 24h from `created_at` (`expires_at`). Never extended.
+- **Rotation**: `POST /v1/auth/switch-team` issues a fresh SID and re-sets both cookies; old SID revoked.
+- **Revocation**: password change, password add, and password reset all call `RevokeAllForUser`. Self-service is at `GET /v1/me/sessions`, `DELETE /v1/me/sessions/{id}`, `POST /v1/auth/logout`, `POST /v1/auth/logout-all`.
+- **`is_admin` freshness**: the session blob caches it for display, but `requireAdmin` always re-reads Postgres so revoked admins lose access at the next admin request.
+
+Host JWTs (long-lived, signed by `JWT_SECRET`) are unchanged — that is the wrenn-cp ↔ wrenn-agent trust channel and has nothing to do with user auth.
+
+SSE / WebSocket auth: browsers send the `wrenn_sid` cookie automatically on `EventSource` and WS upgrades (same-origin via Caddy); SDKs set `X-API-Key`. No ticket exchange is involved.
 
 ## Code Generation
 
@@ -210,9 +241,9 @@ To add a new query: add it to the appropriate `.sql` file in `db/queries/` → `
 
 - **Connect RPC** (not gRPC) for all RPC communication between components
 - **Buf + protoc-gen-connect-go** for Go code generation; **connectrpc-build** for Rust code generation in envd
-- **Raw Firecracker HTTP API** via Unix socket (not firecracker-go-sdk Machine type)
+- **Raw Cloud Hypervisor HTTP API** via Unix socket (`PUT /vm.create` + `PUT /vm.boot`)
 - **TAP networking** (not vsock) for host-to-envd communication
-- **Device-mapper snapshots** for rootfs CoW — shared read-only loop device per base template, per-sandbox sparse CoW file, Firecracker gets `/dev/mapper/wrenn-{id}`
+- **Device-mapper snapshots** for rootfs CoW — shared read-only loop device per base template, per-sandbox sparse CoW file, Cloud Hypervisor gets `/dev/mapper/wrenn-{id}`
 - **PostgreSQL** via pgx/v5 + sqlc (type-safe query generation). Goose for migrations (plain SQL, up/down)
 - **Dashboard**: SvelteKit (Svelte 5, adapter-static) + Tailwind CSS v4 + Bits UI. Built to static files in `frontend/build/`, served by Caddy (not embedded in the Go binary)
 - **Lago** for billing (external service, not in this codebase)
@@ -237,19 +268,19 @@ To add a new query: add it to the appropriate `.sql` file in `db/queries/` → `
 - Kernel: `/var/lib/wrenn/kernels/vmlinux`
 - Base rootfs images: `/var/lib/wrenn/images/{template}.ext4`
 - Sandbox clones: `/var/lib/wrenn/sandboxes/`
-- Firecracker: `/usr/local/bin/firecracker` (e2b's fork of firecracker)
+- Cloud Hypervisor: `/usr/local/bin/cloud-hypervisor`
 
 ## Design Context
 
 ### Users
-Developers across the full spectrum — solo engineers building side projects, startup teams integrating sandboxed execution into products, and platform/infra engineers at larger organizations running production workloads on Firecracker microVMs. They arrive with context: they know what a process is, what a rootfs is, what a TTY means. The interface must feel at home for all three: approachable enough not to intimidate a hacker, precise enough to earn the trust of a production ops team. Never condescend, never oversimplify. Trust the user to understand what they're looking at.
+Developers across the full spectrum — solo engineers building side projects, startup teams integrating sandboxed execution into products, and platform/infra engineers at larger organizations running production workloads on Cloud Hypervisor microVMs. They arrive with context: they know what a process is, what a rootfs is, what a TTY means. The interface must feel at home for all three: approachable enough not to intimidate a hacker, precise enough to earn the trust of a production ops team. Never condescend, never oversimplify. Trust the user to understand what they're looking at.
 
 **Primary job to be done:** Understand what's running, act on it confidently, and get back to code.
 
 ### Brand Personality
 **Precise. Warm. Uncompromising.**
 
-Wrenn is an engineer's favorite tool — built with visible care, not assembled from defaults. It runs real infrastructure (Firecracker microVMs), so the UI should reflect that seriousness without becoming cold or corporate. The warmth comes from the typography and color palette; the precision comes from hierarchy, density, and data fidelity.
+Wrenn is an engineer's favorite tool — built with visible care, not assembled from defaults. It runs real infrastructure (Cloud Hypervisor microVMs), so the UI should reflect that seriousness without becoming cold or corporate. The warmth comes from the typography and color palette; the precision comes from hierarchy, density, and data fidelity.
 
 Emotional goal: **in control.** Users leave a session with full confidence in what's running, what happened, and what comes next. Nothing is hidden, nothing is ambiguous.
 

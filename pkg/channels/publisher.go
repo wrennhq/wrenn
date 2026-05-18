@@ -10,7 +10,10 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/events"
 )
 
-const streamKey = "wrenn:events"
+const (
+	streamKey        = "wrenn:events"
+	ssePubSubChannel = "wrenn:sse"
+)
 
 // Publisher pushes events onto the Redis stream for the dispatcher to consume.
 type Publisher struct {
@@ -22,8 +25,9 @@ func NewPublisher(rdb *redis.Client) *Publisher {
 	return &Publisher{rdb: rdb}
 }
 
-// Publish serializes the event and appends it to the global stream.
-// Fire-and-forget: failures are logged, never propagated.
+// Publish serializes the event, appends it to the durable Redis stream
+// (consumed by channel dispatcher for webhook/telegram delivery), and
+// mirrors it on the SSE Pub/Sub channel for the dashboard. Fire-and-forget.
 func (p *Publisher) Publish(ctx context.Context, e events.Event) {
 	payload, err := json.Marshal(e)
 	if err != nil {
@@ -40,5 +44,25 @@ func (p *Publisher) Publish(ctx context.Context, e events.Event) {
 		},
 	}).Err(); err != nil {
 		slog.Warn("channels: failed to publish event", "event", e.Event, "error", err)
+	}
+
+	if err := p.rdb.Publish(ctx, ssePubSubChannel, string(payload)).Err(); err != nil {
+		slog.Warn("channels: failed to publish SSE event", "event", e.Event, "error", err)
+	}
+}
+
+// PublishTransient mirrors the event on the SSE Pub/Sub channel only — no
+// durable stream write, no channel dispatch. Used for ephemeral UI signals
+// (status transitions during start/pause/resume) that should reach the
+// dashboard live but must not be delivered to webhook/telegram subscribers.
+func (p *Publisher) PublishTransient(ctx context.Context, e events.Event) {
+	payload, err := json.Marshal(e)
+	if err != nil {
+		slog.Warn("channels: failed to marshal transient event", "event", e.Event, "error", err)
+		return
+	}
+
+	if err := p.rdb.Publish(ctx, ssePubSubChannel, string(payload)).Err(); err != nil {
+		slog.Warn("channels: failed to publish transient SSE event", "event", e.Event, "error", err)
 	}
 }

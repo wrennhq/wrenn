@@ -4,11 +4,10 @@
 	type Props = {
 		open: boolean;
 		capsuleId: string;
-		pauseFirst?: boolean;
 		onclose: () => void;
 		onsnapshot?: () => void;
 	};
-	let { open, capsuleId, pauseFirst = false, onclose, onsnapshot }: Props = $props();
+	let { open, capsuleId, onclose, onsnapshot }: Props = $props();
 
 	let snapshotName = $state('');
 	let snapshotting = $state(false);
@@ -23,13 +22,14 @@
 		snapshotting = true;
 		error = null;
 		const result = await createSnapshot(capsuleId, snapshotName.trim() || undefined);
-		if (result.ok) {
-			reset();
-			onsnapshot?.();
-			onclose();
-		} else {
+		if (!result.ok) {
 			error = result.error;
+			snapshotting = false;
+			return;
 		}
+		reset();
+		onsnapshot?.();
+		onclose();
 		snapshotting = false;
 	}
 
@@ -65,18 +65,7 @@
 			</div>
 
 			<div class="px-6 pt-5 pb-6 space-y-4">
-				{#if pauseFirst}
-					<div class="flex items-start gap-2.5 rounded-[var(--radius-input)] border border-[var(--color-amber)]/25 bg-[var(--color-amber)]/8 px-3 py-2.5">
-						<svg class="mt-px shrink-0 text-[var(--color-amber)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-							<line x1="12" y1="9" x2="12" y2="13" />
-							<line x1="12" y1="17" x2="12.01" y2="17" />
-						</svg>
-						<p class="text-meta text-[var(--color-amber)] leading-relaxed">This capsule will be <strong class="font-semibold">paused first</strong>, then its full state (memory + disk) will be captured.</p>
-					</div>
-				{:else}
-					<p class="text-ui text-[var(--color-text-tertiary)]">The capsule's current state (memory + disk) will be captured and stored as a reusable snapshot.</p>
-				{/if}
+				<p class="text-ui text-[var(--color-text-tertiary)]">Live snapshot: the capsule briefly pauses, its memory + disk are written to a new template, then the capsule resumes — your session keeps running.</p>
 
 				{#if error}
 					<div class="rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">

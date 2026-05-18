@@ -255,7 +255,7 @@
 		const int = internals.get(id);
 		if (!int) return;
 
-		if (!auth.token) {
+		if (!auth.isAuthenticated) {
 			updateSession(id, { state: 'error', errorMessage: 'Not authenticated' });
 			return;
 		}
@@ -263,13 +263,12 @@
 		const display = sessions.find(s => s.id === id);
 		const tag = reconnectTag ?? display?.ptyTag;
 
+		// Browser sends wrenn_sid cookie on the WS upgrade automatically (same-origin).
 		const ws = new WebSocket(getWsUrl());
 		int.ws = ws;
 		updateSession(id, { state: 'connecting', errorMessage: null });
 
 		ws.onopen = () => {
-			// Send auth as the first message (JWT no longer in URL).
-			wsSend(ws, JSON.stringify({ type: 'auth', token: auth.token }));
 			const { cols, rows } = int.term;
 			const msg: Record<string, unknown> = {
 				type: tag ? 'connect' : 'start',

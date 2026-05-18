@@ -116,17 +116,20 @@
 	async function handleCreate() {
 		creating = true;
 		createError = null;
-		const creator = templateSource === 'platform' ? createAdminCapsule : createCapsule;
-		const result = await creator(createForm);
-		if (result.ok) {
-			createForm = { template: 'minimal', vcpus: 1, memory_mb: 512, timeout_sec: 0 };
-			templateQuery = 'minimal';
-			oncreated?.(result.data);
-			onclose();
-		} else {
-			createError = result.error;
+		try {
+			const creator = templateSource === 'platform' ? createAdminCapsule : createCapsule;
+			const result = await creator(createForm);
+			if (result.ok) {
+				createForm = { template: 'minimal', vcpus: 1, memory_mb: 512, timeout_sec: 0 };
+				templateQuery = 'minimal';
+				onclose();
+				oncreated?.(result.data);
+			} else {
+				createError = result.error;
+			}
+		} finally {
+			creating = false;
 		}
-		creating = false;
 	}
 </script>
 

@@ -21,8 +21,10 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/channels"
 	"git.omukk.dev/wrenn/wrenn/pkg/config"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -163,22 +165,37 @@ func Run(opts ...Option) {
 		FromEmail: cfg.SMTPFromEmail,
 	})
 
+	// Session service backs cookie auth for the browser; exposed to
+	// extensions through ServerContext so cloud-repo code can revoke or
+	// invalidate sessions on identity events without re-implementing the store.
+	sessionSvc := session.NewService(queries, rdb)
+
 	// Build the server context that extensions receive.
 	sctx := ServerContext{
-		Queries:   queries,
-		PgPool:    pool,
-		Redis:     rdb,
-		HostPool:  hostPool,
-		Scheduler: hostScheduler,
-		CA:        ca,
-		Audit:     al,
-		Mailer:    mailer,
-		JWTSecret: []byte(cfg.JWTSecret),
-		Config:    cfg,
+		Queries:       queries,
+		PgPool:        pool,
+		Redis:         rdb,
+		HostPool:      hostPool,
+		Scheduler:     hostScheduler,
+		CA:            ca,
+		Audit:         al,
+		Mailer:        mailer,
+		OAuthRegistry: oauthRegistry,
+		Channels:      channelSvc,
+		ChannelPub:    channelPub,
+		JWTSecret:     []byte(cfg.JWTSecret),
+		Sessions:      sessionSvc,
+		Config:        cfg,
 	}
 
+	// Host monitor (safety-net reconciliation every 5 minutes).
+	// Primary state sync is push-based (host agent callbacks + CP background
+	// goroutines). The monitor acts as a fallback for missed events, host death
+	// detection, and transient status resolution.
+	monitor := api.NewHostMonitor(queries, hostPool, al, 5*time.Minute)
+
 	// API server.
-	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelSvc, mailer, o.extensions, sctx, o.version)
+	srv := api.New(ctx, queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelPub, channelSvc, mailer, o.extensions, sctx, monitor, o.version)
 
 	// Start template build workers (2 concurrent).
 	stopBuildWorkers := srv.BuildSvc.StartWorkers(ctx, 2)
@@ -188,13 +205,28 @@ func Run(opts ...Option) {
 	channelDispatcher.Start(ctx)
 
 	// Start sandbox event consumer (processes lifecycle events from Redis stream).
-	sandboxEventConsumer := api.NewSandboxEventConsumer(rdb, queries, al)
+	var sandboxHooks []cpextension.SandboxEventHook
+	for _, ext := range o.extensions {
+		if h, ok := ext.(cpextension.SandboxEventHook); ok {
+			sandboxHooks = append(sandboxHooks, h)
+		}
+	}
+	sandboxEventConsumer := api.NewSandboxEventConsumer(rdb, queries, al, sandboxHooks)
 	sandboxEventConsumer.Start(ctx)
 
-	// Start host monitor (passive + active reconciliation every 60s).
-	// Reduced from 15s since async events handle the normal case.
-	monitor := api.NewHostMonitor(queries, hostPool, al, 60*time.Second)
+	// Start SSE relay (subscribes to Redis Pub/Sub, dispatches to connected clients).
+	srv.SSERelay.Start(ctx)
+
+	// Start host monitor loop.
 	monitor.Start(ctx)
+
+	// Collect AuthHook extensions for the hard-delete cleanup goroutine.
+	var authHooks []cpextension.AuthHook
+	for _, ext := range o.extensions {
+		if h, ok := ext.(cpextension.AuthHook); ok {
+			authHooks = append(authHooks, h)
+		}
+	}
 
 	// Hard-delete accounts that have been soft-deleted for more than 15 days (runs every 24h).
 	// Audit logs referencing deleted users are anonymized before the user row is removed.
@@ -222,6 +254,11 @@ func Run(opts ...Option) {
 					if err := queries.HardDeleteUser(ctx, row.ID); err != nil {
 						slog.Error("account cleanup: failed to hard-delete user", "user_id", prefixedID, "error", err)
 						continue
+					}
+					for _, h := range authHooks {
+						if err := h.OnAccountHardDelete(ctx, row.ID); err != nil {
+							slog.Warn("account cleanup: OnAccountHardDelete hook failed", "user_id", prefixedID, "error", err)
+						}
 					}
 					if err := mailer.Send(ctx, row.Email, "Your Wrenn account has been deleted", email.EmailData{
 						Message: "Your Wrenn account and all associated data have been permanently deleted. " +
@@ -251,7 +288,7 @@ func Run(opts ...Option) {
 	// Start extension background workers.
 	for _, ext := range o.extensions {
 		for _, worker := range ext.BackgroundWorkers(sctx) {
-			worker(ctx)
+			go worker(ctx)
 		}
 	}
 

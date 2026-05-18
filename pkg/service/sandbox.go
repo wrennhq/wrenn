@@ -25,6 +25,7 @@ type SandboxEventPublisher func(ctx context.Context, event SandboxStateEvent)
 type SandboxStateEvent struct {
 	Event     string            `json:"event"`
 	SandboxID string            `json:"sandbox_id"`
+	TeamID    string            `json:"team_id,omitempty"`
 	HostID    string            `json:"host_id"`
 	HostIP    string            `json:"host_ip,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
@@ -51,21 +52,49 @@ type SandboxCreateParams struct {
 	DiskSizeMB int32
 }
 
+// MinTimeoutSec mirrors internal/sandbox.MinTimeoutSec. Sub-minute TTLs race
+// the post-create startup window (DB insert → /init → memory loader); the
+// agent silently clamps anyway, but the CP must clamp too so the DB record
+// agrees with what the agent runs. 0 is preserved (no TTL).
+const MinTimeoutSec int32 = 60
+
+// clampTimeout normalises a caller-supplied TTL the same way the host agent
+// does. Keep in sync with internal/sandbox.clampTimeout.
+func clampTimeout(timeoutSec int32) int32 {
+	if timeoutSec <= 0 {
+		return 0
+	}
+	if timeoutSec < MinTimeoutSec {
+		return MinTimeoutSec
+	}
+	return timeoutSec
+}
+
 // agentForSandbox looks up the host for the given sandbox and returns a client.
 func (s *SandboxService) agentForSandbox(ctx context.Context, sandboxID pgtype.UUID) (hostagentClient, db.Sandbox, error) {
 	sb, err := s.DB.GetSandbox(ctx, sandboxID)
 	if err != nil {
 		return nil, db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
 	}
-	host, err := s.DB.GetHost(ctx, sb.HostID)
+	agent, err := s.agentForHost(ctx, sb.HostID)
 	if err != nil {
-		return nil, db.Sandbox{}, fmt.Errorf("host not found for sandbox: %w", err)
+		return nil, db.Sandbox{}, err
+	}
+	return agent, sb, nil
+}
+
+// agentForHost returns the host client by host UUID, skipping the sandbox
+// lookup. Used by callers that already have a db.Sandbox in hand.
+func (s *SandboxService) agentForHost(ctx context.Context, hostID pgtype.UUID) (hostagentClient, error) {
+	host, err := s.DB.GetHost(ctx, hostID)
+	if err != nil {
+		return nil, fmt.Errorf("host not found: %w", err)
 	}
 	agent, err := s.Pool.GetForHost(host)
 	if err != nil {
-		return nil, db.Sandbox{}, fmt.Errorf("get agent client: %w", err)
+		return nil, fmt.Errorf("get agent client: %w", err)
 	}
-	return agent, sb, nil
+	return agent, nil
 }
 
 func (s *SandboxService) publishEvent(ctx context.Context, event SandboxStateEvent) {
@@ -83,6 +112,7 @@ type hostagentClient = interface {
 	PingSandbox(ctx context.Context, req *connect.Request[pb.PingSandboxRequest]) (*connect.Response[pb.PingSandboxResponse], error)
 	GetSandboxMetrics(ctx context.Context, req *connect.Request[pb.GetSandboxMetricsRequest]) (*connect.Response[pb.GetSandboxMetricsResponse], error)
 	FlushSandboxMetrics(ctx context.Context, req *connect.Request[pb.FlushSandboxMetricsRequest]) (*connect.Response[pb.FlushSandboxMetricsResponse], error)
+	CreateSnapshot(ctx context.Context, req *connect.Request[pb.CreateSnapshotRequest]) (*connect.Response[pb.CreateSnapshotResponse], error)
 }
 
 // Create creates a new sandbox asynchronously: picks a host, inserts a
@@ -105,6 +135,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	if p.DiskSizeMB <= 0 {
 		p.DiskSizeMB = 5120 // 5 GB default
 	}
+	p.TimeoutSec = clampTimeout(p.TimeoutSec)
 
 	// Resolve template name → (teamID, templateID).
 	templateTeamID := id.PlatformTeamID
@@ -169,13 +200,14 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		return db.Sandbox{}, fmt.Errorf("insert sandbox: %w", err)
 	}
 
-	go s.createInBackground(sandboxID, sandboxIDStr, hostIDStr, agent, p, templateTeamID, templateID, templateDefaultUser, templateDefaultEnv)
+	teamIDStr := id.FormatTeamID(p.TeamID)
+	go s.createInBackground(sandboxID, sandboxIDStr, hostIDStr, teamIDStr, agent, p, templateTeamID, templateID, templateDefaultUser, templateDefaultEnv)
 
 	return sb, nil
 }
 
 func (s *SandboxService) createInBackground(
-	sandboxID pgtype.UUID, sandboxIDStr, hostIDStr string,
+	sandboxID pgtype.UUID, sandboxIDStr, hostIDStr, teamIDStr string,
 	agent hostagentClient, p SandboxCreateParams,
 	templateTeamID, templateID pgtype.UUID,
 	defaultUser string, defaultEnv map[string]string,
@@ -205,7 +237,7 @@ func (s *SandboxService) createInBackground(
 			slog.Warn("failed to update sandbox to error after create failure", "id", sandboxIDStr, "error", dbErr)
 		}
 		s.publishEvent(errCtx, SandboxStateEvent{
-			Event: "sandbox.failed", SandboxID: sandboxIDStr, HostID: hostIDStr,
+			Event: "sandbox.failed", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
 			Error: err.Error(), Timestamp: time.Now().Unix(),
 		})
 		return
@@ -234,7 +266,7 @@ func (s *SandboxService) createInBackground(
 	}
 
 	s.publishEvent(bgCtx, SandboxStateEvent{
-		Event: "sandbox.started", SandboxID: sandboxIDStr, HostID: hostIDStr,
+		Event: "sandbox.started", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
 		HostIP: resp.Msg.HostIp, Metadata: resp.Msg.Metadata,
 		Timestamp: now.Unix(),
 	})
@@ -250,70 +282,68 @@ func (s *SandboxService) Get(ctx context.Context, sandboxID, teamID pgtype.UUID)
 	return s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 }
 
-// Pause snapshots and freezes a running sandbox to disk asynchronously.
-// Pre-marks the DB status as "pausing" and fires the agent RPC in a
-// background goroutine.
+// Pause asynchronously pauses a running sandbox. The DB CAS from "running"
+// to "pausing" is the authoritative gate against concurrent Pause/Destroy
+// calls; if it loses, no agent RPC fires.
 func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID pgtype.UUID) (db.Sandbox, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
 		return db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
 	}
-	if sb.Status != "running" {
-		return db.Sandbox{}, fmt.Errorf("sandbox is not running (status: %s)", sb.Status)
+	if sb.Status == "paused" {
+		return sb, nil
 	}
 
-	agent, _, err := s.agentForSandbox(ctx, sandboxID)
+	if _, err := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+		ID: sandboxID, Status: "running", Status_2: "pausing",
+	}); err != nil {
+		return db.Sandbox{}, fmt.Errorf("sandbox not in running state (current: %s)", sb.Status)
+	}
+
+	agent, err := s.agentForHost(ctx, sb.HostID)
 	if err != nil {
+		// Roll back the CAS so the sandbox isn't stuck in "pausing".
+		if _, rerr := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+			ID: sandboxID, Status: "pausing", Status_2: "running",
+		}); rerr != nil {
+			slog.Warn("failed to roll back pausing→running", "id", id.FormatSandboxID(sandboxID), "error", rerr)
+		}
 		return db.Sandbox{}, err
 	}
 
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 	hostIDStr := id.FormatHostID(sb.HostID)
+	teamIDStr := id.FormatTeamID(sb.TeamID)
 
-	sb, err = s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
-		ID: sandboxID, Status: "running", Status_2: "pausing",
-	})
-	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox status changed concurrently")
-	}
+	go s.pauseInBackground(sandboxID, sandboxIDStr, hostIDStr, teamIDStr, agent)
 
-	go s.pauseInBackground(sandboxID, sandboxIDStr, hostIDStr, agent)
-
+	sb.Status = "pausing"
 	return sb, nil
 }
 
-func (s *SandboxService) pauseInBackground(sandboxID pgtype.UUID, sandboxIDStr, hostIDStr string, agent hostagentClient) {
-	bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+func (s *SandboxService) pauseInBackground(sandboxID pgtype.UUID, sandboxIDStr, hostIDStr, teamIDStr string, agent hostagentClient) {
+	bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	// Flush metrics before the VM stops sampling so the persisted history
+	// covers the entire run-up to the pause.
 	s.flushAndPersistMetrics(bgCtx, agent, sandboxID, true)
 
 	if _, err := agent.PauseSandbox(bgCtx, connect.NewRequest(&pb.PauseSandboxRequest{
 		SandboxId: sandboxIDStr,
 	})); err != nil {
-		revertStatus := "running"
-		pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if _, pingErr := agent.PingSandbox(pingCtx, connect.NewRequest(&pb.PingSandboxRequest{
-			SandboxId: sandboxIDStr,
-		})); pingErr != nil {
-			revertStatus = "error"
-			slog.Warn("sandbox gone from agent after failed pause, marking as error", "sandbox_id", sandboxIDStr)
-		}
-		pingCancel()
-		dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if _, dbErr := s.DB.UpdateSandboxStatusIf(dbCtx, db.UpdateSandboxStatusIfParams{
-			ID: sandboxID, Status: "pausing", Status_2: revertStatus,
+		slog.Warn("background pause failed", "sandbox_id", sandboxIDStr, "error", err)
+		// Best-effort: try to recover the sandbox back to "running" so the
+		// user isn't stuck in "pausing".
+		if _, dbErr := s.DB.UpdateSandboxStatusIf(bgCtx, db.UpdateSandboxStatusIfParams{
+			ID: sandboxID, Status: "pausing", Status_2: "running",
 		}); dbErr != nil {
-			slog.Warn("failed to revert sandbox status after pause error", "sandbox_id", sandboxIDStr, "error", dbErr)
+			slog.Warn("failed to recover pausing→running after pause failure", "id", sandboxIDStr, "error", dbErr)
 		}
-		dbCancel()
-
-		evtCtx, evtCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		s.publishEvent(evtCtx, SandboxStateEvent{
-			Event: "sandbox.failed", SandboxID: sandboxIDStr, HostID: hostIDStr,
+		s.publishEvent(bgCtx, SandboxStateEvent{
+			Event: "sandbox.pause_failed", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
 			Error: err.Error(), Timestamp: time.Now().Unix(),
 		})
-		evtCancel()
 		return
 	}
 
@@ -324,105 +354,95 @@ func (s *SandboxService) pauseInBackground(sandboxID pgtype.UUID, sandboxIDStr, 
 	}
 
 	s.publishEvent(bgCtx, SandboxStateEvent{
-		Event: "sandbox.paused", SandboxID: sandboxIDStr, HostID: hostIDStr,
+		Event: "sandbox.paused", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
 		Timestamp: time.Now().Unix(),
 	})
 }
 
-// Resume restores a paused sandbox from snapshot asynchronously.
-// Pre-marks the DB status as "resuming" and fires the agent RPC in a
-// background goroutine.
+// Resume asynchronously resumes a paused sandbox on its original host.
+// The DB CAS from "paused" to "resuming" gates concurrent Resume/Destroy.
 func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID pgtype.UUID) (db.Sandbox, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
 		return db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
 	}
-	if sb.Status != "paused" {
-		return db.Sandbox{}, fmt.Errorf("sandbox is not paused (status: %s)", sb.Status)
+	if sb.Status == "running" {
+		return sb, nil
 	}
 
-	agent, _, err := s.agentForSandbox(ctx, sandboxID)
+	if _, err := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+		ID: sandboxID, Status: "paused", Status_2: "resuming",
+	}); err != nil {
+		return db.Sandbox{}, fmt.Errorf("sandbox not in paused state (current: %s)", sb.Status)
+	}
+
+	agent, err := s.agentForHost(ctx, sb.HostID)
 	if err != nil {
+		if _, rerr := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+			ID: sandboxID, Status: "resuming", Status_2: "paused",
+		}); rerr != nil {
+			slog.Warn("failed to roll back resuming→paused", "id", id.FormatSandboxID(sandboxID), "error", rerr)
+		}
 		return db.Sandbox{}, err
+	}
+
+	// Look up template defaults so a resumed sandbox has the same env as
+	// the original Create did.
+	var defaultUser string
+	var defaultEnv map[string]string
+	if tmpl, terr := s.DB.GetTemplate(ctx, sb.TemplateID); terr == nil {
+		defaultUser = tmpl.DefaultUser
+		if len(tmpl.DefaultEnv) > 0 {
+			_ = json.Unmarshal(tmpl.DefaultEnv, &defaultEnv)
+		}
 	}
 
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 	hostIDStr := id.FormatHostID(sb.HostID)
+	teamIDStr := id.FormatTeamID(sb.TeamID)
 
-	var resumeDefaultUser string
-	var resumeDefaultEnv map[string]string
-	if sb.TemplateID.Valid {
-		tmpl, err := s.DB.GetTemplate(ctx, sb.TemplateID)
-		if err == nil {
-			resumeDefaultUser = tmpl.DefaultUser
-			if len(tmpl.DefaultEnv) > 0 {
-				_ = json.Unmarshal(tmpl.DefaultEnv, &resumeDefaultEnv)
-			}
-		}
-	}
+	go s.resumeInBackground(sandboxID, sandboxIDStr, hostIDStr, teamIDStr, agent, sb.TimeoutSec, defaultUser, defaultEnv)
 
-	var kernelVersion string
-	if len(sb.Metadata) > 0 {
-		var meta map[string]string
-		if err := json.Unmarshal(sb.Metadata, &meta); err == nil {
-			kernelVersion = meta["kernel_version"]
-		}
-	}
-
-	sb, err = s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
-		ID: sandboxID, Status: "paused", Status_2: "resuming",
-	})
-	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox status changed concurrently")
-	}
-
-	go s.resumeInBackground(sandboxID, sandboxIDStr, hostIDStr, agent, sb.TimeoutSec, resumeDefaultUser, resumeDefaultEnv, kernelVersion)
-
+	sb.Status = "resuming"
 	return sb, nil
 }
 
 func (s *SandboxService) resumeInBackground(
-	sandboxID pgtype.UUID, sandboxIDStr, hostIDStr string,
+	sandboxID pgtype.UUID, sandboxIDStr, hostIDStr, teamIDStr string,
 	agent hostagentClient, timeoutSec int32,
-	defaultUser string, defaultEnv map[string]string, kernelVersion string,
+	defaultUser string, defaultEnv map[string]string,
 ) {
 	bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	resp, err := agent.ResumeSandbox(bgCtx, connect.NewRequest(&pb.ResumeSandboxRequest{
-		SandboxId:     sandboxIDStr,
-		TimeoutSec:    timeoutSec,
-		DefaultUser:   defaultUser,
-		DefaultEnv:    defaultEnv,
-		KernelVersion: kernelVersion,
+		SandboxId:   sandboxIDStr,
+		TimeoutSec:  timeoutSec,
+		DefaultUser: defaultUser,
+		DefaultEnv:  defaultEnv,
 	}))
 	if err != nil {
 		slog.Warn("background resume failed", "sandbox_id", sandboxIDStr, "error", err)
-		errCtx, errCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer errCancel()
-		if _, dbErr := s.DB.UpdateSandboxStatusIf(errCtx, db.UpdateSandboxStatusIfParams{
+		if _, dbErr := s.DB.UpdateSandboxStatusIf(bgCtx, db.UpdateSandboxStatusIfParams{
 			ID: sandboxID, Status: "resuming", Status_2: "paused",
 		}); dbErr != nil {
-			slog.Warn("failed to revert sandbox to paused after resume failure", "id", sandboxIDStr, "error", dbErr)
+			slog.Warn("failed to recover resuming→paused after resume failure", "id", sandboxIDStr, "error", dbErr)
 		}
-		s.publishEvent(errCtx, SandboxStateEvent{
-			Event: "sandbox.failed", SandboxID: sandboxIDStr, HostID: hostIDStr,
+		s.publishEvent(bgCtx, SandboxStateEvent{
+			Event: "sandbox.resume_failed", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
 			Error: err.Error(), Timestamp: time.Now().Unix(),
 		})
 		return
 	}
 
 	now := time.Now()
-	if _, dbErr := s.DB.UpdateSandboxRunningIf(bgCtx, db.UpdateSandboxRunningIfParams{
-		ID:     sandboxID,
-		Status: "resuming",
-		HostIp: resp.Msg.HostIp,
-		StartedAt: pgtype.Timestamptz{
-			Time:  now,
-			Valid: true,
-		},
-	}); dbErr != nil {
-		slog.Warn("failed to update sandbox running after resume", "id", sandboxIDStr, "error", dbErr)
+	if _, err := s.DB.UpdateSandboxRunningIf(bgCtx, db.UpdateSandboxRunningIfParams{
+		ID:        sandboxID,
+		Status:    "resuming",
+		HostIp:    resp.Msg.HostIp,
+		StartedAt: pgtype.Timestamptz{Time: now, Valid: true},
+	}); err != nil {
+		slog.Warn("failed to update sandbox to running after resume", "id", sandboxIDStr, "error", err)
 	}
 
 	if meta := resp.Msg.Metadata; len(meta) > 0 {
@@ -430,15 +450,70 @@ func (s *SandboxService) resumeInBackground(
 		if err := s.DB.UpdateSandboxMetadata(bgCtx, db.UpdateSandboxMetadataParams{
 			ID: sandboxID, Metadata: metaJSON,
 		}); err != nil {
-			slog.Warn("failed to update sandbox metadata after resume", "id", sandboxIDStr, "error", err)
+			slog.Warn("failed to store sandbox metadata after resume", "id", sandboxIDStr, "error", err)
 		}
 	}
 
 	s.publishEvent(bgCtx, SandboxStateEvent{
-		Event: "sandbox.resumed", SandboxID: sandboxIDStr, HostID: hostIDStr,
+		Event: "sandbox.resumed", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
 		HostIP: resp.Msg.HostIp, Metadata: resp.Msg.Metadata,
 		Timestamp: now.Unix(),
 	})
+}
+
+// CreateSnapshot takes a live snapshot of a running sandbox, publishing
+// the result as a new template owned by the sandbox's team. Returns the
+// inserted template record.
+func (s *SandboxService) CreateSnapshot(ctx context.Context, sandboxID, teamID pgtype.UUID, name string) (db.Template, error) {
+	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
+	if err != nil {
+		return db.Template{}, fmt.Errorf("sandbox not found: %w", err)
+	}
+	if sb.Status != "running" {
+		return db.Template{}, fmt.Errorf("sandbox is not running (status: %s)", sb.Status)
+	}
+
+	if name == "" {
+		name = id.NewSnapshotName()
+	}
+	if err := validate.SafeName(name); err != nil {
+		return db.Template{}, fmt.Errorf("invalid name: %w", err)
+	}
+
+	agent, err := s.agentForHost(ctx, sb.HostID)
+	if err != nil {
+		return db.Template{}, err
+	}
+
+	newTemplateID := id.NewSandboxID() // any random UUID
+	templateUUID := pgtype.UUID{Bytes: newTemplateID.Bytes, Valid: true}
+
+	resp, err := agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
+		SandboxId:  id.FormatSandboxID(sandboxID),
+		Name:       name,
+		TeamId:     id.UUIDString(teamID),
+		TemplateId: id.UUIDString(templateUUID),
+	}))
+	if err != nil {
+		return db.Template{}, fmt.Errorf("agent snapshot: %w", err)
+	}
+
+	tmpl, err := s.DB.InsertTemplate(ctx, db.InsertTemplateParams{
+		ID:          templateUUID,
+		Name:        name,
+		Type:        "snapshot",
+		Vcpus:       sb.Vcpus,
+		MemoryMb:    sb.MemoryMb,
+		SizeBytes:   resp.Msg.SizeBytes,
+		TeamID:      teamID,
+		DefaultUser: "",
+		DefaultEnv:  []byte("{}"),
+		Metadata:    []byte("{}"),
+	})
+	if err != nil {
+		return db.Template{}, fmt.Errorf("insert template: %w", err)
+	}
+	return tmpl, nil
 }
 
 // Destroy stops a sandbox asynchronously. Pre-marks the DB status as
@@ -459,6 +534,7 @@ func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID pgtype.U
 
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 	hostIDStr := id.FormatHostID(sb.HostID)
+	teamIDStr := id.FormatTeamID(sb.TeamID)
 	prevStatus := sb.Status
 
 	if _, err := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
@@ -467,12 +543,12 @@ func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID pgtype.U
 		return fmt.Errorf("pre-mark stopping: %w", err)
 	}
 
-	go s.destroyInBackground(sandboxID, sandboxIDStr, hostIDStr, agent, prevStatus)
+	go s.destroyInBackground(sandboxID, sandboxIDStr, hostIDStr, teamIDStr, agent, prevStatus)
 
 	return nil
 }
 
-func (s *SandboxService) destroyInBackground(sandboxID pgtype.UUID, sandboxIDStr, hostIDStr string, agent hostagentClient, prevStatus string) {
+func (s *SandboxService) destroyInBackground(sandboxID pgtype.UUID, sandboxIDStr, hostIDStr, teamIDStr string, agent hostagentClient, prevStatus string) {
 	bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -502,7 +578,7 @@ func (s *SandboxService) destroyInBackground(sandboxID pgtype.UUID, sandboxIDStr
 	}
 
 	s.publishEvent(bgCtx, SandboxStateEvent{
-		Event: "sandbox.stopped", SandboxID: sandboxIDStr, HostID: hostIDStr,
+		Event: "sandbox.stopped", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
 		Timestamp: time.Now().Unix(),
 	})
 }

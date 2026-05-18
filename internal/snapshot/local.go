@@ -7,14 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-
-	"github.com/google/uuid"
 )
 
 const (
-	SnapFileName   = "snapfile"
-	MemDiffName    = "memfile"
-	MemHeaderName  = "memfile.header"
+	// Cloud Hypervisor snapshot files.
+	CHConfigFile    = "config.json"
+	CHMemRangesFile = "memory-ranges"
+	CHStateFile     = "state.json"
+
+	// Rootfs files.
 	RootfsFileName = "rootfs.ext4"
 	RootfsCowName  = "rootfs.cow"
 	RootfsMetaName = "rootfs.meta"
@@ -23,27 +24,6 @@ const (
 // DirPath returns the snapshot directory for a given name.
 func DirPath(baseDir, name string) string {
 	return filepath.Join(baseDir, name)
-}
-
-// SnapPath returns the path to the VM state snapshot file.
-func SnapPath(baseDir, name string) string {
-	return filepath.Join(DirPath(baseDir, name), SnapFileName)
-}
-
-// MemDiffPath returns the path to the compact memory diff file (legacy single-generation).
-func MemDiffPath(baseDir, name string) string {
-	return filepath.Join(DirPath(baseDir, name), MemDiffName)
-}
-
-// MemDiffPathForBuild returns the path to a specific generation's diff file.
-// Format: memfile.{buildID}
-func MemDiffPathForBuild(baseDir, name string, buildID uuid.UUID) string {
-	return filepath.Join(DirPath(baseDir, name), fmt.Sprintf("memfile.%s", buildID.String()))
-}
-
-// MemHeaderPath returns the path to the memory mapping header file.
-func MemHeaderPath(baseDir, name string) string {
-	return filepath.Join(DirPath(baseDir, name), MemHeaderName)
 }
 
 // RootfsPath returns the path to the rootfs image.
@@ -61,10 +41,13 @@ func MetaPath(baseDir, name string) string {
 	return filepath.Join(DirPath(baseDir, name), RootfsMetaName)
 }
 
-// RootfsMeta records which base template a CoW file was created against.
+// RootfsMeta records which base template a CoW file was created against
+// and the VM resource config needed to restart the sampler on resume.
 type RootfsMeta struct {
 	BaseTemplate string `json:"base_template"`
 	TemplateID   string `json:"template_id,omitempty"`
+	VCPUs        int    `json:"vcpus,omitempty"`
+	MemoryMB     int    `json:"memory_mb,omitempty"`
 }
 
 // WriteMeta writes rootfs metadata to the snapshot directory.
@@ -90,102 +73,6 @@ func ReadMeta(baseDir, name string) (*RootfsMeta, error) {
 		return nil, fmt.Errorf("unmarshal rootfs meta: %w", err)
 	}
 	return &meta, nil
-}
-
-// Exists reports whether a complete snapshot exists (all required files present).
-// Supports both legacy (rootfs.ext4) and CoW-based (rootfs.cow + rootfs.meta) snapshots.
-// Memory diff files can be either legacy "memfile" or generation-specific "memfile.{uuid}".
-func Exists(baseDir, name string) bool {
-	dir := DirPath(baseDir, name)
-
-	// snapfile and header are always required.
-	for _, f := range []string{SnapFileName, MemHeaderName} {
-		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
-			return false
-		}
-	}
-
-	// Check that at least one memfile exists (legacy or generation-specific).
-	// We verify by reading the header and checking that referenced diff files exist.
-	// Fall back to checking for the legacy memfile name if header can't be read.
-	if _, err := os.Stat(filepath.Join(dir, MemDiffName)); err != nil {
-		// No legacy memfile — check if any memfile.{uuid} exists by
-		// looking for files matching the pattern.
-		matches, _ := filepath.Glob(filepath.Join(dir, "memfile.*"))
-		hasGenDiff := false
-		for _, m := range matches {
-			base := filepath.Base(m)
-			if base != MemHeaderName {
-				hasGenDiff = true
-				break
-			}
-		}
-		if !hasGenDiff {
-			return false
-		}
-	}
-
-	// Accept either rootfs.ext4 (legacy/template) or rootfs.cow + rootfs.meta (dm-snapshot).
-	if _, err := os.Stat(filepath.Join(dir, RootfsFileName)); err == nil {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(dir, RootfsCowName)); err == nil {
-		if _, err := os.Stat(filepath.Join(dir, RootfsMetaName)); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-// IsTemplate reports whether a template image directory exists (has rootfs.ext4).
-func IsTemplate(baseDir, name string) bool {
-	_, err := os.Stat(filepath.Join(DirPath(baseDir, name), RootfsFileName))
-	return err == nil
-}
-
-// IsSnapshot reports whether a directory is a snapshot (has all snapshot files).
-func IsSnapshot(baseDir, name string) bool {
-	return Exists(baseDir, name)
-}
-
-// HasCow reports whether a snapshot uses CoW format (rootfs.cow + rootfs.meta)
-// as opposed to legacy full rootfs (rootfs.ext4).
-func HasCow(baseDir, name string) bool {
-	dir := DirPath(baseDir, name)
-	_, cowErr := os.Stat(filepath.Join(dir, RootfsCowName))
-	_, metaErr := os.Stat(filepath.Join(dir, RootfsMetaName))
-	return cowErr == nil && metaErr == nil
-}
-
-// ListDiffFiles returns a map of build ID → file path for all memory diff files
-// referenced by the given header. Handles both the legacy "memfile" name
-// (single-generation) and generation-specific "memfile.{uuid}" names.
-func ListDiffFiles(baseDir, name string, header *Header) (map[string]string, error) {
-	dir := DirPath(baseDir, name)
-	result := make(map[string]string)
-
-	for _, m := range header.Mapping {
-		if m.BuildID == uuid.Nil {
-			continue // zero-fill, no file needed
-		}
-		idStr := m.BuildID.String()
-		if _, exists := result[idStr]; exists {
-			continue
-		}
-		// Try generation-specific path first, fall back to legacy.
-		genPath := filepath.Join(dir, fmt.Sprintf("memfile.%s", idStr))
-		if _, err := os.Stat(genPath); err == nil {
-			result[idStr] = genPath
-			continue
-		}
-		legacyPath := filepath.Join(dir, MemDiffName)
-		if _, err := os.Stat(legacyPath); err == nil {
-			result[idStr] = legacyPath
-			continue
-		}
-		return nil, fmt.Errorf("diff file not found for build %s", idStr)
-	}
-	return result, nil
 }
 
 // EnsureDir creates the snapshot directory if it doesn't exist.

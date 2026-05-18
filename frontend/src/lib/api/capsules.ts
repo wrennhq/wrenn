@@ -1,8 +1,38 @@
 import { apiFetch, type ApiResult } from '$lib/api/client';
 
+// Mirror of the backend state machine. Keep in sync with the `status` enum
+// on the Capsule schema in internal/api/openapi.yaml.
+export type CapsuleStatus =
+	| 'pending'
+	| 'starting'
+	| 'running'
+	| 'pausing'
+	| 'paused'
+	| 'resuming'
+	| 'stopping'
+	| 'hibernated'
+	| 'stopped'
+	| 'missing'
+	| 'error';
+
+// States from which a user may resume the capsule.
+export const RESUMABLE_STATUSES: ReadonlySet<CapsuleStatus> = new Set([
+	'paused',
+	'hibernated'
+]);
+
+// Transient states where lifecycle actions should be disabled.
+export const TRANSIENT_STATUSES: ReadonlySet<CapsuleStatus> = new Set([
+	'pending',
+	'starting',
+	'pausing',
+	'resuming',
+	'stopping'
+]);
+
 export type Capsule = {
 	id: string;
-	status: string;
+	status: CapsuleStatus;
 	template: string;
 	vcpus: number;
 	memory_mb: number;
@@ -13,6 +43,8 @@ export type Capsule = {
 	started_at?: string;
 	last_active_at?: string;
 	last_updated: string;
+	metadata?: Record<string, string>;
+	disk_size_mb?: number;
 };
 
 
@@ -28,6 +60,7 @@ export type CreateCapsuleParams = {
 	template?: string;
 	vcpus?: number;
 	memory_mb?: number;
+	disk_size_mb?: number;
 	timeout_sec?: number;
 };
 
