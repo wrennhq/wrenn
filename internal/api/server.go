@@ -38,6 +38,7 @@ type Server struct {
 // Extensions are called after core routes are registered, allowing cloud
 // or third-party code to add routes and middleware.
 func New(
+	ctx context.Context,
 	queries *db.Queries,
 	pool *lifecycle.HostClientPool,
 	sched scheduler.HostScheduler,
@@ -72,6 +73,7 @@ func New(
 		PublishSandboxEvent(ctx, rdb, SandboxEvent{
 			Event:     event.Event,
 			SandboxID: event.SandboxID,
+			TeamID:    event.TeamID,
 			HostID:    event.HostID,
 			HostIP:    event.HostIP,
 			Metadata:  event.Metadata,
@@ -120,7 +122,7 @@ func New(
 	// SSE real-time event streaming.
 	sseBroker := NewSSEBroker()
 	sseRelay := NewSSERelay(rdb, queries, sseBroker)
-	sseTickets := NewSSETicketStore()
+	sseTickets := NewSSETicketStore(ctx)
 	sseH := newSSEHandler(sseBroker, sseTickets)
 
 	// Health check.

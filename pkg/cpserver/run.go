@@ -184,7 +184,7 @@ func Run(opts ...Option) {
 	monitor := api.NewHostMonitor(queries, hostPool, al, 5*time.Minute)
 
 	// API server.
-	srv := api.New(queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelPub, channelSvc, mailer, o.extensions, sctx, monitor, o.version)
+	srv := api.New(ctx, queries, hostPool, hostScheduler, pool, rdb, []byte(cfg.JWTSecret), oauthRegistry, cfg.OAuthRedirectURL, ca, al, channelPub, channelSvc, mailer, o.extensions, sctx, monitor, o.version)
 
 	// Start template build workers (2 concurrent).
 	stopBuildWorkers := srv.BuildSvc.StartWorkers(ctx, 2)

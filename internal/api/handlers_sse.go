@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -27,25 +28,32 @@ type SSETicketStore struct {
 	tickets map[string]sseTicket
 }
 
-// NewSSETicketStore creates a ticket store and starts a background cleanup goroutine.
-func NewSSETicketStore() *SSETicketStore {
+// NewSSETicketStore creates a ticket store and starts a background cleanup
+// goroutine that exits when ctx is cancelled. Callers should pass the
+// server's root context so a clean shutdown drops the goroutine cleanly.
+func NewSSETicketStore(ctx context.Context) *SSETicketStore {
 	s := &SSETicketStore{tickets: make(map[string]sseTicket)}
-	go s.cleanup()
+	go s.cleanup(ctx)
 	return s
 }
 
-func (s *SSETicketStore) cleanup() {
+func (s *SSETicketStore) cleanup(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		s.mu.Lock()
-		now := time.Now()
-		for k, t := range s.tickets {
-			if now.After(t.expires) {
-				delete(s.tickets, k)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.mu.Lock()
+			now := time.Now()
+			for k, t := range s.tickets {
+				if now.After(t.expires) {
+					delete(s.tickets, k)
+				}
 			}
+			s.mu.Unlock()
 		}
-		s.mu.Unlock()
 	}
 }
 

@@ -52,6 +52,24 @@ type SandboxCreateParams struct {
 	DiskSizeMB int32
 }
 
+// MinTimeoutSec mirrors internal/sandbox.MinTimeoutSec. Sub-minute TTLs race
+// the post-create startup window (DB insert → /init → memory loader); the
+// agent silently clamps anyway, but the CP must clamp too so the DB record
+// agrees with what the agent runs. 0 is preserved (no TTL).
+const MinTimeoutSec int32 = 60
+
+// clampTimeout normalises a caller-supplied TTL the same way the host agent
+// does. Keep in sync with internal/sandbox.clampTimeout.
+func clampTimeout(timeoutSec int32) int32 {
+	if timeoutSec <= 0 {
+		return 0
+	}
+	if timeoutSec < MinTimeoutSec {
+		return MinTimeoutSec
+	}
+	return timeoutSec
+}
+
 // agentForSandbox looks up the host for the given sandbox and returns a client.
 func (s *SandboxService) agentForSandbox(ctx context.Context, sandboxID pgtype.UUID) (hostagentClient, db.Sandbox, error) {
 	sb, err := s.DB.GetSandbox(ctx, sandboxID)
@@ -117,6 +135,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	if p.DiskSizeMB <= 0 {
 		p.DiskSizeMB = 5120 // 5 GB default
 	}
+	p.TimeoutSec = clampTimeout(p.TimeoutSec)
 
 	// Resolve template name → (teamID, templateID).
 	templateTeamID := id.PlatformTeamID
@@ -405,9 +424,9 @@ func (s *SandboxService) resumeInBackground(
 	if err != nil {
 		slog.Warn("background resume failed", "sandbox_id", sandboxIDStr, "error", err)
 		if _, dbErr := s.DB.UpdateSandboxStatusIf(bgCtx, db.UpdateSandboxStatusIfParams{
-			ID: sandboxID, Status: "resuming", Status_2: "error",
+			ID: sandboxID, Status: "resuming", Status_2: "paused",
 		}); dbErr != nil {
-			slog.Warn("failed to mark resuming→error after resume failure", "id", sandboxIDStr, "error", dbErr)
+			slog.Warn("failed to recover resuming→paused after resume failure", "id", sandboxIDStr, "error", dbErr)
 		}
 		s.publishEvent(bgCtx, SandboxStateEvent{
 			Event: "sandbox.resume_failed", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,

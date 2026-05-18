@@ -25,9 +25,14 @@ const (
 // SandboxEvent is the canonical event payload published to the Redis stream
 // by both the CP background goroutines (for explicit lifecycle ops) and
 // the agent callback endpoint (for autonomous events like auto-pause).
+//
+// TeamID is populated by publishers that already have it in hand (the CP
+// service layer); consumers that need it can either trust the field or
+// re-derive it from a sandbox DB lookup.
 type SandboxEvent struct {
 	Event     string            `json:"event"`
 	SandboxID string            `json:"sandbox_id"`
+	TeamID    string            `json:"team_id,omitempty"`
 	HostID    string            `json:"host_id"`
 	HostIP    string            `json:"host_ip,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
@@ -35,15 +40,24 @@ type SandboxEvent struct {
 	Timestamp int64             `json:"timestamp"`
 }
 
-// Sandbox event type constants.
+// Sandbox event type constants. Convention:
+//   - sandbox.started: emitted ONLY after a successful initial Create.
+//   - sandbox.resumed: emitted after a successful Resume, INCLUDING any
+//     future autonomous recovery path (so the SSE mapping in server.go
+//     stays correct without distinguishing recovery from explicit resume).
+//   - sandbox.pause_failed / sandbox.resume_failed: terminal failure of
+//     the background lifecycle op; the in-DB status is rolled back by the
+//     publishing goroutine and the consumer surfaces an SSE error event.
 const (
-	SandboxEventStarted    = "sandbox.started"
-	SandboxEventPaused     = "sandbox.paused"
-	SandboxEventResumed    = "sandbox.resumed"
-	SandboxEventStopped    = "sandbox.stopped"
-	SandboxEventFailed     = "sandbox.failed"
-	SandboxEventError      = "sandbox.error"
-	SandboxEventAutoPaused = "sandbox.auto_paused"
+	SandboxEventStarted      = "sandbox.started"
+	SandboxEventPaused       = "sandbox.paused"
+	SandboxEventResumed      = "sandbox.resumed"
+	SandboxEventStopped      = "sandbox.stopped"
+	SandboxEventFailed       = "sandbox.failed"
+	SandboxEventError        = "sandbox.error"
+	SandboxEventAutoPaused   = "sandbox.auto_paused"
+	SandboxEventPauseFailed  = "sandbox.pause_failed"
+	SandboxEventResumeFailed = "sandbox.resume_failed"
 )
 
 // SandboxEventConsumer reads sandbox lifecycle events from the Redis stream
@@ -146,6 +160,13 @@ func (c *SandboxEventConsumer) handleMessage(ctx context.Context, msg redis.XMes
 		c.handleFailed(ctx, sandboxID)
 	case SandboxEventAutoPaused:
 		c.handleAutoPaused(ctx, sandboxID, event)
+	case SandboxEventPauseFailed:
+		// Background goroutine in SandboxService already rolled the DB
+		// state back from "pausing" → "running" (or "error"); this is just
+		// the audit-trail ack.
+		slog.Info("sandbox pause failed", "sandbox_id", event.SandboxID, "error", event.Error)
+	case SandboxEventResumeFailed:
+		slog.Info("sandbox resume failed", "sandbox_id", event.SandboxID, "error", event.Error)
 	default:
 		slog.Warn("sandbox event consumer: unknown event type", "event", event.Event)
 	}
