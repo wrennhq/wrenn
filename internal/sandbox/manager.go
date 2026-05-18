@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -23,8 +24,20 @@ import (
 	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 )
 
-// ErrNotFound is returned when a sandbox is not present in the in-memory map.
-var ErrNotFound = errors.New("sandbox not found")
+// Sentinel errors. Use errors.Is to detect them rather than string-matching.
+var (
+	// ErrNotFound is returned when a sandbox is not present in the in-memory map.
+	ErrNotFound = errors.New("sandbox not found")
+	// ErrNotRunning is returned when an operation requires StatusRunning but
+	// the sandbox is in another state (or its envd client has been cleared
+	// concurrently by a pause).
+	ErrNotRunning = errors.New("sandbox not running")
+	// ErrNotPaused is returned when an operation requires StatusPaused but
+	// the sandbox is in another state.
+	ErrNotPaused = errors.New("sandbox not paused")
+	// ErrInvalidRange is returned when a metrics range parameter is invalid.
+	ErrInvalidRange = errors.New("invalid range")
+)
 
 // MinTimeoutSec is the minimum inactivity TTL accepted by Create/Resume.
 // 0 keeps the "no TTL" semantic; any positive value below this is clamped.
@@ -110,12 +123,23 @@ func (m *Manager) SetEventSender(sender EventSender) {
 // sandboxState holds the runtime state for a single sandbox.
 type sandboxState struct {
 	models.Sandbox
-	lifecycleMu   sync.Mutex // serializes Pause/Destroy/Resume on this sandbox
-	slot          *network.Slot
-	client        *envdclient.Client
+	lifecycleMu sync.Mutex // serializes Pause/Destroy/Resume on this sandbox
+	slot        *network.Slot
+	// client is published via atomic.Pointer so Exec/Pty/Process callers can
+	// load it without holding lifecycleMu. Pause's releaseRuntime stores nil;
+	// Resume stores a fresh client. Callers MUST nil-check after Load.
+	client        atomic.Pointer[envdclient.Client]
 	connTracker   *ConnTracker // tracks in-flight proxy connections for pre-pause drain
 	dmDevice      *devicemapper.SnapshotDevice
 	baseImagePath string // path to the base template rootfs (for loop registry release)
+
+	// sandboxDirOverride, when non-empty, pins this sandbox's VMConfig.SandboxDir
+	// to a path other than the default vm.SandboxTmpDir(sb.ID). Set when the
+	// sandbox was launched from a snapshot template — CH's saved config.json
+	// hardcodes the *original* source sandbox's tmpfs path, so every subsequent
+	// restore (Resume, PauseAll/restart) must reuse that same path or CH cannot
+	// find rootfs.ext4 in the new mount namespace.
+	sandboxDirOverride string
 
 	// Background memory loading state (set during Resume for UFFD sandboxes).
 	// nil for freshly-created sandboxes. For resumed sandboxes, memLoadDone
@@ -224,7 +248,11 @@ func (m *Manager) Create(
 	// rewritten, the CoW stores a full copy. Undersized CoW causes
 	// dm-snapshot invalidation → EIO on all guest I/O.
 	dmName := "wrenn-" + sandboxID
-	cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s.cow", sandboxID))
+	if err := os.MkdirAll(layout.SandboxDir(m.cfg.WrennDir, sandboxID), 0o755); err != nil {
+		m.loops.Release(baseRootfs)
+		return nil, fmt.Errorf("create sandbox dir: %w", err)
+	}
+	cowPath := layout.SandboxCowPath(m.cfg.WrennDir, sandboxID)
 	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
 	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
@@ -321,11 +349,11 @@ func (m *Manager) Create(
 			Metadata:       m.buildMetadata(envdVersion),
 		},
 		slot:          slot,
-		client:        client,
 		connTracker:   &ConnTracker{},
 		dmDevice:      dmDev,
 		baseImagePath: baseRootfs,
 	}
+	sb.client.Store(client)
 
 	m.mu.Lock()
 	m.boxes[sandboxID] = sb
@@ -398,14 +426,10 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 			slog.Warn("dm-snapshot remove error", "id", sb.ID, "error", err)
 		}
 		os.Remove(sb.dmDevice.CowPath)
-	} else {
-		// Paused sandbox: dm-snapshot and loop were already released by
-		// releaseRuntime, but the CoW file at sandboxes/{id}.cow persisted
-		// so Resume could re-attach. On Destroy that file would leak —
-		// derive its path from the sandbox ID and remove it.
-		cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), sb.ID+".cow")
-		os.Remove(cowPath)
 	}
+	// Paused branch: dm-snapshot and loop were already released by
+	// releaseRuntime; the CoW file inside the sandbox dir is removed by
+	// Destroy's os.RemoveAll(SandboxDir) below.
 	if sb.baseImagePath != "" {
 		m.loops.Release(sb.baseImagePath)
 	}
@@ -414,40 +438,49 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 // Pause, Resume, CreateSnapshot, FlattenRootfs, DeleteSnapshot, PauseAll
 // are implemented in pause.go.
 
-// Exec runs a command inside a sandbox.
-func (m *Manager) Exec(ctx context.Context, sandboxID string, cmd string, args []string, opts *envdclient.ExecOpts) (*envdclient.ExecResult, error) {
+// activeClient resolves sandboxID to its envd client when the sandbox is in
+// StatusRunning and the client has not been cleared by a concurrent pause.
+// It bumps LastActiveAt as a side effect. Returns ErrNotFound if missing or
+// ErrNotRunning (wrapped with context) otherwise.
+//
+// All Exec/Pty/Process methods funnel through this — it is the single
+// chokepoint that guarantees we never deref a stale sb.client.
+func (m *Manager) activeClient(sandboxID string) (*envdclient.Client, error) {
 	sb, err := m.get(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-
 	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+		return nil, fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
-
+	c := sb.client.Load()
+	if c == nil {
+		// Race: status flipped from Running between m.get and Load (pause's
+		// releaseRuntime cleared the pointer).
+		return nil, fmt.Errorf("%w: %s (client cleared)", ErrNotRunning, sandboxID)
+	}
 	m.mu.Lock()
 	sb.LastActiveAt = time.Now()
 	m.mu.Unlock()
+	return c, nil
+}
 
-	return sb.client.Exec(ctx, cmd, args, opts)
+// Exec runs a command inside a sandbox.
+func (m *Manager) Exec(ctx context.Context, sandboxID string, cmd string, args []string, opts *envdclient.ExecOpts) (*envdclient.ExecResult, error) {
+	c, err := m.activeClient(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	return c.Exec(ctx, cmd, args, opts)
 }
 
 // ExecStream runs a command inside a sandbox and returns a channel of streaming events.
 func (m *Manager) ExecStream(ctx context.Context, sandboxID string, cmd string, args ...string) (<-chan envdclient.ExecStreamEvent, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-
-	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.ExecStream(ctx, cmd, args...)
+	return c.ExecStream(ctx, cmd, args...)
 }
 
 // List returns all sandboxes.
@@ -471,16 +504,21 @@ func (m *Manager) Get(sandboxID string) (*models.Sandbox, error) {
 	return &sb.Sandbox, nil
 }
 
-// GetClient returns the envd client for a sandbox.
+// GetClient returns the envd client for a sandbox without bumping
+// LastActiveAt. Used by the proxy path which has its own activity bookkeeping.
 func (m *Manager) GetClient(sandboxID string) (*envdclient.Client, error) {
 	sb, err := m.get(sandboxID)
 	if err != nil {
 		return nil, err
 	}
 	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+		return nil, fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
-	return sb.client, nil
+	c := sb.client.Load()
+	if c == nil {
+		return nil, fmt.Errorf("%w: %s (client cleared)", ErrNotRunning, sandboxID)
+	}
+	return c, nil
 }
 
 // SetDefaults calls envd's PostInit to configure the default user and
@@ -490,146 +528,87 @@ func (m *Manager) SetDefaults(ctx context.Context, sandboxID, defaultUser string
 	if defaultUser == "" && len(defaultEnv) == 0 {
 		return nil
 	}
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-	return sb.client.PostInitWithDefaults(ctx, defaultUser, defaultEnv, "", "")
+	return c.PostInitWithDefaults(ctx, defaultUser, defaultEnv, "", "")
 }
 
 // PtyAttach starts a new PTY process or reconnects to an existing one.
 // If cmd is non-empty, starts a new process. If empty, reconnects using tag.
 func (m *Manager) PtyAttach(ctx context.Context, sandboxID, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd string) (<-chan envdclient.PtyEvent, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
 	if cmd != "" {
-		return sb.client.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd)
+		return c.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd)
 	}
-	return sb.client.PtyConnect(ctx, tag)
+	return c.PtyConnect(ctx, tag)
 }
 
 // PtySendInput sends raw bytes to a PTY process in a sandbox.
 func (m *Manager) PtySendInput(ctx context.Context, sandboxID, tag string, data []byte) error {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.PtySendInput(ctx, tag, data)
+	return c.PtySendInput(ctx, tag, data)
 }
 
 // PtyResize updates the terminal dimensions for a PTY process in a sandbox.
 func (m *Manager) PtyResize(ctx context.Context, sandboxID, tag string, cols, rows uint32) error {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	return sb.client.PtyResize(ctx, tag, cols, rows)
+	return c.PtyResize(ctx, tag, cols, rows)
 }
 
 // PtyKill sends SIGKILL to a PTY process in a sandbox.
 func (m *Manager) PtyKill(ctx context.Context, sandboxID, tag string) error {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	return sb.client.PtyKill(ctx, tag)
+	return c.PtyKill(ctx, tag)
 }
 
 // StartBackground starts a background process inside a sandbox.
 func (m *Manager) StartBackground(ctx context.Context, sandboxID, tag, cmd string, args []string, envs map[string]string, cwd string) (uint32, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return 0, err
 	}
-	if sb.Status != models.StatusRunning {
-		return 0, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.StartBackground(ctx, tag, cmd, args, envs, cwd)
+	return c.StartBackground(ctx, tag, cmd, args, envs, cwd)
 }
 
 // ConnectProcess re-attaches to a running process inside a sandbox.
 func (m *Manager) ConnectProcess(ctx context.Context, sandboxID string, pid uint32, tag string) (<-chan envdclient.ExecStreamEvent, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.ConnectProcess(ctx, pid, tag)
+	return c.ConnectProcess(ctx, pid, tag)
 }
 
 // ListProcesses returns all running processes inside a sandbox.
 func (m *Manager) ListProcesses(ctx context.Context, sandboxID string) ([]envdclient.ProcessInfo, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.ListProcesses(ctx)
+	return c.ListProcesses(ctx)
 }
 
 // KillProcess sends a signal to a process inside a sandbox.
 func (m *Manager) KillProcess(ctx context.Context, sandboxID string, pid uint32, tag string, signal envdpb.Signal) error {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.KillProcess(ctx, pid, tag, signal)
+	return c.KillProcess(ctx, pid, tag, signal)
 }
 
 // AcquireProxyConn atomically looks up a sandbox by ID and registers an
@@ -661,7 +640,7 @@ func (m *Manager) Ping(sandboxID string) error {
 		return fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+		return fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
 	sb.LastActiveAt = time.Now()
 	return nil
@@ -921,10 +900,12 @@ func (m *Manager) cleanupAfterCrash(sb *sandboxState) {
 		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("crash cleanup: dm-snapshot error", "id", sb.ID, "error", err)
 		}
-		os.Remove(sb.dmDevice.CowPath)
 	}
 	if sb.baseImagePath != "" {
 		m.loops.Release(sb.baseImagePath)
+	}
+	if err := os.RemoveAll(layout.SandboxDir(m.cfg.WrennDir, sb.ID)); err != nil {
+		slog.Warn("crash cleanup: sandbox dir error", "id", sb.ID, "error", err)
 	}
 }
 
@@ -1002,7 +983,7 @@ func (m *Manager) samplerLoop(ctx context.Context, sb *sandboxState, vmmPID, vcp
 			// VmRSS of the VMM process includes guest page cache and never
 			// decreases, so we use the guest's own view which reports
 			// total - available (actual process memory).
-			memBytes, _ := readEnvdMemUsed(ctx, sb.client)
+			memBytes, _ := readEnvdMemUsed(ctx, sb.client.Load())
 
 			// Disk: allocated bytes of the CoW sparse file.
 			var diskBytes int64
@@ -1068,7 +1049,7 @@ func (m *Manager) GetMetrics(sandboxID, rangeTier string) ([]MetricPoint, error)
 		points = sb.ring.Get24h()
 		cutoff = 24 * time.Hour
 	default:
-		return nil, fmt.Errorf("invalid range: %s (valid: 5m, 10m, 1h, 2h, 6h, 12h, 24h)", rangeTier)
+		return nil, fmt.Errorf("%w: %s (valid: 5m, 10m, 1h, 2h, 6h, 12h, 24h)", ErrInvalidRange, rangeTier)
 	}
 
 	// Filter points to the requested time window.

@@ -50,7 +50,7 @@ pub async fn post_snapshot_prepare(State(state): State<Arc<AppState>>) -> impl I
     // freed pages to the host in batches and CH punches holes in the backing
     // memfile. Without a brief settle window most of the pages freed by the
     // drop_caches passes above would still be present in the snapshot.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     tracing::info!("snapshot/prepare: quiesced");
     (

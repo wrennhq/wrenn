@@ -54,18 +54,32 @@ func IsSnapshotTemplate(dir string) bool {
 	return true
 }
 
-// PauseSnapshotDir returns the directory for a paused sandbox's snapshot files.
-// Located alongside the sandbox's CoW file under sandboxes/ so all per-sandbox
-// state lives under one parent directory.
+// SandboxCowName is the filename for a sandbox's CoW rootfs diff, kept inside
+// the per-sandbox directory alongside any pause snapshot files.
+const SandboxCowName = "rootfs.cow"
+
+// SandboxDir returns the per-sandbox directory under sandboxes/. It holds
+// the CoW file and, if the sandbox is paused, the snapshot files.
 //
 // Layout:
 //
+//	{wrennDir}/sandboxes/{id}/rootfs.cow   CoW file (persistent across pause/resume)
 //	{wrennDir}/sandboxes/{id}/             paused snapshot (config.json, state.json, memory-ranges, wrenn-snapshot.json)
-//	{wrennDir}/sandboxes/{id}.cow          CoW file (persistent across pause/resume)
 //	{wrennDir}/sandboxes/{id}.staging-*/   in-flight Pause writes (cleaned up by swapDir or startup GC)
 //	{wrennDir}/sandboxes/{id}.trash-*/     mid-swap previous generation (cleaned up by swapDir or startup GC)
-func PauseSnapshotDir(wrennDir, sandboxID string) string {
+func SandboxDir(wrennDir, sandboxID string) string {
 	return filepath.Join(wrennDir, "sandboxes", sandboxID)
+}
+
+// SandboxCowPath returns the path to a sandbox's CoW rootfs diff file.
+func SandboxCowPath(wrennDir, sandboxID string) string {
+	return filepath.Join(SandboxDir(wrennDir, sandboxID), SandboxCowName)
+}
+
+// PauseSnapshotDir returns the directory for a paused sandbox's snapshot files.
+// Same path as SandboxDir — pause snapshot files live alongside the CoW.
+func PauseSnapshotDir(wrennDir, sandboxID string) string {
+	return SandboxDir(wrennDir, sandboxID)
 }
 
 // PauseStagingDir returns a fresh staging directory for an in-flight Pause.

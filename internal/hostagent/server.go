@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -51,19 +50,30 @@ func parseUUIDString(s string) (pgtype.UUID, error) {
 	return pgtype.UUID{Bytes: parsed, Valid: true}, nil
 }
 
+// parseSandboxIDs parses the team+template UUID pair every snapshot-targeting
+// RPC handler receives, returning a CodeInvalidArgument Connect error on the
+// first failure so the caller can `return nil, err` directly.
+func parseSandboxIDs(teamIDStr, templateIDStr string) (teamID, templateID pgtype.UUID, err error) {
+	teamID, err = parseUUIDString(teamIDStr)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err = parseUUIDString(templateIDStr)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return teamID, templateID, nil
+}
+
 func (s *Server) CreateSandbox(
 	ctx context.Context,
 	req *connect.Request[pb.CreateSandboxRequest],
 ) (*connect.Response[pb.CreateSandboxResponse], error) {
 	msg := req.Msg
 
-	teamID, err := parseUUIDString(msg.TeamId)
+	teamID, templateID, err := parseSandboxIDs(msg.TeamId, msg.TemplateId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	templateID, err := parseUUIDString(msg.TemplateId)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, err
 	}
 
 	sb, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID,
@@ -86,10 +96,7 @@ func (s *Server) DestroySandbox(
 	req *connect.Request[pb.DestroySandboxRequest],
 ) (*connect.Response[pb.DestroySandboxResponse], error) {
 	if err := s.mgr.Destroy(ctx, req.Msg.SandboxId); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.DestroySandboxResponse{}), nil
 }
@@ -124,13 +131,9 @@ func (s *Server) CreateSnapshot(
 	ctx context.Context,
 	req *connect.Request[pb.CreateSnapshotRequest],
 ) (*connect.Response[pb.CreateSnapshotResponse], error) {
-	teamID, err := parseUUIDString(req.Msg.TeamId)
+	teamID, templateID, err := parseSandboxIDs(req.Msg.TeamId, req.Msg.TemplateId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	templateID, err := parseUUIDString(req.Msg.TemplateId)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, err
 	}
 	size, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, teamID, templateID)
 	if err != nil {
@@ -146,16 +149,12 @@ func (s *Server) DeleteSnapshot(
 	_ context.Context,
 	req *connect.Request[pb.DeleteSnapshotRequest],
 ) (*connect.Response[pb.DeleteSnapshotResponse], error) {
-	teamID, err := parseUUIDString(req.Msg.TeamId)
+	teamID, templateID, err := parseSandboxIDs(req.Msg.TeamId, req.Msg.TemplateId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	templateID, err := parseUUIDString(req.Msg.TemplateId)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, err
 	}
 	if err := s.mgr.DeleteSnapshot(teamID, templateID); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.DeleteSnapshotResponse{}), nil
 }
@@ -164,13 +163,9 @@ func (s *Server) FlattenRootfs(
 	ctx context.Context,
 	req *connect.Request[pb.FlattenRootfsRequest],
 ) (*connect.Response[pb.FlattenRootfsResponse], error) {
-	teamID, err := parseUUIDString(req.Msg.TeamId)
+	teamID, templateID, err := parseSandboxIDs(req.Msg.TeamId, req.Msg.TemplateId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	templateID, err := parseUUIDString(req.Msg.TemplateId)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, err
 	}
 	size, err := s.mgr.FlattenRootfs(ctx, req.Msg.SandboxId, teamID, templateID)
 	if err != nil {
@@ -181,15 +176,20 @@ func (s *Server) FlattenRootfs(
 	}), nil
 }
 
-// mapSandboxError translates sandbox.Manager errors to Connect error codes.
+// mapSandboxError translates sandbox.Manager errors to Connect error codes
+// via sentinel errors (errors.Is). Adding a new precondition sentinel in the
+// sandbox package only requires extending this switch — no string sniffing.
 func mapSandboxError(err error) error {
-	if errors.Is(err, sandbox.ErrNotFound) {
+	switch {
+	case errors.Is(err, sandbox.ErrNotFound):
 		return connect.NewError(connect.CodeNotFound, err)
-	}
-	if strings.Contains(err.Error(), "not running") || strings.Contains(err.Error(), "not paused") {
+	case errors.Is(err, sandbox.ErrNotRunning), errors.Is(err, sandbox.ErrNotPaused):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
+	case errors.Is(err, sandbox.ErrInvalidRange):
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	default:
+		return connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewError(connect.CodeInternal, err)
 }
 
 func (s *Server) PingSandbox(
@@ -599,13 +599,7 @@ func (s *Server) GetSandboxMetrics(
 
 	points, err := s.mgr.GetMetrics(msg.SandboxId, msg.Range)
 	if err != nil {
-		if errors.Is(err, sandbox.ErrNotFound) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		if strings.Contains(err.Error(), "invalid range") {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
 
 	return connect.NewResponse(&pb.GetSandboxMetricsResponse{Points: metricPointsToPB(points)}), nil
@@ -617,10 +611,7 @@ func (s *Server) FlushSandboxMetrics(
 ) (*connect.Response[pb.FlushSandboxMetricsResponse], error) {
 	pts10m, pts2h, pts24h, err := s.mgr.FlushMetrics(req.Msg.SandboxId)
 	if err != nil {
-		if errors.Is(err, sandbox.ErrNotFound) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
 
 	return connect.NewResponse(&pb.FlushSandboxMetricsResponse{

@@ -24,14 +24,14 @@ import (
 
 // restoreInputs is the common set of fields needed to build a restore VMConfig.
 type restoreInputs struct {
-	sandboxID   string // VM identity for the new CH process (sock path, log file)
-	templateID  string // forwarded to envd via PostInit (informational)
-	snapDir     string // directory containing CH snapshot artefacts
-	rootfsPath  string // /dev/mapper/wrenn-{newID} — per-sandbox dm-snapshot
-	vcpus       int
-	memoryMB    int
-	slot        *network.Slot
-	sandboxDir  string // override for VMConfig.SandboxDir; "" = default
+	sandboxID  string // VM identity for the new CH process (sock path, log file)
+	templateID string // forwarded to envd via PostInit (informational)
+	snapDir    string // directory containing CH snapshot artefacts
+	rootfsPath string // /dev/mapper/wrenn-{newID} — per-sandbox dm-snapshot
+	vcpus      int
+	memoryMB   int
+	slot       *network.Slot
+	sandboxDir string // override for VMConfig.SandboxDir; "" = default
 }
 
 // buildRestoreVMConfig assembles the VMConfig used to launch a CH process in
@@ -105,10 +105,14 @@ func (m *Manager) launchRestoredVM(ctx context.Context, vmCfg vm.VMConfig, hostI
 func (m *Manager) initAndStartMemoryLoader(ctx context.Context, sb *sandboxState, defaultUser, templateIDStr string, envVars map[string]string) {
 	initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
 	defer initCancel()
-	if err := sb.client.PostInitWithDefaults(initCtx, defaultUser, envVars, sb.ID, templateIDStr); err != nil {
+	c := sb.client.Load()
+	if c == nil {
+		slog.Warn("post-restore PostInit skipped: envd client cleared", "id", sb.ID)
+		return
+	}
+	if err := c.PostInitWithDefaults(initCtx, defaultUser, envVars, sb.ID, templateIDStr); err != nil {
 		slog.Warn("post-restore PostInit failed", "id", sb.ID, "error", err)
 	}
 
 	m.startMemoryLoader(sb)
 }
-

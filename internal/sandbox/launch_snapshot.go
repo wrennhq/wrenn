@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -67,7 +66,11 @@ func (m *Manager) createFromSnapshotTemplate(
 
 	// Per-sandbox CoW on top of the shared origin.
 	dmName := "wrenn-" + sandboxID
-	cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s.cow", sandboxID))
+	if err := os.MkdirAll(layout.SandboxDir(m.cfg.WrennDir, sandboxID), 0o755); err != nil {
+		m.loops.Release(baseRootfs)
+		return nil, fmt.Errorf("create sandbox dir: %w", err)
+	}
+	cowPath := layout.SandboxCowPath(m.cfg.WrennDir, sandboxID)
 	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
 	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
@@ -141,12 +144,13 @@ func (m *Manager) createFromSnapshotTemplate(
 			LastActiveAt:   now,
 			Metadata:       m.buildMetadata(envdVersion),
 		},
-		slot:          slot,
-		client:        client,
-		connTracker:   &ConnTracker{},
-		dmDevice:      dmDev,
-		baseImagePath: baseRootfs,
+		slot:               slot,
+		connTracker:        &ConnTracker{},
+		dmDevice:           dmDev,
+		baseImagePath:      baseRootfs,
+		sandboxDirOverride: originalSandboxDir,
 	}
+	sb.client.Store(client)
 
 	m.mu.Lock()
 	m.boxes[sandboxID] = sb

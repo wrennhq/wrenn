@@ -10,7 +10,7 @@
 //
 //	wrenn.pause     =  ch.pause + ch.snapshot + ch.destroy
 //	                   artefacts -> WRENN_DIR/sandboxes/{sandboxID}/
-//	                   VM torn down; CoW file at WRENN_DIR/sandboxes/{id}.cow
+//	                   VM torn down; CoW file at WRENN_DIR/sandboxes/{id}/rootfs.cow
 //	                   + network slot retained so resume reaches the same host-IP.
 //
 // Pause always writes to a fresh staging directory and atomically swaps it
@@ -71,7 +71,11 @@ type snapshotMeta struct {
 	SlotIndex    int       `json:"slot_index"`
 	BaseTemplate string    `json:"base_template"`
 	CowPath      string    `json:"cow_path,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	// SandboxDir, when set, pins the CH SandboxDir on restore. Required for
+	// sandboxes launched from snapshot templates: their CH config.json holds
+	// the original source sandbox's tmpfs path, which Resume must reuse.
+	SandboxDir string    `json:"sandbox_dir,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 func writeSnapshotMeta(dir string, m *snapshotMeta) error {
@@ -102,8 +106,8 @@ func readSnapshotMeta(dir string) (*snapshotMeta, error) {
 // Resume can pick up where the sandbox left off.
 //
 // The sandbox stays in m.boxes with Status=Paused. The cow file at
-// WRENN_DIR/sandboxes/{id}.cow persists; on Resume it is re-attached via
-// devicemapper.RestoreSnapshot.
+// WRENN_DIR/sandboxes/{id}/rootfs.cow persists; on Resume it is re-attached
+// via devicemapper.RestoreSnapshot.
 //
 // Write strategy: snapshot is written into a fresh staging directory, the
 // VM is destroyed (closing CH's open fd to any previous-generation
@@ -124,7 +128,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		return nil
 	}
 	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+		return fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
 
 	// Wait for the post-resume memory loader to finish before snapshotting.
@@ -178,6 +182,11 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		return rollbackToRunning(err, "snapshot")
 	}
 
+	// Punch zero pages CH wrote verbatim (guest had them dirty-then-free
+	// without notifying the balloon driver). Best-effort; failures only
+	// cost disk space.
+	punchZeroPagesInDir(stageDir)
+
 	meta := &snapshotMeta{
 		SandboxID:    sb.ID,
 		TeamID:       id.UUIDString(pgtype.UUID{Bytes: sb.TemplateTeamID, Valid: true}),
@@ -188,6 +197,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		SlotIndex:    sb.SlotIndex,
 		BaseTemplate: sb.baseImagePath,
 		CowPath:      sb.dmDevice.CowPath,
+		SandboxDir:   sb.sandboxDirOverride,
 		CreatedAt:    time.Now(),
 	}
 	if err := writeSnapshotMeta(stageDir, meta); err != nil {
@@ -198,8 +208,21 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 
 	// releaseRuntime destroys the VM, which closes CH's open fd to any
 	// previous-generation memory-ranges. Must happen BEFORE we touch finalDir
-	// so the swap is safe.
+	// so the swap is safe. It also tears down the dm-snapshot so the CoW file
+	// inside finalDir is no longer held open and can be moved.
 	m.releaseRuntime(sb, keepCow)
+
+	// CoW lives at finalDir/rootfs.cow. swapDir replaces finalDir wholesale,
+	// which would discard it. Move it into stageDir first so the swap carries
+	// the CoW through alongside the new snapshot files.
+	cowFinal := layout.SandboxCowPath(m.cfg.WrennDir, sandboxID)
+	cowStage := filepath.Join(stageDir, layout.SandboxCowName)
+	if err := os.Rename(cowFinal, cowStage); err != nil && !os.IsNotExist(err) {
+		m.mu.Lock()
+		sb.Status = models.StatusError
+		m.mu.Unlock()
+		return fmt.Errorf("pause %s: stage cow: %w", sandboxID, err)
+	}
 
 	if err := swapDir(stageDir, finalDir); err != nil {
 		// CH is already destroyed — we cannot roll back to Running. The
@@ -278,10 +301,12 @@ func (m *Manager) quiesceAndPauseCH(ctx context.Context, sb *sandboxState) error
 	sb.connTracker.Drain(drainTimeout)
 	sb.connTracker.ForceClose()
 
-	if err := sb.client.PrepareSnapshot(ctx); err != nil {
-		slog.Warn("envd prepare-snapshot failed (continuing)", "id", sb.ID, "error", err)
+	if c := sb.client.Load(); c != nil {
+		if err := c.PrepareSnapshot(ctx); err != nil {
+			slog.Warn("envd prepare-snapshot failed (continuing)", "id", sb.ID, "error", err)
+		}
+		c.CloseIdleConnections()
 	}
-	sb.client.CloseIdleConnections()
 
 	if err := m.vm.Pause(ctx, sb.ID); err != nil {
 		return fmt.Errorf("ch.pause: %w", err)
@@ -363,7 +388,7 @@ func (m *Manager) releaseRuntime(sb *sandboxState, cow cowDisposition) {
 
 	// Clear runtime references; they're rebuilt on resume.
 	sb.slot = nil
-	sb.client = nil
+	sb.client.Store(nil)
 	sb.dmDevice = nil
 }
 
@@ -392,7 +417,7 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		return &sb.Sandbox, nil
 	}
 	if sb.Status != models.StatusPaused {
-		return nil, fmt.Errorf("sandbox %s is not paused (status: %s)", sandboxID, sb.Status)
+		return nil, fmt.Errorf("%w: %s (status: %s)", ErrNotPaused, sandboxID, sb.Status)
 	}
 
 	snapDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sandboxID)
@@ -486,6 +511,7 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 		vcpus:      meta.VCPUs,
 		memoryMB:   meta.MemoryMB,
 		slot:       slot,
+		sandboxDir: meta.SandboxDir,
 	})
 	client, err := m.launchRestoredVM(ctx, vmCfg, slot.HostIP.String())
 	if err != nil {
@@ -499,8 +525,9 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 	// 7. Re-hydrate in-memory state.
 	m.mu.Lock()
 	sb.slot = slot
-	sb.client = client
+	sb.client.Store(client)
 	sb.dmDevice = dmDev
+	sb.sandboxDirOverride = meta.SandboxDir
 	sb.connTracker.Reset()
 	sb.HostIP = slot.HostIP
 	sb.RootfsPath = dmDev.DevicePath
@@ -533,7 +560,7 @@ func (m *Manager) startMemoryLoader(sb *sandboxState) {
 
 	go func() {
 		defer close(done)
-		client := sb.client
+		client := sb.client.Load()
 		if client == nil {
 			return
 		}
@@ -621,7 +648,7 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 	defer sb.lifecycleMu.Unlock()
 
 	if sb.Status != models.StatusRunning {
-		return 0, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+		return 0, fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
 
 	// Refuse silent overwrites: every snapshot must land in a fresh
@@ -662,6 +689,7 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 		sb.connTracker.Reset()
 		return 0, fmt.Errorf("vm.snapshot: %w", err)
 	}
+	punchZeroPagesInDir(stageDir)
 
 	// Flatten dm-snapshot → rootfs.ext4. Reads through the dm device which is
 	// stable while CH is paused.
@@ -691,7 +719,12 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 	}
 
 	// Resume the live sandbox; the staged snapshot is fully written.
+	// On resume failure we still Reset the connTracker: leaving it draining
+	// would refuse all subsequent proxy connections even though the VM is
+	// effectively running (just wedged on the CH side). The error returned
+	// to the caller surfaces the wedge state.
 	if err := m.vm.Resume(ctx, sandboxID); err != nil {
+		sb.connTracker.Reset()
 		return 0, fmt.Errorf("vm resume after live snapshot: %w", err)
 	}
 	sb.connTracker.Reset()
@@ -703,8 +736,10 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 
 	// Tell envd to refresh its clock and lifecycle. Brief pause means clock
 	// drift is usually <1s but PostInit is cheap.
-	if err := sb.client.PostInit(ctx); err != nil {
-		slog.Warn("envd PostInit after live snapshot", "id", sandboxID, "error", err)
+	if c := sb.client.Load(); c != nil {
+		if err := c.PostInit(ctx); err != nil {
+			slog.Warn("envd PostInit after live snapshot", "id", sandboxID, "error", err)
+		}
 	}
 
 	size, err := snapshot.DirSize(dstDir, "")
@@ -762,7 +797,7 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 	defer sb.lifecycleMu.Unlock()
 
 	if sb.Status != models.StatusRunning {
-		return 0, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+		return 0, fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
 
 	dstDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
