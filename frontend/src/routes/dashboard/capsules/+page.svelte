@@ -170,7 +170,9 @@
 	}
 
 	function handleCapsuleCreated(capsule: Capsule) {
-		capsules = [capsule, ...capsules];
+		if (!capsules.some((c) => c.id === capsule.id)) {
+			capsules = [capsule, ...capsules];
+		}
 		newCapsuleId = capsule.id;
 		setTimeout(() => { newCapsuleId = null; }, 1600);
 	}
