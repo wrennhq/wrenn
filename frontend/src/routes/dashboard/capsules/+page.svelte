@@ -13,6 +13,8 @@
 		resumeCapsule,
 		type Capsule
 	} from '$lib/api/capsules';
+	import { subscribeSSE } from '$lib/sse.svelte';
+	import type { SSEEvent } from '$lib/api/events';
 
 	const REFRESH_INTERVAL = 30;
 	const SPIN_DURATION = 600;
@@ -256,6 +258,33 @@
 		return `${Math.round(sec / 3600)}h`;
 	}
 
+	function handleSSEEvent(event: SSEEvent) {
+		if (!event.resource || event.resource.type !== 'sandbox') return;
+
+		const sandboxId = event.resource.id;
+
+		if (event.event === 'capsule.destroyed') {
+			capsules = capsules.filter((c) => c.id !== sandboxId);
+			return;
+		}
+
+		if (event.sandbox) {
+			const existing = capsules.find((c) => c.id === sandboxId);
+			if (existing) {
+				for (const key of Object.keys(event.sandbox) as (keyof Capsule)[]) {
+					if (existing[key] !== event.sandbox[key]) {
+						(existing as any)[key] = event.sandbox[key];
+					}
+				}
+				capsules = capsules;
+			} else if (event.event === 'capsule.created') {
+				capsules = [event.sandbox, ...capsules];
+				newCapsuleId = sandboxId;
+				setTimeout(() => { newCapsuleId = null; }, 1600);
+			}
+		}
+	}
+
 	function handleClickOutside(event: MouseEvent) {
 		if (openMenuId && !(event.target as Element)?.closest('.status-menu-container')) {
 			openMenuId = null;
@@ -274,9 +303,11 @@
 	onMount(() => {
 		fetchCapsules();
 		startAutoRefresh();
+		const unsubscribe = subscribeSSE(handleSSEEvent);
 		document.addEventListener('visibilitychange', handleVisibility);
 		return () => {
 			stopAutoRefresh();
+			unsubscribe();
 			document.removeEventListener('visibilitychange', handleVisibility);
 		};
 	});

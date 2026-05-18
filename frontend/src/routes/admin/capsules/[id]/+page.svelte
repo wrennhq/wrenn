@@ -14,6 +14,8 @@
 		snapshotAdminCapsule,
 	} from '$lib/api/admin-capsules';
 	import type { Capsule } from '$lib/api/capsules';
+	import { subscribeAdminSSE } from '$lib/sse.svelte';
+	import type { SSEEvent } from '$lib/api/events';
 
 	const capsuleId: string = $page.params.id ?? '';
 	const API_BASE = '/api/v1/admin/capsules';
@@ -87,6 +89,18 @@
 	}
 
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let unsubscribe: (() => void) | null = null;
+
+	function handleSSEEvent(event: SSEEvent) {
+		if (!event.resource || event.resource.id !== capsuleId) return;
+		if (event.event === 'capsule.destroyed') {
+			goto('/admin/capsules');
+			return;
+		}
+		if (event.sandbox) {
+			capsule = event.sandbox;
+		}
+	}
 
 	function startPolling() {
 		stopPolling();
@@ -109,11 +123,13 @@
 	onMount(() => {
 		loadCapsule();
 		startPolling();
+		unsubscribe = subscribeAdminSSE(handleSSEEvent);
 		document.addEventListener('visibilitychange', handleVisibility);
 	});
 
 	onDestroy(() => {
 		stopPolling();
+		unsubscribe?.();
 		document.removeEventListener('visibilitychange', handleVisibility);
 	});
 </script>

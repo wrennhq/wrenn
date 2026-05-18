@@ -2,23 +2,27 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/channels"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 type sandboxEventHandler struct {
-	db  *db.Queries
-	rdb *redis.Client
+	db       *db.Queries
+	rdb      *redis.Client
+	eventPub *channels.Publisher
 }
 
-func newSandboxEventHandler(queries *db.Queries, rdb *redis.Client) *sandboxEventHandler {
-	return &sandboxEventHandler{db: queries, rdb: rdb}
+func newSandboxEventHandler(queries *db.Queries, rdb *redis.Client, eventPub *channels.Publisher) *sandboxEventHandler {
+	return &sandboxEventHandler{db: queries, rdb: rdb, eventPub: eventPub}
 }
 
 type sandboxEventRequest struct {
@@ -60,6 +64,22 @@ func (h *sandboxEventHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		HostID:    req.HostID,
 		Timestamp: req.Timestamp,
 	})
+
+	// Look up sandbox to get teamID, then publish to SSE for immediate frontend update.
+	sandboxUUID, err := id.ParseSandboxID(req.SandboxID)
+	if err == nil {
+		if sb, dbErr := h.db.GetSandbox(r.Context(), sandboxUUID); dbErr == nil {
+			if sseEvt, ok := sandboxEventToSSE(service.SandboxStateEvent{
+				Event: req.Event, SandboxID: req.SandboxID,
+				TeamID: id.FormatTeamID(sb.TeamID), HostID: req.HostID,
+				Timestamp: req.Timestamp,
+			}); ok {
+				h.eventPub.Publish(r.Context(), sseEvt)
+			}
+		} else {
+			slog.Debug("sandbox event callback: sandbox lookup failed", "id", req.SandboxID, "error", dbErr)
+		}
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

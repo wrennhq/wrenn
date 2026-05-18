@@ -173,24 +173,10 @@ func resolveHostTeamID(teamID pgtype.UUID) pgtype.UUID {
 
 func (l *AuditLogger) LogSandboxCreate(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID, template string) {
 	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "create", "success", map[string]any{"template": template}))
-	l.publish(ctx, events.Event{
-		Event:     events.CapsuleCreated,
-		Timestamp: events.Now(),
-		TeamID:    id.FormatTeamID(ac.TeamID),
-		Actor:     actorToEvent(ac),
-		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
-	})
 }
 
 func (l *AuditLogger) LogSandboxPause(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
 	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "pause", "success", nil))
-	l.publish(ctx, events.Event{
-		Event:     events.CapsulePaused,
-		Timestamp: events.Now(),
-		TeamID:    id.FormatTeamID(ac.TeamID),
-		Actor:     actorToEvent(ac),
-		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
-	})
 }
 
 // LogSandboxAutoPause records a system-initiated auto-pause (TTL or host reconciler).
@@ -200,35 +186,14 @@ func (l *AuditLogger) LogSandboxAutoPause(ctx context.Context, teamID, sandboxID
 		ResourceType: "sandbox", ResourceID: id.FormatSandboxID(sandboxID),
 		Action: "pause", Scope: "team", Status: "info",
 	})
-	l.publish(ctx, events.Event{
-		Event:     events.CapsulePaused,
-		Timestamp: events.Now(),
-		TeamID:    id.FormatTeamID(teamID),
-		Actor:     systemActor(),
-		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
-	})
 }
 
 func (l *AuditLogger) LogSandboxResume(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
 	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "resume", "success", nil))
-	l.publish(ctx, events.Event{
-		Event:     events.CapsuleRunning,
-		Timestamp: events.Now(),
-		TeamID:    id.FormatTeamID(ac.TeamID),
-		Actor:     actorToEvent(ac),
-		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
-	})
 }
 
 func (l *AuditLogger) LogSandboxDestroy(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
 	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "destroy", "warning", nil))
-	l.publish(ctx, events.Event{
-		Event:     events.CapsuleDestroyed,
-		Timestamp: events.Now(),
-		TeamID:    id.FormatTeamID(ac.TeamID),
-		Actor:     actorToEvent(ac),
-		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
-	})
 }
 
 // --- Snapshot events (scope: team) ---

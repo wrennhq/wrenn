@@ -10,6 +10,8 @@
 		destroyAdminCapsule,
 	} from '$lib/api/admin-capsules';
 	import type { Capsule } from '$lib/api/capsules';
+	import { subscribeAdminSSE } from '$lib/sse.svelte';
+	import type { SSEEvent } from '$lib/api/events';
 
 	const REFRESH_INTERVAL = 15;
 	const SPIN_DURATION = 600;
@@ -194,6 +196,29 @@
 		return `${Math.floor(seconds / 86400)}d ago`;
 	}
 
+	function handleSSEEvent(event: SSEEvent) {
+		if (!event.resource || event.resource.type !== 'sandbox') return;
+
+		const sandboxId = event.resource.id;
+
+		if (event.event === 'capsule.destroyed') {
+			capsules = capsules.filter((c) => c.id !== sandboxId);
+			return;
+		}
+
+		if (event.sandbox) {
+			const idx = capsules.findIndex((c) => c.id === sandboxId);
+			if (idx >= 0) {
+				capsules[idx] = event.sandbox;
+				capsules = capsules;
+			} else if (event.event === 'capsule.created') {
+				capsules = [event.sandbox, ...capsules];
+				newCapsuleId = sandboxId;
+				setTimeout(() => { newCapsuleId = null; }, 1600);
+			}
+		}
+	}
+
 	function handleVisibility() {
 		if (document.hidden) {
 			stopAutoRefresh();
@@ -203,14 +228,18 @@
 		}
 	}
 
+	let unsubscribe: (() => void) | null = null;
+
 	onMount(() => {
 		fetchCapsules();
 		startAutoRefresh();
+		unsubscribe = subscribeAdminSSE(handleSSEEvent);
 		document.addEventListener('visibilitychange', handleVisibility);
 	});
 
 	onDestroy(() => {
 		stopAutoRefresh();
+		unsubscribe?.();
 		document.removeEventListener('visibilitychange', handleVisibility);
 	});
 </script>

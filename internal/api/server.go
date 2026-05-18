@@ -17,6 +17,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/channels"
 	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/events"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	"git.omukk.dev/wrenn/wrenn/pkg/scheduler"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
@@ -29,6 +30,7 @@ var openapiYAML []byte
 type Server struct {
 	router   chi.Router
 	BuildSvc *service.BuildService
+	SSERelay *SSERelay
 	version  string
 }
 
@@ -46,6 +48,7 @@ func New(
 	oauthRedirectURL string,
 	ca *auth.CA,
 	al *audit.AuditLogger,
+	eventPub *channels.Publisher,
 	channelSvc *channels.Service,
 	mailer email.Mailer,
 	extensions []cpextension.Extension,
@@ -75,6 +78,9 @@ func New(
 			Error:     event.Error,
 			Timestamp: event.Timestamp,
 		})
+		if sseEvent, ok := sandboxEventToSSE(event); ok {
+			eventPub.Publish(ctx, sseEvent)
+		}
 	}
 	apiKeySvc := &service.APIKeyService{DB: queries}
 	templateSvc := &service.TemplateService{DB: queries}
@@ -92,7 +98,7 @@ func New(
 	files := newFilesHandler(queries, pool)
 	filesStream := newFilesStreamHandler(queries, pool)
 	fsH := newFSHandler(queries, pool)
-	snapshots := newSnapshotHandler(templateSvc, queries, pool, al)
+	snapshots := newSnapshotHandler(templateSvc, sandboxSvc, queries, pool, al)
 	authH := newAuthHandler(queries, pgPool, jwtSecret, mailer, rdb, oauthRedirectURL)
 	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, oauthRegistry, oauthRedirectURL)
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
@@ -108,8 +114,14 @@ func New(
 	ptyH := newPtyHandler(queries, pool, jwtSecret)
 	processH := newProcessHandler(queries, pool, jwtSecret)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
-	sandboxEvtH := newSandboxEventHandler(queries, rdb)
+	sandboxEvtH := newSandboxEventHandler(queries, rdb, eventPub)
 	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, mailer, oauthRegistry, oauthRedirectURL, teamSvc)
+
+	// SSE real-time event streaming.
+	sseBroker := NewSSEBroker()
+	sseRelay := NewSSERelay(rdb, queries, sseBroker)
+	sseTickets := NewSSETicketStore()
+	sseH := newSSEHandler(sseBroker, sseTickets)
 
 	// Health check.
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -270,11 +282,19 @@ func New(
 		})
 	})
 
+	// SSE event stream: ticket-based auth for browsers, header auth for SDKs.
+	r.With(optionalAPIKeyOrJWT(queries, jwtSecret)).Get("/v1/events/stream", sseH.Stream)
+	r.With(requireAPIKeyOrJWT(queries, jwtSecret)).Post("/v1/events/token", sseH.IssueToken)
+
 	// JWT-authenticated: audit log.
 	r.With(requireJWT(jwtSecret, queries)).Get("/v1/audit-logs", auditH.List)
 
 	// Platform admin routes — require JWT + DB-validated admin status.
 	r.Route("/v1/admin", func(r chi.Router) {
+		// Admin SSE event stream (sees all teams).
+		r.Get("/events/stream", sseH.AdminStream)
+		r.With(requireJWT(jwtSecret, queries), requireAdmin(queries)).Post("/events/token", sseH.IssueAdminToken)
+
 		// Auth-required admin routes (non-capsule + capsule list/create).
 		r.Group(func(r chi.Router) {
 			r.Use(requireJWT(jwtSecret, queries))
@@ -333,7 +353,7 @@ func New(
 		ext.RegisterRoutes(r, sctx)
 	}
 
-	return &Server{router: r, BuildSvc: buildSvc, version: version}
+	return &Server{router: r, BuildSvc: buildSvc, SSERelay: sseRelay, version: version}
 }
 
 // Handler returns the HTTP handler.
@@ -377,4 +397,30 @@ func serveDocs(w http.ResponseWriter, r *http.Request) {
   </script>
 </body>
 </html>`)
+}
+
+// sandboxEventToSSE maps an internal sandbox lifecycle event to the SSE event
+// format consumed by the frontend. Returns false for events that should not be
+// broadcast (e.g. internal failures without a user-visible state change).
+func sandboxEventToSSE(e service.SandboxStateEvent) (events.Event, bool) {
+	var eventType string
+	switch e.Event {
+	case "sandbox.started":
+		eventType = events.CapsuleCreated
+	case "sandbox.resumed":
+		eventType = events.CapsuleRunning
+	case "sandbox.paused":
+		eventType = events.CapsulePaused
+	case "sandbox.stopped":
+		eventType = events.CapsuleDestroyed
+	default:
+		return events.Event{}, false
+	}
+	return events.Event{
+		Event:     eventType,
+		Timestamp: events.Now(),
+		TeamID:    e.TeamID,
+		Actor:     events.Actor{Type: events.ActorSystem},
+		Resource:  events.Resource{ID: e.SandboxID, Type: "sandbox"},
+	}, true
 }

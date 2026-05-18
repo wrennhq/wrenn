@@ -10,7 +10,10 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/events"
 )
 
-const streamKey = "wrenn:events"
+const (
+	streamKey        = "wrenn:events"
+	ssePubSubChannel = "wrenn:sse"
+)
 
 // Publisher pushes events onto the Redis stream for the dispatcher to consume.
 type Publisher struct {
@@ -40,5 +43,10 @@ func (p *Publisher) Publish(ctx context.Context, e events.Event) {
 		},
 	}).Err(); err != nil {
 		slog.Warn("channels: failed to publish event", "event", e.Event, "error", err)
+	}
+
+	// Fan-out to SSE clients via Pub/Sub (fire-and-forget).
+	if err := p.rdb.Publish(ctx, ssePubSubChannel, string(payload)).Err(); err != nil {
+		slog.Warn("channels: failed to publish SSE event", "event", e.Event, "error", err)
 	}
 }

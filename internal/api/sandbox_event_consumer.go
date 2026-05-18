@@ -179,12 +179,11 @@ func (c *SandboxEventConsumer) handleStarted(ctx context.Context, sandboxID pgty
 
 func (c *SandboxEventConsumer) handlePaused(ctx context.Context, sandboxID pgtype.UUID, event SandboxEvent) {
 	if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
-		ID:       sandboxID,
-		Status:   "pausing",
-		Status_2: "paused",
-	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		slog.Warn("sandbox event consumer: failed to update sandbox to paused", "sandbox_id", event.SandboxID, "error", err)
+		ID: sandboxID, Status: "pausing", Status_2: "paused",
+	}); err != nil {
+		return
 	}
+	slog.Debug("sandbox event consumer: paused fallback applied", "sandbox_id", event.SandboxID)
 }
 
 func (c *SandboxEventConsumer) handleStopped(ctx context.Context, sandboxID pgtype.UUID, event SandboxEvent) {
@@ -220,16 +219,19 @@ func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtyp
 	}
 }
 
-func (c *SandboxEventConsumer) handleAutoPaused(ctx context.Context, sandboxID pgtype.UUID, _ SandboxEvent) {
-	sb, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
-		ID:       sandboxID,
-		Status:   "running",
-		Status_2: "paused",
-	})
-	if err != nil {
-		return
+func (c *SandboxEventConsumer) handleAutoPaused(ctx context.Context, sandboxID pgtype.UUID, event SandboxEvent) {
+	// Try each plausible pre-pause state. Shutdown-time PauseAll can race a
+	// user-initiated pause that already moved the DB to "pausing"; without
+	// the second attempt that row would stay stuck until the HostMonitor
+	// transient-grace period elapses (2 minutes).
+	for _, fromStatus := range []string{"running", "pausing"} {
+		if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+			ID: sandboxID, Status: fromStatus, Status_2: "paused",
+		}); err == nil {
+			slog.Debug("sandbox event consumer: auto-paused fallback applied", "sandbox_id", event.SandboxID, "from", fromStatus)
+			return
+		}
 	}
-	c.audit.LogSandboxAutoPause(ctx, sb.TeamID, sandboxID)
 }
 
 // PublishSandboxEvent writes a sandbox lifecycle event to the Redis stream.

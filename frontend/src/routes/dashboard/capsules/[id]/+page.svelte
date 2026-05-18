@@ -3,6 +3,8 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { getCapsule, pauseCapsule, resumeCapsule, type Capsule } from '$lib/api/capsules';
+	import { subscribeSSE } from '$lib/sse.svelte';
+	import type { SSEEvent } from '$lib/api/events';
 	import { toast } from '$lib/toast.svelte';
 	import SnapshotDialog from '$lib/components/SnapshotDialog.svelte';
 	import DestroyDialog from '$lib/components/DestroyDialog.svelte';
@@ -21,6 +23,18 @@
 	let capsule = $state<Capsule | null>(null);
 	let capsuleLoading = $state(true);
 	let capsuleError = $state<string | null>(null);
+	let unsubscribeSSE: (() => void) | null = null;
+
+	function handleSSEEvent(event: SSEEvent) {
+		if (!event.resource || event.resource.id !== capsuleId) return;
+		if (event.event === 'capsule.destroyed') {
+			goto('/dashboard/capsules');
+			return;
+		}
+		if (event.sandbox) {
+			capsule = event.sandbox;
+		}
+	}
 
 	// Lifecycle action state
 	let actionLoading = $state<string | null>(null);
@@ -373,6 +387,8 @@
 			range = urlRange as MetricRange;
 		}
 
+		unsubscribeSSE = subscribeSSE(handleSSEEvent);
+
 		await loadCapsule();
 
 		if (!metricsAvailable) return;
@@ -394,6 +410,8 @@
 
 	onDestroy(() => {
 		stopPolling();
+		unsubscribeSSE?.();
+		unsubscribeSSE = null;
 		if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
 		chartCpu?.destroy();
 		chartRam?.destroy();
@@ -542,6 +560,14 @@
 							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
 							Pause
 						{/if}
+					</button>
+					<button
+						onclick={() => { showSnapshot = true; }}
+						disabled={actionLoading !== null}
+						class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-3 py-1.5 text-meta font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					>
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
+						Snapshot
 					</button>
 				{:else if capsule.status === 'paused'}
 					<button
@@ -767,7 +793,7 @@
 	open={showSnapshot}
 	capsuleId={capsuleId}
 	onclose={() => { showSnapshot = false; }}
-	onsnapshot={() => { goto('/dashboard/capsules'); }}
+	onsnapshot={() => { loadCapsule(); }}
 />
 
 <DestroyDialog
