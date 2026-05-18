@@ -26,6 +26,28 @@ import (
 // ErrNotFound is returned when a sandbox is not present in the in-memory map.
 var ErrNotFound = errors.New("sandbox not found")
 
+// MinTimeoutSec is the minimum inactivity TTL accepted by Create/Resume.
+// 0 keeps the "no TTL" semantic; any positive value below this is clamped.
+//
+// Rationale: very short TTLs race the post-create/post-resume startup window
+// (m.boxes insertion → /init → startMemoryLoader). With memLoadDone unset
+// for a brief moment, the reaper guard does not fire and a sub-second
+// TimeoutSec could auto-pause a sandbox before its memory loader arms,
+// producing a stale ch.snapshot. 60s is well above the startup envelope.
+const MinTimeoutSec = 60
+
+// clampTimeout normalises a caller-supplied TTL. 0 means "no TTL" and is
+// preserved; positive values are floored at MinTimeoutSec.
+func clampTimeout(timeoutSec int) int {
+	if timeoutSec <= 0 {
+		return 0
+	}
+	if timeoutSec < MinTimeoutSec {
+		return MinTimeoutSec
+	}
+	return timeoutSec
+}
+
 // Config holds the paths and defaults for the sandbox manager.
 type Config struct {
 	WrennDir            string // root directory (e.g. /var/lib/wrenn); all sub-paths derived via layout package
@@ -136,9 +158,21 @@ func New(cfg Config) *Manager {
 	}
 }
 
-// Create boots a new sandbox: clone rootfs, set up network, start VM, wait for envd.
+// Create boots a new sandbox. If the template's TemplateDir contains a CH
+// memory snapshot (state.json + config.json) it is restored via CH's
+// --restore + UFFD lazy memory; otherwise a fresh boot from the flattened
+// rootfs is performed. defaultUser/defaultEnv are forwarded to envd's /init
+// in both paths.
+//
 // If sandboxID is empty, a new ID is generated.
-func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID, vcpus, memoryMB, timeoutSec, diskSizeMB int) (*models.Sandbox, error) {
+func (m *Manager) Create(
+	ctx context.Context,
+	sandboxID string,
+	teamID, templateID pgtype.UUID,
+	vcpus, memoryMB, timeoutSec, diskSizeMB int,
+	defaultUser string,
+	defaultEnv map[string]string,
+) (*models.Sandbox, error) {
 	if sandboxID == "" {
 		sandboxID = id.FormatSandboxID(id.NewSandboxID())
 	}
@@ -151,6 +185,20 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	}
 	if diskSizeMB <= 0 {
 		diskSizeMB = 5120 // 5 GB default
+	}
+	timeoutSec = clampTimeout(timeoutSec)
+
+	// Snapshot template? Route to the CH-restore path; the launcher manages
+	// its own resource lifecycle and registers the sandbox itself.
+	//
+	// The minimal base template never carries a memory snapshot; guarding
+	// here prevents a stray state.json (e.g. from a failed CreateSnapshot
+	// that mis-targeted minimal) from silently rerouting fresh boots into
+	// the restore path with a confusing error downstream.
+	templateDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
+	if !layout.IsMinimal(teamID, templateID) && layout.IsSnapshotTemplate(templateDir) {
+		return m.createFromSnapshotTemplate(ctx, sandboxID, teamID, templateID,
+			vcpus, memoryMB, timeoutSec, diskSizeMB, defaultUser, defaultEnv)
 	}
 
 	// Resolve base rootfs image.
@@ -245,6 +293,15 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 
 	// Fetch envd version (best-effort).
 	envdVersion, _ := client.FetchVersion(ctx)
+
+	// Apply template defaults via envd /init (no-op when both empty).
+	if defaultUser != "" || len(defaultEnv) > 0 {
+		initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
+		if err := client.PostInitWithDefaults(initCtx, defaultUser, defaultEnv, sandboxID, id.UUIDString(templateID)); err != nil {
+			slog.Warn("post-create PostInit failed", "id", sandboxID, "error", err)
+		}
+		initCancel()
+	}
 
 	now := time.Now()
 	sb := &sandboxState{

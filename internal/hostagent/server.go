@@ -66,16 +66,11 @@ func (s *Server) CreateSandbox(
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
-	sb, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb))
+	sb, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID,
+		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb),
+		msg.DefaultUser, msg.DefaultEnv)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create sandbox: %w", err))
-	}
-
-	// Apply template defaults (user, env vars) if provided.
-	if msg.DefaultUser != "" || len(msg.DefaultEnv) > 0 {
-		if err := s.mgr.SetDefaults(ctx, sb.ID, msg.DefaultUser, msg.DefaultEnv); err != nil {
-			slog.Warn("failed to set sandbox defaults", "sandbox", sb.ID, "error", err)
-		}
 	}
 
 	return connect.NewResponse(&pb.CreateSandboxResponse{

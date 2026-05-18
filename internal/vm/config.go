@@ -2,6 +2,19 @@ package vm
 
 import "fmt"
 
+// SandboxTmpDir returns the per-sandbox tmpfs mount point used inside the
+// VMM's private mount namespace. Recorded as the disk path in CH's saved
+// config.json, so restore paths must reconstruct it exactly to make the
+// symlink prelude resolve.
+func SandboxTmpDir(sandboxID string) string {
+	return fmt.Sprintf("/tmp/ch-vm-%s", sandboxID)
+}
+
+// SandboxSocketPath returns the Cloud Hypervisor API socket path for a sandbox.
+func SandboxSocketPath(sandboxID string) string {
+	return fmt.Sprintf("/tmp/ch-%s.sock", sandboxID)
+}
+
 // VMConfig holds the configuration for creating a Cloud Hypervisor microVM.
 type VMConfig struct {
 	// SandboxID is the unique identifier for this sandbox (e.g., "cl-a1b2c3d4").
@@ -85,10 +98,10 @@ func (c *VMConfig) applyDefaults() {
 		c.VMMBin = "/usr/local/bin/cloud-hypervisor"
 	}
 	if c.SocketPath == "" {
-		c.SocketPath = fmt.Sprintf("/tmp/ch-%s.sock", c.SandboxID)
+		c.SocketPath = SandboxSocketPath(c.SandboxID)
 	}
 	if c.SandboxDir == "" {
-		c.SandboxDir = fmt.Sprintf("/tmp/ch-vm-%s", c.SandboxID)
+		c.SandboxDir = SandboxTmpDir(c.SandboxID)
 	}
 	if c.TapDevice == "" {
 		c.TapDevice = "tap0"

@@ -39,6 +39,21 @@ func TemplateRootfs(wrennDir string, teamID, templateID pgtype.UUID) string {
 	return filepath.Join(TemplateDir(wrennDir, teamID, templateID), "rootfs.ext4")
 }
 
+// IsSnapshotTemplate reports whether dir contains a Cloud Hypervisor memory
+// snapshot (state.json + config.json + memory-ranges) alongside the flattened
+// rootfs.ext4. Used to distinguish snapshot templates (launch via CH restore)
+// from base/disk-only templates (launch via fresh boot).
+//
+// state.json is CH-authoritative — its presence indicates a complete snapshot.
+func IsSnapshotTemplate(dir string) bool {
+	for _, name := range []string{"state.json", "config.json", "rootfs.ext4"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // PauseSnapshotDir returns the directory for a paused sandbox's snapshot files.
 // Located alongside the sandbox's CoW file under sandboxes/ so all per-sandbox
 // state lives under one parent directory.

@@ -41,12 +41,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
-	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/internal/models"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
-	"git.omukk.dev/wrenn/wrenn/internal/vm"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
@@ -416,28 +414,15 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 		return nil, err
 	}
 
-	// Single /init with optional defaults — also bumps lifecycle on envd
-	// (restarting port forwarder + stepping clock via chronyc).
-	//
-	// Must complete BEFORE startMemoryLoader: the /init lifecycle bump
-	// resets the mem_preload_* atomics in envd. If the loader's POST
-	// /memory/preload landed first, the reset would race the running
-	// blocking thread and the next GET would observe state="idle", the
-	// host goroutine would close memLoadDone, and the next Pause would
-	// proceed straight to ch.snapshot before pages were faulted in —
-	// producing a memory-ranges file full of holes that read back as zero
-	// on the next restore. Sequence: init (reset) → loader (start fresh).
-	initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-	if err := resumed.client.PostInitWithDefaults(initCtx, defaultUser, envVars, sandboxID, id.UUIDString(pgtype.UUID{Bytes: sb.TemplateID, Valid: true})); err != nil {
-		slog.Warn("post-resume PostInit failed", "id", sandboxID, "error", err)
-	}
-	initCancel()
-
-	m.startMemoryLoader(resumed)
+	// Single /init then start the memory loader. See initAndStartMemoryLoader
+	// for the ordering rationale (init resets envd atomics that the loader
+	// then re-arms — reversing the order silently corrupts the next snapshot).
+	m.initAndStartMemoryLoader(ctx, resumed, defaultUser,
+		id.UUIDString(pgtype.UUID{Bytes: sb.TemplateID, Valid: true}), envVars)
 
 	if timeoutSec > 0 {
 		m.mu.Lock()
-		sb.TimeoutSec = timeoutSec
+		sb.TimeoutSec = clampTimeout(timeoutSec)
 		m.mu.Unlock()
 	}
 
@@ -489,53 +474,23 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 		m.loops.Release(meta.BaseTemplate)
 	}
 
-	// 4. Launch CH in restore mode. Lazy memory loading keeps Resume fast.
-	vmCfg := vm.VMConfig{
-		SandboxID:         sb.ID,
-		TemplateID:        id.UUIDString(pgtype.UUID{Bytes: sb.TemplateID, Valid: true}),
-		KernelPath:        m.cfg.KernelPath,
-		RootfsPath:        dmDev.DevicePath,
-		VCPUs:             meta.VCPUs,
-		MemoryMB:          meta.MemoryMB,
-		NetworkNamespace:  slot.NamespaceID,
-		TapDevice:         slot.TapName,
-		TapMAC:            slot.TapMAC,
-		GuestIP:           slot.GuestIP,
-		GatewayIP:         slot.TapIP,
-		NetMask:           slot.GuestNetMask,
-		VMMBin:            m.cfg.VMMBin,
-		LogDir:            filepath.Join(m.cfg.WrennDir, "logs"),
-		RestoreFromDir:    snapDir,
-		RestoreLazyMemory: true,
-	}
-	if _, err := m.vm.CreateFromSnapshot(ctx, vmCfg); err != nil {
+	// 4-6. Launch CH in restore mode, wait envd, deflate balloon. Sandbox
+	// keeps its original ID/SandboxDir so the disk path baked into
+	// config.json (`/tmp/ch-vm-{originalID}/rootfs.ext4`) resolves to the
+	// re-attached dm device via the tmpfs symlink set up by the launcher.
+	vmCfg := m.buildRestoreVMConfig(restoreInputs{
+		sandboxID:  sb.ID,
+		templateID: id.UUIDString(pgtype.UUID{Bytes: sb.TemplateID, Valid: true}),
+		snapDir:    snapDir,
+		rootfsPath: dmDev.DevicePath,
+		vcpus:      meta.VCPUs,
+		memoryMB:   meta.MemoryMB,
+		slot:       slot,
+	})
+	client, err := m.launchRestoredVM(ctx, vmCfg, slot.HostIP.String())
+	if err != nil {
 		rollback()
-		return nil, fmt.Errorf("create from snapshot: %w", err)
-	}
-
-	// 5. Resume the VM (CreateFromSnapshot leaves it Paused).
-	if err := m.vm.Resume(ctx, sb.ID); err != nil {
-		_ = m.vm.Destroy(context.Background(), sb.ID)
-		rollback()
-		return nil, fmt.Errorf("vm resume: %w", err)
-	}
-
-	// 6. Wait for envd inside the guest.
-	client := envdclient.New(slot.HostIP.String())
-	waitCtx, waitCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-	defer waitCancel()
-	if err := client.WaitUntilReady(waitCtx); err != nil {
-		_ = m.vm.Destroy(context.Background(), sb.ID)
-		rollback()
-		return nil, fmt.Errorf("wait envd: %w", err)
-	}
-
-	// 6a. Deflate the balloon. Free-page reporting drains pages opportunistically
-	// while the sandbox runs; the resumed guest needs its full memory budget back.
-	// Best-effort: a failure here leaves the guest memory-starved but doesn't
-	// break correctness.
-	if err := m.vm.UpdateBalloon(ctx, sb.ID, 0); err != nil {
-		slog.Warn("balloon deflate after resume failed", "id", sb.ID, "error", err)
+		return nil, err
 	}
 
 	// /init is invoked once by the outer Resume so a single lifecycle bump
@@ -669,6 +624,15 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 		return 0, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
 	}
 
+	// Refuse silent overwrites: every snapshot must land in a fresh
+	// templateID. Defends against caller bugs and concurrent CreateSnapshot
+	// races for the same destination. User-facing snapshot-name uniqueness
+	// is also enforced by the CP at the templates table.
+	if m.templateExists(teamID, templateID) {
+		return 0, fmt.Errorf("snapshot template %s/%s already exists",
+			id.UUIDString(teamID), id.UUIDString(templateID))
+	}
+
 	// Same rationale as Pause: wait for the background memory loader so the
 	// resulting memory-ranges is self-contained when this sandbox itself was
 	// previously restored from an ondemand snapshot.
@@ -757,9 +721,25 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 	return size, nil
 }
 
-// DeleteSnapshot removes a template snapshot directory. The caller must
-// ensure no running sandbox depends on this template before calling.
+// DeleteSnapshot removes a template snapshot directory. Refuses deletion
+// while any in-memory sandbox is still derived from this template — even
+// though Linux unlink lets the open loop device keep working, the agent
+// would be unable to re-acquire it after a restart and a concurrent
+// LoopRegistry.Acquire would fail mid-flight.
 func (m *Manager) DeleteSnapshot(teamID, templateID pgtype.UUID) error {
+	m.mu.RLock()
+	var users []string
+	for sbID, sb := range m.boxes {
+		if sb.TemplateTeamID == teamID.Bytes && sb.TemplateID == templateID.Bytes {
+			users = append(users, sbID)
+		}
+	}
+	m.mu.RUnlock()
+	if len(users) > 0 {
+		return fmt.Errorf("snapshot %s/%s is in use by %d sandbox(es): %v",
+			id.UUIDString(teamID), id.UUIDString(templateID), len(users), users)
+	}
+
 	dir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove snapshot dir: %w", err)
