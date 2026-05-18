@@ -18,12 +18,15 @@ const ssePubSubChannel = "wrenn:sse"
 
 // sseEventPayload is the JSON envelope sent to SSE clients.
 type sseEventPayload struct {
-	Event     string           `json:"event"`
-	Timestamp string           `json:"timestamp"`
-	TeamID    string           `json:"team_id"`
-	Actor     events.Actor     `json:"actor"`
-	Resource  events.Resource  `json:"resource"`
-	Sandbox   *sandboxResponse `json:"sandbox,omitempty"`
+	Event     string            `json:"event"`
+	Outcome   events.Outcome    `json:"outcome,omitempty"`
+	Timestamp string            `json:"timestamp"`
+	TeamID    string            `json:"team_id"`
+	Actor     events.Actor      `json:"actor"`
+	Resource  events.Resource   `json:"resource"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	Error     string            `json:"error,omitempty"`
+	Sandbox   *sandboxResponse  `json:"sandbox,omitempty"`
 }
 
 // SSERelay subscribes to the Redis Pub/Sub channel and dispatches hydrated
@@ -86,10 +89,13 @@ func (r *SSERelay) handleMessage(ctx context.Context, msg *redis.Message) {
 
 	payload := sseEventPayload{
 		Event:     event.Event,
+		Outcome:   event.Outcome,
 		Timestamp: event.Timestamp,
 		TeamID:    event.TeamID,
 		Actor:     event.Actor,
 		Resource:  event.Resource,
+		Metadata:  event.Metadata,
+		Error:     event.Error,
 	}
 
 	// Hydrate sandbox state for capsule events.
@@ -134,7 +140,7 @@ func (r *SSERelay) hydrateSandbox(ctx context.Context, sandboxIDStr string) (*sa
 
 func isCapsuleEvent(eventType string) bool {
 	switch eventType {
-	case events.CapsuleCreated, events.CapsuleRunning, events.CapsulePaused, events.CapsuleDestroyed:
+	case events.CapsuleCreate, events.CapsulePause, events.CapsuleResume, events.CapsuleDestroy, events.CapsuleStateChanged:
 		return true
 	}
 	return false

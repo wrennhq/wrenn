@@ -62,15 +62,15 @@ const (
 // minimum information needed to restore the sandbox or build a new sandbox
 // from a template, independent of the in-memory state in m.boxes.
 type snapshotMeta struct {
-	SandboxID    string    `json:"sandbox_id"`
-	TeamID       string    `json:"team_id"`
-	TemplateID   string    `json:"template_id"`
-	VCPUs        int       `json:"vcpus"`
-	MemoryMB     int       `json:"memory_mb"`
-	TimeoutSec   int       `json:"timeout_sec"`
-	SlotIndex    int       `json:"slot_index"`
-	BaseTemplate string    `json:"base_template"`
-	CowPath      string    `json:"cow_path,omitempty"`
+	SandboxID    string `json:"sandbox_id"`
+	TeamID       string `json:"team_id"`
+	TemplateID   string `json:"template_id"`
+	VCPUs        int    `json:"vcpus"`
+	MemoryMB     int    `json:"memory_mb"`
+	TimeoutSec   int    `json:"timeout_sec"`
+	SlotIndex    int    `json:"slot_index"`
+	BaseTemplate string `json:"base_template"`
+	CowPath      string `json:"cow_path,omitempty"`
 	// SandboxDir, when set, pins the CH SandboxDir on restore. Required for
 	// sandboxes launched from snapshot templates: their CH config.json holds
 	// the original source sandbox's tmpfs path, which Resume must reuse.

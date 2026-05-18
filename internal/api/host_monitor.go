@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -14,6 +15,12 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
+
+// errInferredTransientTimeout marks a state change that the reconciler
+// inferred after a transient (starting/resuming) sandbox failed to settle
+// within the grace period. Used as the err value on system audit calls so
+// the published event carries Outcome=error with a human-readable message.
+var errInferredTransientTimeout = errors.New("transient state did not settle within grace period")
 
 // unreachableThreshold is how long a host can go without a heartbeat before
 // it is considered unreachable (3 missed 30-second heartbeats).
@@ -168,39 +175,55 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 	if err != nil {
 		slog.Warn("host monitor: failed to list missing sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
 	} else {
-		restoreByStatus := make(map[string][]pgtype.UUID)
-		var toStop []pgtype.UUID
+		restoreByStatus := make(map[string][]db.Sandbox)
+		var toStop []db.Sandbox
 		for _, sb := range missingSandboxes {
 			sbIDStr := id.FormatSandboxID(sb.ID)
 			status, ok := aliveStatus[sbIDStr]
 			if !ok {
-				toStop = append(toStop, sb.ID)
+				toStop = append(toStop, sb)
 				continue
 			}
 			if status == "" {
-				// Reported as transient (pausing/resuming/etc.) — let the
-				// sandbox stay in "missing" and retry next tick once it has
-				// settled into a terminal state.
 				continue
 			}
-			restoreByStatus[status] = append(restoreByStatus[status], sb.ID)
+			restoreByStatus[status] = append(restoreByStatus[status], sb)
 		}
-		for status, ids := range restoreByStatus {
+		for status, sbs := range restoreByStatus {
+			ids := make([]pgtype.UUID, len(sbs))
+			for i, sb := range sbs {
+				ids[i] = sb.ID
+			}
 			slog.Info("host monitor: restoring missing sandboxes", "host_id", id.FormatHostID(host.ID), "status", status, "count", len(ids))
 			if err := m.db.BulkRestoreMissingToStatus(ctx, db.BulkRestoreMissingToStatusParams{
 				Column1: ids,
 				Status:  status,
 			}); err != nil {
 				slog.Warn("host monitor: failed to restore missing sandboxes", "host_id", id.FormatHostID(host.ID), "status", status, "error", err)
+				continue
+			}
+			// Only restore→paused emits a notification (per design: running restore is silent).
+			if status == "paused" {
+				for _, sb := range sbs {
+					m.audit.LogSandboxAutoPause(ctx, sb.TeamID, sb.ID, "restored_after_host_recovery", nil)
+				}
 			}
 		}
 		if len(toStop) > 0 {
-			slog.Info("host monitor: stopping confirmed-dead missing sandboxes", "host_id", id.FormatHostID(host.ID), "count", len(toStop))
+			ids := make([]pgtype.UUID, len(toStop))
+			for i, sb := range toStop {
+				ids[i] = sb.ID
+			}
+			slog.Info("host monitor: stopping confirmed-dead missing sandboxes", "host_id", id.FormatHostID(host.ID), "count", len(ids))
 			if err := m.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
-				Column1: toStop,
+				Column1: ids,
 				Status:  "stopped",
 			}); err != nil {
 				slog.Warn("host monitor: failed to stop missing sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
+			} else {
+				for _, sb := range toStop {
+					m.audit.LogSandboxDestroySystem(ctx, sb.TeamID, sb.ID, "orphaned", nil)
+				}
 			}
 		}
 	}
@@ -221,37 +244,55 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		return
 	}
 
-	var toStop []pgtype.UUID
-	syncToStatus := make(map[string][]pgtype.UUID)
+	var toStop []db.Sandbox
+	syncByStatus := make(map[string][]db.Sandbox)
 	for _, sb := range runningSandboxes {
 		sbIDStr := id.FormatSandboxID(sb.ID)
 		status, ok := aliveStatus[sbIDStr]
 		if !ok {
-			toStop = append(toStop, sb.ID)
+			toStop = append(toStop, sb)
 			continue
 		}
 		if status == "running" || status == "" {
 			continue
 		}
-		syncToStatus[status] = append(syncToStatus[status], sb.ID)
+		syncByStatus[status] = append(syncByStatus[status], sb)
 	}
 
 	if len(toStop) > 0 {
-		slog.Info("host monitor: marking orphaned sandboxes stopped", "host_id", id.FormatHostID(host.ID), "count", len(toStop))
+		ids := make([]pgtype.UUID, len(toStop))
+		for i, sb := range toStop {
+			ids[i] = sb.ID
+		}
+		slog.Info("host monitor: marking orphaned sandboxes stopped", "host_id", id.FormatHostID(host.ID), "count", len(ids))
 		if err := m.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
-			Column1: toStop,
+			Column1: ids,
 			Status:  "stopped",
 		}); err != nil {
 			slog.Warn("host monitor: failed to mark stopped", "host_id", id.FormatHostID(host.ID), "error", err)
+		} else {
+			for _, sb := range toStop {
+				m.audit.LogSandboxDestroySystem(ctx, sb.TeamID, sb.ID, "orphaned", nil)
+			}
 		}
 	}
-	for status, ids := range syncToStatus {
+	for status, sbs := range syncByStatus {
+		ids := make([]pgtype.UUID, len(sbs))
+		for i, sb := range sbs {
+			ids[i] = sb.ID
+		}
 		slog.Info("host monitor: syncing running→reported status", "host_id", id.FormatHostID(host.ID), "status", status, "count", len(ids))
 		if err := m.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
 			Column1: ids,
 			Status:  status,
 		}); err != nil {
 			slog.Warn("host monitor: failed to sync running sandboxes", "host_id", id.FormatHostID(host.ID), "status", status, "error", err)
+			continue
+		}
+		if status == "paused" {
+			for _, sb := range sbs {
+				m.audit.LogSandboxAutoPause(ctx, sb.TeamID, sb.ID, "host_state_sync", nil)
+			}
 		}
 	}
 
@@ -302,10 +343,23 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		case "stopping":
 			finalStatus = "stopped"
 		}
+		fromStatus := sb.Status
 		if _, err := m.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
-			ID: sb.ID, Status: sb.Status, Status_2: finalStatus,
+			ID: sb.ID, Status: fromStatus, Status_2: finalStatus,
 		}); err == nil {
-			slog.Info("host monitor: resolved transient sandbox", "sandbox_id", sbIDStr, "from", sb.Status, "to", finalStatus)
+			slog.Info("host monitor: resolved transient sandbox", "sandbox_id", sbIDStr, "from", fromStatus, "to", finalStatus)
+			inferredErr := errInferredTransientTimeout
+			switch fromStatus {
+			case "starting":
+				m.audit.LogSandboxCreateSystem(ctx, sb.TeamID, sb.ID, "transient_timeout", inferredErr)
+			case "resuming":
+				m.audit.LogSandboxResumeSystem(ctx, sb.TeamID, sb.ID, "transient_timeout", inferredErr)
+			case "pausing":
+				// Pause assumed to have succeeded host-side; emit success with inferred metadata.
+				m.audit.LogSandboxAutoPause(ctx, sb.TeamID, sb.ID, "transient_timeout_inferred", nil)
+			case "stopping":
+				m.audit.LogSandboxDestroySystem(ctx, sb.TeamID, sb.ID, "transient_timeout_inferred", nil)
+			}
 		}
 	}
 }

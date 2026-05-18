@@ -125,13 +125,20 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 
 	tmpl, err := h.sandboxSvc.CreateSnapshot(r.Context(), sandboxID, ac.TeamID, req.Name)
+	name := req.Name
+	if err == nil {
+		name = tmpl.Name
+	}
+	h.audit.LogSnapshotCreate(r.Context(), ac, name, err)
 	if err != nil {
+		if name != "" {
+			h.audit.LogSnapshotDeleteSystem(r.Context(), ac.TeamID, name, "cleanup_after_create_error", nil)
+		}
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSnapshotCreate(r.Context(), ac, tmpl.Name)
 	writeJSON(w, http.StatusCreated, templateToResponse(tmpl))
 }
 
@@ -180,15 +187,17 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := deleteSnapshotBroadcast(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
+		h.audit.LogSnapshotDelete(r.Context(), ac, name, err)
 		writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete snapshot files")
 		return
 	}
 
 	if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: name, TeamID: ac.TeamID}); err != nil {
+		h.audit.LogSnapshotDelete(r.Context(), ac, name, err)
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete template record")
 		return
 	}
 
-	h.audit.LogSnapshotDelete(r.Context(), ac, name)
+	h.audit.LogSnapshotDelete(r.Context(), ac, name, nil)
 	w.WriteHeader(http.StatusNoContent)
 }

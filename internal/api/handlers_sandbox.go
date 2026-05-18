@@ -101,13 +101,16 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MemoryMB:   req.MemoryMB,
 		TimeoutSec: req.TimeoutSec,
 	})
+	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, req.Template, err)
 	if err != nil {
+		if sb.ID.Valid {
+			h.audit.LogSandboxDestroySystem(r.Context(), ac.TeamID, sb.ID, "cleanup_after_create_error", nil)
+		}
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, sb.Template)
 	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
@@ -160,13 +163,13 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sb, err := h.svc.Pause(r.Context(), sandboxID, ac.TeamID)
+	h.audit.LogSandboxPause(r.Context(), ac, sandboxID, err)
 	if err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSandboxPause(r.Context(), ac, sandboxID)
 	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
@@ -182,13 +185,13 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sb, err := h.svc.Resume(r.Context(), sandboxID, ac.TeamID)
+	h.audit.LogSandboxResume(r.Context(), ac, sandboxID, err)
 	if err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSandboxResume(r.Context(), ac, sandboxID)
 	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
@@ -223,12 +226,13 @@ func (h *sandboxHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Destroy(r.Context(), sandboxID, ac.TeamID); err != nil {
+	err = h.svc.Destroy(r.Context(), sandboxID, ac.TeamID)
+	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID, err)
+	if err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID)
 	w.WriteHeader(http.StatusAccepted)
 }

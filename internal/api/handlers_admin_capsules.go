@@ -42,14 +42,17 @@ func (h *adminCapsuleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MemoryMB:   req.MemoryMB,
 		TimeoutSec: req.TimeoutSec,
 	})
+	ac.TeamID = id.PlatformTeamID
+	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, req.Template, err)
 	if err != nil {
+		if sb.ID.Valid {
+			h.audit.LogSandboxDestroySystem(r.Context(), id.PlatformTeamID, sb.ID, "cleanup_after_create_error", nil)
+		}
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	ac.TeamID = id.PlatformTeamID
-	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, sb.Template)
 	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
@@ -99,13 +102,15 @@ func (h *adminCapsuleHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Destroy(r.Context(), sandboxID, id.PlatformTeamID); err != nil {
+	ac.TeamID = id.PlatformTeamID
+	err = h.svc.Destroy(r.Context(), sandboxID, id.PlatformTeamID)
+	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID, err)
+	if err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -133,14 +138,21 @@ func (h *adminCapsuleHandler) Snapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tmpl, err := h.svc.CreateSnapshot(r.Context(), sandboxID, id.PlatformTeamID, req.Name)
+	ac := auth.MustFromContext(r.Context())
+	ac.TeamID = id.PlatformTeamID
+	name := req.Name
+	if err == nil {
+		name = tmpl.Name
+	}
+	h.audit.LogSnapshotCreate(r.Context(), ac, name, err)
 	if err != nil {
+		if name != "" {
+			h.audit.LogSnapshotDeleteSystem(r.Context(), id.PlatformTeamID, name, "cleanup_after_create_error", nil)
+		}
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	ac := auth.MustFromContext(r.Context())
-	ac.TeamID = id.PlatformTeamID
-	h.audit.LogSnapshotCreate(r.Context(), ac, tmpl.Name)
 	writeJSON(w, http.StatusCreated, templateToResponse(tmpl))
 }

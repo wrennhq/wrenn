@@ -152,4 +152,91 @@ Hosts must be registered with the control plane before they can serve sandboxes.
 
 The agent sends heartbeats to the control plane every 30 seconds.
 
+## Notification channels
+
+Teams can subscribe to lifecycle events via webhook, Discord, Slack, Teams, Google Chat, Telegram, or Matrix. All providers consume the same event stream (durable Redis stream `wrenn:events`, consumer group `wrenn-channels-v1`, at-least-once delivery with two retries at 10s / 30s).
+
+### Subscribable event types
+
+| Event | Emitted on | Has outcome |
+|-------|-----------|-------------|
+| `capsule.create` | First boot of a sandbox | yes |
+| `capsule.pause` | Manual pause, TTL auto-pause, or reconciler-detected pause | yes |
+| `capsule.resume` | Unpause (any subsequent boot after `capsule.create`) | yes |
+| `capsule.destroy` | Stop / destroy, including system cleanup-on-error | yes |
+| `template.snapshot.create` | Snapshot taken from a running sandbox | yes |
+| `template.snapshot.delete` | Snapshot deletion (including cleanup-on-error) | yes |
+| `host.up` | Host agent comes online | no |
+| `host.down` | Host agent crashes or misses heartbeats | no |
+
+Subscribing to an event type delivers **both success and failure**. The `outcome` field on the payload (`success` or `error`) distinguishes them. `error` events carry an `error` string with the failure reason.
+
+The transient `capsule.state.changed` event (intermediate transitions like `starting`, `pausing`, `resuming`) is **not** subscribable — it is delivered to the dashboard via SSE only and never written to the durable stream.
+
+### Event payload
+
+All channels receive the same canonical JSON shape:
+
+```json
+{
+  "event": "capsule.pause",
+  "outcome": "success",
+  "timestamp": "2026-05-19T14:23:01Z",
+  "team_id": "tm_...",
+  "actor": {
+    "type": "user",
+    "id": "usr_...",
+    "name": "alice@example.com"
+  },
+  "resource": {
+    "id": "sb_a1b2c3d4",
+    "type": "sandbox"
+  },
+  "metadata": {
+    "reason": "ttl_expired"
+  },
+  "error": ""
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `event` | string | Event type (see table above) |
+| `outcome` | `"success"` \| `"error"` \| `""` | Omitted for host.up/host.down |
+| `timestamp` | RFC3339 UTC | When the event was published |
+| `team_id` | string | Owning team |
+| `actor.type` | `"user"` \| `"api_key"` \| `"system"` | System = TTL reaper, reconciler, cleanup-on-error |
+| `actor.id` | string | User ID, API key ID, or empty for system |
+| `actor.name` | string | Display name (email for user, label for api_key) |
+| `resource.id` | string | Sandbox ID, snapshot ID, or host ID |
+| `resource.type` | `"sandbox"` \| `"snapshot"` \| `"host"` | |
+| `metadata` | object\<string,string\> | Event-specific context (e.g., `reason`, `from`/`to`, `inferred`) |
+| `error` | string | Failure reason when `outcome == "error"` |
+
+`metadata` keys you may observe:
+
+- `reason` — `ttl_expired` (auto-pause), `orphaned` (reconciler cleanup), `cleanup_after_create_error`, `restored_after_host_recovery`, `host_state_sync`, `transient_timeout`, `transient_timeout_inferred`
+- `inferred` — `"true"` when the reconciler derived the event from host state, not a direct host callback
+
+### Webhook delivery
+
+Webhook channels receive a raw `POST` with the JSON payload as the body.
+
+Headers:
+
+| Header | Value |
+|--------|-------|
+| `Content-Type` | `application/json` |
+| `X-Wrenn-Delivery` | UUID, unique per delivery attempt |
+| `X-Wrenn-Timestamp` | RFC3339 UTC, used for signature verification |
+| `X-WRENN-SIGNATURE` | `sha256=<hex>` HMAC over `<timestamp>.<body>` using the channel's signing secret |
+
+The signing secret is shown **once** at channel creation. Verify signatures by computing `HMAC-SHA256(secret, timestamp + "." + body)` and comparing to the header (constant-time compare). Reject deliveries where `X-Wrenn-Timestamp` is outside your acceptable clock skew window. Redirects are not followed.
+
+Any non-2xx response triggers retry (10s, then 30s). After three total failures the event is dropped (logged on the control plane).
+
+### Other providers
+
+Discord, Slack, Teams, Google Chat, Telegram, and Matrix receive a formatted text message — the same fields, rendered as human-readable text — not the JSON payload. Use webhook if you need the structured event.
+
 See `CLAUDE.md` for full architecture documentation.
