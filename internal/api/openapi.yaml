@@ -144,7 +144,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/auth/oauth/{provider}:
+  /auth/oauth/{provider}:
     parameters:
       - name: provider
         in: path
@@ -171,7 +171,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/auth/oauth/{provider}/callback:
+  /auth/oauth/{provider}/callback:
     parameters:
       - name: provider
         in: path
@@ -675,7 +675,7 @@ paths:
         - bearerAuth: []
       description: |
         Owner only. Soft-deletes the team and destroys all running/paused/starting
-        capsulees. All DB records are preserved. The team slug is permanently reserved.
+        capsules. All DB records are preserved. The team slug is permanently reserved.
       responses:
         "204":
           description: Team deleted
@@ -859,6 +859,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -880,14 +881,15 @@ paths:
                 $ref: "#/components/schemas/Error"
 
     get:
-      summary: List capsulees for your team
+      summary: List capsules for your team
       operationId: listCapsules
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       responses:
         "200":
-          description: List of capsulees
+          description: List of capsules
           content:
             application/json:
               schema:
@@ -902,6 +904,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       parameters:
         - name: range
           in: query
@@ -928,6 +931,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       parameters:
         - name: from
           in: query
@@ -967,6 +971,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       responses:
         "200":
           description: Capsule details
@@ -987,6 +992,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       responses:
         "202":
           description: Capsule destruction initiated
@@ -1005,6 +1011,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1051,6 +1058,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Returns all running processes inside the capsule, including background
         processes and any processes started by templates or init scripts.
@@ -1094,6 +1102,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       parameters:
         - name: signal
           in: query
@@ -1139,6 +1148,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Opens a WebSocket connection to stream stdout/stderr from a running
         background process. The selector can be a numeric PID or a string tag.
@@ -1167,9 +1177,10 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Resets the last_active_at timestamp for a running capsule, preventing
-        the auto-pause TTL from expiring. Use this as a keepalive for capsulees
+        the auto-pause TTL from expiring. Use this as a keepalive for capsules
         that are idle but should remain running.
       responses:
         "204":
@@ -1209,9 +1220,9 @@ paths:
         - `2h`: 30-second averages, last 2 hours
         - `24h`: 5-minute averages, last 24 hours
 
-        For running capsulees, data comes from the host agent's in-memory
-        ring buffer. For paused capsulees, data is read from persisted
-        snapshots in the database. Stopped/destroyed capsulees return 404.
+        For running capsules, data comes from the host agent's in-memory
+        ring buffer. For paused capsules, data is read from persisted
+        snapshots in the database. Stopped/destroyed capsules return 404.
       parameters:
         - name: range
           in: query
@@ -1255,6 +1266,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Takes a snapshot of the capsule (VM state + memory + rootfs), then
         destroys all running resources. The capsule exists only as files on
@@ -1287,6 +1299,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Restores a paused capsule from its snapshot. Cloud Hypervisor is
         relaunched in --restore mode with memory_restore_mode=ondemand so
@@ -1313,19 +1326,15 @@ paths:
       tags: [snapshots]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Live snapshot: briefly pauses the capsule, writes its VM state +
         memory + flattened rootfs to a new template directory, then resumes
         the capsule. The source capsule keeps running after the snapshot;
         the resulting template can be used to create new capsules.
-      parameters:
-        - name: overwrite
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: ["true"]
-          description: Set to "true" to overwrite an existing snapshot with the same name.
+
+        Snapshots are immutable: each call must use a fresh name. Re-using
+        an existing name returns 409 Conflict.
       requestBody:
         required: true
         content:
@@ -1352,6 +1361,7 @@ paths:
       tags: [snapshots]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       parameters:
         - name: type
           in: query
@@ -1384,6 +1394,7 @@ paths:
       tags: [snapshots]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: Removes the snapshot files from disk and deletes the database record.
       responses:
         "204":
@@ -1409,6 +1420,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1454,6 +1466,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1489,6 +1502,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1529,6 +1543,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1569,6 +1584,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1605,6 +1621,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Opens a WebSocket connection for streaming command execution.
 
@@ -1658,6 +1675,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Opens a WebSocket connection for an interactive PTY (terminal) session.
         Supports creating new sessions, sending input, resizing, killing, and
@@ -1735,6 +1753,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Streams file content to the capsule without buffering in memory.
         Suitable for large files. Uses the same multipart/form-data format
@@ -1784,6 +1803,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - bearerAuth: []
       description: |
         Streams file content from the capsule without buffering in memory.
         Suitable for large files. Returns raw bytes with chunked transfer encoding.
@@ -1906,14 +1926,14 @@ paths:
       description: |
         Admins can delete any host. Team owners and admins can delete BYOC hosts
         belonging to their team. Without `?force=true`, returns 409 if the host
-        has active capsulees. With `?force=true`, destroys all capsulees first.
+        has active capsules. With `?force=true`, destroys all capsules first.
       parameters:
         - name: force
           in: query
           required: false
           schema:
             type: boolean
-          description: If true, destroy all capsulees on the host before deleting.
+          description: If true, destroy all capsules on the host before deleting.
       responses:
         "204":
           description: Host deleted
@@ -1924,7 +1944,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Host has active capsulees (only when force is not set)
+          description: Host has active capsules (only when force is not set)
           content:
             application/json:
               schema:
@@ -2058,7 +2078,13 @@ paths:
               properties:
                 event:
                   type: string
-                  enum: [sandbox.auto_paused]
+                  description: |
+                    Lifecycle event type. Known values:
+                      * `sandbox.auto_paused` — TTL reaper paused the capsule
+                      * `sandbox.stopped` — autonomous destroy (crash/eviction)
+                      * `sandbox.error` — VMM/crash watcher reported error
+                    Unknown event names are accepted and forwarded to the
+                    stream consumer as-is (future-compatible).
                 sandbox_id:
                   type: string
                 host_id:
@@ -2441,10 +2467,862 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/events/stream:
+    get:
+      summary: Real-time lifecycle event stream
+      operationId: streamEvents
+      tags: [events]
+      description: |
+        Server-Sent Events stream of capsule, template, and host lifecycle
+        events scoped to the caller's active team. SDK clients can authenticate
+        with `X-API-Key` or `Authorization: Bearer <jwt>` headers directly;
+        browser clients call `POST /v1/events/token` first and pass the
+        single-use ticket as `?ticket=`.
+
+        Frame format follows the standard SSE protocol:
+        ```
+        event: capsule.running
+        data: {"event":"capsule.running","resource":{"id":"sb-..."},"sandbox":{...},"timestamp":1700000000}
+
+        : keepalive
+        ```
+        A `: keepalive` comment is emitted every 30s.
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: ticket
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Single-use ticket from POST /v1/events/token (browsers only).
+      responses:
+        "200":
+          description: SSE stream opened
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SSEEvent"
+        "401":
+          description: Missing or invalid auth (no ticket and no API key/JWT)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/events/token:
+    post:
+      summary: Issue a single-use SSE ticket
+      operationId: issueEventTicket
+      tags: [events]
+      description: |
+        Exchanges API key or JWT auth for a 30-second single-use ticket that
+        a browser EventSource can pass on the `/v1/events/stream` query string,
+        avoiding long-lived credentials in server logs.
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Ticket issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket]
+                properties:
+                  ticket:
+                    type: string
+
+  /v1/audit-logs:
+    get:
+      summary: List team audit log entries
+      operationId: listAuditLogs
+      tags: [audit]
+      description: Paginated cursor list of audit events for the caller's team.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Audit log page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditLogEntry"
+                  next_cursor:
+                    type: object
+                    nullable: true
+                    properties:
+                      before:
+                        type: string
+                        format: date-time
+                      before_id:
+                        type: string
+
+  /v1/admin/events/stream:
+    get:
+      summary: Admin SSE event stream (all teams)
+      operationId: adminStreamEvents
+      tags: [admin, events]
+      description: |
+        Admin variant of /v1/events/stream that emits events across all teams.
+        Requires a ticket issued by POST /v1/admin/events/token (admin JWT).
+      security:
+        - {}
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE stream opened
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SSEEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/admin/events/token:
+    post:
+      summary: Issue an admin SSE ticket
+      operationId: issueAdminEventTicket
+      tags: [admin, events]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Admin ticket issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket]
+                properties:
+                  ticket:
+                    type: string
+
+  /v1/admin/audit-logs:
+    get:
+      summary: List audit log entries (all teams)
+      operationId: adminListAuditLogs
+      tags: [admin, audit]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: before
+          in: query
+          schema: {type: string, format: date-time}
+        - name: before_id
+          in: query
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+      responses:
+        "200":
+          description: Audit log page (all teams)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditLogEntry"
+
+  /v1/admin/teams:
+    get:
+      summary: List all teams (admin)
+      operationId: adminListTeams
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Teams list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
+
+  /v1/admin/teams/{id}/byoc:
+    put:
+      summary: Toggle BYOC for a team (admin)
+      operationId: adminSetTeamBYOC
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [byoc]
+              properties:
+                byoc: {type: boolean}
+      responses:
+        "204":
+          description: Updated
+
+  /v1/admin/teams/{id}:
+    delete:
+      summary: Delete a team (admin)
+      operationId: adminDeleteTeam
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Deleted
+
+  /v1/admin/users:
+    get:
+      summary: List all users (admin)
+      operationId: adminListUsers
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Users list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
+
+  /v1/admin/users/{id}/active:
+    put:
+      summary: Activate or deactivate a user (admin)
+      operationId: adminSetUserActive
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active: {type: boolean}
+      responses:
+        "204":
+          description: Updated
+
+  /v1/admin/templates:
+    get:
+      summary: List all templates (admin)
+      operationId: adminListTemplates
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Templates list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Template"
+
+  /v1/admin/templates/{name}:
+    delete:
+      summary: Delete a template (admin)
+      operationId: adminDeleteTemplate
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Deleted
+
+  /v1/admin/builds:
+    post:
+      summary: Submit a template build (admin)
+      operationId: adminCreateBuild
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        "202":
+          description: Build queued
+          content:
+            application/json:
+              schema: {type: object}
+    get:
+      summary: List builds (admin)
+      operationId: adminListBuilds
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Builds list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
+
+  /v1/admin/builds/{id}:
+    get:
+      summary: Get build detail (admin)
+      operationId: adminGetBuild
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Build detail
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/admin/builds/{id}/cancel:
+    post:
+      summary: Cancel a build (admin)
+      operationId: adminCancelBuild
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Cancelled
+
+  /v1/admin/capsules:
+    post:
+      summary: Create a capsule on behalf of any team (admin)
+      operationId: adminCreateCapsule
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCapsuleRequest"
+      responses:
+        "201":
+          description: Capsule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capsule"
+    get:
+      summary: List capsules across all teams (admin)
+      operationId: adminListCapsules
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Capsules list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Capsule"
+
+  /v1/admin/capsules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: Get capsule detail (admin)
+      operationId: adminGetCapsule
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Capsule detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capsule"
+    delete:
+      summary: Destroy capsule (admin)
+      operationId: adminDestroyCapsule
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Destroyed
+
+  /v1/admin/capsules/{id}/snapshot:
+    post:
+      summary: Create snapshot from any capsule (admin)
+      operationId: adminCreateSnapshotFromCapsule
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+      responses:
+        "201":
+          description: Snapshot created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+
+  /v1/admin/capsules/{id}/exec:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Execute a command on any capsule (admin)
+      operationId: adminExecCommand
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecRequest"
+      responses:
+        "200":
+          description: Command output (foreground exec)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecResponse"
+        "202":
+          description: Background process started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackgroundExecResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/metrics:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: Get per-capsule resource metrics (admin)
+      operationId: adminGetCapsuleMetrics
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["5m", "10m", "1h", "2h", "6h", "12h", "24h"]
+            default: "10m"
+      responses:
+        "200":
+          description: Metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapsuleMetrics"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/capsules/{id}/processes:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: List running processes on any capsule (admin)
+      operationId: adminListProcesses
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Process list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/processes/{selector}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: selector
+        in: path
+        required: true
+        schema: {type: string}
+        description: Process PID (numeric) or tag (string)
+    delete:
+      summary: Kill a process on any capsule (admin)
+      operationId: adminKillProcess
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: signal
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [SIGKILL, SIGTERM]
+            default: SIGKILL
+      responses:
+        "204":
+          description: Process killed
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/files/write:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Upload a file to any capsule (admin)
+      operationId: adminUploadFile
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [path, file]
+              properties:
+                path: {type: string}
+                file: {type: string, format: binary}
+      responses:
+        "204":
+          description: File uploaded
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/files/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Download a file from any capsule (admin)
+      operationId: adminDownloadFile
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReadFileRequest"
+      responses:
+        "200":
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/capsules/{id}/files/list:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: List directory contents on any capsule (admin)
+      operationId: adminListDir
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListDirRequest"
+      responses:
+        "200":
+          description: Directory listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDirResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/files/mkdir:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Create a directory on any capsule (admin)
+      operationId: adminMakeDir
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MakeDirRequest"
+      responses:
+        "200":
+          description: Directory created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MakeDirResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/files/remove:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Remove a file or directory on any capsule (admin)
+      operationId: adminRemovePath
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveRequest"
+      responses:
+        "204":
+          description: File or directory removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/exec/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: Stream command execution on any capsule via WebSocket (admin)
+      operationId: adminExecStream
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      description: |
+        Admin variant of /v1/capsules/{id}/exec/stream. Same protocol — WebSocket
+        upgrade, client sends `{"type":"start", "cmd":..., "args":...}` to start;
+        server streams stdout/stderr/exit frames.
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/pty:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: Interactive PTY session on any capsule via WebSocket (admin)
+      operationId: adminPtySession
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      description: |
+        Admin variant of /v1/capsules/{id}/pty. Same protocol — base64-encoded
+        PTY bytes, start/connect/input/resize/kill control messages, persistent
+        sessions reconnectable via tag.
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/processes/{selector}/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: selector
+        in: path
+        required: true
+        schema: {type: string}
+        description: Process PID (numeric) or tag (string)
+    get:
+      summary: Stream process output on any capsule via WebSocket (admin)
+      operationId: adminConnectProcess
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   responses:
     BadRequest:
       description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    Unauthorized:
+      description: Missing or invalid auth
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    Forbidden:
+      description: Authenticated but not permitted (e.g. non-admin on /v1/admin/*)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    FailedPrecondition:
+      description: Resource state does not allow this operation (e.g. exec on a paused capsule)
       content:
         application/json:
           schema:
@@ -2559,13 +3437,22 @@ components:
         memory_mb:
           type: integer
           default: 512
+        disk_size_mb:
+          type: integer
+          default: 5120
+          description: >
+            Maximum size of the per-capsule copy-on-write disk in MB. Capped
+            at 5 GB by default; the actual size is max(disk_size_mb, origin
+            rootfs size).
         timeout_sec:
           type: integer
+          minimum: 0
           default: 0
           description: >
             Auto-pause TTL in seconds. The capsule is automatically paused
             after this duration of inactivity (no exec or ping). 0 means
-            no auto-pause.
+            no auto-pause. Positive values below 60 are silently clamped
+            to 60 (the agent's startup envelope).
 
     UsageResponse:
       type: object
@@ -2674,6 +3561,17 @@ components:
         last_updated:
           type: string
           format: date-time
+        metadata:
+          type: object
+          additionalProperties: {type: string}
+          nullable: true
+          description: |
+            Free-form key/value labels attached at create-time. Also carries
+            agent-side version info (kernel_version, vmm_version,
+            agent_version, envd_version) when running.
+        disk_size_mb:
+          type: integer
+          nullable: true
 
     CreateSnapshotRequest:
       type: object
@@ -2706,6 +3604,16 @@ components:
         created_at:
           type: string
           format: date-time
+        platform:
+          type: boolean
+          description: |
+            True when the template is platform-managed (visible to all teams,
+            e.g. the built-in `minimal` rootfs). False for team-owned
+            snapshot templates.
+        metadata:
+          type: object
+          additionalProperties: {type: string}
+          nullable: true
 
     ExecRequest:
       type: object
@@ -3007,7 +3915,7 @@ components:
           type: array
           items:
             type: string
-          description: IDs of capsulees that would be destroyed on force-delete.
+          description: IDs of capsules that would be destroyed on force-delete.
 
     HostHasCapsulesError:
       type: object
@@ -3024,7 +3932,7 @@ components:
               type: array
               items:
                 type: string
-              description: IDs of active capsulees blocking deletion.
+              description: IDs of active capsules blocking deletion.
 
     AddTagRequest:
       type: object
@@ -3267,3 +4175,55 @@ components:
               type: string
             message:
               type: string
+
+    AuditLogEntry:
+      type: object
+      properties:
+        id: {type: string}
+        actor_type: {type: string, enum: [user, api_key, host, system]}
+        actor_id: {type: string}
+        actor_name: {type: string}
+        resource_type: {type: string}
+        resource_id: {type: string}
+        action: {type: string}
+        scope: {type: string}
+        status: {type: string, enum: [success, failure]}
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    SSEEvent:
+      type: object
+      description: |
+        Wire format of one SSE message body. The event name (`event:` line) is
+        the `kind` and the JSON below is the `data:` line.
+      properties:
+        event:
+          type: string
+          enum:
+            - connected
+            - capsule.created
+            - capsule.running
+            - capsule.paused
+            - capsule.destroyed
+            - capsule.error
+            - template.snapshot.created
+            - template.snapshot.deleted
+            - host.up
+            - host.down
+        resource:
+          type: object
+          properties:
+            id: {type: string}
+            type: {type: string}
+        sandbox:
+          allOf:
+            - $ref: "#/components/schemas/Capsule"
+          nullable: true
+          description: Populated for capsule.* events; null if DB lookup failed.
+        timestamp:
+          type: integer
+          format: int64

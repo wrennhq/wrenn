@@ -46,7 +46,7 @@
 	let showCreateDialog = $state(false);
 
 	// Snapshot dialog state
-	let snapshotTarget = $state<{ capsule: Capsule; pauseFirst: boolean } | null>(null);
+	let snapshotTarget = $state<Capsule | null>(null);
 
 	// Destroy confirmation state
 	let destroyTarget = $state<Capsule | null>(null);
@@ -202,12 +202,7 @@
 
 	function handleSnapshot(capsule: Capsule) {
 		openMenuId = null;
-		snapshotTarget = { capsule, pauseFirst: false };
-	}
-
-	function handlePauseAndSnapshot(capsule: Capsule) {
-		openMenuId = null;
-		snapshotTarget = { capsule, pauseFirst: true };
+		snapshotTarget = capsule;
 	}
 
 	function handleSnapshotDone() {
@@ -502,7 +497,7 @@
 		{:else}
 			{#each filteredCapsules as capsule, i (capsule.id)}
 				{@const isTransient = ['starting', 'resuming', 'pausing', 'stopping'].includes(capsule.status)}
-				{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : capsule.status === 'paused' ? 'bg-[var(--color-amber)]' : isTransient ? 'bg-[var(--color-blue)]' : 'bg-[var(--color-text-muted)]'}
+				{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : (capsule.status === 'paused' || capsule.status === 'hibernated') ? 'bg-[var(--color-amber)]' : isTransient ? 'bg-[var(--color-blue)]' : 'bg-[var(--color-text-muted)]'}
 				<div
 					class="capsule-row relative grid grid-cols-[1.6fr_0.8fr_0.5fr_0.5fr_0.6fr_1fr_0.9fr] items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {newCapsuleId === capsule.id ? 'capsule-born' : ''}"
 					style={initialAnimationDone ? '' : `animation: fadeUp 0.35s ease both; animation-delay: ${i * 40}ms`}
@@ -517,7 +512,7 @@
 								<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
 								<span class="relative inline-flex h-[6px] w-[6px] rounded-full bg-[var(--color-accent)]"></span>
 							</span>
-						{:else if capsule.status === 'paused'}
+						{:else if capsule.status === 'paused' || capsule.status === 'hibernated'}
 							<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-amber)]"></span>
 						{:else if isTransient}
 							<span class="relative flex h-[6px] w-[6px] shrink-0">
@@ -631,26 +626,6 @@
 					Pause
 				</button>
 				<button
-					onclick={() => handlePauseAndSnapshot(openCapsule)}
-					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
-				>
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-						<path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" />
-						<circle cx="12" cy="15" r="3" />
-					</svg>
-					Pause & Snapshot
-				</button>
-			{:else if openCapsule.status === 'paused'}
-				<button
-					onclick={() => handleResume(openCapsule.id)}
-					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
-				>
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" class="shrink-0">
-						<polygon points="5 3 19 12 5 21 5 3" />
-					</svg>
-					Resume
-				</button>
-				<button
 					onclick={() => handleSnapshot(openCapsule)}
 					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
 				>
@@ -660,6 +635,28 @@
 					</svg>
 					Snapshot
 				</button>
+			{:else if openCapsule.status === 'paused' || openCapsule.status === 'hibernated'}
+				<button
+					onclick={() => handleResume(openCapsule.id)}
+					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
+				>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" class="shrink-0">
+						<polygon points="5 3 19 12 5 21 5 3" />
+					</svg>
+					Resume
+				</button>
+				{#if openCapsule.status === 'paused'}
+					<button
+						onclick={() => handleSnapshot(openCapsule)}
+						class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
+					>
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+							<path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" />
+							<circle cx="12" cy="15" r="3" />
+						</svg>
+						Snapshot
+					</button>
+				{/if}
 			{/if}
 			<div class="my-1 border-t border-[var(--color-border)]"></div>
 			<button
@@ -680,8 +677,7 @@
 {#if snapshotTarget}
 	<SnapshotDialog
 		open={true}
-		capsuleId={snapshotTarget.capsule.id}
-		pauseFirst={snapshotTarget.pauseFirst}
+		capsuleId={snapshotTarget.id}
 		onclose={() => { snapshotTarget = null; }}
 		onsnapshot={handleSnapshotDone}
 	/>

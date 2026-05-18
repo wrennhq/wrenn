@@ -33,6 +33,18 @@
 		}
 		if (event.sandbox) {
 			capsule = event.sandbox;
+			return;
+		}
+		// Hydration on the server side failed (DB lookup error). Fall back to
+		// a single refetch so we don't sit on a stale "starting" badge until
+		// the next poll fires.
+		void refetchCapsule();
+	}
+
+	async function refetchCapsule() {
+		const result = await getCapsule(capsuleId);
+		if (result.ok) {
+			capsule = result.data;
 		}
 	}
 
@@ -569,7 +581,7 @@
 						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
 						Snapshot
 					</button>
-				{:else if capsule.status === 'paused'}
+				{:else if capsule.status === 'paused' || capsule.status === 'hibernated'}
 					<button
 						onclick={handleResume}
 						disabled={actionLoading !== null}
@@ -583,17 +595,19 @@
 							Resume
 						{/if}
 					</button>
-					<button
-						onclick={() => { showSnapshot = true; }}
-						disabled={actionLoading !== null}
-						class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-3 py-1.5 text-meta font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
-					>
-						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
-						Snapshot
-					</button>
+					{#if capsule.status === 'paused'}
+						<button
+							onclick={() => { showSnapshot = true; }}
+							disabled={actionLoading !== null}
+							class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-3 py-1.5 text-meta font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+						>
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
+							Snapshot
+						</button>
+					{/if}
 				{/if}
 
-				{#if capsule.status === 'running' || capsule.status === 'paused'}
+				{#if capsule.status === 'running' || capsule.status === 'paused' || capsule.status === 'hibernated'}
 					<button
 						onclick={() => { showDestroy = true; }}
 						disabled={actionLoading !== null}

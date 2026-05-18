@@ -37,6 +37,16 @@
 		capsule?.status === 'running' || capsule?.status === 'paused'
 	);
 
+	const canSnapshot = $derived(
+		capsule?.status === 'running' || capsule?.status === 'paused'
+	);
+
+	const canDestroy = $derived(
+		capsule?.status === 'running' ||
+		capsule?.status === 'paused' ||
+		capsule?.status === 'hibernated'
+	);
+
 	async function loadCapsule() {
 		const result = await getAdminCapsule(capsuleId);
 		if (result.ok) {
@@ -54,7 +64,10 @@
 		const result = await snapshotAdminCapsule(capsuleId, snapshotName.trim() || undefined);
 		if (result.ok) {
 			toast.success(`Snapshot "${result.data.name}" created`);
-			goto('/admin/templates');
+			showSnapshot = false;
+			snapshotName = '';
+			// Capsule keeps running after a live snapshot; refresh local state.
+			void loadCapsule();
 		} else {
 			snapshotError = result.error;
 		}
@@ -64,8 +77,10 @@
 	function statusColor(status: string): string {
 		switch (status) {
 			case 'running': return 'var(--color-accent)';
-			case 'paused':  return 'var(--color-amber)';
+			case 'paused': case 'hibernated':  return 'var(--color-amber)';
 			case 'error':   return 'var(--color-red)';
+			case 'pending': case 'starting': case 'resuming': case 'pausing': case 'stopping':
+				return 'var(--color-blue)';
 			default:        return 'var(--color-text-muted)';
 		}
 	}
@@ -73,8 +88,10 @@
 	function statusBg(status: string): string {
 		switch (status) {
 			case 'running': return 'rgba(94,140,88,0.12)';
-			case 'paused':  return 'rgba(212,167,60,0.12)';
+			case 'paused': case 'hibernated':  return 'rgba(212,167,60,0.12)';
 			case 'error':   return 'rgba(207,129,114,0.12)';
+			case 'pending': case 'starting': case 'resuming': case 'pausing': case 'stopping':
+				return 'rgba(90,159,212,0.12)';
 			default:        return 'rgba(255,255,255,0.05)';
 		}
 	}
@@ -82,8 +99,10 @@
 	function statusBorder(status: string): string {
 		switch (status) {
 			case 'running': return 'rgba(94,140,88,0.3)';
-			case 'paused':  return 'rgba(212,167,60,0.3)';
+			case 'paused': case 'hibernated':  return 'rgba(212,167,60,0.3)';
 			case 'error':   return 'rgba(207,129,114,0.3)';
+			case 'pending': case 'starting': case 'resuming': case 'pausing': case 'stopping':
+				return 'rgba(90,159,212,0.3)';
 			default:        return 'rgba(255,255,255,0.08)';
 		}
 	}
@@ -99,7 +118,11 @@
 		}
 		if (event.sandbox) {
 			capsule = event.sandbox;
+			return;
 		}
+		// Hydration failed server-side; pull fresh state so the badge doesn't
+		// sit on a stale value until the next poll tick.
+		void loadCapsule();
 	}
 
 	function startPolling() {
@@ -186,7 +209,7 @@
 					<span class="font-mono text-ui text-[var(--color-text-muted)]">{capsule.template} &middot; {capsule.vcpus}v &middot; {capsule.memory_mb}MB</span>
 
 					<div class="ml-auto flex items-center gap-2">
-						{#if capsule.status === 'running' || capsule.status === 'paused'}
+						{#if canSnapshot}
 							<button
 								onclick={() => { showSnapshot = true; snapshotName = ''; snapshotError = null; }}
 								disabled={snapshotting}
@@ -195,6 +218,8 @@
 								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
 								Snapshot
 							</button>
+						{/if}
+						{#if canDestroy}
 							<button
 								onclick={() => { showDestroy = true; }}
 								class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/8 px-3 py-1.5 text-meta font-medium text-[var(--color-red)] transition-all duration-150 hover:bg-[var(--color-red)]/15 hover:border-[var(--color-red)]/50"
@@ -270,14 +295,7 @@
 			</div>
 
 			<div class="px-6 pt-5 pb-6 space-y-4">
-				<div class="flex items-start gap-2.5 rounded-[var(--radius-input)] border border-[var(--color-amber)]/25 bg-[var(--color-amber)]/8 px-3 py-2.5">
-					<svg class="mt-px shrink-0 text-[var(--color-amber)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-						<line x1="12" y1="9" x2="12" y2="13" />
-						<line x1="12" y1="17" x2="12.01" y2="17" />
-					</svg>
-					<p class="text-meta text-[var(--color-amber)] leading-relaxed">This will <strong class="font-semibold">pause, snapshot, and destroy</strong> the capsule. The snapshot will be available as a platform template for all teams.</p>
-				</div>
+				<p class="text-ui text-[var(--color-text-tertiary)]">Live snapshot: the capsule briefly pauses, its memory + disk are written to a new platform template available to all teams, then the capsule resumes — your session keeps running.</p>
 
 				{#if snapshotError}
 					<div class="rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
@@ -321,7 +339,7 @@
 							</svg>
 							Snapshotting...
 						{:else}
-							Snapshot & Destroy
+							Snapshot
 						{/if}
 					</button>
 				</div>
