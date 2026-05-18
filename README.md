@@ -227,4 +227,61 @@ Any non-2xx response triggers retry (10s, then 30s). After three total failures 
 
 Discord, Slack, Teams, Google Chat, Telegram, and Matrix receive a formatted text message — the same fields, rendered as human-readable text — not the JSON payload. Use webhook if you need the structured event.
 
+## Extending the control plane
+
+The OSS control plane is designed to be embedded by a private cloud distribution without forking. Import this module, implement the `Extension` interface from `pkg/cpextension`, and pass it to `cpserver.Run`:
+
+```go
+import (
+    "git.omukk.dev/wrenn/wrenn/pkg/cpextension"
+    "git.omukk.dev/wrenn/wrenn/pkg/cpserver"
+)
+
+func main() {
+    cpserver.Run(
+        cpserver.WithVersion("cloud-1.0.0"),
+        cpserver.WithExtensions(&myExtension{}),
+    )
+}
+```
+
+Every extension implements two methods:
+
+```go
+RegisterRoutes(r chi.Router, sctx cpextension.ServerContext)
+BackgroundWorkers(sctx cpextension.ServerContext) []func(context.Context)
+```
+
+`ServerContext` exposes the initialized OSS services so extensions never re-implement them: `Queries`, `PgPool`, `Redis`, `HostPool`, `Scheduler`, `CA`, `Audit`, `Mailer`, `OAuthRegistry`, `Channels`, `ChannelPub`, `JWTSecret`, `Sessions`, `Config`.
+
+### Optional hook interfaces
+
+An extension can also implement any subset of these — the OSS server type-asserts at startup:
+
+| Interface | When it fires | Failure semantics |
+|---|---|---|
+| `MiddlewareProvider` | Wraps every OSS route before registration | n/a |
+| `AuthHook.OnSignup(ctx, userID, teamID, email)` | After team provisioning on email-activate or OAuth-new-signup | Error aborts signup with 500 `signup_hook_failed` (billing customer creation must succeed) |
+| `AuthHook.OnLogin(ctx, userID)` | After a successful login or OAuth callback | Error logged, login still succeeds |
+| `AuthHook.OnAccountSoftDelete(ctx, userID)` | After `DELETE /v1/me` commits | Error logged, request still succeeds |
+| `AuthHook.OnAccountHardDelete(ctx, userID)` | After the 15-day cleanup goroutine purges a soft-deleted account | Error logged, cleanup continues |
+| `SandboxEventHook.OnSandboxEvent(ctx, ev)` | Capsule create/pause/resume/destroy success, from the Redis stream consumer | Error leaves the message un-acked — hooks **must** be idempotent |
+| `LimitsProvider.EffectiveLimits(ctx, teamID)` | `POST /v1/capsules` consults before scheduling | Returns 402 (`concurrent_sandbox_limit` / `vcpu_limit` / `memory_limit`) when over |
+| `UsageProvider.CurrentUsage(ctx, teamID)` | Feeds `LimitsProvider` checks; falls back to OSS DB-backed default | Error → 402 `usage_unavailable` |
+
+### Auth middleware helpers
+
+For extensions that gate their own routes:
+
+```go
+r.With(cpextension.RequireSession(sctx)).Get("/billing", handler)
+r.With(cpextension.RequireSessionOrAPIKey(sctx)).Get("/usage", handler)
+r.With(cpextension.RequireSession(sctx), cpextension.RequireAdmin(sctx)).Get("/admin/exports", handler)
+
+// Issue a session from a custom flow (e.g. invite-accept):
+sess, err := cpextension.IssueSession(w, r, sctx, userID, teamID)
+```
+
+Cookie/header names are exported as `cpextension.SessionCookieName`, `CSRFCookieName`, `CSRFHeaderName`.
+
 See `CLAUDE.md` for full architecture documentation.

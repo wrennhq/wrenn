@@ -18,6 +18,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
@@ -38,6 +39,7 @@ type meHandler struct {
 	oauthRegistry *oauth.Registry
 	redirectURL   string
 	teamSvc       *service.TeamService
+	authHooks     []cpextension.AuthHook
 }
 
 func newMeHandler(
@@ -50,6 +52,7 @@ func newMeHandler(
 	registry *oauth.Registry,
 	redirectURL string,
 	teamSvc *service.TeamService,
+	hooks []cpextension.AuthHook,
 ) *meHandler {
 	return &meHandler{
 		db:            db,
@@ -61,6 +64,7 @@ func newMeHandler(
 		oauthRegistry: registry,
 		redirectURL:   strings.TrimRight(redirectURL, "/"),
 		teamSvc:       teamSvc,
+		authHooks:     hooks,
 	}
 }
 
@@ -570,6 +574,8 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("delete account: revoke sessions failed", "error", err)
 	}
 	clearSessionCookies(w, isSecure(r))
+
+	fireOnSoftDelete(ctx, h.authHooks, ac.UserID)
 
 	slog.Info("account soft-deleted", "user_id", id.FormatUserID(ac.UserID), "email", user.Email)
 

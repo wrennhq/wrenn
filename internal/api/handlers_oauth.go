@@ -19,6 +19,7 @@ import (
 
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
@@ -30,9 +31,10 @@ type oauthHandler struct {
 	sessions    *session.Service
 	registry    *oauth.Registry
 	redirectURL string // base frontend URL (e.g. "https://app.wrenn.dev")
+	authHooks   []cpextension.AuthHook
 }
 
-func newOAuthHandler(db *db.Queries, pool *pgxpool.Pool, hmacKey []byte, sessions *session.Service, registry *oauth.Registry, redirectURL string) *oauthHandler {
+func newOAuthHandler(db *db.Queries, pool *pgxpool.Pool, hmacKey []byte, sessions *session.Service, registry *oauth.Registry, redirectURL string, hooks []cpextension.AuthHook) *oauthHandler {
 	return &oauthHandler{
 		db:          db,
 		pool:        pool,
@@ -40,6 +42,7 @@ func newOAuthHandler(db *db.Queries, pool *pgxpool.Pool, hmacKey []byte, session
 		sessions:    sessions,
 		registry:    registry,
 		redirectURL: strings.TrimRight(redirectURL, "/"),
+		authHooks:   hooks,
 	}
 }
 
@@ -250,7 +253,9 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		if err := h.issueSessionAndRedirect(w, r, user.ID, team.ID, user.Email, user.Name, role, isAdmin, redirectBase); err != nil {
 			slog.Error("oauth login: failed to issue session", "error", err)
 			redirectWithError(w, r, redirectBase, "internal_error")
+			return
 		}
+		fireOnLogin(ctx, h.authHooks, user.ID)
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -374,6 +379,13 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fire OnSignup before session issuance — billing must succeed first.
+	if hookErr := fireOnSignup(ctx, h.authHooks, userID, teamID, email); hookErr != nil {
+		slog.Error("oauth signup: OnSignup hook failed", "user_id", id.FormatUserID(userID), "error", hookErr)
+		redirectWithError(w, r, redirectBase, "signup_hook_failed")
+		return
+	}
+
 	// Signal frontend that this is a new signup so it can show the name confirmation dialog.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "wrenn_oauth_new_signup",
@@ -388,7 +400,9 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if err := h.issueSessionAndRedirect(w, r, userID, teamID, email, profile.Name, "owner", isFirstUser, redirectBase); err != nil {
 		slog.Error("oauth: failed to issue session", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
+		return
 	}
+	fireOnLogin(ctx, h.authHooks, userID)
 }
 
 // retryAsLogin handles the race where a concurrent request already created the user.
@@ -430,7 +444,9 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 	if err := h.issueSessionAndRedirect(w, r, user.ID, team.ID, user.Email, user.Name, role, isAdmin, redirectBase); err != nil {
 		slog.Error("oauth: retry login: failed to issue session", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
+		return
 	}
+	fireOnLogin(ctx, h.authHooks, user.ID)
 }
 
 // issueSessionAndRedirect creates a session, sets the session and CSRF
@@ -472,8 +488,4 @@ func computeHMAC(key []byte, data string) string {
 	h := hmac.New(sha256.New, key)
 	h.Write([]byte(data))
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func isSecure(r *http.Request) bool {
-	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }

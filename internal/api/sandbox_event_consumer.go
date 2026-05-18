@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/events"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -31,11 +32,12 @@ type SandboxEventConsumer struct {
 	rdb   *redis.Client
 	db    *db.Queries
 	audit *audit.AuditLogger
+	hooks []cpextension.SandboxEventHook
 }
 
 // NewSandboxEventConsumer creates a consumer.
-func NewSandboxEventConsumer(rdb *redis.Client, queries *db.Queries, al *audit.AuditLogger) *SandboxEventConsumer {
-	return &SandboxEventConsumer{rdb: rdb, db: queries, audit: al}
+func NewSandboxEventConsumer(rdb *redis.Client, queries *db.Queries, al *audit.AuditLogger, hooks []cpextension.SandboxEventHook) *SandboxEventConsumer {
+	return &SandboxEventConsumer{rdb: rdb, db: queries, audit: al, hooks: hooks}
 }
 
 // Start launches the consumer goroutine. Reads from "$" so prior history
@@ -84,7 +86,11 @@ func (c *SandboxEventConsumer) run(ctx context.Context) {
 }
 
 func (c *SandboxEventConsumer) handleMessage(ctx context.Context, msg redis.XMessage) {
+	ack := true
 	defer func() {
+		if !ack {
+			return
+		}
 		ackCtx, ackCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer ackCancel()
 		if err := c.rdb.XAck(ackCtx, unifiedEventStream, reconcilerConsumerGrp, msg.ID).Err(); err != nil {
@@ -145,6 +151,59 @@ func (c *SandboxEventConsumer) handleMessage(ctx context.Context, msg redis.XMes
 			c.handleStopped(ctx, sandboxID)
 		}
 	}
+
+	// Dispatch to extension hooks (cloud billing, audit shipping, etc.). Any
+	// hook error suppresses the ack so the message will be redelivered. Hooks
+	// MUST be idempotent — duplicate deliveries are expected on transient
+	// failures.
+	if len(c.hooks) > 0 && event.Outcome == events.OutcomeSuccess {
+		if verb, ok := canonicalSandboxVerb(event.Event); ok {
+			teamID, _ := id.ParseTeamID(event.TeamID)
+			meta := map[string]any{}
+			for k, v := range event.Metadata {
+				meta[k] = v
+			}
+			ev := cpextension.SandboxEvent{
+				SandboxID:  sandboxID,
+				TeamID:     teamID,
+				Type:       verb,
+				OccurredAt: parseEventTimestamp(event.Timestamp),
+				Metadata:   meta,
+			}
+			for _, h := range c.hooks {
+				if err := h.OnSandboxEvent(ctx, ev); err != nil {
+					slog.Warn("sandbox event hook failed; leaving message un-acked", "id", msg.ID, "event", event.Event, "error", err)
+					ack = false
+					return
+				}
+			}
+		}
+	}
+}
+
+func canonicalSandboxVerb(event string) (string, bool) {
+	switch event {
+	case events.CapsuleCreate:
+		return "created", true
+	case events.CapsuleResume:
+		return "resumed", true
+	case events.CapsulePause:
+		return "paused", true
+	case events.CapsuleDestroy:
+		return "destroyed", true
+	}
+	return "", false
+}
+
+func parseEventTimestamp(s string) time.Time {
+	if s == "" {
+		return time.Now().UTC()
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Now().UTC()
+	}
+	return t
 }
 
 // handleStarted is a fallback writer for capsule.create.success and

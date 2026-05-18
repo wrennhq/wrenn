@@ -66,11 +66,24 @@ envd is a standalone Rust binary (Tokio + Axum + connectrpc-rs). It is completel
 
 **Internal packages:** `internal/api/`, `internal/email/`
 
-**Public packages (importable by cloud repo):** `pkg/config/`, `pkg/db/`, `pkg/auth/`, `pkg/auth/oauth/`, `pkg/scheduler/`, `pkg/lifecycle/`, `pkg/channels/`, `pkg/audit/`, `pkg/service/`, `pkg/events/`, `pkg/id/`, `pkg/validate/`
+**Public packages (importable by cloud repo):** `pkg/config/`, `pkg/db/`, `pkg/auth/`, `pkg/auth/oauth/`, `pkg/auth/session/`, `pkg/auth/session/middleware/`, `pkg/scheduler/`, `pkg/lifecycle/`, `pkg/channels/`, `pkg/audit/`, `pkg/service/`, `pkg/events/`, `pkg/id/`, `pkg/validate/`
 
-**Extension framework:** `pkg/cpextension/` (shared `Extension` interface + `ServerContext`), `pkg/cpserver/` (exported `Run()` entrypoint with functional options for cloud `main.go`)
+**Extension framework:** `pkg/cpextension/` (shared `Extension` interface + `ServerContext` + hook interfaces), `pkg/cpserver/` (exported `Run()` entrypoint with functional options for cloud `main.go`)
 
-The cloud repo imports this module as a Go dependency and calls `cpserver.Run(cpserver.WithExtensions(myExt))`. Each extension implements two methods: `RegisterRoutes(r chi.Router, sctx ServerContext)` to add HTTP routes, and `BackgroundWorkers(sctx ServerContext) []func(context.Context)` to add long-running goroutines. `ServerContext` carries all OSS services (DB, scheduler, auth, etc.) so extensions can use them without reimplementing anything. To expose a new OSS service to extensions, add it to `ServerContext` in `pkg/cpextension/extension.go` and populate it in `pkg/cpserver/run.go`.
+The cloud repo imports this module as a Go dependency and calls `cpserver.Run(cpserver.WithExtensions(myExt))`. An extension always implements:
+- `RegisterRoutes(r chi.Router, sctx ServerContext)` — adds HTTP routes.
+- `BackgroundWorkers(sctx ServerContext) []func(context.Context)` — starts long-running goroutines.
+
+It can optionally implement any of these hook interfaces (the OSS server type-asserts at startup):
+- `MiddlewareProvider` — `Middlewares(sctx) []func(http.Handler) http.Handler`, applied before OSS routes so cloud middleware can wrap them (e.g. billing gates).
+- `AuthHook` — `OnSignup` (synchronous, error aborts the request with 500 `signup_hook_failed`), `OnLogin`, `OnAccountSoftDelete`, `OnAccountHardDelete` (the last three log + ignore errors). OnSignup fires after team provisioning in both email-activate and OAuth-new-signup paths.
+- `SandboxEventHook` — `OnSandboxEvent(ctx, SandboxEvent)`, invoked from the unified Redis stream consumer for capsule create/pause/resume/destroy success events. Hook errors leave the message un-acked so it will be redelivered; hooks must be idempotent.
+- `LimitsProvider` — `EffectiveLimits(ctx, teamID) (Limits, error)`. When set, `POST /v1/capsules` consults it before scheduling and returns 402 (`concurrent_sandbox_limit` / `vcpu_limit` / `memory_limit`) on overage. With no provider the OSS deployment is unmetered.
+- `UsageProvider` — `CurrentUsage(ctx, teamID) (Usage, error)`. If absent but a LimitsProvider is set, an OSS default backed by `GetLiveMetrics` (sandbox count + reserved vCPU/RAM) is used.
+
+`ServerContext` carries the initialized OSS dependencies: `Queries`, `PgPool`, `Redis`, `HostPool`, `Scheduler`, `CA`, `Audit`, `Mailer`, `OAuthRegistry`, `Channels`, `ChannelPub`, `JWTSecret`, `Sessions`, `Config`. To expose a new OSS service to extensions, add it to `ServerContext` in `pkg/cpextension/extension.go` and populate it in `pkg/cpserver/run.go`.
+
+**Auth helpers for extensions** (`pkg/auth/session/middleware/`, re-exported via `cpextension`): `RequireSession(sctx)`, `RequireSessionOrAPIKey(sctx)`, `RequireAdmin(sctx)`, `RequireCSRF()`, `IssueSession(w, r, sctx, userID, teamID)`, `ClearSessionCookies(w, r)`. Cookie/header names are exported as `SessionCookieName`, `CSRFCookieName`, `CSRFHeaderName`. OSS handlers (`internal/api/middleware_session.go`) are thin shims over this package — single source of truth.
 
 **pkg/ vs internal/ decision rule:** A package belongs in `pkg/` only if the cloud repo needs to import it directly. Everything else stays in `internal/`. New OSS services (e.g. email, notifications) go in `internal/` — the cloud repo accesses them through `ServerContext`, not by importing the package. Do not put a service in `pkg/` just because the cloud repo uses it.
 

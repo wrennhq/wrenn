@@ -24,6 +24,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/channels"
 	"git.omukk.dev/wrenn/wrenn/pkg/config"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -171,17 +172,20 @@ func Run(opts ...Option) {
 
 	// Build the server context that extensions receive.
 	sctx := ServerContext{
-		Queries:   queries,
-		PgPool:    pool,
-		Redis:     rdb,
-		HostPool:  hostPool,
-		Scheduler: hostScheduler,
-		CA:        ca,
-		Audit:     al,
-		Mailer:    mailer,
-		JWTSecret: []byte(cfg.JWTSecret),
-		Sessions:  sessionSvc,
-		Config:    cfg,
+		Queries:       queries,
+		PgPool:        pool,
+		Redis:         rdb,
+		HostPool:      hostPool,
+		Scheduler:     hostScheduler,
+		CA:            ca,
+		Audit:         al,
+		Mailer:        mailer,
+		OAuthRegistry: oauthRegistry,
+		Channels:      channelSvc,
+		ChannelPub:    channelPub,
+		JWTSecret:     []byte(cfg.JWTSecret),
+		Sessions:      sessionSvc,
+		Config:        cfg,
 	}
 
 	// Host monitor (safety-net reconciliation every 5 minutes).
@@ -201,7 +205,13 @@ func Run(opts ...Option) {
 	channelDispatcher.Start(ctx)
 
 	// Start sandbox event consumer (processes lifecycle events from Redis stream).
-	sandboxEventConsumer := api.NewSandboxEventConsumer(rdb, queries, al)
+	var sandboxHooks []cpextension.SandboxEventHook
+	for _, ext := range o.extensions {
+		if h, ok := ext.(cpextension.SandboxEventHook); ok {
+			sandboxHooks = append(sandboxHooks, h)
+		}
+	}
+	sandboxEventConsumer := api.NewSandboxEventConsumer(rdb, queries, al, sandboxHooks)
 	sandboxEventConsumer.Start(ctx)
 
 	// Start SSE relay (subscribes to Redis Pub/Sub, dispatches to connected clients).
@@ -209,6 +219,14 @@ func Run(opts ...Option) {
 
 	// Start host monitor loop.
 	monitor.Start(ctx)
+
+	// Collect AuthHook extensions for the hard-delete cleanup goroutine.
+	var authHooks []cpextension.AuthHook
+	for _, ext := range o.extensions {
+		if h, ok := ext.(cpextension.AuthHook); ok {
+			authHooks = append(authHooks, h)
+		}
+	}
 
 	// Hard-delete accounts that have been soft-deleted for more than 15 days (runs every 24h).
 	// Audit logs referencing deleted users are anonymized before the user row is removed.
@@ -236,6 +254,11 @@ func Run(opts ...Option) {
 					if err := queries.HardDeleteUser(ctx, row.ID); err != nil {
 						slog.Error("account cleanup: failed to hard-delete user", "user_id", prefixedID, "error", err)
 						continue
+					}
+					for _, h := range authHooks {
+						if err := h.OnAccountHardDelete(ctx, row.ID); err != nil {
+							slog.Warn("account cleanup: OnAccountHardDelete hook failed", "user_id", prefixedID, "error", err)
+						}
 					}
 					if err := mailer.Send(ctx, row.Email, "Your Wrenn account has been deleted", email.EmailData{
 						Message: "Your Wrenn account and all associated data have been permanently deleted. " +

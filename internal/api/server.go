@@ -96,15 +96,18 @@ func New(
 	usageSvc := &service.UsageService{DB: queries}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
 
-	sandbox := newSandboxHandler(sandboxSvc, al)
+	limitsProvider := collectLimitsProvider(extensions)
+	usageProvider := collectUsageProvider(extensions, queries)
+	sandbox := newSandboxHandler(sandboxSvc, al, limitsProvider, usageProvider)
 	exec := newExecHandler(queries, pool)
 	execStream := newExecStreamHandler(queries, pool)
 	files := newFilesHandler(queries, pool)
 	filesStream := newFilesStreamHandler(queries, pool)
 	fsH := newFSHandler(queries, pool)
 	snapshots := newSnapshotHandler(templateSvc, sandboxSvc, queries, pool, al)
-	authH := newAuthHandler(queries, pgPool, sessionSvc, mailer, rdb, oauthRedirectURL)
-	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, sessionSvc, oauthRegistry, oauthRedirectURL)
+	authHooks := collectAuthHooks(extensions)
+	authH := newAuthHandler(queries, pgPool, sessionSvc, mailer, rdb, oauthRedirectURL, authHooks)
+	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, sessionSvc, oauthRegistry, oauthRedirectURL, authHooks)
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
 	hostH := newHostHandler(hostSvc, queries, al, monitor)
 	teamH := newTeamHandler(teamSvc, al, mailer, sessionSvc)
@@ -119,7 +122,7 @@ func New(
 	processH := newProcessHandler(queries, pool)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
 	sandboxEvtH := newSandboxEventHandler(queries, eventPub)
-	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, sessionSvc, mailer, oauthRegistry, oauthRedirectURL, teamSvc)
+	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, sessionSvc, mailer, oauthRegistry, oauthRedirectURL, teamSvc, authHooks)
 	sessionsH := newSessionsHandler(sessionSvc)
 
 	// SSE real-time event streaming.

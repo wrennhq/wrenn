@@ -21,6 +21,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
@@ -145,10 +146,11 @@ type authHandler struct {
 	mailer      email.Mailer
 	rdb         *redis.Client
 	redirectURL string
+	authHooks   []cpextension.AuthHook
 }
 
-func newAuthHandler(db *db.Queries, pool *pgxpool.Pool, sessions *session.Service, mailer email.Mailer, rdb *redis.Client, redirectURL string) *authHandler {
-	return &authHandler{db: db, pool: pool, sessions: sessions, mailer: mailer, rdb: rdb, redirectURL: strings.TrimRight(redirectURL, "/")}
+func newAuthHandler(db *db.Queries, pool *pgxpool.Pool, sessions *session.Service, mailer email.Mailer, rdb *redis.Client, redirectURL string, hooks []cpextension.AuthHook) *authHandler {
+	return &authHandler{db: db, pool: pool, sessions: sessions, mailer: mailer, rdb: rdb, redirectURL: strings.TrimRight(redirectURL, "/"), authHooks: hooks}
 }
 
 type signupRequest struct {
@@ -376,11 +378,18 @@ func (h *authHandler) Activate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isAdmin := user.IsAdmin || isFirstUser
+	// Fire OnSignup before issuing a session — billing must succeed first.
+	if err := fireOnSignup(ctx, h.authHooks, userID, team.ID, user.Email); err != nil {
+		slog.Error("activate: OnSignup hook failed", "user_id", id.FormatUserID(userID), "error", err)
+		writeError(w, http.StatusInternalServerError, "signup_hook_failed", "failed to finalize account setup")
+		return
+	}
 	if err := h.issueSession(w, r, userID, team.ID, user.Email, user.Name, role, isAdmin); err != nil {
 		slog.Error("activate: failed to issue session", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
 		return
 	}
+	fireOnLogin(ctx, h.authHooks, userID)
 
 	writeJSON(w, http.StatusOK, authResponse{
 		UserID:  id.FormatUserID(userID),
@@ -464,6 +473,7 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
 		return
 	}
+	fireOnLogin(ctx, h.authHooks, user.ID)
 
 	writeJSON(w, http.StatusOK, authResponse{
 		UserID:  id.FormatUserID(user.ID),
