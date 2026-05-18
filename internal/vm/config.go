@@ -58,9 +58,20 @@ type VMConfig struct {
 	// Defaults to "/sbin/init" if empty.
 	InitPath string
 
-	// SnapshotDir is the path to the snapshot directory for restore.
-	// Only set when restoring from a snapshot.
-	SnapshotDir string
+	// RestoreFromDir, if non-empty, switches the process launcher into restore
+	// mode. CH is invoked with `--restore source_url=file://{dir}/` instead of
+	// the fresh-boot path. The directory must contain CH's snapshot artefacts
+	// (config.json, state.json, memory-ranges, memory file).
+	RestoreFromDir string
+
+	// RestoreLazyMemory enables `memory_restore_mode=ondemand` so guest pages
+	// fault in lazily via userfaultfd. Only honored when RestoreFromDir is set.
+	RestoreLazyMemory bool
+
+	// LogDir is the directory for Cloud Hypervisor log files. If set, CH
+	// stdout/stderr are written to {LogDir}/ch-{SandboxID}.log instead of
+	// the parent process's stdout/stderr.
+	LogDir string
 }
 
 func (c *VMConfig) applyDefaults() {
@@ -98,7 +109,7 @@ func (c *VMConfig) kernelArgs() string {
 	)
 
 	return fmt.Sprintf(
-		"console=ttyS0 root=/dev/vda rw reboot=k panic=1 quiet loglevel=1 init_on_free=1 clocksource=kvm-clock init=%s %s",
+		"console=ttyS0 root=/dev/vda rw rootflags=nodiscard reboot=k panic=1 quiet loglevel=1 init_on_free=1 clocksource=kvm-clock init=%s %s",
 		c.InitPath, ipArg,
 	)
 }

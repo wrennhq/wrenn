@@ -24,6 +24,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/internal/vm"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/logging"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
@@ -63,7 +64,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Clean up stale resources from a previous crash.
+	// Clean up stale resources from a previous crash. Order matters:
+	// kill stale CH processes first — they hold dm-snapshot devices open and
+	// would otherwise cause "Device or resource busy" on dmsetup remove.
+	vm.CleanupStaleProcesses()
 	devicemapper.CleanupStaleDevices()
 	network.CleanupStaleNamespaces()
 
@@ -145,6 +149,11 @@ func main() {
 		AgentVersion:        version,
 	}
 
+	// Remove any *.staging-* / *.trash-* directories left behind by a
+	// previous Pause that crashed before completing the atomic swap. Must
+	// run before any Resume so we don't race with a sandbox restoration.
+	sandbox.CleanupOrphanPauseDirs(rootDir)
+
 	mgr := sandbox.New(cfg)
 
 	// Set up lifecycle event callback sender so autonomous events
@@ -195,7 +204,12 @@ func main() {
 		shutdownOnce.Do(func() {
 			slog.Info("shutting down", "reason", reason)
 			cancel()
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			// Shutdown pauses every running sandbox in parallel (PauseAll uses
+			// a worker pool). Per-sandbox Pause can take 10–30s (memory loader
+			// wait + ch.snapshot of guest RAM). 5 minutes is enough headroom for
+			// a busy host while still bounded so a wedged sandbox can't keep the
+			// process alive indefinitely — a second signal force-exits anyway.
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer shutdownCancel()
 			mgr.Shutdown(shutdownCtx)
 			sandbox.ShrinkMinimalImage(rootDir)

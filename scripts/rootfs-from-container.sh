@@ -141,7 +141,7 @@ ls -la "${MOUNT_DIR}/usr/local/bin/envd" "${MOUNT_DIR}/usr/local/bin/wrenn-init"
 echo ""
 echo "==> Checking required container packages..."
 MISSING_PKGS=""
-for bin in socat chronyd curl git; do
+for bin in socat chronyd chronyc curl git; do
     if ! find "${MOUNT_DIR}" -name "${bin}" -type f 2>/dev/null | head -1 | grep -q .; then
         MISSING_PKGS="${MISSING_PKGS} ${bin}"
     fi

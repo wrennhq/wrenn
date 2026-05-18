@@ -130,7 +130,6 @@ async fn main() {
 
     // Memory reclaimer — drop page cache when available memory is low.
     // The balloon device can only reclaim pages the guest kernel freed.
-    // Pauses during snapshot/prepare to avoid corrupting kernel page table state.
     {
         let state_for_reclaimer = Arc::clone(&state);
         std::thread::spawn(move || memory_reclaimer(state_for_reclaimer));
@@ -211,34 +210,14 @@ fn spawn_initial_command(cmd: &str, state: &AppState) {
     }
 }
 
-fn memory_reclaimer(state: Arc<AppState>) {
-    use std::sync::atomic::Ordering;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+fn memory_reclaimer(_state: Arc<AppState>) {
+    use std::time::Duration;
 
     const CHECK_INTERVAL: Duration = Duration::from_secs(10);
     const DROP_THRESHOLD_PCT: u64 = 80;
-    const RESTORE_GRACE_SECS: u64 = 30;
 
     loop {
         std::thread::sleep(CHECK_INTERVAL);
-
-        if state.snapshot_in_progress.load(Ordering::Acquire) {
-            continue;
-        }
-
-        // Skip during post-restore grace period. Balloon deflation causes
-        // transient high memory that resolves on its own — triggering
-        // drop_caches during UFFD page fault storms makes the guest unresponsive.
-        let restore_epoch = state.restore_epoch.load(Ordering::Acquire);
-        if restore_epoch > 0 {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if now.saturating_sub(restore_epoch) < RESTORE_GRACE_SECS {
-                continue;
-            }
-        }
 
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
@@ -251,10 +230,6 @@ fn memory_reclaimer(state: Arc<AppState>) {
 
         let used_pct = ((total - available) * 100) / total;
         if used_pct >= DROP_THRESHOLD_PCT {
-            if state.snapshot_in_progress.load(Ordering::Acquire) {
-                continue;
-            }
-
             if let Err(e) = std::fs::write("/proc/sys/vm/drop_caches", "3") {
                 tracing::debug!(error = %e, "drop_caches failed");
             } else {

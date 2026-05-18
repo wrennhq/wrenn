@@ -17,10 +17,11 @@ mkdir -p /sys/fs/cgroup
 mount -t cgroup2 cgroup2 /sys/fs/cgroup 2>/dev/null || true
 echo "+cpu +memory +io" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
 
-# Disable write_zeroes on rootfs — dm-snapshot doesn't support BLKZEROOUT,
-# and CH advertises the feature anyway. Without this, every zeroing IO
-# hits EOPNOTSUPP and CH spams warnings. Only writable on kernel 6.6+.
-echo 0 > /sys/block/vda/queue/write_zeroes_max_bytes 2>/dev/null || true
+# Disable write_zeroes and discard on rootfs — dm-snapshot doesn't support
+# these ops, but CH advertises them anyway. Suppress at block queue level.
+# sysfs attributes are read-only on some kernels, so failures are expected.
+{ echo 0 > /sys/block/vda/queue/write_zeroes_max_bytes; } 2>/dev/null || true
+{ echo 0 > /sys/block/vda/queue/discard_max_bytes; } 2>/dev/null || true
 
 # Set hostname and make it resolvable (sudo requires this).
 hostname capsule

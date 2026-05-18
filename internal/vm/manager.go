@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -87,38 +88,22 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 	return vm, nil
 }
 
-// Pause pauses a running VM.
+// Pause freezes a running VM's vCPUs via the CH API.
 func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
-	m.mu.RLock()
-	vm, ok := m.vms[sandboxID]
-	m.mu.RUnlock()
+	vm, ok := m.Get(sandboxID)
 	if !ok {
 		return fmt.Errorf("VM not found: %s", sandboxID)
 	}
-
-	if err := vm.client.pauseVM(ctx); err != nil {
-		return fmt.Errorf("pause VM: %w", err)
-	}
-
-	slog.Info("VM paused", "sandbox", sandboxID)
-	return nil
+	return vm.client.pauseVM(ctx)
 }
 
-// Resume resumes a paused VM.
+// Resume unfreezes a paused VM via the CH API.
 func (m *Manager) Resume(ctx context.Context, sandboxID string) error {
-	m.mu.RLock()
-	vm, ok := m.vms[sandboxID]
-	m.mu.RUnlock()
+	vm, ok := m.Get(sandboxID)
 	if !ok {
 		return fmt.Errorf("VM not found: %s", sandboxID)
 	}
-
-	if err := vm.client.resumeVM(ctx); err != nil {
-		return fmt.Errorf("resume VM: %w", err)
-	}
-
-	slog.Info("VM resumed", "sandbox", sandboxID)
-	return nil
+	return vm.client.resumeVM(ctx)
 }
 
 // UpdateBalloon adjusts the balloon target for a running VM.
@@ -168,64 +153,55 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 	return nil
 }
 
-// Snapshot creates a VM snapshot. The VM must already be paused.
-// destURL is the file:// URL to the snapshot directory.
+// Snapshot writes the VM's config/state/memory to snapshotDir via CH's
+// vm.snapshot API. The VM must already be paused. snapshotDir must be an
+// absolute path; it is passed to CH as `file://{dir}/`.
 func (m *Manager) Snapshot(ctx context.Context, sandboxID, snapshotDir string) error {
-	m.mu.RLock()
-	vm, ok := m.vms[sandboxID]
-	m.mu.RUnlock()
+	vm, ok := m.Get(sandboxID)
 	if !ok {
 		return fmt.Errorf("VM not found: %s", sandboxID)
 	}
-
-	destURL := "file://" + snapshotDir
-	if err := vm.client.snapshotVM(ctx, destURL); err != nil {
-		return fmt.Errorf("create snapshot: %w", err)
+	if err := os.MkdirAll(snapshotDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir snapshot dir: %w", err)
 	}
-
-	slog.Info("VM snapshot created", "sandbox", sandboxID, "snapshot_dir", snapshotDir)
+	url := "file://" + strings.TrimRight(snapshotDir, "/") + "/"
+	if err := vm.client.snapshotVM(ctx, url); err != nil {
+		return fmt.Errorf("vm.snapshot: %w", err)
+	}
+	slog.Info("VM snapshot written", "sandbox", sandboxID, "dir", snapshotDir)
 	return nil
 }
 
-// CreateFromSnapshot boots a new Cloud Hypervisor VM by restoring from a
-// snapshot directory. The network namespace and TAP device must already be set up.
+// CreateFromSnapshot launches a Cloud Hypervisor process in restore mode,
+// connecting it to an existing snapshot directory. The VM is left in the
+// paused state — the caller is expected to call Resume after any post-restore
+// setup (e.g. re-acquiring envd connectivity is implicit via TCP).
 //
-// A bare CH process is started first, then the restore is performed via the API
-// with memory_restore_mode=OnDemand for UFFD-based lazy page loading. This means
-// only pages the guest actually touches are faulted in from disk — a 16GB template
-// with 2GB active working set only loads ~2GB into RAM at restore time.
-//
-// The restore API also sets resume=true, so the VM starts running immediately
-// without a separate resume call.
-//
-// The rootfs path recorded in the snapshot is resolved via a stable symlink at
-// SandboxDir/rootfs.ext4 inside the mount namespace.
-//
-// The sequence is:
-//  1. Start bare CH process in mount+network namespace
-//  2. Wait for API socket
-//  3. Restore VM via API (OnDemand memory + auto-resume)
-func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapshotDir string) (*VM, error) {
-	cfg.SnapshotDir = snapshotDir
+// cfg.RestoreFromDir must point to an absolute path containing the CH
+// snapshot artefacts. The disk path inside config.json must already resolve
+// (CH receives the same SandboxDir/rootfs.ext4 symlink as for fresh boot).
+func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig) (*VM, error) {
 	cfg.applyDefaults()
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+	if cfg.RestoreFromDir == "" {
+		return nil, fmt.Errorf("RestoreFromDir is required for restore")
 	}
 
 	os.Remove(cfg.SocketPath)
 
 	slog.Info("restoring VM from snapshot",
 		"sandbox", cfg.SandboxID,
-		"snapshot_dir", snapshotDir,
+		"restore_dir", cfg.RestoreFromDir,
+		"lazy_memory", cfg.RestoreLazyMemory,
 	)
 
-	// Step 1: Launch bare CH process (no --restore).
-	proc, err := startProcessForRestore(&cfg)
+	proc, err := startRestoreProcess(&cfg)
 	if err != nil {
-		return nil, fmt.Errorf("start process: %w", err)
+		return nil, fmt.Errorf("start restore process: %w", err)
 	}
 
-	// Step 2: Wait for the API socket.
 	if err := waitForSocket(ctx, cfg.SocketPath, proc); err != nil {
 		_ = proc.stop()
 		return nil, fmt.Errorf("wait for socket: %w", err)
@@ -233,11 +209,17 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapshot
 
 	client := newCHClient(cfg.SocketPath)
 
-	// Step 3: Restore via API with OnDemand memory + auto-resume.
-	sourceURL := "file://" + snapshotDir
-	if err := client.restoreVM(ctx, sourceURL); err != nil {
+	// Confirm CH actually hydrated the snapshot before registering. Without
+	// this check, a broken snapshot would leave a zombie *VM in the map that
+	// blocks future restores for the same sandbox ID.
+	state, err := client.vmInfo(ctx)
+	if err != nil {
 		_ = proc.stop()
-		return nil, fmt.Errorf("restore VM: %w", err)
+		return nil, fmt.Errorf("vm.info after restore: %w", err)
+	}
+	if state != "Paused" {
+		_ = proc.stop()
+		return nil, fmt.Errorf("unexpected post-restore VM state %q (want Paused)", state)
 	}
 
 	vm := &VM{
@@ -250,7 +232,7 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig, snapshot
 	m.vms[cfg.SandboxID] = vm
 	m.mu.Unlock()
 
-	slog.Info("VM restored from snapshot", "sandbox", cfg.SandboxID)
+	slog.Info("VM restored from snapshot (paused)", "sandbox", cfg.SandboxID)
 	return vm, nil
 }
 

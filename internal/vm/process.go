@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -18,6 +19,7 @@ type process struct {
 
 	exitCh  chan struct{}
 	exitErr error
+	logFile *os.File
 }
 
 // startProcess launches the Cloud Hypervisor binary inside an isolated mount
@@ -35,10 +37,10 @@ func startProcess(cfg *VMConfig) (*process, error) {
 	return launchScript(script, cfg)
 }
 
-// startProcessForRestore launches a bare Cloud Hypervisor process (no --restore).
-// The restore is performed via the API after the socket is ready, which allows
-// passing memory_restore_mode=OnDemand for UFFD lazy paging.
-func startProcessForRestore(cfg *VMConfig) (*process, error) {
+// startRestoreProcess launches CH in restore mode. It mirrors startProcess
+// for namespace/tmpfs/symlink setup so the disk paths recorded in the
+// snapshot's config.json remain valid, then execs CH with `--restore`.
+func startRestoreProcess(cfg *VMConfig) (*process, error) {
 	script := buildRestoreScript(cfg)
 	return launchScript(script, cfg)
 }
@@ -50,22 +52,40 @@ func launchScript(script string, cfg *VMConfig) (*process, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid: true,
 	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	var logFile *os.File
+	if cfg.LogDir != "" {
+		logPath := fmt.Sprintf("%s/ch-%s.log", cfg.LogDir, cfg.SandboxID)
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("open CH log file %s: %w", logPath, err)
+		}
+		cmd.Stdout = f
+		cmd.Stderr = f
+		logFile = f
+	}
 
 	if err := cmd.Start(); err != nil {
 		cancel()
+		if logFile != nil {
+			logFile.Close()
+		}
 		return nil, fmt.Errorf("start cloud-hypervisor process: %w", err)
 	}
 
 	p := &process{
-		cmd:    cmd,
-		cancel: cancel,
-		exitCh: make(chan struct{}),
+		cmd:     cmd,
+		cancel:  cancel,
+		exitCh:  make(chan struct{}),
+		logFile: logFile,
 	}
 
 	go func() {
 		p.exitErr = cmd.Wait()
+		if p.logFile != nil {
+			p.logFile.Close()
+		}
 		close(p.exitCh)
 	}()
 
@@ -80,6 +100,30 @@ func launchScript(script string, cfg *VMConfig) (*process, error) {
 // buildStartScript generates the bash script for fresh boot: sets up mount
 // namespace, symlinks kernel/rootfs, and execs Cloud Hypervisor.
 func buildStartScript(cfg *VMConfig) string {
+	return buildLaunchScript(cfg, "")
+}
+
+// buildRestoreScript generates the bash script for restoring a VM from a
+// snapshot directory. The mount/symlink prelude is identical to fresh boot
+// so disk paths in the snapshot config.json resolve correctly.
+func buildRestoreScript(cfg *VMConfig) string {
+	dir := strings.TrimRight(cfg.RestoreFromDir, "/")
+	restoreArg := fmt.Sprintf("--restore source_url=file://%s/", dir)
+	if cfg.RestoreLazyMemory {
+		restoreArg += ",memory_restore_mode=ondemand"
+	}
+	return buildLaunchScript(cfg, restoreArg)
+}
+
+// buildLaunchScript composes the namespace/tmpfs/symlink prelude and the
+// final cloud-hypervisor exec line. extraArgs is appended verbatim — used
+// to inject `--restore source_url=...` for restore launches.
+func buildLaunchScript(cfg *VMConfig, extraArgs string) string {
+	chCmd := fmt.Sprintf("ip netns exec %s %s --api-socket path=%s",
+		cfg.NetworkNamespace, cfg.VMMBin, cfg.SocketPath)
+	if extraArgs != "" {
+		chCmd += " " + extraArgs
+	}
 	return fmt.Sprintf(`
 set -euo pipefail
 
@@ -91,39 +135,12 @@ mount -t tmpfs tmpfs %[1]s
 ln -s %[2]s %[1]s/vmlinux
 ln -s %[3]s %[1]s/rootfs.ext4
 
-exec ip netns exec %[4]s %[5]s --api-socket path=%[6]s
+exec %[4]s
 `,
-		cfg.SandboxDir,       // 1
-		cfg.KernelPath,       // 2
-		cfg.RootfsPath,       // 3
-		cfg.NetworkNamespace, // 4
-		cfg.VMMBin,           // 5
-		cfg.SocketPath,       // 6
-	)
-}
-
-// buildRestoreScript generates the bash script for snapshot restore: sets up
-// mount namespace, symlinks rootfs, and starts a bare Cloud Hypervisor process.
-// The actual restore is done via the API (PUT /vm.restore) after the socket is
-// ready, which enables memory_restore_mode=OnDemand for UFFD lazy paging.
-func buildRestoreScript(cfg *VMConfig) string {
-	return fmt.Sprintf(`
-set -euo pipefail
-
-mount --make-rprivate /
-
-mkdir -p %[1]s
-mount -t tmpfs tmpfs %[1]s
-
-ln -s %[2]s %[1]s/rootfs.ext4
-
-exec ip netns exec %[3]s %[4]s --api-socket path=%[5]s
-`,
-		cfg.SandboxDir,       // 1
-		cfg.RootfsPath,       // 2
-		cfg.NetworkNamespace, // 3
-		cfg.VMMBin,           // 4
-		cfg.SocketPath,       // 5
+		cfg.SandboxDir, // 1
+		cfg.KernelPath, // 2
+		cfg.RootfsPath, // 3
+		chCmd,          // 4
 	)
 }
 

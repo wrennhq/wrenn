@@ -31,6 +31,12 @@ func newCHClient(socketPath string) *chClient {
 }
 
 func (c *chClient) do(ctx context.Context, method, path string, body any) error {
+	return c.doJSON(ctx, method, path, body, nil)
+}
+
+// doJSON sends a request and optionally decodes a JSON response into out.
+// out may be nil if the response body should be discarded.
+func (c *chClient) doJSON(ctx context.Context, method, path string, body, out any) error {
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -59,8 +65,15 @@ func (c *chClient) do(ctx context.Context, method, path string, body any) error 
 		return fmt.Errorf("%s %s: status %d: %s", method, path, resp.StatusCode, string(respBody))
 	}
 
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return fmt.Errorf("%s %s: decode response: %w", method, path, err)
+		}
+	}
 	return nil
 }
+
+func boolPtr(b bool) *bool { return &b }
 
 // --- CH API payload types ---
 
@@ -76,8 +89,16 @@ type chCPUs struct {
 }
 
 type chMemory struct {
-	Size          uint64 `json:"size"`
-	Shared        bool   `json:"shared,omitempty"`
+	Size   uint64 `json:"size"`
+	Shared bool   `json:"shared,omitempty"`
+	// Thp uses a pointer with NO omitempty so explicit false is always
+	// serialized (CH defaults to true). Must be false so the backing memfile
+	// remains 4 KiB-granular: balloon-reported free pages get punched as
+	// holes and CH's SEEK_DATA/SEEK_HOLE snapshot writer (v52+) skips them.
+	// A nil Thp would silently re-enable THP and break sparse snapshots —
+	// rejecting "thp": null at the wire is preferable to a silent fallback.
+	Thp           *bool  `json:"thp"`
+	Prefault      bool   `json:"prefault,omitempty"`
 	HotplugSize   uint64 `json:"hotplug_size,omitempty"`
 	HotplugMethod string `json:"hotplug_method,omitempty"`
 }
@@ -132,6 +153,7 @@ func (c *chClient) createVM(ctx context.Context, cfg *VMConfig) error {
 		Memory: chMemory{
 			Size:   memBytes,
 			Shared: true,
+			Thp:    boolPtr(false),
 		},
 		Disks: []chDisk{
 			{
@@ -166,34 +188,6 @@ func (c *chClient) bootVM(ctx context.Context) error {
 	return c.do(ctx, http.MethodPut, "/api/v1/vm.boot", nil)
 }
 
-// pauseVM pauses the microVM.
-func (c *chClient) pauseVM(ctx context.Context) error {
-	return c.do(ctx, http.MethodPut, "/api/v1/vm.pause", nil)
-}
-
-// resumeVM resumes a paused microVM.
-func (c *chClient) resumeVM(ctx context.Context) error {
-	return c.do(ctx, http.MethodPut, "/api/v1/vm.resume", nil)
-}
-
-// snapshotVM creates a VM snapshot to the given directory.
-func (c *chClient) snapshotVM(ctx context.Context, destURL string) error {
-	return c.do(ctx, http.MethodPut, "/api/v1/vm.snapshot", map[string]string{
-		"destination_url": destURL,
-	})
-}
-
-// restoreVM restores a VM from a snapshot via the API. Uses OnDemand memory
-// restore mode for UFFD-based lazy page loading — only pages the guest
-// actually touches are faulted in from disk.
-func (c *chClient) restoreVM(ctx context.Context, sourceURL string) error {
-	return c.do(ctx, http.MethodPut, "/api/v1/vm.restore", map[string]any{
-		"source_url":          sourceURL,
-		"memory_restore_mode": "OnDemand",
-		"resume":              true,
-	})
-}
-
 // shutdownVMM cleanly shuts down the Cloud Hypervisor VMM process.
 func (c *chClient) shutdownVMM(ctx context.Context) error {
 	return c.do(ctx, http.MethodPut, "/api/v1/vmm.shutdown", nil)
@@ -205,4 +199,34 @@ func (c *chClient) resizeBalloon(ctx context.Context, sizeBytes int64) error {
 	return c.do(ctx, http.MethodPut, "/api/v1/vm.resize", map[string]int64{
 		"desired_balloon": sizeBytes,
 	})
+}
+
+// pauseVM freezes guest vCPUs and devices via the CH API.
+func (c *chClient) pauseVM(ctx context.Context) error {
+	return c.do(ctx, http.MethodPut, "/api/v1/vm.pause", nil)
+}
+
+// resumeVM unfreezes a paused VM via the CH API.
+func (c *chClient) resumeVM(ctx context.Context) error {
+	return c.do(ctx, http.MethodPut, "/api/v1/vm.resume", nil)
+}
+
+// snapshotVM dumps VM config + state + memory to a directory URL of the form
+// `file:///abs/path/`. VM must be paused before calling.
+func (c *chClient) snapshotVM(ctx context.Context, destURL string) error {
+	return c.do(ctx, http.MethodPut, "/api/v1/vm.snapshot", map[string]string{
+		"destination_url": destURL,
+	})
+}
+
+// vmInfo reports the runtime state of the VM. Used after a restore to confirm
+// CH successfully hydrated the snapshot before registering the VM.
+func (c *chClient) vmInfo(ctx context.Context) (state string, err error) {
+	var resp struct {
+		State string `json:"state"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/vm.info", nil, &resp); err != nil {
+		return "", err
+	}
+	return resp.State, nil
 }

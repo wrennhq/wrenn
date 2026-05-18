@@ -25,14 +25,15 @@ import (
 )
 
 type snapshotHandler struct {
-	svc   *service.TemplateService
-	db    *db.Queries
-	pool  *lifecycle.HostClientPool
-	audit *audit.AuditLogger
+	svc        *service.TemplateService
+	sandboxSvc *service.SandboxService
+	db         *db.Queries
+	pool       *lifecycle.HostClientPool
+	audit      *audit.AuditLogger
 }
 
-func newSnapshotHandler(svc *service.TemplateService, db *db.Queries, pool *lifecycle.HostClientPool, al *audit.AuditLogger) *snapshotHandler {
-	return &snapshotHandler{svc: svc, db: db, pool: pool, audit: al}
+func newSnapshotHandler(svc *service.TemplateService, sandboxSvc *service.SandboxService, db *db.Queries, pool *lifecycle.HostClientPool, al *audit.AuditLogger) *snapshotHandler {
+	return &snapshotHandler{svc: svc, sandboxSvc: sandboxSvc, db: db, pool: pool, audit: al}
 }
 
 // deleteSnapshotBroadcast attempts to delete snapshot files on all online hosts.
@@ -61,11 +62,6 @@ func deleteSnapshotBroadcast(ctx context.Context, queries *db.Queries, pool *lif
 		}
 	}
 	return nil
-}
-
-type createSnapshotRequest struct {
-	SandboxID string `json:"sandbox_id"`
-	Name      string `json:"name"`
 }
 
 type snapshotResponse struct {
@@ -104,131 +100,38 @@ func templateToResponse(t db.Template) snapshotResponse {
 	return resp
 }
 
-// Create handles POST /v1/snapshots.
+type createSnapshotRequest struct {
+	SandboxID string `json:"sandbox_id"`
+	Name      string `json:"name"`
+}
+
+// Create handles POST /v1/snapshots. Takes a live snapshot of a running
+// sandbox and registers the result as a new template.
 func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createSnapshotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-
 	if req.SandboxID == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "sandbox_id is required")
 		return
 	}
-
 	sandboxID, err := id.ParseSandboxID(req.SandboxID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox_id")
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
 		return
 	}
+	ac := auth.MustFromContext(r.Context())
 
-	if req.Name == "" {
-		req.Name = id.NewSnapshotName()
-	}
-	if err := validate.SafeName(req.Name); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid snapshot name: %s", err))
-		return
-	}
-
-	ctx := r.Context()
-	ac := auth.MustFromContext(ctx)
-
-	// Check for global name collision.
-	if _, err := h.db.GetPlatformTemplateByName(ctx, req.Name); err == nil {
-		writeError(w, http.StatusConflict, "name_reserved", "template name is reserved by a global template")
-		return
-	}
-
-	// Check if name already exists for this team.
-	if _, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: req.Name, TeamID: ac.TeamID}); err == nil {
-		writeError(w, http.StatusConflict, "template_name_taken",
-			"snapshot name already exists; delete the existing snapshot first to reuse this name")
-		return
-	}
-
-	// Verify sandbox exists, belongs to team, and is running or paused.
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
+	tmpl, err := h.sandboxSvc.CreateSnapshot(r.Context(), sandboxID, ac.TeamID, req.Name)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" && sb.Status != "paused" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox must be running or paused")
-		return
-	}
-
-	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
-		return
-	}
-
-	// Pre-mark sandbox as "paused" in DB BEFORE issuing the snapshot RPC.
-	// The host agent's CreateSnapshot removes the sandbox from its in-memory
-	// map immediately; if the reconciler fires during the flatten window and
-	// the DB still says "running", it will mark the sandbox "stopped".
-	if sb.Status == "running" {
-		if _, err := h.db.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
-			ID: sandboxID, Status: "paused",
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "db_error", "failed to update sandbox status")
-			return
-		}
-	}
-
-	// Use a detached context with a generous timeout so the snapshot completes
-	// even if the client disconnects (the flatten step can take 10-20s).
-	snapCtx, snapCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer snapCancel()
-
-	// Generate the new template ID upfront so the host agent knows where to store files.
-	newTemplateID := id.NewTemplateID()
-
-	resp, err := agent.CreateSnapshot(snapCtx, connect.NewRequest(&pb.CreateSnapshotRequest{
-		SandboxId:  req.SandboxID,
-		Name:       req.Name,
-		TeamId:     formatUUIDForRPC(ac.TeamID),
-		TemplateId: formatUUIDForRPC(newTemplateID),
-	}))
-	if err != nil {
-		// Snapshot failed — revert status back to what it was.
-		if sb.Status == "running" {
-			if _, dbErr := h.db.UpdateSandboxStatus(snapCtx, db.UpdateSandboxStatusParams{
-				ID: sandboxID, Status: "running",
-			}); dbErr != nil {
-				slog.Error("failed to revert sandbox status after snapshot error", "sandbox_id", req.SandboxID, "error", dbErr)
-			}
-		}
-		status, code, msg := agentErrToHTTP(err)
+		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	tmpl, err := h.db.InsertTemplate(snapCtx, db.InsertTemplateParams{
-		ID:          newTemplateID,
-		Name:        req.Name,
-		Type:        "snapshot",
-		Vcpus:       sb.Vcpus,
-		MemoryMb:    sb.MemoryMb,
-		SizeBytes:   resp.Msg.SizeBytes,
-		TeamID:      ac.TeamID,
-		DefaultUser: "root",
-		DefaultEnv:  []byte("{}"),
-		Metadata:    sb.Metadata,
-	})
-	if err != nil {
-		slog.Error("failed to insert template record", "name", req.Name, "error", err)
-		writeError(w, http.StatusInternalServerError, "db_error", "snapshot created but failed to record in database")
-		return
-	}
-
-	h.audit.LogSnapshotCreate(snapCtx, ac, req.Name)
-
-	if ctx.Err() != nil {
-		slog.Info("snapshot created but client disconnected before response", "name", req.Name)
-		return
-	}
+	h.audit.LogSnapshotCreate(r.Context(), ac, tmpl.Name)
 	writeJSON(w, http.StatusCreated, templateToResponse(tmpl))
 }
 

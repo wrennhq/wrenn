@@ -97,9 +97,17 @@ func TestTemplateRootfs(t *testing.T) {
 
 func TestPauseSnapshotDir(t *testing.T) {
 	got := PauseSnapshotDir("/var/lib/wrenn", "cl-abc123")
-	want := "/var/lib/wrenn/snapshots/cl-abc123"
+	want := "/var/lib/wrenn/sandboxes/cl-abc123"
 	if got != want {
 		t.Errorf("PauseSnapshotDir() = %q, want %q", got, want)
+	}
+}
+
+func TestPauseStagingDir(t *testing.T) {
+	got := PauseStagingDir("/var/lib/wrenn", "cl-abc123")
+	prefix := "/var/lib/wrenn/sandboxes/cl-abc123.staging-"
+	if len(got) <= len(prefix) || got[:len(prefix)] != prefix {
+		t.Errorf("PauseStagingDir() = %q, want prefix %q", got, prefix)
 	}
 }
 

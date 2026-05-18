@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createSnapshot } from '$lib/api/capsules';
+	import { createSnapshot, pauseCapsule } from '$lib/api/capsules';
 
 	type Props = {
 		open: boolean;
@@ -23,13 +23,24 @@
 		snapshotting = true;
 		error = null;
 		const result = await createSnapshot(capsuleId, snapshotName.trim() || undefined);
-		if (result.ok) {
-			reset();
-			onsnapshot?.();
-			onclose();
-		} else {
+		if (!result.ok) {
 			error = result.error;
+			snapshotting = false;
+			return;
 		}
+		// Snapshot is live — capsule keeps running. If pauseFirst is set the
+		// user wants the source paused after capture; trigger pause now.
+		if (pauseFirst) {
+			const pauseRes = await pauseCapsule(capsuleId);
+			if (!pauseRes.ok) {
+				error = `snapshot ok, pause failed: ${pauseRes.error}`;
+				snapshotting = false;
+				return;
+			}
+		}
+		reset();
+		onsnapshot?.();
+		onclose();
 		snapshotting = false;
 	}
 
@@ -72,10 +83,10 @@
 							<line x1="12" y1="9" x2="12" y2="13" />
 							<line x1="12" y1="17" x2="12.01" y2="17" />
 						</svg>
-						<p class="text-meta text-[var(--color-amber)] leading-relaxed">This capsule will be <strong class="font-semibold">paused first</strong>, then its full state (memory + disk) will be captured.</p>
+						<p class="text-meta text-[var(--color-amber)] leading-relaxed">Live snapshot captured first (capsule keeps running), then this capsule is <strong class="font-semibold">paused</strong>.</p>
 					</div>
 				{:else}
-					<p class="text-ui text-[var(--color-text-tertiary)]">The capsule's current state (memory + disk) will be captured and stored as a reusable snapshot.</p>
+					<p class="text-ui text-[var(--color-text-tertiary)]">Live snapshot: the capsule briefly pauses, its memory + disk are written to a new template, then the capsule resumes — your session keeps running.</p>
 				{/if}
 
 				{#if error}

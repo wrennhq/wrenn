@@ -6,11 +6,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
+
+func timeNowNano() int64 { return time.Now().UnixNano() }
 
 // IsMinimal reports whether the given team and template IDs represent the
 // built-in "minimal" template (both all-zeros).
@@ -37,11 +40,29 @@ func TemplateRootfs(wrennDir string, teamID, templateID pgtype.UUID) string {
 }
 
 // PauseSnapshotDir returns the directory for a paused sandbox's snapshot files.
+// Located alongside the sandbox's CoW file under sandboxes/ so all per-sandbox
+// state lives under one parent directory.
+//
+// Layout:
+//
+//	{wrennDir}/sandboxes/{id}/             paused snapshot (config.json, state.json, memory-ranges, wrenn-snapshot.json)
+//	{wrennDir}/sandboxes/{id}.cow          CoW file (persistent across pause/resume)
+//	{wrennDir}/sandboxes/{id}.staging-*/   in-flight Pause writes (cleaned up by swapDir or startup GC)
+//	{wrennDir}/sandboxes/{id}.trash-*/     mid-swap previous generation (cleaned up by swapDir or startup GC)
 func PauseSnapshotDir(wrennDir, sandboxID string) string {
-	return filepath.Join(wrennDir, "snapshots", sandboxID)
+	return filepath.Join(wrennDir, "sandboxes", sandboxID)
 }
 
-// SandboxesDir returns the directory for running sandbox CoW files.
+// PauseStagingDir returns a fresh staging directory for an in-flight Pause.
+// Each call returns a unique path (timestamped) so concurrent retries do not
+// collide.
+func PauseStagingDir(wrennDir, sandboxID string) string {
+	return filepath.Join(wrennDir, "sandboxes",
+		fmt.Sprintf("%s.staging-%d", sandboxID, timeNowNano()))
+}
+
+// SandboxesDir returns the directory for running sandbox CoW files and paused
+// snapshot directories.
 func SandboxesDir(wrennDir string) string {
 	return filepath.Join(wrennDir, "sandboxes")
 }

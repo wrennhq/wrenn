@@ -59,6 +59,28 @@ func (c *Client) FetchVersion(ctx context.Context) (string, error) {
 	return data.Version, nil
 }
 
+// WaitUntilRPCReady polls envd's Connect RPC layer until it responds
+// successfully or the context is cancelled. This catches cases where envd's
+// HTTP health endpoint works but the Connect protocol layer is not yet
+// functional (e.g., after VM snapshot restore).
+func (c *Client) WaitUntilRPCReady(ctx context.Context) error {
+	const retryInterval = 200 * time.Millisecond
+
+	ticker := time.NewTicker(retryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("envd RPC not ready: %w", ctx.Err())
+		case <-ticker.C:
+			if _, err := c.ListProcesses(ctx); err == nil {
+				return nil
+			}
+		}
+	}
+}
+
 // healthCheck sends a single GET /health request to envd.
 func (c *Client) healthCheck(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.healthURL, nil)

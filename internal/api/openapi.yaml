@@ -1288,9 +1288,10 @@ paths:
       security:
         - apiKeyAuth: []
       description: |
-        Restores a paused capsule from its snapshot using UFFD for lazy
-        memory loading. Boots a fresh Cloud Hypervisor process, sets up a new
-        network slot, and waits for envd to become ready.
+        Restores a paused capsule from its snapshot. Cloud Hypervisor is
+        relaunched in --restore mode with memory_restore_mode=ondemand so
+        guest pages fault in lazily via userfaultfd. The original network
+        slot (and host-reachable IP) is preserved across pause/resume.
       responses:
         "202":
           description: Capsule resume initiated (status will be "resuming")
@@ -1313,9 +1314,10 @@ paths:
       security:
         - apiKeyAuth: []
       description: |
-        Pauses a running capsule, takes a full snapshot, copies the snapshot
-        files to the images directory as a reusable template, then destroys
-        the capsule. The template can be used to create new capsulees.
+        Live snapshot: briefly pauses the capsule, writes its VM state +
+        memory + flattened rootfs to a new template directory, then resumes
+        the capsule. The source capsule keeps running after the snapshot;
+        the resulting template can be used to create new capsules.
       parameters:
         - name: overwrite
           in: query

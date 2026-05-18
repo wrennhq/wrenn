@@ -92,7 +92,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	var streamClosed bool
 	defer func() {
 		if !streamClosed {
-			stream.CloseAndReceive()
+			_, _ = stream.CloseAndReceive()
 		}
 	}()
 

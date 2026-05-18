@@ -104,7 +104,7 @@ func (s *Server) PauseSandbox(
 	req *connect.Request[pb.PauseSandboxRequest],
 ) (*connect.Response[pb.PauseSandboxResponse], error) {
 	if err := s.mgr.Pause(ctx, req.Msg.SandboxId); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.PauseSandboxResponse{}), nil
 }
@@ -113,12 +113,10 @@ func (s *Server) ResumeSandbox(
 	ctx context.Context,
 	req *connect.Request[pb.ResumeSandboxRequest],
 ) (*connect.Response[pb.ResumeSandboxResponse], error) {
-	msg := req.Msg
-	sb, err := s.mgr.Resume(ctx, msg.SandboxId, int(msg.TimeoutSec), msg.KernelVersion, msg.DefaultUser, msg.DefaultEnv)
+	sb, err := s.mgr.Resume(ctx, req.Msg.SandboxId, int(req.Msg.TimeoutSec), req.Msg.DefaultUser, req.Msg.KernelVersion, req.Msg.DefaultEnv)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
-
 	return connect.NewResponse(&pb.ResumeSandboxResponse{
 		SandboxId: sb.ID,
 		Status:    string(sb.Status),
@@ -131,41 +129,38 @@ func (s *Server) CreateSnapshot(
 	ctx context.Context,
 	req *connect.Request[pb.CreateSnapshotRequest],
 ) (*connect.Response[pb.CreateSnapshotResponse], error) {
-	msg := req.Msg
-	teamID, err := parseUUIDString(msg.TeamId)
+	teamID, err := parseUUIDString(req.Msg.TeamId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	templateID, err := parseUUIDString(msg.TemplateId)
+	templateID, err := parseUUIDString(req.Msg.TemplateId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-
-	sizeBytes, err := s.mgr.CreateSnapshot(ctx, msg.SandboxId, teamID, templateID)
+	size, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, teamID, templateID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create snapshot: %w", err))
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.CreateSnapshotResponse{
-		SizeBytes: sizeBytes,
+		Name:      req.Msg.TemplateId,
+		SizeBytes: size,
 	}), nil
 }
 
 func (s *Server) DeleteSnapshot(
-	ctx context.Context,
+	_ context.Context,
 	req *connect.Request[pb.DeleteSnapshotRequest],
 ) (*connect.Response[pb.DeleteSnapshotResponse], error) {
-	msg := req.Msg
-	teamID, err := parseUUIDString(msg.TeamId)
+	teamID, err := parseUUIDString(req.Msg.TeamId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	templateID, err := parseUUIDString(msg.TemplateId)
+	templateID, err := parseUUIDString(req.Msg.TemplateId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-
 	if err := s.mgr.DeleteSnapshot(teamID, templateID); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("delete snapshot: %w", err))
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&pb.DeleteSnapshotResponse{}), nil
 }
@@ -174,23 +169,32 @@ func (s *Server) FlattenRootfs(
 	ctx context.Context,
 	req *connect.Request[pb.FlattenRootfsRequest],
 ) (*connect.Response[pb.FlattenRootfsResponse], error) {
-	msg := req.Msg
-	teamID, err := parseUUIDString(msg.TeamId)
+	teamID, err := parseUUIDString(req.Msg.TeamId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	templateID, err := parseUUIDString(msg.TemplateId)
+	templateID, err := parseUUIDString(req.Msg.TemplateId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-
-	sizeBytes, err := s.mgr.FlattenRootfs(ctx, msg.SandboxId, teamID, templateID)
+	size, err := s.mgr.FlattenRootfs(ctx, req.Msg.SandboxId, teamID, templateID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("flatten rootfs: %w", err))
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.FlattenRootfsResponse{
-		SizeBytes: sizeBytes,
+		SizeBytes: size,
 	}), nil
+}
+
+// mapSandboxError translates sandbox.Manager errors to Connect error codes.
+func mapSandboxError(err error) error {
+	if errors.Is(err, sandbox.ErrNotFound) {
+		return connect.NewError(connect.CodeNotFound, err)
+	}
+	if strings.Contains(err.Error(), "not running") || strings.Contains(err.Error(), "not paused") {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewError(connect.CodeInternal, err)
 }
 
 func (s *Server) PingSandbox(

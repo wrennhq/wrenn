@@ -26,6 +26,10 @@ pub struct InitRequest {
     pub volume_mounts: Option<Vec<VolumeMount>>,
     pub sandbox_id: Option<String>,
     pub template_id: Option<String>,
+    /// New lifecycle identifier for this resume. When it changes between
+    /// /init calls, envd treats the call as a post-resume hook: port
+    /// forwarder is restarted and NFS mounts are refreshed.
+    pub lifecycle_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -34,7 +38,7 @@ pub struct VolumeMount {
     pub path: String,
 }
 
-/// POST /init — called by host agent after boot and after every resume.
+/// POST /init — called by host agent after boot.
 pub async fn post_init(
     State(state): State<Arc<AppState>>,
     body: Option<Json<InitRequest>>,
@@ -49,12 +53,71 @@ pub async fn post_init(
         }
     }
 
-    // Idempotent timestamp check
+    // Post-resume lifecycle hook: restart port forwarder so socat children
+    // are reaped + respawned against the new wall clock and any rotated
+    // listeners. Must run BEFORE the stale-timestamp early-return so a
+    // resume with an out-of-order timestamp still refreshes the subsystem.
+    let lifecycle_changed = if let Some(ref new_id) = init_req.lifecycle_id {
+        state.bump_lifecycle(new_id)
+    } else {
+        false
+    };
+    if lifecycle_changed {
+        // Each new lifecycle (i.e. a snapshot restore) requires a fresh memory
+        // preload pass — pages materialised before the previous pause are now
+        // back in the source memory-ranges file as the host re-restored them
+        // lazily. Reset the flags so the next POST /memory/preload kicks off
+        // a new loader instead of returning the stale "already-done".
+        use std::sync::atomic::Ordering;
+        state.mem_preload_cancel.store(false, Ordering::SeqCst);
+        state.mem_preload_done.store(false, Ordering::SeqCst);
+        state.mem_preload_started.store(false, Ordering::SeqCst);
+        state.mem_preload_regions.store(0, Ordering::SeqCst);
+        state.mem_preload_pages.store(0, Ordering::SeqCst);
+        state.mem_preload_bytes.store(0, Ordering::SeqCst);
+        state.mem_preload_elapsed_us.store(0, Ordering::SeqCst);
+        state.mem_preload_source.store(0, Ordering::SeqCst);
+        *state.mem_preload_error.lock().unwrap() = None;
+
+        if let Some(ref port_sub) = state.port_subsystem {
+            tracing::info!("lifecycle changed, restarting port subsystem");
+            port_sub.restart();
+        }
+        // Force chrony to step the clock immediately. chronyd is launched by
+        // wrenn-init.sh and disciplines against PHC (/dev/ptp0), so the host
+        // wall time is already available — `makestep` just bypasses chrony's
+        // normal slewing and snaps the clock in one go. Best effort.
+        tokio::spawn(async {
+            match tokio::process::Command::new("chronyc")
+                .args(["makestep"])
+                .output()
+                .await
+            {
+                Ok(out) if out.status.success() => {
+                    tracing::info!("chronyc makestep ok");
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    tracing::warn!(stderr = %stderr, "chronyc makestep failed");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "chronyc makestep spawn failed");
+                }
+            }
+        });
+    }
+
+    // Idempotent timestamp check. Run after lifecycle handling so a
+    // stale-timestamp /init still gets to refresh ports + step clock.
+    // No userspace clock_settime here — chrony owns time discipline.
     if let Some(ref ts_str) = init_req.timestamp {
-        if let Ok(ts) = chrono_parse_to_nanos(ts_str) {
+        if let Ok(ts) = parse_timestamp_to_nanos(ts_str) {
             if !state.last_set_time.set_to_greater(ts) {
-                // Stale request, skip data updates
-                return trigger_restore_and_respond(&state).await;
+                return (
+                    StatusCode::NO_CONTENT,
+                    [(header::CACHE_CONTROL, "no-store")],
+                )
+                    .into_response();
             }
         }
     }
@@ -94,24 +157,24 @@ pub async fn post_init(
         }
     }
 
-    // Hyperloop /etc/hosts setup
+    // Hyperloop /etc/hosts setup. Awaited so callers that immediately
+    // resolve events.wrenn.local see the entry. Cheap (two file ops).
     if let Some(ref ip) = init_req.hyperloop_ip {
-        let ip = ip.clone();
-        let env_vars = Arc::clone(&state.defaults.env_vars);
-        tokio::spawn(async move {
-            setup_hyperloop(&ip, &env_vars).await;
-        });
+        setup_hyperloop(ip, &state.defaults.env_vars).await;
     }
 
-    // NFS mounts
+    // NFS mounts. Awaited in parallel so callers that immediately access the
+    // mount path don't race the mount(2). Previously these were detached via
+    // tokio::spawn, which let /init return success before mounts existed.
     if let Some(ref mounts) = init_req.volume_mounts {
-        for mount in mounts {
-            let target = mount.nfs_target.clone();
-            let path = mount.path.clone();
-            tokio::spawn(async move {
+        let futs = mounts.iter().map(|m| {
+            let target = m.nfs_target.clone();
+            let path = m.path.clone();
+            async move {
                 setup_nfs(&target, &path).await;
-            });
-        }
+            }
+        });
+        futures::future::join_all(futs).await;
     }
 
     // Set sandbox/template metadata from request body.
@@ -129,12 +192,6 @@ pub async fn post_init(
         write_run_file(".WRENN_TEMPLATE_ID", id);
         state.defaults.env_vars.insert("WRENN_TEMPLATE_ID".into(), id.clone());
     }
-
-    trigger_restore_and_respond(&state).await
-}
-
-async fn trigger_restore_and_respond(state: &AppState) -> axum::response::Response {
-    state.try_restore_recovery();
 
     (
         StatusCode::NO_CONTENT,
@@ -240,10 +297,16 @@ fn write_run_file(name: &str, value: &str) {
     }
 }
 
-fn chrono_parse_to_nanos(ts: &str) -> Result<i64, ()> {
-    let secs = ts.parse::<f64>().ok();
-    if let Some(s) = secs {
-        return Ok((s * 1_000_000_000.0) as i64);
+/// Parses a host-provided timestamp into nanoseconds since the Unix epoch.
+/// Accepts either RFC3339 (`2026-05-17T16:13:03.123456Z`) or a float-seconds
+/// string (legacy callers).
+fn parse_timestamp_to_nanos(ts: &str) -> Result<i64, ()> {
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(ts) {
+        return Ok(parsed.timestamp_nanos_opt().ok_or(())?);
+    }
+    if let Ok(secs) = ts.parse::<f64>() {
+        return Ok((secs * 1_000_000_000.0) as i64);
     }
     Err(())
 }
+

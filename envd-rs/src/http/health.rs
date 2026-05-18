@@ -9,8 +9,6 @@ use serde_json::json;
 use crate::state::AppState;
 
 pub async fn get_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    state.try_restore_recovery();
-
     tracing::trace!("health check");
 
     (

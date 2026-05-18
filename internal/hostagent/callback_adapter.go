@@ -1,6 +1,8 @@
 package hostagent
 
 import (
+	"context"
+
 	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
 )
 
@@ -16,6 +18,13 @@ func NewEventSender(sender *CallbackSender) sandbox.EventSender {
 
 func (a *callbackAdapter) SendAsync(event sandbox.LifecycleEvent) {
 	a.sender.SendAsync(CallbackEvent{
+		Event:     event.Event,
+		SandboxID: event.SandboxID,
+	})
+}
+
+func (a *callbackAdapter) Send(ctx context.Context, event sandbox.LifecycleEvent) error {
+	return a.sender.Send(ctx, CallbackEvent{
 		Event:     event.Event,
 		SandboxID: event.SandboxID,
 	})

@@ -447,6 +447,9 @@ func CreateNetwork(slot *Slot) error {
 // All steps are attempted even if earlier ones fail. Returns a combined
 // error describing which cleanup steps failed.
 func RemoveNetwork(slot *Slot) error {
+	if slot == nil {
+		return nil
+	}
 	var errs []error
 
 	defaultIface, _ := getDefaultInterface()

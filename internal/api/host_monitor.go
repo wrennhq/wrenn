@@ -137,21 +137,29 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		return
 	}
 
-	// Build set of sandbox IDs alive on the host.
-	// The host agent returns sandbox IDs as strings (formatted with prefix).
-	alive := make(map[string]struct{}, len(resp.Msg.Sandboxes))
+	// Build map of sandbox ID -> reported status. Transient statuses
+	// (pausing/resuming/starting/stopping) are coerced to a presence-only
+	// entry: ListSandboxes can observe the in-memory status mid-transition
+	// (Pause flips the status under m.mu while List holds m.mu.RLock), and
+	// writing those transient labels into the DB would force the transient
+	// reconciliation phase to wait the full grace period before resolving.
+	// Recording the presence keeps "missing → restore" and "running →
+	// orphan-stop" logic correct without overwriting with stale labels;
+	// the next monitor tick reads the settled status.
+	aliveStatus := make(map[string]string, len(resp.Msg.Sandboxes))
 	for _, sb := range resp.Msg.Sandboxes {
-		alive[sb.SandboxId] = struct{}{}
-	}
-
-	autoPaused := make(map[string]struct{}, len(resp.Msg.AutoPausedSandboxIds))
-	for _, apID := range resp.Msg.AutoPausedSandboxIds {
-		autoPaused[apID] = struct{}{}
+		status := sb.Status
+		switch status {
+		case "pausing", "resuming", "starting", "stopping":
+			status = ""
+		}
+		aliveStatus[sb.SandboxId] = status
 	}
 
 	// --- Restore sandboxes that are "missing" in DB but alive on host ---
-	// This handles the case where CP marked them missing due to a transient
-	// heartbeat gap, but the host was actually fine.
+	// Handles transient heartbeat gaps where the host was actually fine. The
+	// reported status must be honored: a sandbox the agent paused while CP
+	// was disconnected must not be silently promoted back to running.
 
 	missingSandboxes, err := m.db.ListSandboxesByHostAndStatus(ctx, db.ListSandboxesByHostAndStatusParams{
 		HostID:  host.ID,
@@ -160,20 +168,30 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 	if err != nil {
 		slog.Warn("host monitor: failed to list missing sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
 	} else {
-		var toRestore []pgtype.UUID
+		restoreByStatus := make(map[string][]pgtype.UUID)
 		var toStop []pgtype.UUID
 		for _, sb := range missingSandboxes {
 			sbIDStr := id.FormatSandboxID(sb.ID)
-			if _, ok := alive[sbIDStr]; ok {
-				toRestore = append(toRestore, sb.ID)
-			} else {
+			status, ok := aliveStatus[sbIDStr]
+			if !ok {
 				toStop = append(toStop, sb.ID)
+				continue
 			}
+			if status == "" {
+				// Reported as transient (pausing/resuming/etc.) — let the
+				// sandbox stay in "missing" and retry next tick once it has
+				// settled into a terminal state.
+				continue
+			}
+			restoreByStatus[status] = append(restoreByStatus[status], sb.ID)
 		}
-		if len(toRestore) > 0 {
-			slog.Info("host monitor: restoring missing sandboxes", "host_id", id.FormatHostID(host.ID), "count", len(toRestore))
-			if err := m.db.BulkRestoreRunning(ctx, toRestore); err != nil {
-				slog.Warn("host monitor: failed to restore missing sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
+		for status, ids := range restoreByStatus {
+			slog.Info("host monitor: restoring missing sandboxes", "host_id", id.FormatHostID(host.ID), "status", status, "count", len(ids))
+			if err := m.db.BulkRestoreMissingToStatus(ctx, db.BulkRestoreMissingToStatusParams{
+				Column1: ids,
+				Status:  status,
+			}); err != nil {
+				slog.Warn("host monitor: failed to restore missing sandboxes", "host_id", id.FormatHostID(host.ID), "status", status, "error", err)
 			}
 		}
 		if len(toStop) > 0 {
@@ -187,7 +205,12 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		}
 	}
 
-	// --- Find running sandboxes in DB that are no longer alive on the host ---
+	// --- Reconcile running sandboxes in DB against live host state ---
+	// Three cases per DB-running row:
+	//   absent on host          -> stopped
+	//   present and running     -> no change
+	//   present but paused/etc. -> sync DB to reported status (catches the
+	//                              shutdown-pause notify failure case)
 
 	runningSandboxes, err := m.db.ListSandboxesByHostAndStatus(ctx, db.ListSandboxesByHostAndStatusParams{
 		HostID:  host.ID,
@@ -198,33 +221,21 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		return
 	}
 
-	var toPause, toStop []pgtype.UUID
-	sbTeamID := make(map[pgtype.UUID]pgtype.UUID, len(runningSandboxes))
+	var toStop []pgtype.UUID
+	syncToStatus := make(map[string][]pgtype.UUID)
 	for _, sb := range runningSandboxes {
 		sbIDStr := id.FormatSandboxID(sb.ID)
-		sbTeamID[sb.ID] = sb.TeamID
-		if _, ok := alive[sbIDStr]; ok {
+		status, ok := aliveStatus[sbIDStr]
+		if !ok {
+			toStop = append(toStop, sb.ID)
 			continue
 		}
-		if _, ok := autoPaused[sbIDStr]; ok {
-			toPause = append(toPause, sb.ID)
-		} else {
-			toStop = append(toStop, sb.ID)
+		if status == "running" || status == "" {
+			continue
 		}
+		syncToStatus[status] = append(syncToStatus[status], sb.ID)
 	}
 
-	if len(toPause) > 0 {
-		slog.Info("host monitor: marking auto-paused sandboxes", "host_id", id.FormatHostID(host.ID), "count", len(toPause))
-		if err := m.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
-			Column1: toPause,
-			Status:  "paused",
-		}); err != nil {
-			slog.Warn("host monitor: failed to mark paused", "host_id", id.FormatHostID(host.ID), "error", err)
-		}
-		for _, sbID := range toPause {
-			m.audit.LogSandboxAutoPause(ctx, sbTeamID[sbID], sbID)
-		}
-	}
 	if len(toStop) > 0 {
 		slog.Info("host monitor: marking orphaned sandboxes stopped", "host_id", id.FormatHostID(host.ID), "count", len(toStop))
 		if err := m.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
@@ -232,6 +243,15 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 			Status:  "stopped",
 		}); err != nil {
 			slog.Warn("host monitor: failed to mark stopped", "host_id", id.FormatHostID(host.ID), "error", err)
+		}
+	}
+	for status, ids := range syncToStatus {
+		slog.Info("host monitor: syncing running→reported status", "host_id", id.FormatHostID(host.ID), "status", status, "count", len(ids))
+		if err := m.db.BulkUpdateStatusByIDs(ctx, db.BulkUpdateStatusByIDsParams{
+			Column1: ids,
+			Status:  status,
+		}); err != nil {
+			slog.Warn("host monitor: failed to sync running sandboxes", "host_id", id.FormatHostID(host.ID), "status", status, "error", err)
 		}
 	}
 
@@ -250,7 +270,7 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 
 	for _, sb := range transientSandboxes {
 		sbIDStr := id.FormatSandboxID(sb.ID)
-		if _, ok := alive[sbIDStr]; ok {
+		if _, ok := aliveStatus[sbIDStr]; ok {
 			// Sandbox is alive on host — the background goroutine should
 			// finalize the transition. For starting/resuming, if the sandbox
 			// is alive it means creation/resume succeeded.
