@@ -14,6 +14,7 @@ package session
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -51,8 +52,14 @@ var ErrExpired = errors.New("session: expired")
 // after the identity block are denormalized from the users + team_members
 // tables for fast middleware lookups; they are refreshed on rotation and
 // invalidated by Revoke/RevokeAllForUser on identity changes.
+//
+// ID is the sha256(rawSID) hex digest — the value stored in Postgres and
+// used as the Redis cache key. RawSID is the un-hashed bearer secret;
+// it is only populated by Create and Rotate so the caller can write the
+// cookie, and is never serialized to Redis or persisted in Postgres.
 type Session struct {
 	ID         string      `json:"id"`
+	RawSID     string      `json:"-"`
 	UserID     pgtype.UUID `json:"user_id"`
 	TeamID     pgtype.UUID `json:"team_id"`
 	CSRFToken  string      `json:"csrf"`
@@ -97,6 +104,14 @@ func GenerateCSRFToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// HashSID returns the sha256 hex digest of a raw session ID. Storage and
+// lookups in Postgres + Redis use the hash; the raw value only lives in
+// the user's cookie and transiently in this process.
+func HashSID(rawSID string) string {
+	sum := sha256.Sum256([]byte(rawSID))
+	return hex.EncodeToString(sum[:])
+}
+
 // Create issues a new session for the given user. Email, name, role and
 // is_admin are stamped into the session blob and used by middleware without
 // further DB lookups (except for admin gates, which always re-check the DB).
@@ -107,10 +122,11 @@ func (s *Service) Create(
 	isAdmin bool,
 	userAgent, ipAddress string,
 ) (*Session, error) {
-	sid, err := GenerateSID()
+	rawSID, err := GenerateSID()
 	if err != nil {
 		return nil, fmt.Errorf("generate sid: %w", err)
 	}
+	sidHash := HashSID(rawSID)
 	csrf, err := GenerateCSRFToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate csrf: %w", err)
@@ -120,7 +136,7 @@ func (s *Service) Create(
 	expiresAt := now.Add(AbsoluteCap)
 
 	row, err := s.db.InsertSession(ctx, db.InsertSessionParams{
-		ID:        sid,
+		ID:        sidHash,
 		UserID:    userID,
 		TeamID:    teamID,
 		CsrfToken: csrf,
@@ -134,6 +150,7 @@ func (s *Service) Create(
 
 	sess := &Session{
 		ID:         row.ID,
+		RawSID:     rawSID,
 		UserID:     row.UserID,
 		TeamID:     row.TeamID,
 		CSRFToken:  row.CsrfToken,
@@ -155,30 +172,33 @@ func (s *Service) Create(
 	return sess, nil
 }
 
-// Get loads a session by SID, validates expiry, and slides the idle window.
-// It returns ErrNotFound if the session does not exist (or has been revoked)
-// and ErrExpired if it is past its absolute cap.
+// Get loads a session by its raw SID (from the cookie), validates expiry,
+// and slides the idle window. The raw SID is hashed internally; storage and
+// lookups never see the un-hashed value. Returns ErrNotFound if the session
+// does not exist (or has been revoked) and ErrExpired if it is past its
+// absolute cap.
 //
 // The hydrate callback is invoked on cache miss to refetch identity columns
 // (email, name, role, is_admin) from the source tables before the session is
 // repopulated into Redis. Pass nil to skip identity refresh.
 func (s *Service) Get(
 	ctx context.Context,
-	sid string,
+	rawSID string,
 	hydrate func(context.Context, *Session) error,
 ) (*Session, error) {
-	if sid == "" {
+	if rawSID == "" {
 		return nil, ErrNotFound
 	}
+	sidHash := HashSID(rawSID)
 
 	now := time.Now().UTC()
 
 	// Cache hit fast path.
-	if sess, ok, err := s.readCache(ctx, sid); err != nil {
+	if sess, ok, err := s.readCache(ctx, sidHash); err != nil {
 		slog.Warn("session: read cache failed", "error", err)
 	} else if ok {
 		if now.After(sess.ExpiresAt) {
-			_ = s.Revoke(ctx, sid)
+			_ = s.revokeByHash(ctx, sidHash)
 			return nil, ErrExpired
 		}
 		s.slideIdle(ctx, sess)
@@ -187,7 +207,7 @@ func (s *Service) Get(
 	}
 
 	// Cache miss — fall back to DB.
-	row, err := s.db.GetSession(ctx, sid)
+	row, err := s.db.GetSession(ctx, sidHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -195,7 +215,7 @@ func (s *Service) Get(
 		return nil, fmt.Errorf("get session: %w", err)
 	}
 	if now.After(row.ExpiresAt.Time) {
-		_ = s.db.DeleteSession(ctx, sid)
+		_ = s.db.DeleteSession(ctx, sidHash)
 		return nil, ErrExpired
 	}
 
@@ -222,31 +242,39 @@ func (s *Service) Get(
 	return sess, nil
 }
 
-// Rotate revokes oldSID and issues a fresh session with possibly updated
-// team/role. Used on team switch and any privilege change.
+// Rotate revokes the session identified by oldHashedSID and issues a fresh
+// one with possibly updated team/role. Used on team switch and any privilege
+// change. The old ID is a hash (taken from AuthContext.SessionID), not the
+// raw cookie value.
 func (s *Service) Rotate(
 	ctx context.Context,
-	oldSID string,
+	oldHashedSID string,
 	userID, teamID pgtype.UUID,
 	email, name, role string,
 	isAdmin bool,
 	userAgent, ipAddress string,
 ) (*Session, error) {
-	if err := s.Revoke(ctx, oldSID); err != nil {
+	if err := s.revokeByHash(ctx, oldHashedSID); err != nil {
 		return nil, fmt.Errorf("revoke old: %w", err)
 	}
 	return s.Create(ctx, userID, teamID, email, name, role, isAdmin, userAgent, ipAddress)
 }
 
-// Revoke deletes a single session by SID from both Redis and Postgres.
-func (s *Service) Revoke(ctx context.Context, sid string) error {
-	if sid == "" {
+// Revoke deletes a single session by its hashed ID from both Redis and
+// Postgres. Callers in authenticated request paths already hold the hash
+// in AuthContext.SessionID; pass that value here.
+func (s *Service) Revoke(ctx context.Context, hashedSID string) error {
+	return s.revokeByHash(ctx, hashedSID)
+}
+
+func (s *Service) revokeByHash(ctx context.Context, sidHash string) error {
+	if sidHash == "" {
 		return nil
 	}
-	if err := s.rdb.Del(ctx, redisKey(sid)).Err(); err != nil {
+	if err := s.rdb.Del(ctx, redisKey(sidHash)).Err(); err != nil {
 		slog.Warn("session: del cache failed", "error", err)
 	}
-	if err := s.db.DeleteSession(ctx, sid); err != nil {
+	if err := s.db.DeleteSession(ctx, sidHash); err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
 	return nil
@@ -284,13 +312,15 @@ func (s *Service) ListForUser(ctx context.Context, userID pgtype.UUID) ([]db.Ses
 }
 
 // DeleteForUser deletes a single session if it belongs to the given user.
-// Returns no error if the SID does not exist or belongs to someone else
-// (caller is treated as having already lost interest in it).
-func (s *Service) DeleteForUser(ctx context.Context, sid string, userID pgtype.UUID) error {
-	if err := s.rdb.Del(ctx, redisKey(sid)).Err(); err != nil {
+// hashedSID is the stored hash (as returned by ListForUser / AuthContext),
+// not the raw cookie value. Returns no error if the SID does not exist or
+// belongs to someone else (caller is treated as having already lost
+// interest in it).
+func (s *Service) DeleteForUser(ctx context.Context, hashedSID string, userID pgtype.UUID) error {
+	if err := s.rdb.Del(ctx, redisKey(hashedSID)).Err(); err != nil {
 		slog.Warn("session: del cache failed", "error", err)
 	}
-	if err := s.db.DeleteSessionForUser(ctx, db.DeleteSessionForUserParams{ID: sid, UserID: userID}); err != nil {
+	if err := s.db.DeleteSessionForUser(ctx, db.DeleteSessionForUserParams{ID: hashedSID, UserID: userID}); err != nil {
 		return fmt.Errorf("delete session for user: %w", err)
 	}
 	return nil
@@ -320,12 +350,13 @@ func (s *Service) InvalidateCacheForUser(ctx context.Context, userID pgtype.UUID
 
 // UpdateTeam mutates the team_id on the current session in place (for the
 // non-rotation switch-team path; we do rotate in handlers, but the helper
-// is kept for completeness).
-func (s *Service) UpdateTeam(ctx context.Context, sid string, teamID pgtype.UUID) error {
-	if err := s.db.UpdateSessionTeam(ctx, db.UpdateSessionTeamParams{ID: sid, TeamID: teamID}); err != nil {
+// is kept for completeness). hashedSID is the stored hash, not the raw
+// cookie value.
+func (s *Service) UpdateTeam(ctx context.Context, hashedSID string, teamID pgtype.UUID) error {
+	if err := s.db.UpdateSessionTeam(ctx, db.UpdateSessionTeamParams{ID: hashedSID, TeamID: teamID}); err != nil {
 		return fmt.Errorf("update session team: %w", err)
 	}
-	_ = s.rdb.Del(ctx, redisKey(sid))
+	_ = s.rdb.Del(ctx, redisKey(hashedSID))
 	return nil
 }
 
