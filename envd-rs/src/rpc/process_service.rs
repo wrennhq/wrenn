@@ -199,12 +199,28 @@ impl Process for ProcessServiceImpl {
                         match data {
                             Ok(ev) => yield Ok(make_data_start_response(ev)),
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                // Data channel closed: the process ended and its
+                                // handle was dropped. The end event is published
+                                // before the handle drop, so it is still buffered
+                                // — emit it rather than losing the exit code.
+                                if let Ok(end) = end_rx.try_recv() {
+                                    yield Ok(make_end_start_response(end));
+                                }
+                                break;
+                            }
                         }
                     }
                     end = end_rx.recv() => {
-                        while let Ok(ev) = data_rx.try_recv() {
-                            yield Ok(make_data_start_response(ev));
+                        // Process ended. The waiter joins the output readers
+                        // before sending this event, so every byte is already
+                        // in the data channel — drain it fully before the end.
+                        loop {
+                            match data_rx.try_recv() {
+                                Ok(ev) => yield Ok(make_data_start_response(ev)),
+                                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                                Err(_) => break,
+                            }
                         }
                         if let Ok(end) = end {
                             yield Ok(make_end_start_response(end));
@@ -268,15 +284,35 @@ impl Process for ProcessServiceImpl {
                                     });
                                 }
                                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                    // Data channel closed: the process ended and
+                                    // its handle was dropped. The end event is
+                                    // published before the handle drop, so it is
+                                    // still buffered — emit it rather than losing
+                                    // the exit code.
+                                    if let Ok(end) = end_rx.try_recv() {
+                                        yield Ok(ConnectResponse {
+                                            event: buffa::MessageField::some(make_end_event(end)),
+                                            ..Default::default()
+                                        });
+                                    }
+                                    break;
+                                }
                             }
                         }
                         end = end_rx.recv() => {
-                            while let Ok(ev) = data_rx.try_recv() {
-                                yield Ok(ConnectResponse {
-                                    event: buffa::MessageField::some(make_data_event(ev)),
-                                    ..Default::default()
-                                });
+                            // Process ended. The waiter joins the output readers
+                            // before sending this event, so every byte is already
+                            // in the data channel — drain it fully before the end.
+                            loop {
+                                match data_rx.try_recv() {
+                                    Ok(ev) => yield Ok(ConnectResponse {
+                                        event: buffa::MessageField::some(make_data_event(ev)),
+                                        ..Default::default()
+                                    }),
+                                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                                    Err(_) => break,
+                                }
                             }
                             if let Ok(end) = end {
                                 yield Ok(ConnectResponse {
