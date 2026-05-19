@@ -111,37 +111,6 @@ type SandboxEventHook interface {
 	OnSandboxEvent(ctx context.Context, ev SandboxEvent) error
 }
 
-// Limits describes the per-team quota envelope.
-type Limits struct {
-	MaxConcurrentSandboxes int
-	MaxVCPUs               int
-	MaxMemoryMB            int
-	MaxStorageGB           int
-	MaxSnapshots           int
-}
-
-// LimitsProvider is optionally implemented by an extension that owns billing
-// plans. The sandbox create handler consults it before scheduling work; if no
-// extension provides limits, OSS defaults apply.
-type LimitsProvider interface {
-	EffectiveLimits(ctx context.Context, teamID pgtype.UUID) (Limits, error)
-}
-
-// Usage describes a team's current resource footprint.
-type Usage struct {
-	ConcurrentSandboxes int
-	VCPUsInUse          int
-	MemoryMBInUse       int
-	SnapshotCount       int
-	SnapshotStorageGB   int
-}
-
-// UsageProvider returns the current usage for a team. Consumed by the
-// LimitsProvider gate and by extension dashboards.
-type UsageProvider interface {
-	CurrentUsage(ctx context.Context, teamID pgtype.UUID) (Usage, error)
-}
-
 // --- Auth middleware helpers exposed to extensions ---
 
 // RequireSession returns middleware that enforces a valid session cookie.

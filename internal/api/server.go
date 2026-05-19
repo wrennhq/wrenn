@@ -96,9 +96,7 @@ func New(
 	usageSvc := &service.UsageService{DB: queries}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
 
-	limitsProvider := collectLimitsProvider(extensions)
-	usageProvider := collectUsageProvider(extensions, queries)
-	sandbox := newSandboxHandler(sandboxSvc, al, limitsProvider, usageProvider)
+	sandbox := newSandboxHandler(sandboxSvc, al)
 	exec := newExecHandler(queries, pool)
 	execStream := newExecStreamHandler(queries, pool)
 	files := newFilesHandler(queries, pool)

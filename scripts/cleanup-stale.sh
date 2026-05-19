@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Clean up leftover wrenn host state from crashed/unclean agent exits.
 # Removes: cloud-hypervisor procs, CH sockets, dm-snapshot devices,
-# loop devices backing sandbox CoW files, network namespaces, veth
-# interfaces, iptables rules, sandbox CoW files (optional).
+# loop devices backing sandbox CoW files AND base rootfs images,
+# network namespaces, veth interfaces, iptables rules, sandbox CoW
+# files (optional).
 #
-# Does NOT touch: base rootfs loop device, /var/lib/wrenn/images/*,
+# Does NOT touch: /var/lib/wrenn/images/* files themselves,
 # /var/lib/wrenn/kernels/*, snapshot directories (cl-*/ with state.json).
+#
+# WARNING: base rootfs image loop devices are detached unconditionally.
+# Run only when no wrenn-agent is alive — a live agent holds those.
 #
 # Sudo is invoked per-command. Script itself runs as normal user.
 #
@@ -60,12 +64,15 @@ while read -r name _; do
   esac
 done < <(sudo dmsetup ls --target snapshot 2>/dev/null)
 
-# 4. Detach loop devices backing sandbox CoW files (skip base rootfs).
+# 4. Detach loop devices backing sandbox CoW files and base rootfs images.
+IMAGES_DIR=/var/lib/wrenn/images
 while IFS= read -r line; do
   dev=${line%%:*}
-  backing=$(printf '%s' "$line" | sed -n 's/.*(\(.*\)).*/\1/p')
+  backing=${line#*(}              # strip up to first '('
+  backing=${backing%)}            # strip trailing ')'
+  backing=${backing% (deleted)}   # strip kernel '(deleted)' marker
   case "$backing" in
-    "$SANDBOX_DIR"/*.cow)
+    "$SANDBOX_DIR"/*.cow|"$IMAGES_DIR"/*)
       log "losetup -d $dev ($backing)"
       sudo losetup -d "$dev" || true
       ;;

@@ -9,21 +9,18 @@ import (
 
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
-	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 type sandboxHandler struct {
-	svc    *service.SandboxService
-	audit  *audit.AuditLogger
-	limits cpextension.LimitsProvider
-	usage  cpextension.UsageProvider
+	svc   *service.SandboxService
+	audit *audit.AuditLogger
 }
 
-func newSandboxHandler(svc *service.SandboxService, al *audit.AuditLogger, limits cpextension.LimitsProvider, usage cpextension.UsageProvider) *sandboxHandler {
-	return &sandboxHandler{svc: svc, audit: al, limits: limits, usage: usage}
+func newSandboxHandler(svc *service.SandboxService, al *audit.AuditLogger) *sandboxHandler {
+	return &sandboxHandler{svc: svc, audit: al}
 }
 
 type createSandboxRequest struct {
@@ -94,11 +91,6 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 	if !ac.TeamID.Valid {
 		writeError(w, http.StatusForbidden, "no_team", "no active team context; re-authenticate")
-		return
-	}
-
-	if res := enforceLimits(r.Context(), h.limits, h.usage, ac.TeamID, req.VCPUs, req.MemoryMB); res.limited {
-		writeError(w, http.StatusPaymentRequired, res.code, res.message)
 		return
 	}
 
