@@ -95,6 +95,7 @@ func New(
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
 	usageSvc := &service.UsageService{DB: queries}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
+	buildBroker := service.NewBuildBroker(rdb)
 
 	sandbox := newSandboxHandler(sandboxSvc, al)
 	exec := newExecHandler(queries, pool)
@@ -115,6 +116,7 @@ func New(
 	usageH := newUsageHandler(usageSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
 	buildH := newBuildHandler(buildSvc, queries, pool, al)
+	buildStreamH := newBuildStreamHandler(queries, buildBroker)
 	channelH := newChannelHandler(channelSvc, al)
 	ptyH := newPtyHandler(queries, pool)
 	processH := newProcessHandler(queries, pool)
@@ -339,6 +341,15 @@ func New(
 			r.Post("/builds/{id}/cancel", buildH.Cancel)
 			r.Post("/capsules", adminCapsules.Create)
 			r.Get("/capsules", adminCapsules.List)
+		})
+
+		// Admin build console WebSocket — cookie + admin DB check before
+		// upgrade, no CSRF (WS upgrade). Builds are platform-scoped, not
+		// sandbox-scoped, so this sits outside the /capsules/{id} router.
+		r.Group(func(r chi.Router) {
+			r.Use(requireSession(queries, sessionSvc))
+			r.Use(requireAdmin(queries))
+			r.Get("/builds/{id}/stream", buildStreamH.Stream)
 		})
 
 		r.Route("/capsules/{id}", func(r chi.Router) {

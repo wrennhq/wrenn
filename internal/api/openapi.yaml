@@ -2899,6 +2899,26 @@ paths:
         "204":
           description: Cancelled
 
+  /v1/admin/builds/{id}/stream:
+    get:
+      summary: Stream a build's live console (admin, WebSocket)
+      description: >
+        WebSocket endpoint. On connect, replays the completed-step history,
+        then live-tails JSON events (step-start, output, step-end,
+        build-status, ping) until the build finishes.
+      operationId: adminStreamBuild
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "101":
+          description: WebSocket upgrade — streams build console events
+
   /v1/admin/capsules:
     post:
       summary: Create a capsule on behalf of any team (admin)

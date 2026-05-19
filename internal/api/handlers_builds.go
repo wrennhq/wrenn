@@ -42,6 +42,7 @@ type createBuildRequest struct {
 	VCPUs        int32    `json:"vcpus"`
 	MemoryMB     int32    `json:"memory_mb"`
 	SkipPrePost  bool     `json:"skip_pre_post"`
+	RunAsRoot    bool     `json:"run_as_root"`
 }
 
 type buildResponse struct {
@@ -181,6 +182,7 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 		VCPUs:        req.VCPUs,
 		MemoryMB:     req.MemoryMB,
 		SkipPrePost:  req.SkipPrePost,
+		RunAsRoot:    req.RunAsRoot,
 		Archive:      archive,
 		ArchiveName:  archiveName,
 	})
