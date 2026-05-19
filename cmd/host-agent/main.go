@@ -161,6 +161,14 @@ func main() {
 	cb := hostagent.NewCallbackSender(cpURL, credsFile, creds.HostID)
 	mgr.SetEventSender(hostagent.NewEventSender(cb))
 
+	// Restore paused sandboxes from disk so ListSandboxes reports them as
+	// 'paused' immediately. Without this, the CP's HostMonitor would mark
+	// every paused-on-disk sandbox 'stopped' via the missing→stopped
+	// reconcile path on the first ListSandboxes after agent restart.
+	// Must run before HTTP server starts serving (an early Create would
+	// race the slot reservation).
+	mgr.RestorePausedSandboxes()
+
 	mgr.StartTTLReaper(ctx)
 
 	// httpServer is declared here so the shutdown func can reference it.
@@ -211,6 +219,13 @@ func main() {
 			// process alive indefinitely — a second signal force-exits anyway.
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer shutdownCancel()
+			// Order matters: mgr.Shutdown FIRST so it runs to completion
+			// before httpServer.Shutdown unblocks main's Serve and lets the
+			// process exit. mgr.Shutdown internally flips a draining flag
+			// that rejects new Create/Resume RPCs with Unavailable so any
+			// in-flight HTTP handlers can't add sandboxes after PauseAll
+			// snapshotted state. User-initiated Pauses already running are
+			// awaited by PauseAll/Destroy's lifecycleMu serialization.
 			mgr.Shutdown(shutdownCtx)
 			sandbox.ShrinkMinimalImage(rootDir)
 			if err := httpServer.Shutdown(shutdownCtx); err != nil {

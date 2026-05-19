@@ -110,6 +110,12 @@ type EventSender interface {
 	Send(ctx context.Context, event LifecycleEvent) error
 }
 
+// ErrDraining is returned by Create / Resume when the manager has begun
+// shutdown. The agent process is about to pause every running sandbox and
+// exit; admitting new lifecycle work would race the destroy loop and leave
+// orphaned VMs after the process is gone.
+var ErrDraining = errors.New("agent is draining for shutdown")
+
 // Manager orchestrates sandbox lifecycle: VM, network, filesystem, envd.
 type Manager struct {
 	cfg    Config
@@ -119,6 +125,10 @@ type Manager struct {
 	mu     sync.RWMutex
 	boxes  map[string]*sandboxState
 	stopCh chan struct{}
+	// draining is set at the start of Shutdown. Create and Resume check it
+	// (atomically, no lock needed) and refuse new work so the destroy loop
+	// can run to completion without racing fresh RPCs.
+	draining atomic.Bool
 
 	// creates tracks in-flight Create calls by sandbox ID. An entry exists
 	// only while Create is acquiring resources / booting the VM, before the
@@ -232,6 +242,9 @@ func (m *Manager) Create(
 	defaultUser string,
 	defaultEnv map[string]string,
 ) (*models.Sandbox, error) {
+	if m.draining.Load() {
+		return nil, ErrDraining
+	}
 	if sandboxID == "" {
 		sandboxID = id.FormatSandboxID(id.NewSandboxID())
 	}
@@ -457,7 +470,14 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 		m.mu.Lock()
 	}
 	sb, ok := m.boxes[sandboxID]
+	// statusAtEntry distinguishes "user is destroying an already-paused
+	// sandbox" (legitimate cleanup → fall through) from "user is destroying
+	// a running sandbox that raced to Paused before we got lifecycleMu"
+	// (preserve snapshot → re-insert and bail). Captured under m.mu so it
+	// reflects the same generation as the boxes-map delete.
+	var statusAtEntry models.SandboxStatus
 	if ok {
+		statusAtEntry = sb.Status
 		delete(m.boxes, sandboxID)
 	}
 	m.mu.Unlock()
@@ -466,6 +486,25 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 		// Wait for any in-progress Pause to finish before tearing down resources.
 		sb.lifecycleMu.Lock()
 		defer sb.lifecycleMu.Unlock()
+
+		// Racing-Pause guard. Only fires when the sandbox was NOT paused at
+		// entry but became paused while we waited for lifecycleMu — i.e. a
+		// concurrent Pause completed under us. In that case the snapshot was
+		// just written to disk and destroying now would wipe a freshly-paused
+		// sandbox. Re-insert into m.boxes (releaseRuntime already cleared
+		// runtime refs; slot reservation retained for Resume) and return nil
+		// so the agent's view stays consistent with the on-disk state.
+		//
+		// A legitimate Destroy of an already-paused sandbox (statusAtEntry ==
+		// Paused) falls through to cleanup, which releases the slot and
+		// removes the snapshot dir — the user explicitly asked for deletion.
+		if statusAtEntry != models.StatusPaused && sb.Status == models.StatusPaused {
+			m.mu.Lock()
+			m.boxes[sandboxID] = sb
+			m.mu.Unlock()
+			slog.Info("destroy: racing pause completed, preserving snapshot", "id", sandboxID)
+			return nil
+		}
 		m.cleanup(ctx, sb)
 	}
 
@@ -822,6 +861,10 @@ func (m *Manager) reapExpired(_ context.Context) {
 // Starting/Resuming/Error) are destroyed to release VM / dm / loop / netns.
 // Finally the shared loop registry is fully released.
 func (m *Manager) Shutdown(ctx context.Context) {
+	// Flip draining BEFORE close(stopCh) so any Create/Resume already inside
+	// its handler-goroutine sees the flag on its next check. Subsequent RPC
+	// handlers that load the flag get ErrDraining and return immediately.
+	m.draining.Store(true)
 	close(m.stopCh)
 
 	// Cancel in-flight Create calls and wait for them to settle. A slow create
@@ -866,6 +909,20 @@ func (m *Manager) Shutdown(ctx context.Context) {
 		slog.Info("shutdown: destroying sandbox", "id", sbID)
 		if err := m.Destroy(ctx, sbID); err != nil {
 			slog.Warn("shutdown destroy failed", "id", sbID, "error", err)
+			continue
+		}
+		// Notify CP so the DB row flips off running/pausing/error to stopped.
+		// Async: a sync Send with CP unreachable can burn ~31s per sandbox
+		// (3 × 10s HTTP timeout + backoff) and blow the 5min shutdown budget.
+		// Best-effort — if the agent process exits before the goroutine's
+		// HTTP request lands, HostMonitor's missing-confirmed-dead reconcile
+		// catches it after the next agent restart (it sees the sandbox in DB
+		// as 'running'/'missing' but not present in ListSandboxes → stopped).
+		if m.eventSender != nil {
+			m.eventSender.SendAsync(LifecycleEvent{
+				Event:     "sandbox.stopped",
+				SandboxID: sbID,
+			})
 		}
 	}
 

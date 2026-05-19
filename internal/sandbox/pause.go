@@ -423,6 +423,9 @@ func (m *Manager) releaseRuntime(sb *sandboxState, cow cowDisposition) {
 // The remaining args (defaultUser, env, etc.) are forwarded to envd's /init
 // so the resumed sandbox sees the same execution environment as before.
 func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, defaultUser, _ string, envVars map[string]string) (*models.Sandbox, error) {
+	if m.draining.Load() {
+		return nil, ErrDraining
+	}
 	sb, err := m.get(sandboxID)
 	if err != nil {
 		return nil, err
@@ -546,6 +549,12 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 	sb.client.Store(client)
 	sb.dmDevice = dmDev
 	sb.sandboxDirOverride = meta.SandboxDir
+	// baseImagePath pairs the loop refcount we just Acquire'd with the
+	// matching Release inside cleanup() / releaseRuntime(). For a sandbox
+	// rehydrated from RestorePausedSandboxes this is the first time
+	// baseImagePath is populated — the restored entry intentionally leaves
+	// it empty so a Destroy-before-Resume cannot underflow the registry.
+	sb.baseImagePath = meta.BaseTemplate
 	sb.connTracker.Reset()
 	sb.HostIP = slot.HostIP
 	sb.RootfsPath = dmDev.DevicePath
