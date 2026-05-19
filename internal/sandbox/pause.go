@@ -45,6 +45,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/models"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
+	"git.omukk.dev/wrenn/wrenn/internal/vm"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
@@ -62,20 +63,38 @@ const (
 // minimum information needed to restore the sandbox or build a new sandbox
 // from a template, independent of the in-memory state in m.boxes.
 type snapshotMeta struct {
-	SandboxID    string `json:"sandbox_id"`
+	// TemplateName is the human-readable template name. Set for snapshot
+	// templates (CreateSnapshot); empty for pause snapshots.
+	TemplateName string `json:"template_name,omitempty"`
 	TeamID       string `json:"team_id"`
 	TemplateID   string `json:"template_id"`
 	VCPUs        int    `json:"vcpus"`
 	MemoryMB     int    `json:"memory_mb"`
 	TimeoutSec   int    `json:"timeout_sec"`
-	SlotIndex    int    `json:"slot_index"`
+	// SlotIndex is the retained network slot. Only meaningful for pause
+	// snapshots — resume re-acquires the same slot so the host-IP is stable.
+	// Omitted for snapshot templates, which allocate a fresh slot per launch.
+	SlotIndex    int    `json:"slot_index,omitempty"`
 	BaseTemplate string `json:"base_template"`
 	CowPath      string `json:"cow_path,omitempty"`
-	// SandboxDir, when set, pins the CH SandboxDir on restore. Required for
-	// sandboxes launched from snapshot templates: their CH config.json holds
-	// the original source sandbox's tmpfs path, which Resume must reuse.
-	SandboxDir string    `json:"sandbox_dir,omitempty"`
+	// SandboxDir pins the CH SandboxDir on restore — the tmpfs path baked
+	// into CH's saved config.json. Always set: a restored sandbox gets a
+	// fresh ID, but config.json keeps the tmpfs path of the sandbox the
+	// snapshot was taken from, so the launcher must reconstruct it exactly.
+	// For a snapshot-of-a-snapshot this is the root ancestor's path, carried
+	// forward verbatim through the chain.
+	SandboxDir string    `json:"sandbox_dir"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+// effectiveSandboxDir returns the tmpfs SandboxDir the running VM uses — the
+// path baked into CH's config.json. A fresh-boot sandbox derives it from its
+// own ID; a sandbox launched from a snapshot template inherits the override.
+func effectiveSandboxDir(sb *sandboxState) string {
+	if sb.sandboxDirOverride != "" {
+		return sb.sandboxDirOverride
+	}
+	return vm.SandboxTmpDir(sb.ID)
 }
 
 func writeSnapshotMeta(dir string, m *snapshotMeta) error {
@@ -188,7 +207,6 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	punchZeroPagesInDir(stageDir)
 
 	meta := &snapshotMeta{
-		SandboxID:    sb.ID,
 		TeamID:       id.UUIDString(pgtype.UUID{Bytes: sb.TemplateTeamID, Valid: true}),
 		TemplateID:   id.UUIDString(pgtype.UUID{Bytes: sb.TemplateID, Valid: true}),
 		VCPUs:        sb.VCPUs,
@@ -197,7 +215,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		SlotIndex:    sb.SlotIndex,
 		BaseTemplate: sb.baseImagePath,
 		CowPath:      sb.dmDevice.CowPath,
-		SandboxDir:   sb.sandboxDirOverride,
+		SandboxDir:   effectiveSandboxDir(sb),
 		CreatedAt:    time.Now(),
 	}
 	if err := writeSnapshotMeta(stageDir, meta); err != nil {
@@ -638,7 +656,7 @@ func (m *Manager) waitForMemoryLoader(ctx context.Context, sb *sandboxState) err
 // memory snapshot, then the sandbox is resumed.
 //
 // Returns the total size (in bytes) of the artefacts written.
-func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID) (int64, error) {
+func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID, name string) (int64, error) {
 	sb, err := m.get(sandboxID)
 	if err != nil {
 		return 0, err
@@ -703,15 +721,18 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 		return 0, fmt.Errorf("flatten rootfs: %w", err)
 	}
 
+	// SlotIndex is intentionally omitted: a snapshot template allocates a
+	// fresh network slot on every launch, so the source sandbox's slot is
+	// meaningless. SandboxDir, however, must be recorded — see snapshotMeta.
 	meta := &snapshotMeta{
-		SandboxID:    sb.ID,
+		TemplateName: name,
 		TeamID:       id.UUIDString(teamID),
 		TemplateID:   id.UUIDString(templateID),
 		VCPUs:        sb.VCPUs,
 		MemoryMB:     sb.MemoryMB,
 		TimeoutSec:   sb.TimeoutSec,
-		SlotIndex:    sb.SlotIndex,
 		BaseTemplate: sb.baseImagePath,
+		SandboxDir:   effectiveSandboxDir(sb),
 		CreatedAt:    time.Now(),
 	}
 	if err := writeSnapshotMeta(stageDir, meta); err != nil {
@@ -779,8 +800,24 @@ func (m *Manager) DeleteSnapshot(teamID, templateID pgtype.UUID) error {
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove snapshot dir: %w", err)
 	}
+	// Prune the parent team directory if this was the team's last template,
+	// so deleting a template leaves no residual directory behind.
+	pruneEmptyDir(filepath.Dir(dir))
 	slog.Info("template snapshot deleted", "team_id", teamID, "template_id", templateID)
 	return nil
+}
+
+// pruneEmptyDir removes dir only when it is empty. Best-effort: a non-empty
+// dir or any filesystem error is silently ignored. Used to clean up a team's
+// template parent directory once its last template has been removed.
+func pruneEmptyDir(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) > 0 {
+		return
+	}
+	if err := os.Remove(dir); err != nil {
+		slog.Warn("prune empty template dir", "path", dir, "error", err)
+	}
 }
 
 // FlattenRootfs writes the current dm-snapshot state to a new template

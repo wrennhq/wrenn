@@ -135,12 +135,12 @@ func (s *Server) CreateSnapshot(
 	if err != nil {
 		return nil, err
 	}
-	size, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, teamID, templateID)
+	size, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, teamID, templateID, req.Msg.Name)
 	if err != nil {
 		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.CreateSnapshotResponse{
-		Name:      req.Msg.TemplateId,
+		Name:      req.Msg.Name,
 		SizeBytes: size,
 	}), nil
 }

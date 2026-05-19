@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
@@ -20,7 +19,6 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
 	"git.omukk.dev/wrenn/wrenn/pkg/validate"
-	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
 type buildHandler struct {
@@ -287,24 +285,12 @@ func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast delete to all online hosts.
-	hosts, _ := h.db.ListActiveHosts(ctx)
-	for _, host := range hosts {
-		if host.Status != "online" {
-			continue
-		}
-		agent, err := h.pool.GetForHost(host)
-		if err != nil {
-			continue
-		}
-		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{
-			TeamId:     formatUUIDForRPC(tmpl.TeamID),
-			TemplateId: formatUUIDForRPC(tmpl.ID),
-		})); err != nil {
-			if connect.CodeOf(err) != connect.CodeNotFound {
-				slog.Warn("admin: failed to delete template on host", "host_id", id.FormatHostID(host.ID), "name", name, "error", err)
-			}
-		}
+	// Remove the files from every host before dropping the DB record, so a
+	// failure leaves the template intact and retryable rather than orphaned.
+	if err := deleteSnapshotEverywhere(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
+		writeError(w, http.StatusConflict, "delete_failed",
+			"could not remove template files from all hosts: "+err.Error())
+		return
 	}
 
 	if err := h.db.DeleteTemplate(ctx, tmpl.ID); err != nil {
