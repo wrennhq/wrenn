@@ -78,8 +78,6 @@ It can optionally implement any of these hook interfaces (the OSS server type-as
 - `MiddlewareProvider` — `Middlewares(sctx) []func(http.Handler) http.Handler`, applied before OSS routes so cloud middleware can wrap them (e.g. billing gates).
 - `AuthHook` — `OnSignup` (synchronous, error aborts the request with 500 `signup_hook_failed`), `OnLogin`, `OnAccountSoftDelete`, `OnAccountHardDelete` (the last three log + ignore errors). OnSignup fires after team provisioning in both email-activate and OAuth-new-signup paths.
 - `SandboxEventHook` — `OnSandboxEvent(ctx, SandboxEvent)`, invoked from the unified Redis stream consumer for capsule create/pause/resume/destroy success events. Hook errors leave the message un-acked so it will be redelivered; hooks must be idempotent.
-- `LimitsProvider` — `EffectiveLimits(ctx, teamID) (Limits, error)`. When set, `POST /v1/capsules` consults it before scheduling and returns 402 (`concurrent_sandbox_limit` / `vcpu_limit` / `memory_limit`) on overage. With no provider the OSS deployment is unmetered.
-- `UsageProvider` — `CurrentUsage(ctx, teamID) (Usage, error)`. If absent but a LimitsProvider is set, an OSS default backed by `GetLiveMetrics` (sandbox count + reserved vCPU/RAM) is used.
 
 `ServerContext` carries the initialized OSS dependencies: `Queries`, `PgPool`, `Redis`, `HostPool`, `Scheduler`, `CA`, `Audit`, `Mailer`, `OAuthRegistry`, `Channels`, `ChannelPub`, `JWTSecret`, `Sessions`, `Config`. To expose a new OSS service to extensions, add it to `ServerContext` in `pkg/cpextension/extension.go` and populate it in `pkg/cpserver/run.go`.
 
