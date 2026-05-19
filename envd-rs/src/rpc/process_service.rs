@@ -133,9 +133,19 @@ impl ProcessServiceImpl {
 
         let processes = Arc::clone(&self.processes);
         let pid = spawned.handle.pid;
+        // Subscribe before checking cached_end so the prune cannot be lost to a
+        // race: a short-lived process can exit and broadcast its end event
+        // before this task runs. A broadcast receiver only sees messages sent
+        // after subscribe(), so a late subscribe would miss the event forever
+        // (recv() never returns Closed either — the handle keeps end_tx alive
+        // until it leaves the map, which only this task does). The waiter sets
+        // ended before sending end_tx, so cached_end() is a reliable fallback.
         let mut cleanup_end_rx = spawned.handle.subscribe_end();
+        let already_ended = spawned.handle.cached_end().is_some();
         tokio::spawn(async move {
-            let _ = cleanup_end_rx.recv().await;
+            if !already_ended {
+                let _ = cleanup_end_rx.recv().await;
+            }
             processes.remove(&pid);
         });
 
