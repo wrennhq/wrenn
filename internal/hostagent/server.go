@@ -236,6 +236,17 @@ func (s *Server) Exec(
 	}), nil
 }
 
+// envdErr propagates an error from the envd client, preserving its Connect
+// error code (e.g. AlreadyExists, NotFound) so the control plane maps it to
+// the correct HTTP status. Non-Connect errors fall back to CodeInternal.
+func envdErr(action string, err error) error {
+	code := connect.CodeOf(err)
+	if code == connect.CodeUnknown {
+		code = connect.CodeInternal
+	}
+	return connect.NewError(code, fmt.Errorf("%s: %w", action, err))
+}
+
 func (s *Server) WriteFile(
 	ctx context.Context,
 	req *connect.Request[pb.WriteFileRequest],
@@ -248,7 +259,7 @@ func (s *Server) WriteFile(
 	}
 
 	if err := client.WriteFile(ctx, msg.Path, msg.Content); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("write file: %w", err))
+		return nil, envdErr("write file", err)
 	}
 
 	return connect.NewResponse(&pb.WriteFileResponse{}), nil
@@ -267,7 +278,7 @@ func (s *Server) ReadFile(
 
 	content, err := client.ReadFile(ctx, msg.Path)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("read file: %w", err))
+		return nil, envdErr("read file", err)
 	}
 
 	return connect.NewResponse(&pb.ReadFileResponse{Content: content}), nil
@@ -286,7 +297,7 @@ func (s *Server) ListDir(
 
 	resp, err := client.ListDir(ctx, msg.Path, msg.Depth)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list dir: %w", err))
+		return nil, envdErr("list dir", err)
 	}
 
 	entries := make([]*pb.FileEntry, 0, len(resp.Entries))
@@ -310,7 +321,7 @@ func (s *Server) MakeDir(
 
 	resp, err := client.MakeDir(ctx, msg.Path)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("make dir: %w", err))
+		return nil, envdErr("make dir", err)
 	}
 
 	return connect.NewResponse(&pb.MakeDirResponse{
@@ -330,7 +341,7 @@ func (s *Server) RemovePath(
 	}
 
 	if err := client.Remove(ctx, msg.Path); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("remove: %w", err))
+		return nil, envdErr("remove", err)
 	}
 
 	return connect.NewResponse(&pb.RemovePathResponse{}), nil

@@ -50,7 +50,9 @@ func agentErrToHTTP(err error) (int, string, string) {
 		return http.StatusNotFound, "not_found", err.Error()
 	case connect.CodeInvalidArgument:
 		return http.StatusBadRequest, "invalid_request", err.Error()
-	case connect.CodeFailedPrecondition, connect.CodeAlreadyExists:
+	case connect.CodeAlreadyExists:
+		return http.StatusConflict, "already_exists", err.Error()
+	case connect.CodeFailedPrecondition:
 		return http.StatusConflict, "conflict", err.Error()
 	case connect.CodePermissionDenied:
 		return http.StatusForbidden, "forbidden", err.Error()

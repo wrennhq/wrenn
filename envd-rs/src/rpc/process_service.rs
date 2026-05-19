@@ -14,14 +14,14 @@ use crate::state::AppState;
 
 pub struct ProcessServiceImpl {
     state: Arc<AppState>,
-    processes: DashMap<u32, Arc<ProcessHandle>>,
+    processes: Arc<DashMap<u32, Arc<ProcessHandle>>>,
 }
 
 impl ProcessServiceImpl {
     pub fn new(state: Arc<AppState>) -> Self {
         Self {
             state,
-            processes: DashMap::new(),
+            processes: Arc::new(DashMap::new()),
         }
     }
 
@@ -131,7 +131,7 @@ impl ProcessServiceImpl {
 
         self.processes.insert(spawned.handle.pid, Arc::clone(&spawned.handle));
 
-        let processes = self.processes.clone();
+        let processes = Arc::clone(&self.processes);
         let pid = spawned.handle.pid;
         let mut cleanup_end_rx = spawned.handle.subscribe_end();
         tokio::spawn(async move {
