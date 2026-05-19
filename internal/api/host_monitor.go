@@ -296,6 +296,54 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		}
 	}
 
+	// --- Reconcile DB-stopped + agent-paused zombies ---
+	// A sandbox the agent reports as 'paused' but DB has as 'stopped' is an
+	// orphan from a previous bug where a successful pause's auto_paused
+	// callback was lost (e.g. CP unreachable during agent shutdown). With the
+	// agent-side fix (RestorePausedSandboxes), the snapshot survives across
+	// agent restarts and surfaces here. Authoritative direction: DB wins
+	// (user already saw 'stopped' and may have stopped tracking it).
+	// Issue Destroy so the on-disk snapshot dir is removed and the agent's
+	// slot reservation released.
+	//
+	// Gate: only run the DB query if the agent reports at least one paused
+	// sandbox. Otherwise we'd fetch every historically-stopped sandbox on
+	// this host every monitor tick — unbounded growth over a host's lifetime.
+	hasPaused := false
+	for _, status := range aliveStatus {
+		if status == "paused" {
+			hasPaused = true
+			break
+		}
+	}
+	if hasPaused {
+		stoppedSandboxes, err := m.db.ListSandboxesByHostAndStatus(ctx, db.ListSandboxesByHostAndStatusParams{
+			HostID:  host.ID,
+			Column2: []string{"stopped"},
+		})
+		if err != nil {
+			slog.Warn("host monitor: failed to list stopped sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
+		} else {
+			for _, sb := range stoppedSandboxes {
+				sbIDStr := id.FormatSandboxID(sb.ID)
+				status, ok := aliveStatus[sbIDStr]
+				if !ok || status != "paused" {
+					continue
+				}
+				slog.Info("host monitor: destroying DB-stopped agent-paused zombie",
+					"host_id", id.FormatHostID(host.ID), "sandbox_id", sbIDStr)
+				if _, err := agent.DestroySandbox(ctx, connect.NewRequest(&pb.DestroySandboxRequest{
+					SandboxId: sbIDStr,
+				})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
+					slog.Warn("host monitor: zombie destroy failed",
+						"sandbox_id", sbIDStr, "error", err)
+					continue
+				}
+				m.audit.LogSandboxDestroySystem(ctx, sb.TeamID, sb.ID, "paused_zombie_cleanup", nil)
+			}
+		}
+	}
+
 	// --- Reconcile transient statuses (starting, resuming, pausing, stopping) ---
 	// These represent in-flight operations. If the sandbox is no longer alive on
 	// the host, infer the final state based on the transient status.

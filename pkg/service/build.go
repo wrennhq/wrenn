@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -26,13 +27,16 @@ const (
 	buildCommandTimeout = 30 * time.Second
 )
 
-// preBuildCmds run before the user recipe to prepare the build environment.
-// apt update runs as root first, then USER switches to wrenn-user for the recipe.
+// preBuildCmds run before the recipe to prepare the build environment, as
+// root. The build user (USER/WORKDIR) is not injected here — Create prepends
+// it to the persisted recipe instead, so "run as root" can omit it with no
+// build-level flag to track.
 var preBuildCmds = []string{
 	"RUN apt update",
-	"USER wrenn-user",
-	"WORKDIR /home/wrenn-user",
 }
+
+// buildUser is the non-root user a recipe runs as unless run_as_root is set.
+const buildUser = "wrenn-user"
 
 // postBuildCmds run after the user recipe to clean up caches and reduce image size.
 var postBuildCmds = []string{
@@ -47,6 +51,8 @@ type buildAgentClient interface {
 	CreateSandbox(ctx context.Context, req *connect.Request[pb.CreateSandboxRequest]) (*connect.Response[pb.CreateSandboxResponse], error)
 	DestroySandbox(ctx context.Context, req *connect.Request[pb.DestroySandboxRequest]) (*connect.Response[pb.DestroySandboxResponse], error)
 	Exec(ctx context.Context, req *connect.Request[pb.ExecRequest]) (*connect.Response[pb.ExecResponse], error)
+	PtyAttach(ctx context.Context, req *connect.Request[pb.PtyAttachRequest]) (*connect.ServerStreamForClient[pb.PtyAttachResponse], error)
+	PtyKill(ctx context.Context, req *connect.Request[pb.PtyKillRequest]) (*connect.Response[pb.PtyKillResponse], error)
 	WriteFile(ctx context.Context, req *connect.Request[pb.WriteFileRequest]) (*connect.Response[pb.WriteFileResponse], error)
 	CreateSnapshot(ctx context.Context, req *connect.Request[pb.CreateSnapshotRequest]) (*connect.Response[pb.CreateSnapshotResponse], error)
 	FlattenRootfs(ctx context.Context, req *connect.Request[pb.FlattenRootfsRequest]) (*connect.Response[pb.FlattenRootfsResponse], error)
@@ -73,6 +79,7 @@ type BuildCreateParams struct {
 	VCPUs        int32
 	MemoryMB     int32
 	SkipPrePost  bool
+	RunAsRoot    bool   // Run the recipe as root instead of the non-root build user.
 	Archive      []byte // Optional tar/tar.gz/zip archive for COPY commands.
 	ArchiveName  string // Original filename (used to detect format).
 }
@@ -108,7 +115,19 @@ func (s *BuildService) Create(ctx context.Context, p BuildCreateParams) (db.Temp
 		p.MemoryMB = 512
 	}
 
-	recipeJSON, err := json.Marshal(p.Recipe)
+	// Assemble the recipe. Unless run_as_root is set, the non-root build user
+	// is prepended as USER + WORKDIR steps. Persisting it in the recipe means
+	// "run as root" needs no build-level flag — it simply omits these steps,
+	// so wrenn-user is never created in a root template.
+	recipeLines := p.Recipe
+	if !p.RunAsRoot {
+		recipeLines = append([]string{
+			"USER " + buildUser,
+			"WORKDIR /home/" + buildUser,
+		}, recipeLines...)
+	}
+
+	recipeJSON, err := json.Marshal(recipeLines)
 	if err != nil {
 		return db.TemplateBuild{}, fmt.Errorf("marshal recipe: %w", err)
 	}
@@ -130,7 +149,7 @@ func (s *BuildService) Create(ctx context.Context, p BuildCreateParams) (db.Temp
 		Healthcheck:  p.Healthcheck,
 		Vcpus:        p.VCPUs,
 		MemoryMb:     p.MemoryMB,
-		TotalSteps:   int32(len(p.Recipe) + defaultSteps),
+		TotalSteps:   int32(len(recipeLines) + defaultSteps),
 		TemplateID:   newTemplateID,
 		TeamID:       id.PlatformTeamID,
 		SkipPrePost:  p.SkipPrePost,
@@ -183,6 +202,7 @@ func (s *BuildService) Cancel(ctx context.Context, buildID pgtype.UUID) error {
 	}); err != nil {
 		return fmt.Errorf("update build status: %w", err)
 	}
+	s.publishStatus(ctx, buildID, "cancelled", 0, 0, "")
 
 	// If the build is currently running, signal its context.
 	buildIDStr := id.FormatBuildID(buildID)
@@ -274,6 +294,7 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		log.Error("failed to update build status", "error", err)
 		return
 	}
+	s.publishStatus(buildCtx, buildID, "running", 0, build.TotalSteps, "")
 
 	// Parse user recipe.
 	var userRecipe []string
@@ -318,16 +339,35 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 	}
 	bctx := &recipe.ExecContext{EnvVars: envVars, User: "root"}
 
-	// Per-step progress callback for live UI updates.
-	progressFn := func(currentStep int, allEntries []recipe.BuildLogEntry) {
-		s.updateLogs(buildCtx, buildID, currentStep, allEntries)
-	}
+	streamFn := s.ptyStreamExec(agent)
 
 	runPhase := func(phase string, steps []recipe.Step, defaultTimeout time.Duration) bool {
-		newEntries, nextStep, ok := recipe.Execute(buildCtx, phase, steps, sandboxIDStr, step, defaultTimeout, bctx, agent.Exec, func(currentStep int, phaseEntries []recipe.BuildLogEntry) {
-			// Progress callback: combine prior logs with current phase entries.
-			progressFn(currentStep, append(logs, phaseEntries...))
-		})
+		// step-start: published before each step begins.
+		onStepStart := func(stepNum int, ph string, st recipe.Step) {
+			publishBuildEvent(buildCtx, s.Redis, buildIDStr, BuildStreamEvent{
+				Type: "step-start", Step: stepNum, Phase: ph, Cmd: st.Raw,
+			})
+		}
+		// output: raw PTY bytes from a streaming RUN step, base64-encoded.
+		onChunk := func(stepNum int, data []byte) {
+			publishBuildEvent(buildCtx, s.Redis, buildIDStr, BuildStreamEvent{
+				Type: "output", Step: stepNum, Data: base64.StdEncoding.EncodeToString(data),
+			})
+		}
+		// onProgress: persist the DB log snapshot and publish step-end.
+		onProgress := func(currentStep int, phaseEntries []recipe.BuildLogEntry) {
+			s.updateLogs(buildCtx, buildID, currentStep, append(logs, phaseEntries...))
+			if len(phaseEntries) > 0 {
+				last := phaseEntries[len(phaseEntries)-1]
+				publishBuildEvent(buildCtx, s.Redis, buildIDStr, BuildStreamEvent{
+					Type: "step-end", Step: last.Step, Phase: last.Phase, Cmd: last.Cmd,
+					Exit: last.Exit, Ok: last.Ok, ElapsedMs: last.Elapsed,
+				})
+			}
+		}
+
+		newEntries, nextStep, ok := recipe.Execute(buildCtx, phase, steps, sandboxIDStr, step,
+			defaultTimeout, bctx, agent.Exec, streamFn, onStepStart, onChunk, onProgress)
 		logs = append(logs, newEntries...)
 		step = nextStep
 		s.updateLogs(buildCtx, buildID, step, logs)
@@ -350,15 +390,16 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		return ok
 	}
 
-	// Phase 1: Pre-build (as root) — creates wrenn-user, updates apt.
+	// Phase 1: Pre-build (as root) — apt update.
 	if !build.SkipPrePost {
 		if !runPhase("pre-build", preBuildSteps, 0) {
 			return
 		}
 	}
 
-	// Phase 2: User recipe — starts as wrenn-user (set by USER in pre-build)
-	// or root if skip_pre_post.
+	// Phase 2: Recipe — the persisted recipe. For non-root builds it begins
+	// with the injected USER/WORKDIR steps that create and switch to the build
+	// user; for run_as_root builds it runs as root throughout.
 	if !runPhase("recipe", userRecipeSteps, buildCommandTimeout) {
 		return
 	}
@@ -559,6 +600,7 @@ func (s *BuildService) finalizeBuild(
 	}); err != nil {
 		log.Error("failed to mark build as success", "error", err)
 	}
+	s.publishStatus(ctx, buildID, "success", build.TotalSteps, build.TotalSteps, "")
 
 	log.Info("template build completed successfully", "name", build.Name)
 }
@@ -657,6 +699,91 @@ func (s *BuildService) failBuild(_ context.Context, buildID pgtype.UUID, errMsg 
 		Error: errMsg,
 	}); err != nil {
 		slog.Error("failed to update build error", "build_id", id.FormatBuildID(buildID), "error", err)
+	}
+	s.publishStatus(ctx, buildID, "failed", 0, 0, errMsg)
+}
+
+// build PTY dimensions — wide enough for tools that adapt output to terminal
+// width (apt/pip progress bars).
+const (
+	buildPtyCols = 120
+	buildPtyRows = 40
+)
+
+// publishStatus emits a build-status event to the build's live stream.
+func (s *BuildService) publishStatus(ctx context.Context, buildID pgtype.UUID, status string, currentStep, totalSteps int32, errMsg string) {
+	publishBuildEvent(ctx, s.Redis, id.FormatBuildID(buildID), BuildStreamEvent{
+		Type:        "build-status",
+		Status:      status,
+		CurrentStep: currentStep,
+		TotalSteps:  totalSteps,
+		Error:       errMsg,
+	})
+}
+
+// ptyStreamExec returns a recipe.StreamExecFunc that runs a shell command in a
+// PTY on the build sandbox via the host agent and streams its output. A PTY
+// makes build tools emit unbuffered, colorized output (apt/pip progress bars).
+func (s *BuildService) ptyStreamExec(agent buildAgentClient) recipe.StreamExecFunc {
+	return func(ctx context.Context, sandboxID, shellCmd string) (<-chan recipe.PtyChunk, error) {
+		tag := "build-" + id.NewPtyTag()
+		stream, err := agent.PtyAttach(ctx, connect.NewRequest(&pb.PtyAttachRequest{
+			SandboxId: sandboxID,
+			Tag:       tag,
+			Cmd:       "/bin/sh",
+			Args:      []string{"-c", shellCmd},
+			Cols:      buildPtyCols,
+			Rows:      buildPtyRows,
+		}))
+		if err != nil {
+			return nil, err
+		}
+
+		ch := make(chan recipe.PtyChunk, 64)
+		go func() {
+			defer close(ch)
+			defer stream.Close()
+
+			gotExit := false
+			for stream.Receive() {
+				switch ev := stream.Msg().Event.(type) {
+				case *pb.PtyAttachResponse_Output:
+					select {
+					case ch <- recipe.PtyChunk{Data: ev.Output.Data}:
+					case <-ctx.Done():
+						return
+					}
+				case *pb.PtyAttachResponse_Exited:
+					gotExit = true
+					select {
+					case ch <- recipe.PtyChunk{Done: true, Exit: ev.Exited.ExitCode}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+			if gotExit {
+				return
+			}
+			// Stream ended with no exit event: timeout, cancellation, or error.
+			// Kill the lingering guest process so it does not keep running.
+			streamErr := stream.Err()
+			if ctx.Err() != nil {
+				killCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				_, _ = agent.PtyKill(killCtx, connect.NewRequest(&pb.PtyKillRequest{
+					SandboxId: sandboxID, Tag: tag,
+				}))
+				cancel()
+				if streamErr == nil {
+					streamErr = ctx.Err()
+				}
+			}
+			if streamErr == nil {
+				streamErr = fmt.Errorf("pty stream ended without an exit event")
+			}
+			ch <- recipe.PtyChunk{Err: streamErr}
+		}()
+		return ch, nil
 	}
 }
 

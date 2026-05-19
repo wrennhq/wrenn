@@ -192,7 +192,8 @@ message ResumeSandboxResponse {
 
 message CreateSnapshotRequest {
   string sandbox_id = 1;
-  // Deprecated: use team_id + template_id instead.
+  // Human-readable template name, recorded into the snapshot's
+  // wrenn-snapshot.json metadata.
   string name = 2;
   // Team UUID that will own the new template.
   string team_id = 3;

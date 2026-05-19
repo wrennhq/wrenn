@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -36,29 +35,37 @@ func newSnapshotHandler(svc *service.TemplateService, sandboxSvc *service.Sandbo
 	return &snapshotHandler{svc: svc, sandboxSvc: sandboxSvc, db: db, pool: pool, audit: al}
 }
 
-// deleteSnapshotBroadcast attempts to delete snapshot files on all online hosts.
-// Snapshots aren't currently host-tracked in the DB, so we broadcast to all hosts
-// and ignore NotFound errors.
-func deleteSnapshotBroadcast(ctx context.Context, queries *db.Queries, pool *lifecycle.HostClientPool, teamID, templateID pgtype.UUID) error {
+// deleteSnapshotEverywhere removes a template's files from every active host.
+// Templates aren't host-tracked in the DB, so it broadcasts to all hosts.
+//
+// It is strict by design: deletion is reported successful only when every
+// active host has either removed the files or reported NotFound (it never
+// held them). If any host is offline or returns an error, it returns an error
+// and the caller MUST NOT delete the DB record — doing so would orphan the
+// files on disk with no record left to retry against.
+func deleteSnapshotEverywhere(ctx context.Context, queries *db.Queries, pool *lifecycle.HostClientPool, teamID, templateID pgtype.UUID) error {
 	hosts, err := queries.ListActiveHosts(ctx)
 	if err != nil {
 		return fmt.Errorf("list hosts: %w", err)
 	}
 	for _, host := range hosts {
 		if host.Status != "online" {
-			continue
+			return fmt.Errorf("host %s is %s — cannot guarantee snapshot file removal",
+				id.FormatHostID(host.ID), host.Status)
 		}
 		agent, err := pool.GetForHost(host)
 		if err != nil {
-			continue
+			return fmt.Errorf("connect to host %s: %w", id.FormatHostID(host.ID), err)
 		}
 		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{
 			TeamId:     formatUUIDForRPC(teamID),
 			TemplateId: formatUUIDForRPC(templateID),
 		})); err != nil {
-			if connect.CodeOf(err) != connect.CodeNotFound {
-				slog.Warn("snapshot: failed to delete on host", "host_id", id.FormatHostID(host.ID), "error", err)
+			// NotFound just means this host never held the template.
+			if connect.CodeOf(err) == connect.CodeNotFound {
+				continue
 			}
+			return fmt.Errorf("delete snapshot on host %s: %w", id.FormatHostID(host.ID), err)
 		}
 	}
 	return nil
@@ -186,9 +193,10 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := deleteSnapshotBroadcast(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
+	if err := deleteSnapshotEverywhere(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
 		h.audit.LogSnapshotDelete(r.Context(), ac, name, err)
-		writeError(w, http.StatusInternalServerError, "agent_error", "failed to delete snapshot files")
+		writeError(w, http.StatusConflict, "delete_failed",
+			"could not remove snapshot files from all hosts: "+err.Error())
 		return
 	}
 

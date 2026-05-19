@@ -95,6 +95,7 @@ func New(
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
 	usageSvc := &service.UsageService{DB: queries}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
+	buildBroker := service.NewBuildBroker(rdb)
 
 	sandbox := newSandboxHandler(sandboxSvc, al)
 	exec := newExecHandler(queries, pool)
@@ -115,6 +116,7 @@ func New(
 	usageH := newUsageHandler(usageSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
 	buildH := newBuildHandler(buildSvc, queries, pool, al)
+	buildStreamH := newBuildStreamHandler(queries, buildBroker)
 	channelH := newChannelHandler(channelSvc, al)
 	ptyH := newPtyHandler(queries, pool)
 	processH := newProcessHandler(queries, pool)
@@ -341,6 +343,15 @@ func New(
 			r.Get("/capsules", adminCapsules.List)
 		})
 
+		// Admin build console WebSocket — cookie + admin DB check before
+		// upgrade, no CSRF (WS upgrade). Builds are platform-scoped, not
+		// sandbox-scoped, so this sits outside the /capsules/{id} router.
+		r.Group(func(r chi.Router) {
+			r.Use(requireSession(queries, sessionSvc))
+			r.Use(requireAdmin(queries))
+			r.Get("/builds/{id}/stream", buildStreamH.Stream)
+		})
+
 		r.Route("/capsules/{id}", func(r chi.Router) {
 			// Auth-required non-WS admin capsule routes.
 			r.Group(func(r chi.Router) {
@@ -454,11 +465,23 @@ func serviceEventToCanonical(e service.SandboxStateEvent) (events.Event, bool) {
 		eventType = events.CapsuleDestroy
 		outcome = events.OutcomeSuccess
 	case "sandbox.pause_failed":
+		// reason must be non-empty or channels.isRedundantSystemFollowup
+		// filters this system-actor event out of webhook delivery.
 		eventType = events.CapsulePause
 		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "pause_failed"}
 	case "sandbox.resume_failed":
 		eventType = events.CapsuleResume
 		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "resume_failed"}
+	case "sandbox.failed":
+		// First-boot failure from the createInBackground goroutine. Without
+		// this case the event falls through to default and is dropped — no
+		// SSE push, no channel delivery, no DB reconciliation. reason must be
+		// non-empty or channels.isRedundantSystemFollowup filters it out.
+		eventType = events.CapsuleCreate
+		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "create_failed"}
 	default:
 		return events.Event{}, false
 	}
