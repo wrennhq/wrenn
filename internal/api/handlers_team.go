@@ -14,19 +14,21 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 type teamHandler struct {
-	svc    *service.TeamService
-	audit  *audit.AuditLogger
-	mailer email.Mailer
+	svc      *service.TeamService
+	audit    *audit.AuditLogger
+	mailer   email.Mailer
+	sessions *session.Service
 }
 
-func newTeamHandler(svc *service.TeamService, al *audit.AuditLogger, mailer email.Mailer) *teamHandler {
-	return &teamHandler{svc: svc, audit: al, mailer: mailer}
+func newTeamHandler(svc *service.TeamService, al *audit.AuditLogger, mailer email.Mailer, sessions *session.Service) *teamHandler {
+	return &teamHandler{svc: svc, audit: al, mailer: mailer, sessions: sessions}
 }
 
 // teamResponse is the JSON shape for a team.
@@ -364,6 +366,11 @@ func (h *teamHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
+	}
+
+	// Drop cached session blobs so the new role propagates immediately.
+	if err := h.sessions.InvalidateCacheForUser(r.Context(), targetUserID); err != nil {
+		_ = err
 	}
 
 	h.audit.LogMemberRoleUpdate(r.Context(), ac, targetUserID, req.Role)

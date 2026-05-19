@@ -3,6 +3,8 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { getCapsule, pauseCapsule, resumeCapsule, type Capsule } from '$lib/api/capsules';
+	import { subscribeSSE } from '$lib/sse.svelte';
+	import type { SSEEvent } from '$lib/api/events';
 	import { toast } from '$lib/toast.svelte';
 	import SnapshotDialog from '$lib/components/SnapshotDialog.svelte';
 	import DestroyDialog from '$lib/components/DestroyDialog.svelte';
@@ -21,6 +23,30 @@
 	let capsule = $state<Capsule | null>(null);
 	let capsuleLoading = $state(true);
 	let capsuleError = $state<string | null>(null);
+	let unsubscribeSSE: (() => void) | null = null;
+
+	function handleSSEEvent(event: SSEEvent) {
+		if (!event.resource || event.resource.id !== capsuleId) return;
+		if (event.event === 'capsule.destroy') {
+			goto('/dashboard/capsules');
+			return;
+		}
+		if (event.sandbox) {
+			capsule = event.sandbox;
+			return;
+		}
+		// Hydration on the server side failed (DB lookup error). Fall back to
+		// a single refetch so we don't sit on a stale "starting" badge until
+		// the next poll fires.
+		void refetchCapsule();
+	}
+
+	async function refetchCapsule() {
+		const result = await getCapsule(capsuleId);
+		if (result.ok) {
+			capsule = result.data;
+		}
+	}
 
 	// Lifecycle action state
 	let actionLoading = $state<string | null>(null);
@@ -373,6 +399,8 @@
 			range = urlRange as MetricRange;
 		}
 
+		unsubscribeSSE = subscribeSSE(handleSSEEvent);
+
 		await loadCapsule();
 
 		if (!metricsAvailable) return;
@@ -394,6 +422,8 @@
 
 	onDestroy(() => {
 		stopPolling();
+		unsubscribeSSE?.();
+		unsubscribeSSE = null;
 		if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
 		chartCpu?.destroy();
 		chartRam?.destroy();
@@ -404,6 +434,8 @@
 			case 'running': return 'var(--color-accent)';
 			case 'paused':  return 'var(--color-amber)';
 			case 'error':   return 'var(--color-red)';
+			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+				return 'var(--color-blue)';
 			default:        return 'var(--color-text-muted)';
 		}
 	}
@@ -413,6 +445,8 @@
 			case 'running': return 'rgba(94,140,88,0.12)';
 			case 'paused':  return 'rgba(212,167,60,0.12)';
 			case 'error':   return 'rgba(207,129,114,0.12)';
+			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+				return 'rgba(90,159,212,0.12)';
 			default:        return 'rgba(255,255,255,0.05)';
 		}
 	}
@@ -422,6 +456,8 @@
 			case 'running': return 'rgba(94,140,88,0.3)';
 			case 'paused':  return 'rgba(212,167,60,0.3)';
 			case 'error':   return 'rgba(207,129,114,0.3)';
+			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+				return 'rgba(90,159,212,0.3)';
 			default:        return 'rgba(255,255,255,0.08)';
 		}
 	}
@@ -537,7 +573,15 @@
 							Pause
 						{/if}
 					</button>
-				{:else if capsule.status === 'paused'}
+					<button
+						onclick={() => { showSnapshot = true; }}
+						disabled={actionLoading !== null}
+						class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-3 py-1.5 text-meta font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					>
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
+						Snapshot
+					</button>
+				{:else if capsule.status === 'paused' || capsule.status === 'hibernated'}
 					<button
 						onclick={handleResume}
 						disabled={actionLoading !== null}
@@ -551,17 +595,19 @@
 							Resume
 						{/if}
 					</button>
-					<button
-						onclick={() => { showSnapshot = true; }}
-						disabled={actionLoading !== null}
-						class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-3 py-1.5 text-meta font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
-					>
-						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
-						Snapshot
-					</button>
+					{#if capsule.status === 'paused'}
+						<button
+							onclick={() => { showSnapshot = true; }}
+							disabled={actionLoading !== null}
+							class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-3 py-1.5 text-meta font-medium text-[var(--color-text-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+						>
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
+							Snapshot
+						</button>
+					{/if}
 				{/if}
 
-				{#if capsule.status === 'running' || capsule.status === 'paused'}
+				{#if capsule.status === 'running' || capsule.status === 'paused' || capsule.status === 'hibernated'}
 					<button
 						onclick={() => { showDestroy = true; }}
 						disabled={actionLoading !== null}
@@ -761,7 +807,7 @@
 	open={showSnapshot}
 	capsuleId={capsuleId}
 	onclose={() => { showSnapshot = false; }}
-	onsnapshot={() => { goto('/dashboard/capsules'); }}
+	onsnapshot={() => { loadCapsule(); }}
 />
 
 <DestroyDialog

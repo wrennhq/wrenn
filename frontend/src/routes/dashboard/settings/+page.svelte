@@ -12,7 +12,11 @@
 		getProviderConnectURL,
 		disconnectProvider,
 		deleteAccount,
-		type MeResponse
+		listSessions,
+		revokeSession,
+		logoutAll,
+		type MeResponse,
+		type SessionRow
 	} from '$lib/api/me';
 
 	let me = $state<MeResponse | null>(null);
@@ -47,6 +51,14 @@
 	let showDisconnectConfirm = $state(false);
 	let disconnectError = $state<string | null>(null);
 
+	// Sessions
+	let sessions = $state<SessionRow[]>([]);
+	let sessionsLoading = $state(true);
+	let sessionsError = $state<string | null>(null);
+	let revokingSession = $state<Record<string, boolean>>({});
+	let confirmingLogoutAll = $state(false);
+	let loggingOutAll = $state(false);
+
 	// Delete account
 	let showDeleteConfirm = $state(false);
 	let deleteConfirmation = $state('');
@@ -75,11 +87,13 @@
 		if (!editName.trim() || editName.trim() === me?.name) return;
 		savingName = true;
 		nameError = null;
-		const result = await updateName(editName.trim());
+		const trimmed = editName.trim();
+		const result = await updateName(trimmed);
 		if (result.ok) {
-			auth.login(result.data);
-			me = { ...me!, name: result.data.name };
-			editName = result.data.name;
+			// Re-probe identity so cached state reflects the new name.
+			await auth.init();
+			me = { ...me!, name: trimmed };
+			editName = trimmed;
 			toast.success('Name updated.');
 			nameSaved = true;
 			if (nameSavedTimer) clearTimeout(nameSavedTimer);
@@ -116,14 +130,14 @@
 			newPassword = '';
 			confirmPassword = '';
 			const wasPasswordSet = !!me?.has_password;
-			if (me) me = { ...me, has_password: true };
-			toast.success(wasPasswordSet ? 'Password updated.' : 'Password added.');
-			passwordSaved = true;
-			if (passwordSavedTimer) clearTimeout(passwordSavedTimer);
-			passwordSavedTimer = setTimeout(() => (passwordSaved = false), 1500);
-		} else {
-			passwordError = result.error;
+			toast.success(wasPasswordSet ? 'Password updated. Sign in again.' : 'Password added. Sign in again.');
+			// Server revokes every session on password change/add; bounce to /login
+			// so the user signs in with the new credential.
+			auth.clearUser();
+			await goto('/login');
+			return;
 		}
+		passwordError = result.error;
 		savingPassword = false;
 	}
 
@@ -152,6 +166,99 @@
 		disconnectingGitHub = false;
 	}
 
+	async function loadSessions() {
+		sessionsLoading = true;
+		sessionsError = null;
+		const res = await listSessions();
+		if (res.ok) {
+			// current device first, then most-recently-active
+			sessions = res.data.sessions.slice().sort((a, b) => {
+				if (a.current !== b.current) return a.current ? -1 : 1;
+				return new Date(b.last_seen_at).getTime() - new Date(a.last_seen_at).getTime();
+			});
+		} else {
+			sessionsError = res.error;
+		}
+		sessionsLoading = false;
+	}
+
+	async function handleRevokeSession(id: string) {
+		revokingSession = { ...revokingSession, [id]: true };
+		const res = await revokeSession(id);
+		if (!res.ok) {
+			toast.error(res.error);
+			revokingSession = { ...revokingSession, [id]: false };
+			return;
+		}
+		const row = sessions.find((r) => r.id === id);
+		if (row?.current) {
+			auth.clearUser();
+			await goto('/login');
+			return;
+		}
+		sessions = sessions.filter((r) => r.id !== id);
+		toast.success('Session revoked.');
+		revokingSession = { ...revokingSession, [id]: false };
+	}
+
+	async function handleLogoutAll() {
+		loggingOutAll = true;
+		const res = await logoutAll();
+		if (!res.ok) {
+			toast.error(res.error);
+			loggingOutAll = false;
+			confirmingLogoutAll = false;
+			return;
+		}
+		auth.clearUser();
+		await goto('/login');
+	}
+
+	// ── User-agent → friendly "Browser on OS" label ─────────────────────────
+	function describeClient(ua: string): { label: string; raw: string } {
+		const raw = ua?.trim() ?? '';
+		if (!raw) return { label: 'Unknown client', raw: '' };
+
+		let browser = 'Browser';
+		if (/Firefox\//.test(raw)) browser = 'Firefox';
+		else if (/Edg\//.test(raw)) browser = 'Edge';
+		else if (/OPR\/|Opera\//.test(raw)) browser = 'Opera';
+		else if (/Chrome\//.test(raw) && !/Chromium/.test(raw)) browser = 'Chrome';
+		else if (/Chromium\//.test(raw)) browser = 'Chromium';
+		else if (/Safari\//.test(raw) && !/Chrome\//.test(raw)) browser = 'Safari';
+
+		let os = '';
+		if (/Windows NT 10/.test(raw)) os = 'Windows';
+		else if (/Windows NT/.test(raw)) os = 'Windows';
+		else if (/Mac OS X|Macintosh/.test(raw)) os = 'macOS';
+		else if (/Android/.test(raw)) os = 'Android';
+		else if (/iPhone|iPad|iOS/.test(raw)) os = 'iOS';
+		else if (/Linux/.test(raw)) os = 'Linux';
+
+		return { label: os ? `${browser} on ${os}` : browser, raw };
+	}
+
+	function relTime(iso: string): string {
+		const then = new Date(iso).getTime();
+		if (!Number.isFinite(then)) return iso;
+		const diff = Date.now() - then;
+		const abs = Math.abs(diff);
+		const min = 60_000, hr = 60 * min, day = 24 * hr;
+		const future = diff < 0;
+		let val: string;
+		if (abs < 45 * 1000) val = 'just now';
+		else if (abs < hr) val = `${Math.round(abs / min)}m`;
+		else if (abs < day) val = `${Math.round(abs / hr)}h`;
+		else if (abs < 30 * day) val = `${Math.round(abs / day)}d`;
+		else val = new Date(iso).toLocaleDateString();
+		if (val === 'just now') return val;
+		return future ? `in ${val}` : `${val} ago`;
+	}
+
+	function absTime(iso: string): string {
+		try { return new Date(iso).toLocaleString(); } catch { return iso; }
+	}
+
 	async function handleDeleteAccount() {
 		deleting = true;
 		deleteError = null;
@@ -165,7 +272,7 @@
 	}
 
 	onMount(async () => {
-		await fetchMe();
+		await Promise.all([fetchMe(), loadSessions()]);
 
 		// Read OAuth callback params and clean URL immediately,
 		// regardless of whether fetchMe succeeds.
@@ -391,8 +498,134 @@
 
 						<div class="border-t border-[var(--color-border)]"></div>
 
-						<!-- ── Connected Accounts ── -->
+						<!-- ── Active Sessions ── -->
 						<section style="animation: fadeUp 0.35s ease both; animation-delay: 120ms">
+							<div class="flex items-start gap-3">
+								<div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-avatar)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--color-text-tertiary)]"><rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
+								</div>
+								<div class="flex-1">
+									<div class="flex items-baseline justify-between gap-3">
+										<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Active sessions</h2>
+										{#if !sessionsLoading && !sessionsError && sessions.length > 0}
+											<span class="font-mono text-meta text-[var(--color-text-tertiary)]">
+												{sessions.length} {sessions.length === 1 ? 'device' : 'devices'}
+											</span>
+										{/if}
+									</div>
+									<p class="mt-0.5 text-ui text-[var(--color-text-tertiary)]">
+										Browsers signed into your account. Revoke any you don't recognise.
+									</p>
+								</div>
+							</div>
+
+							<div class="mt-5">
+								{#if sessionsLoading}
+									<div class="space-y-2">
+										{#each [0, 1] as i}
+											<div class="h-[68px] animate-pulse rounded-[var(--radius-card)] bg-[var(--color-bg-2)]" style="animation-delay: {i * 80}ms"></div>
+										{/each}
+									</div>
+								{:else if sessionsError}
+									<div class="rounded-[var(--radius-card)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-4 py-3 text-ui text-[var(--color-red)]">
+										{sessionsError}
+									</div>
+								{:else if sessions.length === 0}
+									<p class="text-ui text-[var(--color-text-tertiary)]">No active sessions.</p>
+								{:else}
+									<ul class="divide-y divide-[var(--color-border)] rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden">
+										{#each sessions as row, i (row.id)}
+											{@const client = describeClient(row.user_agent)}
+											<li
+												class="flex items-start justify-between gap-4 px-4 py-3 transition-colors duration-150 {row.current ? 'bg-[var(--color-accent-glow)]' : 'hover:bg-[var(--color-bg-2)]'}"
+												style="animation: fadeUp 0.3s ease both; animation-delay: {i * 40}ms"
+											>
+												<div class="min-w-0 flex-1">
+													<div class="flex items-center gap-2 flex-wrap">
+														<span class="text-ui font-medium text-[var(--color-text-primary)] truncate">
+															{client.label}
+														</span>
+														{#if row.current}
+															<span class="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-accent-glow-mid)] px-2 py-0.5 text-badge uppercase tracking-[0.08em] text-[var(--color-accent-bright)]">
+																<span class="relative flex h-[5px] w-[5px]">
+																	<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
+																	<span class="relative inline-flex h-[5px] w-[5px] rounded-full bg-[var(--color-accent)]"></span>
+																</span>
+																This device
+															</span>
+														{/if}
+													</div>
+													<div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-meta text-[var(--color-text-tertiary)]">
+														<span>{row.ip_address || 'unknown ip'}</span>
+														<span class="text-[var(--color-text-muted)]">·</span>
+														<span title={absTime(row.last_seen_at)}>active {relTime(row.last_seen_at)}</span>
+														<span class="text-[var(--color-text-muted)]">·</span>
+														<span title={absTime(row.expires_at)}>expires {relTime(row.expires_at)}</span>
+													</div>
+												</div>
+												<button
+													type="button"
+													onclick={() => handleRevokeSession(row.id)}
+													disabled={revokingSession[row.id]}
+													class="shrink-0 rounded-[var(--radius-button)] border border-[var(--color-border)] px-3 py-1.5 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-red)]/50 hover:text-[var(--color-red)] disabled:opacity-50"
+												>
+													{#if revokingSession[row.id]}
+														<span class="inline-flex items-center gap-1.5">
+															<svg class="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+															Revoking…
+														</span>
+													{:else if row.current}
+														Sign out
+													{:else}
+														Revoke
+													{/if}
+												</button>
+											</li>
+										{/each}
+									</ul>
+
+									{#if sessions.length > 1}
+										<div class="mt-4 flex items-center justify-end gap-3">
+											{#if !confirmingLogoutAll}
+												<button
+													type="button"
+													onclick={() => (confirmingLogoutAll = true)}
+													class="text-meta text-[var(--color-text-tertiary)] transition-colors duration-150 hover:text-[var(--color-red)]"
+												>
+													Sign out of every device
+												</button>
+											{:else}
+												<span class="text-meta text-[var(--color-text-secondary)]">This signs you out everywhere.</span>
+												<button
+													type="button"
+													onclick={() => (confirmingLogoutAll = false)}
+													disabled={loggingOutAll}
+													class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-3 py-1.5 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+												>
+													Cancel
+												</button>
+												<button
+													type="button"
+													onclick={handleLogoutAll}
+													disabled={loggingOutAll}
+													class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-red)] px-4 py-1.5 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+												>
+													{#if loggingOutAll}
+														<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+													{/if}
+													Confirm sign out
+												</button>
+											{/if}
+										</div>
+									{/if}
+								{/if}
+							</div>
+						</section>
+
+						<div class="border-t border-[var(--color-border)]"></div>
+
+						<!-- ── Connected Accounts ── -->
+						<section style="animation: fadeUp 0.35s ease both; animation-delay: 180ms">
 							<div class="flex items-start gap-3">
 								<div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-avatar)] border border-[var(--color-border)] bg-[var(--color-bg-2)]">
 									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[var(--color-text-tertiary)]"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
@@ -452,7 +685,7 @@
 						<div class="border-t border-[var(--color-border)]"></div>
 
 						<!-- ── Danger Zone ── -->
-						<section style="animation: fadeUp 0.35s ease both; animation-delay: 180ms">
+						<section style="animation: fadeUp 0.35s ease both; animation-delay: 240ms">
 							<h2 class="font-serif text-heading text-[var(--color-red)]">Danger zone</h2>
 							<p class="mt-1 text-ui text-[var(--color-text-tertiary)]">
 								Deleting your account is irreversible.

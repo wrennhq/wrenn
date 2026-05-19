@@ -1,8 +1,8 @@
 openapi: "3.1.0"
 info:
   title: Wrenn API
-  description: MicroVM-based code execution platform API.
-  version: "0.1.4"
+  description: AI agent execution platform API.
+  version: "0.2.0"
 
 servers:
   - url: http://localhost:8080
@@ -53,7 +53,7 @@ paths:
       tags: [auth]
       description: |
         Consumes the activation token sent via email and activates the user account.
-        Creates a default team and returns a JWT to log the user in.
+        Creates a default team and sets a session cookie to log the user in.
       requestBody:
         required: true
         content:
@@ -66,11 +66,11 @@ paths:
                   type: string
       responses:
         "200":
-          description: Account activated, JWT issued
+          description: Account activated, session cookie set
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: "#/components/schemas/SessionResponse"
         "400":
           description: Invalid or expired token
           content:
@@ -78,17 +78,113 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/auth/logout:
+    post:
+      summary: Revoke the current session
+      operationId: logout
+      tags: [auth]
+      security:
+        - sessionAuth: []
+      responses:
+        "204":
+          description: Session revoked; cookies cleared
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/auth/logout-all:
+    post:
+      summary: Revoke every session for the current user
+      operationId: logoutAll
+      tags: [auth]
+      description: |
+        Revokes every active session for the calling user across all devices,
+        including the caller's own. Returns 204 and clears cookies on the
+        response. Triggered automatically by password change, password add,
+        and password reset.
+      security:
+        - sessionAuth: []
+      responses:
+        "204":
+          description: All sessions revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/me/sessions:
+    get:
+      summary: List the caller's active sessions
+      operationId: listSessions
+      tags: [me]
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Sessions list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        user_agent:
+                          type: string
+                        ip_address:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        last_seen_at:
+                          type: string
+                          format: date-time
+                        expires_at:
+                          type: string
+                          format: date-time
+                        current:
+                          type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/me/sessions/{id}:
+    delete:
+      summary: Revoke a single session
+      operationId: revokeSession
+      tags: [me]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Session revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/auth/switch-team:
     post:
       summary: Switch active team
       operationId: switchTeam
       tags: [auth]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
-        Re-issues a JWT scoped to a different team. The user must be a member of
-        the target team (verified from DB). Use the returned token for subsequent
-        requests to that team's resources.
+        Rotates the session SID and updates its team scope. The user must be a
+        member of the target team (verified from DB). The new wrenn_sid and
+        wrenn_csrf cookies are set on the response.
       requestBody:
         required: true
         content:
@@ -101,11 +197,11 @@ paths:
                   type: string
       responses:
         "200":
-          description: New JWT issued for the target team
+          description: New session issued for the target team; cookies refreshed
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: "#/components/schemas/SessionResponse"
         "403":
           description: Not a member of this team
           content:
@@ -136,7 +232,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: "#/components/schemas/SessionResponse"
         "401":
           description: Invalid credentials
           content:
@@ -144,7 +240,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/auth/oauth/{provider}:
+  /auth/oauth/{provider}:
     parameters:
       - name: provider
         in: path
@@ -171,7 +267,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /v1/auth/oauth/{provider}/callback:
+  /auth/oauth/{provider}/callback:
     parameters:
       - name: provider
         in: path
@@ -188,9 +284,10 @@ paths:
       description: |
         Handles the OAuth provider's callback after user authorization.
         Exchanges the authorization code for a user profile, creates or
-        logs in the user, and redirects to the frontend with a JWT token.
+        logs in the user, sets the wrenn_sid + wrenn_csrf cookies, and
+        redirects to the SPA callback page.
 
-        **On success:** redirects to `{OAUTH_REDIRECT_URL}/auth/{provider}/callback?token=...&user_id=...&team_id=...&email=...`
+        **On success:** redirects to `{OAUTH_REDIRECT_URL}/auth/{provider}/callback` (no tokens in URL).
 
         **On error:** redirects to `{OAUTH_REDIRECT_URL}/auth/{provider}/callback?error=...`
 
@@ -217,7 +314,7 @@ paths:
       operationId: getMe
       tags: [account]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: User profile
@@ -231,7 +328,7 @@ paths:
       operationId: updateName
       tags: [account]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -245,12 +342,8 @@ paths:
                   minLength: 1
                   maxLength: 100
       responses:
-        "200":
-          description: Name updated, new JWT issued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
+        "204":
+          description: Name updated; session caches refreshed
         "400":
           description: Invalid name
           content:
@@ -263,7 +356,7 @@ paths:
       operationId: deleteAccount
       tags: [account]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Soft-deletes the account (sets status=deleted, deleted_at=now).
         The account is permanently removed after 15 days. Blocked if the user
@@ -301,7 +394,7 @@ paths:
       operationId: changePassword
       tags: [account]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         For users with an existing password: requires `current_password` and `new_password`.
         For OAuth-only users adding a password: requires `new_password` and `confirm_password`.
@@ -398,7 +491,7 @@ paths:
       operationId: connectProvider
       tags: [account]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Sets OAuth state and link cookies, then returns the provider's
         authorization URL. The frontend navigates to this URL to start the
@@ -437,7 +530,7 @@ paths:
       operationId: disconnectProvider
       tags: [account]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Unlinks the OAuth provider from the current account. Blocked if this
         is the user's only login method (no password and no other providers).
@@ -463,7 +556,7 @@ paths:
       operationId: createAPIKey
       tags: [api-keys]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -489,7 +582,7 @@ paths:
       operationId: listAPIKeys
       tags: [api-keys]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: List of API keys (plaintext keys are never returned)
@@ -513,7 +606,7 @@ paths:
       operationId: deleteAPIKey
       tags: [api-keys]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "204":
           description: API key deleted
@@ -524,7 +617,7 @@ paths:
       operationId: searchUsers
       tags: [users]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Returns up to 10 users whose email starts with the given prefix.
         The prefix must contain "@". Intended for the add-member UI autocomplete.
@@ -557,7 +650,7 @@ paths:
       operationId: listTeams
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: Teams the user belongs to, each with their role
@@ -573,7 +666,7 @@ paths:
       operationId: createTeam
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -613,7 +706,7 @@ paths:
       operationId: getTeam
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: Team details with members
@@ -639,7 +732,7 @@ paths:
       operationId: renameTeam
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: Admin or owner role required (verified from DB).
       requestBody:
         required: true
@@ -672,10 +765,10 @@ paths:
       operationId: deleteTeam
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Owner only. Soft-deletes the team and destroys all running/paused/starting
-        capsulees. All DB records are preserved. The team slug is permanently reserved.
+        capsules. All DB records are preserved. The team slug is permanently reserved.
       responses:
         "204":
           description: Team deleted
@@ -699,7 +792,7 @@ paths:
       operationId: listTeamMembers
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: Members with roles
@@ -715,7 +808,7 @@ paths:
       operationId: addTeamMember
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: Admin or owner role required. User is added instantly as a member.
       requestBody:
         required: true
@@ -773,7 +866,7 @@ paths:
       operationId: updateMemberRole
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Admin or owner required. Valid target roles: admin, member.
         The owner's role cannot be changed.
@@ -809,7 +902,7 @@ paths:
       operationId: removeTeamMember
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: Admin or owner required. Owner cannot be removed.
       responses:
         "204":
@@ -840,7 +933,7 @@ paths:
       operationId: leaveTeam
       tags: [teams]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: The owner cannot leave; they must delete the team instead.
       responses:
         "204":
@@ -859,6 +952,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -866,8 +960,8 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateCapsuleRequest"
       responses:
-        "201":
-          description: Capsule created
+        "202":
+          description: Capsule creation initiated (status will be "starting")
           content:
             application/json:
               schema:
@@ -880,14 +974,15 @@ paths:
                 $ref: "#/components/schemas/Error"
 
     get:
-      summary: List capsulees for your team
+      summary: List capsules for your team
       operationId: listCapsules
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       responses:
         "200":
-          description: List of capsulees
+          description: List of capsules
           content:
             application/json:
               schema:
@@ -902,6 +997,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       parameters:
         - name: range
           in: query
@@ -928,6 +1024,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       parameters:
         - name: from
           in: query
@@ -967,6 +1064,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: Capsule details
@@ -987,9 +1085,10 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       responses:
-        "204":
-          description: Capsule destroyed
+        "202":
+          description: Capsule destruction initiated
 
   /v1/capsules/{id}/exec:
     parameters:
@@ -1005,6 +1104,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -1051,6 +1151,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
         Returns all running processes inside the capsule, including background
         processes and any processes started by templates or init scripts.
@@ -1094,6 +1195,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       parameters:
         - name: signal
           in: query
@@ -1139,6 +1241,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
         Opens a WebSocket connection to stream stdout/stderr from a running
         background process. The selector can be a numeric PID or a string tag.
@@ -1167,9 +1270,10 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
         Resets the last_active_at timestamp for a running capsule, preventing
-        the auto-pause TTL from expiring. Use this as a keepalive for capsulees
+        the auto-pause TTL from expiring. Use this as a keepalive for capsules
         that are idle but should remain running.
       responses:
         "204":
@@ -1201,7 +1305,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Returns time-series CPU, memory, and disk metrics for a capsule.
         Three tiers are available with different granularity and retention:
@@ -1209,9 +1313,9 @@ paths:
         - `2h`: 30-second averages, last 2 hours
         - `24h`: 5-minute averages, last 24 hours
 
-        For running capsulees, data comes from the host agent's in-memory
-        ring buffer. For paused capsulees, data is read from persisted
-        snapshots in the database. Stopped/destroyed capsulees return 404.
+        For running capsules, data comes from the host agent's in-memory
+        ring buffer. For paused capsules, data is read from persisted
+        snapshots in the database. Stopped/destroyed capsules return 404.
       parameters:
         - name: range
           in: query
@@ -1255,13 +1359,14 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
         Takes a snapshot of the capsule (VM state + memory + rootfs), then
         destroys all running resources. The capsule exists only as files on
         disk and can be resumed later.
       responses:
-        "200":
-          description: Capsule paused (snapshot taken, resources released)
+        "202":
+          description: Capsule pause initiated (status will be "pausing")
           content:
             application/json:
               schema:
@@ -1287,13 +1392,15 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
-        Restores a paused capsule from its snapshot using UFFD for lazy
-        memory loading. Boots a fresh Firecracker process, sets up a new
-        network slot, and waits for envd to become ready.
+        Restores a paused capsule from its snapshot. Cloud Hypervisor is
+        relaunched in --restore mode with memory_restore_mode=ondemand so
+        guest pages fault in lazily via userfaultfd. The original network
+        slot (and host-reachable IP) is preserved across pause/resume.
       responses:
-        "200":
-          description: Capsule resumed (new VM booted from snapshot)
+        "202":
+          description: Capsule resume initiated (status will be "resuming")
           content:
             application/json:
               schema:
@@ -1312,18 +1419,15 @@ paths:
       tags: [snapshots]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
-        Pauses a running capsule, takes a full snapshot, copies the snapshot
-        files to the images directory as a reusable template, then destroys
-        the capsule. The template can be used to create new capsulees.
-      parameters:
-        - name: overwrite
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: ["true"]
-          description: Set to "true" to overwrite an existing snapshot with the same name.
+        Live snapshot: briefly pauses the capsule, writes its VM state +
+        memory + flattened rootfs to a new template directory, then resumes
+        the capsule. The source capsule keeps running after the snapshot;
+        the resulting template can be used to create new capsules.
+
+        Snapshots are immutable: each call must use a fresh name. Re-using
+        an existing name returns 409 Conflict.
       requestBody:
         required: true
         content:
@@ -1350,6 +1454,7 @@ paths:
       tags: [snapshots]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       parameters:
         - name: type
           in: query
@@ -1382,6 +1487,7 @@ paths:
       tags: [snapshots]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: Removes the snapshot files from disk and deletes the database record.
       responses:
         "204":
@@ -1407,6 +1513,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -1452,6 +1559,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -1487,6 +1595,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -1527,6 +1636,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -1567,6 +1677,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -1603,6 +1714,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
         Opens a WebSocket connection for streaming command execution.
 
@@ -1656,6 +1768,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
         Opens a WebSocket connection for an interactive PTY (terminal) session.
         Supports creating new sessions, sending input, resizing, killing, and
@@ -1733,6 +1846,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
         Streams file content to the capsule without buffering in memory.
         Suitable for large files. Uses the same multipart/form-data format
@@ -1782,6 +1896,7 @@ paths:
       tags: [capsules]
       security:
         - apiKeyAuth: []
+        - sessionAuth: []
       description: |
         Streams file content from the capsule without buffering in memory.
         Suitable for large files. Returns raw bytes with chunked transfer encoding.
@@ -1818,7 +1933,7 @@ paths:
       operationId: createHost
       tags: [hosts]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Creates a new host record and returns a one-time registration token.
         Regular hosts can only be created by admins. BYOC hosts can be created
@@ -1854,7 +1969,7 @@ paths:
       operationId: listHosts
       tags: [hosts]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Admins see all hosts. Non-admins see only BYOC hosts belonging to their team.
       responses:
@@ -1880,7 +1995,7 @@ paths:
       operationId: getHost
       tags: [hosts]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: Host details
@@ -1900,18 +2015,18 @@ paths:
       operationId: deleteHost
       tags: [hosts]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Admins can delete any host. Team owners and admins can delete BYOC hosts
         belonging to their team. Without `?force=true`, returns 409 if the host
-        has active capsulees. With `?force=true`, destroys all capsulees first.
+        has active capsules. With `?force=true`, destroys all capsules first.
       parameters:
         - name: force
           in: query
           required: false
           schema:
             type: boolean
-          description: If true, destroy all capsulees on the host before deleting.
+          description: If true, destroy all capsules on the host before deleting.
       responses:
         "204":
           description: Host deleted
@@ -1922,7 +2037,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Host has active capsulees (only when force is not set)
+          description: Host has active capsules (only when force is not set)
           content:
             application/json:
               schema:
@@ -1941,7 +2056,7 @@ paths:
       operationId: regenerateHostToken
       tags: [hosts]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Issues a new registration token for a host still in "pending" status.
         Use this when a previous registration attempt failed after consuming
@@ -2035,6 +2150,57 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/hosts/sandbox-events:
+    post:
+      summary: Sandbox lifecycle event callback
+      operationId: sandboxEventCallback
+      tags: [hosts]
+      security:
+        - hostTokenAuth: []
+      description: |
+        Receives autonomous lifecycle events from host agents (e.g. auto-pause
+        from the TTL reaper). The event is published to an internal Redis stream
+        for the control plane's event consumer to process.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, sandbox_id, host_id]
+              properties:
+                event:
+                  type: string
+                  description: |
+                    Lifecycle event type. Known values:
+                      * `sandbox.auto_paused` — TTL reaper paused the capsule
+                      * `sandbox.stopped` — autonomous destroy (crash/eviction)
+                      * `sandbox.error` — VMM/crash watcher reported error
+                    Unknown event names are accepted and forwarded to the
+                    stream consumer as-is (future-compatible).
+                sandbox_id:
+                  type: string
+                host_id:
+                  type: string
+                timestamp:
+                  type: integer
+                  format: int64
+      responses:
+        "204":
+          description: Event accepted
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Host ID mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/hosts/auth/refresh:
     post:
       summary: Refresh host JWT
@@ -2077,7 +2243,7 @@ paths:
       operationId: getHostDeletePreview
       tags: [hosts]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       description: |
         Returns the list of capsule IDs that would be destroyed if the host
         were deleted with `?force=true`. No state is modified.
@@ -2114,7 +2280,7 @@ paths:
       operationId: listHostTags
       tags: [hosts]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: List of tags
@@ -2130,7 +2296,7 @@ paths:
       operationId: addHostTag
       tags: [hosts]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -2165,7 +2331,7 @@ paths:
       operationId: removeHostTag
       tags: [hosts]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "204":
           description: Tag removed
@@ -2182,7 +2348,7 @@ paths:
       operationId: createChannel
       tags: [channels]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -2203,7 +2369,7 @@ paths:
       operationId: listChannels
       tags: [channels]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: Channels list
@@ -2223,7 +2389,7 @@ paths:
       operationId: testChannel
       tags: [channels]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -2256,7 +2422,7 @@ paths:
       operationId: getChannel
       tags: [channels]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "200":
           description: Channel details
@@ -2275,7 +2441,7 @@ paths:
       operationId: updateChannel
       tags: [channels]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -2302,7 +2468,7 @@ paths:
       operationId: deleteChannel
       tags: [channels]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       responses:
         "204":
           description: Channel deleted
@@ -2323,7 +2489,7 @@ paths:
       operationId: rotateChannelConfig
       tags: [channels]
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -2353,11 +2519,11 @@ paths:
       tags: [admin]
       description: |
         Sets the platform admin flag on a user. Cannot remove the last admin.
-        Requires platform admin access (JWT + is_admin).
-        The target user's JWT is not re-issued — their frontend will reflect the
-        change on next login or team switch.
+        Requires platform admin access. Session caches for the target user
+        are invalidated immediately so the flag flip takes effect on the
+        user's next request.
       security:
-        - bearerAuth: []
+        - sessionAuth: []
       parameters:
         - name: id
           in: path
@@ -2394,7 +2560,811 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/events/stream:
+    get:
+      summary: Real-time lifecycle event stream
+      operationId: streamEvents
+      tags: [events]
+      description: |
+        Server-Sent Events stream of capsule, template, and host lifecycle
+        events scoped to the caller's active team. Browsers send the
+        wrenn_sid cookie automatically on EventSource connections; SDKs
+        authenticate via X-API-Key.
+
+        Frame format follows the standard SSE protocol:
+        ```
+        event: capsule.create
+        data: {"event":"capsule.create","outcome":"success","resource":{"id":"sb-..."},"sandbox":{...},"timestamp":"2026-05-19T02:00:00Z"}
+
+        : keepalive
+        ```
+        A `: keepalive` comment is emitted every 30s.
+      security:
+        - apiKeyAuth: []
+        - sessionAuth: []
+      responses:
+        "200":
+          description: SSE stream opened
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SSEEvent"
+        "401":
+          description: Missing or invalid auth
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/audit-logs:
+    get:
+      summary: List team audit log entries
+      operationId: listAuditLogs
+      tags: [audit]
+      description: Paginated cursor list of audit events for the caller's team.
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Audit log page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditLogEntry"
+                  next_cursor:
+                    type: object
+                    nullable: true
+                    properties:
+                      before:
+                        type: string
+                        format: date-time
+                      before_id:
+                        type: string
+
+  /v1/admin/events/stream:
+    get:
+      summary: Admin SSE event stream (all teams)
+      operationId: adminStreamEvents
+      tags: [admin, events]
+      description: |
+        Admin variant of /v1/events/stream that emits events across all teams.
+        Requires an admin session cookie.
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: SSE stream opened
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SSEEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/audit-logs:
+    get:
+      summary: List audit log entries (all teams)
+      operationId: adminListAuditLogs
+      tags: [admin, audit]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: before
+          in: query
+          schema: {type: string, format: date-time}
+        - name: before_id
+          in: query
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+      responses:
+        "200":
+          description: Audit log page (all teams)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditLogEntry"
+
+  /v1/admin/teams:
+    get:
+      summary: List all teams (admin)
+      operationId: adminListTeams
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Teams list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
+
+  /v1/admin/teams/{id}/byoc:
+    put:
+      summary: Toggle BYOC for a team (admin)
+      operationId: adminSetTeamBYOC
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [byoc]
+              properties:
+                byoc: {type: boolean}
+      responses:
+        "204":
+          description: Updated
+
+  /v1/admin/teams/{id}:
+    delete:
+      summary: Delete a team (admin)
+      operationId: adminDeleteTeam
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Deleted
+
+  /v1/admin/users:
+    get:
+      summary: List all users (admin)
+      operationId: adminListUsers
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Users list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
+
+  /v1/admin/users/{id}/active:
+    put:
+      summary: Activate or deactivate a user (admin)
+      operationId: adminSetUserActive
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active: {type: boolean}
+      responses:
+        "204":
+          description: Updated
+
+  /v1/admin/templates:
+    get:
+      summary: List all templates (admin)
+      operationId: adminListTemplates
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Templates list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Template"
+
+  /v1/admin/templates/{name}:
+    delete:
+      summary: Delete a template (admin)
+      operationId: adminDeleteTemplate
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Deleted
+
+  /v1/admin/builds:
+    post:
+      summary: Submit a template build (admin)
+      operationId: adminCreateBuild
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        "202":
+          description: Build queued
+          content:
+            application/json:
+              schema: {type: object}
+    get:
+      summary: List builds (admin)
+      operationId: adminListBuilds
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Builds list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
+
+  /v1/admin/builds/{id}:
+    get:
+      summary: Get build detail (admin)
+      operationId: adminGetBuild
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Build detail
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/admin/builds/{id}/cancel:
+    post:
+      summary: Cancel a build (admin)
+      operationId: adminCancelBuild
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Cancelled
+
+  /v1/admin/capsules:
+    post:
+      summary: Create a capsule on behalf of any team (admin)
+      operationId: adminCreateCapsule
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCapsuleRequest"
+      responses:
+        "201":
+          description: Capsule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capsule"
+    get:
+      summary: List capsules across all teams (admin)
+      operationId: adminListCapsules
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Capsules list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Capsule"
+
+  /v1/admin/capsules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: Get capsule detail (admin)
+      operationId: adminGetCapsule
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Capsule detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capsule"
+    delete:
+      summary: Destroy capsule (admin)
+      operationId: adminDestroyCapsule
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      responses:
+        "204":
+          description: Destroyed
+
+  /v1/admin/capsules/{id}/snapshot:
+    post:
+      summary: Create snapshot from any capsule (admin)
+      operationId: adminCreateSnapshotFromCapsule
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+      responses:
+        "201":
+          description: Snapshot created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+
+  /v1/admin/capsules/{id}/exec:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Execute a command on any capsule (admin)
+      operationId: adminExecCommand
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecRequest"
+      responses:
+        "200":
+          description: Command output (foreground exec)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecResponse"
+        "202":
+          description: Background process started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackgroundExecResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/metrics:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: Get per-capsule resource metrics (admin)
+      operationId: adminGetCapsuleMetrics
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["5m", "10m", "1h", "2h", "6h", "12h", "24h"]
+            default: "10m"
+      responses:
+        "200":
+          description: Metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapsuleMetrics"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/capsules/{id}/processes:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: List running processes on any capsule (admin)
+      operationId: adminListProcesses
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Process list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/processes/{selector}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: selector
+        in: path
+        required: true
+        schema: {type: string}
+        description: Process PID (numeric) or tag (string)
+    delete:
+      summary: Kill a process on any capsule (admin)
+      operationId: adminKillProcess
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: signal
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [SIGKILL, SIGTERM]
+            default: SIGKILL
+      responses:
+        "204":
+          description: Process killed
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/files/write:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Upload a file to any capsule (admin)
+      operationId: adminUploadFile
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [path, file]
+              properties:
+                path: {type: string}
+                file: {type: string, format: binary}
+      responses:
+        "204":
+          description: File uploaded
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/files/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Download a file from any capsule (admin)
+      operationId: adminDownloadFile
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReadFileRequest"
+      responses:
+        "200":
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/capsules/{id}/files/list:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: List directory contents on any capsule (admin)
+      operationId: adminListDir
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListDirRequest"
+      responses:
+        "200":
+          description: Directory listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDirResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/files/mkdir:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Create a directory on any capsule (admin)
+      operationId: adminMakeDir
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MakeDirRequest"
+      responses:
+        "200":
+          description: Directory created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MakeDirResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/files/remove:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      summary: Remove a file or directory on any capsule (admin)
+      operationId: adminRemovePath
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveRequest"
+      responses:
+        "204":
+          description: File or directory removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/exec/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: Stream command execution on any capsule via WebSocket (admin)
+      operationId: adminExecStream
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      description: |
+        Admin variant of /v1/capsules/{id}/exec/stream. Same protocol — WebSocket
+        upgrade, client sends `{"type":"start", "cmd":..., "args":...}` to start;
+        server streams stdout/stderr/exit frames.
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/pty:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      summary: Interactive PTY session on any capsule via WebSocket (admin)
+      operationId: adminPtySession
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      description: |
+        Admin variant of /v1/capsules/{id}/pty. Same protocol — base64-encoded
+        PTY bytes, start/connect/input/resize/kill control messages, persistent
+        sessions reconnectable via tag.
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+
+  /v1/admin/capsules/{id}/processes/{selector}/stream:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: selector
+        in: path
+        required: true
+        schema: {type: string}
+        description: Process PID (numeric) or tag (string)
+    get:
+      summary: Stream process output on any capsule via WebSocket (admin)
+      operationId: adminConnectProcess
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    Unauthorized:
+      description: Missing or invalid auth
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    Forbidden:
+      description: Authenticated but not permitted (e.g. non-admin on /v1/admin/*)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    FailedPrecondition:
+      description: Resource state does not allow this operation (e.g. exec on a paused capsule)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
   securitySchemes:
     apiKeyAuth:
       type: apiKey
@@ -2402,11 +3372,23 @@ components:
       name: X-API-Key
       description: API key for capsule lifecycle operations. Create via POST /v1/api-keys.
 
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: JWT token from /v1/auth/login or /v1/auth/signup. Valid for 6 hours.
+    sessionAuth:
+      type: apiKey
+      in: cookie
+      name: wrenn_sid
+      description: |
+        Opaque session cookie set by POST /v1/auth/login, /v1/auth/activate, or
+        the OAuth callback. HttpOnly, Secure, SameSite=Strict. Idle window 6h,
+        absolute lifetime 24h. State-changing requests also require an
+        X-CSRF-Token header matching the wrenn_csrf cookie (double-submit).
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: |
+        Double-submit CSRF token whose value must match the wrenn_csrf cookie.
+        Required on all non-GET requests authenticated via session cookie.
+        Not required for API key auth.
 
     hostTokenAuth:
       type: apiKey
@@ -2446,12 +3428,13 @@ components:
           type: string
           description: Confirmation message instructing user to check email
 
-    AuthResponse:
+    SessionResponse:
       type: object
+      description: |
+        Returned by login, activate, and switch-team. The actual auth credential
+        is the wrenn_sid cookie set on the response. The body carries identity
+        data the SPA needs to bootstrap.
       properties:
-        token:
-          type: string
-          description: JWT token (valid for 6 hours)
         user_id:
           type: string
         team_id:
@@ -2460,6 +3443,10 @@ components:
           type: string
         name:
           type: string
+        role:
+          type: string
+        is_admin:
+          type: boolean
 
     CreateAPIKeyRequest:
       type: object
@@ -2504,13 +3491,22 @@ components:
         memory_mb:
           type: integer
           default: 512
+        disk_size_mb:
+          type: integer
+          default: 5120
+          description: >
+            Maximum size of the per-capsule copy-on-write disk in MB. Capped
+            at 5 GB by default; the actual size is max(disk_size_mb, origin
+            rootfs size).
         timeout_sec:
           type: integer
+          minimum: 0
           default: 0
           description: >
             Auto-pause TTL in seconds. The capsule is automatically paused
             after this duration of inactivity (no exec or ping). 0 means
-            no auto-pause.
+            no auto-pause. Positive values below 60 are silently clamped
+            to 60 (the agent's startup envelope).
 
     UsageResponse:
       type: object
@@ -2592,7 +3588,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, starting, running, paused, hibernated, stopped, missing, error]
+          enum: [pending, starting, running, pausing, paused, resuming, stopping, hibernated, stopped, missing, error]
         template:
           type: string
         vcpus:
@@ -2619,6 +3615,17 @@ components:
         last_updated:
           type: string
           format: date-time
+        metadata:
+          type: object
+          additionalProperties: {type: string}
+          nullable: true
+          description: |
+            Free-form key/value labels attached at create-time. Also carries
+            agent-side version info (kernel_version, vmm_version,
+            agent_version, envd_version) when running.
+        disk_size_mb:
+          type: integer
+          nullable: true
 
     CreateSnapshotRequest:
       type: object
@@ -2651,6 +3658,16 @@ components:
         created_at:
           type: string
           format: date-time
+        platform:
+          type: boolean
+          description: |
+            True when the template is platform-managed (visible to all teams,
+            e.g. the built-in `minimal` rootfs). False for team-owned
+            snapshot templates.
+        metadata:
+          type: object
+          additionalProperties: {type: string}
+          nullable: true
 
     ExecRequest:
       type: object
@@ -2952,7 +3969,7 @@ components:
           type: array
           items:
             type: string
-          description: IDs of capsulees that would be destroyed on force-delete.
+          description: IDs of capsules that would be destroyed on force-delete.
 
     HostHasCapsulesError:
       type: object
@@ -2969,7 +3986,7 @@ components:
               type: array
               items:
                 type: string
-              description: IDs of active capsulees blocking deletion.
+              description: IDs of active capsules blocking deletion.
 
     AddTagRequest:
       type: object
@@ -3059,7 +4076,7 @@ components:
         mem_bytes:
           type: integer
           format: int64
-          description: "Resident memory in bytes (VmRSS of Firecracker process)"
+          description: "Resident memory in bytes (VmRSS of Cloud Hypervisor process)"
         disk_bytes:
           type: integer
           format: int64
@@ -3090,12 +4107,12 @@ components:
           items:
             type: string
             enum:
-              - capsule.created
-              - capsule.running
-              - capsule.paused
-              - capsule.destroyed
-              - template.snapshot.created
-              - template.snapshot.deleted
+              - capsule.create
+              - capsule.pause
+              - capsule.resume
+              - capsule.destroy
+              - template.snapshot.create
+              - template.snapshot.delete
               - host.up
               - host.down
 
@@ -3135,12 +4152,12 @@ components:
           items:
             type: string
             enum:
-              - capsule.created
-              - capsule.running
-              - capsule.paused
-              - capsule.destroyed
-              - template.snapshot.created
-              - template.snapshot.deleted
+              - capsule.create
+              - capsule.pause
+              - capsule.resume
+              - capsule.destroy
+              - template.snapshot.create
+              - template.snapshot.delete
               - host.up
               - host.down
 
@@ -3212,3 +4229,78 @@ components:
               type: string
             message:
               type: string
+
+    AuditLogEntry:
+      type: object
+      properties:
+        id: {type: string}
+        actor_type: {type: string, enum: [user, api_key, host, system]}
+        actor_id: {type: string}
+        actor_name: {type: string}
+        resource_type: {type: string}
+        resource_id: {type: string}
+        action: {type: string}
+        scope: {type: string}
+        status: {type: string, enum: [success, failure]}
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    SSEEvent:
+      type: object
+      description: |
+        Wire format of one SSE message body. The event name (`event:` line) is
+        the `kind` and the JSON below is the `data:` line.
+      properties:
+        event:
+          type: string
+          enum:
+            - connected
+            - capsule.create
+            - capsule.pause
+            - capsule.resume
+            - capsule.destroy
+            - capsule.state.changed
+            - template.snapshot.create
+            - template.snapshot.delete
+            - host.up
+            - host.down
+        outcome:
+          type: string
+          enum: [success, error]
+          description: |
+            Present for action events (capsule.* except state.changed,
+            template.snapshot.*). Absent for host.up/down, capsule.state.changed,
+            and the connected sentinel.
+        resource:
+          type: object
+          properties:
+            id: {type: string}
+            type: {type: string}
+        actor:
+          type: object
+          properties:
+            type: {type: string, enum: [user, api_key, system]}
+            id: {type: string}
+            name: {type: string}
+        metadata:
+          type: object
+          additionalProperties: {type: string}
+          description: |
+            Event-specific context. Examples: `reason` (ttl_expired,
+            host_failure, cleanup_after_create_error, orphaned),
+            `host_ip`, `from`/`to` (for capsule.state.changed).
+        error:
+          type: string
+          description: Failure reason; only set when outcome=error.
+        sandbox:
+          allOf:
+            - $ref: "#/components/schemas/Capsule"
+          nullable: true
+          description: Populated for capsule.* events; null if DB lookup failed.
+        timestamp:
+          type: string
+          format: date-time

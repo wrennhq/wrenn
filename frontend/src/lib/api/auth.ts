@@ -1,9 +1,10 @@
 export type AuthResponse = {
-	token: string;
 	user_id: string;
 	team_id: string;
 	email: string;
 	name: string;
+	role: string;
+	is_admin: boolean;
 };
 
 export type SignupResponse = {
@@ -30,6 +31,7 @@ async function authFetch<T = AuthResponse>(url: string, body: Record<string, str
 		const res = await fetch(url, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
+			credentials: 'same-origin',
 			body: JSON.stringify(body)
 		});
 

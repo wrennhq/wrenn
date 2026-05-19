@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import AdminSidebar from '$lib/components/AdminSidebar.svelte';
 	import Toaster from '$lib/components/Toaster.svelte';
+	import { startAdminSSE, stopAdminSSE } from '$lib/sse.svelte';
 	let { children } = $props();
 
 	let collapsed = $state(
@@ -8,6 +10,11 @@
 			? localStorage.getItem('wrenn_sidebar_collapsed') === 'true'
 			: false
 	);
+
+	onMount(() => {
+		startAdminSSE();
+		return () => stopAdminSSE();
+	});
 </script>
 
 <div class="flex h-screen overflow-hidden">

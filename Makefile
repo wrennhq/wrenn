@@ -16,7 +16,7 @@ LDFLAGS        := -s -w
 build: build-cp build-agent build-envd
 
 build-frontend:
-	cd frontend && pnpm install --frozen-lockfile && pnpm build
+	cd frontend && bun install --frozen-lockfile && bun run build
 
 build-cp:
 	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_CP) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/wrenn-cp ./cmd/control-plane
@@ -59,10 +59,10 @@ dev-agent:
 	sudo go run ./cmd/host-agent
 
 dev-frontend:
-	cd frontend && pnpm dev --port 5173 --host 0.0.0.0
+	cd frontend && bun run dev --port 5173 --host 0.0.0.0
 
 dev-envd:
-	cd envd-rs && cargo run -- --isnotfc --port 49983
+	cd envd-rs && cargo run -- --port 49983
 
 # ═══════════════════════════════════════════════════
 #  Database (goose)
@@ -181,7 +181,7 @@ help:
 	@echo "  make dev-cp         Control plane (hot reload if air installed)"
 	@echo "  make dev-frontend   Vite dev server with HMR (port 5173)"
 	@echo "  make dev-agent      Host agent (sudo required)"
-	@echo "  make dev-envd       envd in debug mode (--isnotfc, port 49983)"
+	@echo "  make dev-envd       envd in debug mode (port 49983)"
 	@echo ""
 	@echo "  make build          Build all binaries → builds/"
 	@echo "  make build-frontend Build SvelteKit dashboard → frontend/build/"

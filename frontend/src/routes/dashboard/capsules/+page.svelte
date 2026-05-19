@@ -13,9 +13,8 @@
 		resumeCapsule,
 		type Capsule
 	} from '$lib/api/capsules';
-
-	const REFRESH_INTERVAL = 30;
-	const SPIN_DURATION = 600;
+	import { subscribeSSE } from '$lib/sse.svelte';
+	import type { SSEEvent } from '$lib/api/events';
 
 	// Capsule list state
 	let capsules = $state<Capsule[]>([]);
@@ -23,13 +22,6 @@
 	let error = $state<string | null>(null);
 	let searchQuery = $state('');
 	let actionLoading = $state<string | null>(null);
-	let spinning = $state(false);
-
-	// Auto-refresh countdown state
-	let autoRefresh = $state(true);
-	let countdown = $state(REFRESH_INTERVAL);
-	let countdownInterval: ReturnType<typeof setInterval> | null = null;
-	let refreshInterval: ReturnType<typeof setInterval> | null = null;
 
 	// Sorting state
 	type SortKey = 'status' | 'vcpus' | 'memory_mb' | 'started_at' | 'timeout_sec';
@@ -44,7 +36,7 @@
 	let showCreateDialog = $state(false);
 
 	// Snapshot dialog state
-	let snapshotTarget = $state<{ capsule: Capsule; pauseFirst: boolean } | null>(null);
+	let snapshotTarget = $state<Capsule | null>(null);
 
 	// Destroy confirmation state
 	let destroyTarget = $state<Capsule | null>(null);
@@ -94,32 +86,6 @@
 		}
 	}
 
-	function startAutoRefresh() {
-		stopAutoRefresh();
-		countdown = REFRESH_INTERVAL;
-		countdownInterval = setInterval(() => {
-			countdown--;
-			if (countdown <= 0) {
-				countdown = REFRESH_INTERVAL;
-			}
-		}, 1000);
-		refreshInterval = setInterval(fetchCapsules, REFRESH_INTERVAL * 1000);
-	}
-
-	function stopAutoRefresh() {
-		if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
-		if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
-	}
-
-	function toggleAutoRefresh() {
-		autoRefresh = !autoRefresh;
-		if (autoRefresh) {
-			startAutoRefresh();
-		} else {
-			stopAutoRefresh();
-		}
-	}
-
 	function mergeCapsuleData(incoming: Capsule[]) {
 		const existingMap = new Map(capsules.map((c) => [c.id, c]));
 		const merged: Capsule[] = [];
@@ -139,14 +105,9 @@
 		capsules = merged;
 	}
 
-	async function fetchCapsules(manual = false) {
+	async function fetchCapsules() {
 		const wasEmpty = capsules.length === 0;
 		if (wasEmpty) loading = true;
-
-		if (manual) {
-			spinning = true;
-			var spinTimer = new Promise<void>((resolve) => setTimeout(resolve, SPIN_DURATION));
-		}
 
 		const result = await listCapsules();
 		if (result.ok) {
@@ -161,16 +122,8 @@
 		}
 		loading = false;
 
-		// Mark initial entrance animation as done after first successful fetch
 		if (!initialAnimationDone) {
 			setTimeout(() => { initialAnimationDone = true; }, 400 + (capsules.length * 40));
-		}
-
-		if (autoRefresh) countdown = REFRESH_INTERVAL;
-
-		if (manual) {
-			await spinTimer!;
-			spinning = false;
 		}
 	}
 
@@ -200,12 +153,7 @@
 
 	function handleSnapshot(capsule: Capsule) {
 		openMenuId = null;
-		snapshotTarget = { capsule, pauseFirst: false };
-	}
-
-	function handlePauseAndSnapshot(capsule: Capsule) {
-		openMenuId = null;
-		snapshotTarget = { capsule, pauseFirst: true };
+		snapshotTarget = capsule;
 	}
 
 	function handleSnapshotDone() {
@@ -222,7 +170,9 @@
 	}
 
 	function handleCapsuleCreated(capsule: Capsule) {
-		capsules = [capsule, ...capsules];
+		if (!capsules.some((c) => c.id === capsule.id)) {
+			capsules = [capsule, ...capsules];
+		}
 		newCapsuleId = capsule.id;
 		setTimeout(() => { newCapsuleId = null; }, 1600);
 	}
@@ -256,6 +206,33 @@
 		return `${Math.round(sec / 3600)}h`;
 	}
 
+	function handleSSEEvent(event: SSEEvent) {
+		if (!event.resource || event.resource.type !== 'sandbox') return;
+
+		const sandboxId = event.resource.id;
+
+		if (event.event === 'capsule.destroy') {
+			capsules = capsules.filter((c) => c.id !== sandboxId);
+			return;
+		}
+
+		if (event.sandbox) {
+			const existing = capsules.find((c) => c.id === sandboxId);
+			if (existing) {
+				for (const key of Object.keys(event.sandbox) as (keyof Capsule)[]) {
+					if (existing[key] !== event.sandbox[key]) {
+						(existing as any)[key] = event.sandbox[key];
+					}
+				}
+				capsules = capsules;
+			} else if (event.event === 'capsule.create') {
+				capsules = [event.sandbox, ...capsules];
+				newCapsuleId = sandboxId;
+				setTimeout(() => { newCapsuleId = null; }, 1600);
+			}
+		}
+	}
+
 	function handleClickOutside(event: MouseEvent) {
 		if (openMenuId && !(event.target as Element)?.closest('.status-menu-container')) {
 			openMenuId = null;
@@ -263,30 +240,23 @@
 	}
 
 	function handleVisibility() {
-		if (document.hidden) {
-			stopAutoRefresh();
-		} else if (autoRefresh) {
+		if (!document.hidden) {
 			fetchCapsules();
-			startAutoRefresh();
 		}
 	}
 
 	onMount(() => {
 		fetchCapsules();
-		startAutoRefresh();
+		const unsubscribe = subscribeSSE(handleSSEEvent);
 		document.addEventListener('visibilitychange', handleVisibility);
 		return () => {
-			stopAutoRefresh();
+			unsubscribe();
 			document.removeEventListener('visibilitychange', handleVisibility);
 		};
 	});
 </script>
 
 <style>
-	.refresh-spin {
-		animation: spin-once 0.6s ease-in-out;
-	}
-
 	@keyframes capsule-born {
 		0%, 25% { background-color: rgba(94, 140, 88, 0.1); }
 		100% { background-color: transparent; }
@@ -325,51 +295,6 @@
 		<span class="text-ui text-[var(--color-text-secondary)]">{filteredCapsules.length} capsule{filteredCapsules.length !== 1 ? 's' : ''}</span>
 
 		<div class="flex-1"></div>
-
-		<!-- Refresh button -->
-		<button
-			onclick={() => fetchCapsules(true)}
-			disabled={spinning}
-			class="flex h-8 w-8 items-center justify-center rounded-[var(--radius-button)] border border-[var(--color-border)] text-[var(--color-text-tertiary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-secondary)] disabled:opacity-50"
-			title="Refresh"
-		>
-			<svg
-				class={spinning ? 'refresh-spin' : ''}
-				width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-			>
-				<polyline points="23 4 23 10 17 10" />
-				<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-			</svg>
-		</button>
-
-		<!-- Auto-refresh countdown toggle -->
-		<button
-			onclick={toggleAutoRefresh}
-			class="flex items-center gap-1.5 rounded-[var(--radius-button)] border px-2.5 py-1.5 font-mono text-label transition-colors duration-150
-				{autoRefresh
-					? 'border-[var(--color-accent)]/30 text-[var(--color-accent-mid)] hover:border-[var(--color-accent)]/50'
-					: 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-secondary)]'}"
-			title={autoRefresh ? 'Click to disable auto-refresh' : 'Click to enable auto-refresh (30s)'}
-		>
-			{#if autoRefresh}
-				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-					<circle cx="8" cy="8" r="5" stroke="var(--color-accent-glow-mid)" stroke-width="1.5" />
-					<circle
-						cx="8" cy="8" r="5"
-						stroke="var(--color-accent)"
-						stroke-width="1.5"
-						stroke-linecap="round"
-						stroke-dasharray="31.416"
-						stroke-dashoffset={31.416 * (1 - countdown / REFRESH_INTERVAL)}
-						transform="rotate(-90 8 8)"
-						style="transition: stroke-dashoffset 1s linear"
-					/>
-				</svg>
-				{countdown}s
-			{:else}
-				Off
-			{/if}
-		</button>
 
 		<button
 			onclick={() => { showCreateDialog = true; }}
@@ -470,7 +395,8 @@
 			</div>
 		{:else}
 			{#each filteredCapsules as capsule, i (capsule.id)}
-				{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : capsule.status === 'paused' ? 'bg-[var(--color-amber)]' : 'bg-[var(--color-text-muted)]'}
+				{@const isTransient = ['starting', 'resuming', 'pausing', 'stopping'].includes(capsule.status)}
+				{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : (capsule.status === 'paused' || capsule.status === 'hibernated') ? 'bg-[var(--color-amber)]' : isTransient ? 'bg-[var(--color-blue)]' : 'bg-[var(--color-text-muted)]'}
 				<div
 					class="capsule-row relative grid grid-cols-[1.6fr_0.8fr_0.5fr_0.5fr_0.6fr_1fr_0.9fr] items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {newCapsuleId === capsule.id ? 'capsule-born' : ''}"
 					style={initialAnimationDone ? '' : `animation: fadeUp 0.35s ease both; animation-delay: ${i * 40}ms`}
@@ -485,8 +411,13 @@
 								<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)]"></span>
 								<span class="relative inline-flex h-[6px] w-[6px] rounded-full bg-[var(--color-accent)]"></span>
 							</span>
-						{:else if capsule.status === 'paused'}
+						{:else if capsule.status === 'paused' || capsule.status === 'hibernated'}
 							<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-amber)]"></span>
+						{:else if isTransient}
+							<span class="relative flex h-[6px] w-[6px] shrink-0">
+								<span class="animate-status-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-blue)]"></span>
+								<span class="relative inline-flex h-[6px] w-[6px] rounded-full bg-[var(--color-blue)]"></span>
+							</span>
 						{:else}
 							<span class="inline-flex h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--color-text-muted)]"></span>
 						{/if}
@@ -556,7 +487,7 @@
 										openMenuId = capsule.id;
 									}
 								}}
-								class="inline-flex items-center gap-1.5 rounded-[var(--radius-button)] border px-2.5 py-1 text-label font-semibold uppercase tracking-[0.04em] transition-colors duration-150 {capsule.status === 'running' ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow)] text-[var(--color-accent-mid)] hover:border-[var(--color-accent)]/70 hover:text-[var(--color-accent-bright)]' : capsule.status === 'paused' ? 'border-[var(--color-amber)]/30 bg-[var(--color-amber)]/5 text-[var(--color-amber)] hover:border-[var(--color-amber)]/60' : 'border-[var(--color-border)] bg-[var(--color-bg-2)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
+								class="inline-flex items-center gap-1.5 rounded-[var(--radius-button)] border px-2.5 py-1 text-label font-semibold uppercase tracking-[0.04em] transition-colors duration-150 {capsule.status === 'running' ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-glow)] text-[var(--color-accent-mid)] hover:border-[var(--color-accent)]/70 hover:text-[var(--color-accent-bright)]' : capsule.status === 'paused' ? 'border-[var(--color-amber)]/30 bg-[var(--color-amber)]/5 text-[var(--color-amber)] hover:border-[var(--color-amber)]/60' : isTransient ? 'border-[var(--color-blue)]/30 bg-[var(--color-blue)]/5 text-[var(--color-blue)]' : 'border-[var(--color-border)] bg-[var(--color-bg-2)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)]'}"
 							>
 								{capsule.status}
 								<svg
@@ -594,26 +525,6 @@
 					Pause
 				</button>
 				<button
-					onclick={() => handlePauseAndSnapshot(openCapsule)}
-					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
-				>
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-						<path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" />
-						<circle cx="12" cy="15" r="3" />
-					</svg>
-					Pause & Snapshot
-				</button>
-			{:else if openCapsule.status === 'paused'}
-				<button
-					onclick={() => handleResume(openCapsule.id)}
-					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
-				>
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" class="shrink-0">
-						<polygon points="5 3 19 12 5 21 5 3" />
-					</svg>
-					Resume
-				</button>
-				<button
 					onclick={() => handleSnapshot(openCapsule)}
 					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
 				>
@@ -623,6 +534,28 @@
 					</svg>
 					Snapshot
 				</button>
+			{:else if openCapsule.status === 'paused' || openCapsule.status === 'hibernated'}
+				<button
+					onclick={() => handleResume(openCapsule.id)}
+					class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
+				>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" class="shrink-0">
+						<polygon points="5 3 19 12 5 21 5 3" />
+					</svg>
+					Resume
+				</button>
+				{#if openCapsule.status === 'paused'}
+					<button
+						onclick={() => handleSnapshot(openCapsule)}
+						class="flex w-full items-center gap-2.5 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] hover:text-[var(--color-text-primary)]"
+					>
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+							<path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" />
+							<circle cx="12" cy="15" r="3" />
+						</svg>
+						Snapshot
+					</button>
+				{/if}
 			{/if}
 			<div class="my-1 border-t border-[var(--color-border)]"></div>
 			<button
@@ -643,8 +576,7 @@
 {#if snapshotTarget}
 	<SnapshotDialog
 		open={true}
-		capsuleId={snapshotTarget.capsule.id}
-		pauseFirst={snapshotTarget.pauseFirst}
+		capsuleId={snapshotTarget.id}
 		onclose={() => { snapshotTarget = null; }}
 		onsnapshot={handleSnapshotDone}
 	/>

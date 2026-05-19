@@ -101,6 +101,10 @@ func (d *Dispatcher) handleMessage(ctx context.Context, msg redis.XMessage) {
 		return
 	}
 
+	if isRedundantSystemFollowup(event) {
+		return
+	}
+
 	teamID, err := id.ParseTeamID(event.TeamID)
 	if err != nil {
 		slog.Warn("channels: invalid team ID in event", "team_id", event.TeamID, "error", err)
@@ -180,4 +184,24 @@ func (d *Dispatcher) decryptConfig(configJSON []byte) (map[string]string, error)
 
 func isGroupExistsError(err error) bool {
 	return err != nil && err.Error() == "BUSYGROUP Consumer Group name already exists"
+}
+
+// isRedundantSystemFollowup filters out capsule lifecycle events emitted by
+// the SandboxService background goroutine / host-agent callback after a
+// user-initiated action. The corresponding handler already publishes a
+// user-actor event for the same intent; without this filter, every user
+// action delivers two notifications.
+//
+// Genuinely system-only emitters (TTL auto-pause, host_monitor reconciler,
+// host-reported failures) always set Metadata["reason"], so they pass.
+func isRedundantSystemFollowup(e events.Event) bool {
+	if e.Actor.Type != events.ActorSystem {
+		return false
+	}
+	switch e.Event {
+	case events.CapsuleCreate, events.CapsulePause, events.CapsuleResume, events.CapsuleDestroy:
+	default:
+		return false
+	}
+	return e.Metadata["reason"] == ""
 }

@@ -20,6 +20,8 @@ import (
 
 	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
@@ -140,14 +142,15 @@ type switchTeamRequest struct {
 type authHandler struct {
 	db          *db.Queries
 	pool        *pgxpool.Pool
-	jwtSecret   []byte
+	sessions    *session.Service
 	mailer      email.Mailer
 	rdb         *redis.Client
 	redirectURL string
+	authHooks   []cpextension.AuthHook
 }
 
-func newAuthHandler(db *db.Queries, pool *pgxpool.Pool, jwtSecret []byte, mailer email.Mailer, rdb *redis.Client, redirectURL string) *authHandler {
-	return &authHandler{db: db, pool: pool, jwtSecret: jwtSecret, mailer: mailer, rdb: rdb, redirectURL: strings.TrimRight(redirectURL, "/")}
+func newAuthHandler(db *db.Queries, pool *pgxpool.Pool, sessions *session.Service, mailer email.Mailer, rdb *redis.Client, redirectURL string, hooks []cpextension.AuthHook) *authHandler {
+	return &authHandler{db: db, pool: pool, sessions: sessions, mailer: mailer, rdb: rdb, redirectURL: strings.TrimRight(redirectURL, "/"), authHooks: hooks}
 }
 
 type signupRequest struct {
@@ -166,11 +169,41 @@ type activateRequest struct {
 }
 
 type authResponse struct {
-	Token  string `json:"token"`
-	UserID string `json:"user_id"`
-	TeamID string `json:"team_id"`
-	Email  string `json:"email"`
-	Name   string `json:"name"`
+	UserID  string `json:"user_id"`
+	TeamID  string `json:"team_id"`
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Role    string `json:"role"`
+	IsAdmin bool   `json:"is_admin"`
+}
+
+// issueSession creates a new session and writes both the session and CSRF
+// cookies to the response. On success it writes the authResponse JSON body.
+func (h *authHandler) issueSession(
+	w http.ResponseWriter,
+	r *http.Request,
+	userID, teamID pgtype.UUID,
+	email, name, role string,
+	isAdmin bool,
+) error {
+	sess, err := h.sessions.Create(r.Context(), userID, teamID, email, name, role, isAdmin, r.UserAgent(), clientIP(r))
+	if err != nil {
+		return err
+	}
+	setSessionCookies(w, sess.ID, sess.CSRFToken, isSecure(r))
+	return nil
+}
+
+// clientIP returns the request's apparent client IP, honoring
+// X-Forwarded-For when behind a reverse proxy.
+func clientIP(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		if i := strings.IndexByte(fwd, ','); i > 0 {
+			return strings.TrimSpace(fwd[:i])
+		}
+		return strings.TrimSpace(fwd)
+	}
+	return r.RemoteAddr
 }
 
 type signupResponse struct {
@@ -253,8 +286,8 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate activation token and store in Redis.
-	rawToken := generateActivationToken()
-	tokenHash := hashActivationToken(rawToken)
+	rawToken := generateOpaqueToken()
+	tokenHash := hashOpaqueToken(rawToken)
 	redisKey := activationKeyPrefix + tokenHash
 
 	if err := h.rdb.Set(ctx, redisKey, id.FormatUserID(userID), activationTTL).Err(); err != nil {
@@ -296,7 +329,7 @@ func (h *authHandler) Activate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	tokenHash := hashActivationToken(req.Token)
+	tokenHash := hashOpaqueToken(req.Token)
 	redisKey := activationKeyPrefix + tokenHash
 
 	userIDStr, err := h.rdb.GetDel(ctx, redisKey).Result()
@@ -345,18 +378,26 @@ func (h *authHandler) Activate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isAdmin := user.IsAdmin || isFirstUser
-	token, err := auth.SignJWT(h.jwtSecret, userID, team.ID, user.Email, user.Name, role, isAdmin)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
+	// Fire OnSignup before issuing a session — billing must succeed first.
+	if err := fireOnSignup(ctx, h.authHooks, userID, team.ID, user.Email); err != nil {
+		slog.Error("activate: OnSignup hook failed", "user_id", id.FormatUserID(userID), "error", err)
+		writeError(w, http.StatusInternalServerError, "signup_hook_failed", "failed to finalize account setup")
 		return
 	}
+	if err := h.issueSession(w, r, userID, team.ID, user.Email, user.Name, role, isAdmin); err != nil {
+		slog.Error("activate: failed to issue session", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
+		return
+	}
+	fireOnLogin(ctx, h.authHooks, userID)
 
 	writeJSON(w, http.StatusOK, authResponse{
-		Token:  token,
-		UserID: id.FormatUserID(userID),
-		TeamID: id.FormatTeamID(team.ID),
-		Email:  user.Email,
-		Name:   user.Name,
+		UserID:  id.FormatUserID(userID),
+		TeamID:  id.FormatTeamID(team.ID),
+		Email:   user.Email,
+		Name:    user.Name,
+		Role:    role,
+		IsAdmin: isAdmin,
 	})
 }
 
@@ -427,18 +468,20 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isAdmin := user.IsAdmin || isFirstUser
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, isAdmin)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
+	if err := h.issueSession(w, r, user.ID, team.ID, user.Email, user.Name, role, isAdmin); err != nil {
+		slog.Error("login: failed to issue session", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
 		return
 	}
+	fireOnLogin(ctx, h.authHooks, user.ID)
 
 	writeJSON(w, http.StatusOK, authResponse{
-		Token:  token,
-		UserID: id.FormatUserID(user.ID),
-		TeamID: id.FormatTeamID(team.ID),
-		Email:  user.Email,
-		Name:   user.Name,
+		UserID:  id.FormatUserID(user.ID),
+		TeamID:  id.FormatTeamID(team.ID),
+		Email:   user.Email,
+		Name:    user.Name,
+		Role:    role,
+		IsAdmin: isAdmin,
 	})
 }
 
@@ -503,24 +546,54 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, ac.UserID, teamID, ac.Email, user.Name, membership.Role, user.IsAdmin)
+	// Rotate the SID so any leaked old cookie loses access at the moment of
+	// privilege change.
+	newSess, err := h.sessions.Rotate(ctx, ac.SessionID, ac.UserID, teamID, user.Email, user.Name, membership.Role, user.IsAdmin, r.UserAgent(), clientIP(r))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
+		slog.Error("switch team: failed to rotate session", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to switch team")
 		return
 	}
+	setSessionCookies(w, newSess.ID, newSess.CSRFToken, isSecure(r))
 
 	writeJSON(w, http.StatusOK, authResponse{
-		Token:  token,
-		UserID: id.FormatUserID(ac.UserID),
-		TeamID: id.FormatTeamID(teamID),
-		Email:  ac.Email,
-		Name:   user.Name,
+		UserID:  id.FormatUserID(ac.UserID),
+		TeamID:  id.FormatTeamID(teamID),
+		Email:   user.Email,
+		Name:    user.Name,
+		Role:    membership.Role,
+		IsAdmin: user.IsAdmin,
 	})
+}
+
+// Logout handles POST /v1/auth/logout — revokes the caller's current session.
+func (h *authHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	ac := auth.MustFromContext(r.Context())
+	if err := h.sessions.Revoke(r.Context(), ac.SessionID); err != nil {
+		slog.Warn("logout: revoke failed", "error", err)
+	}
+	clearSessionCookies(w, isSecure(r))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// LogoutAll handles POST /v1/auth/logout-all — revokes every session for the
+// current user, including the caller's own.
+func (h *authHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	ac := auth.MustFromContext(r.Context())
+	if err := h.sessions.RevokeAllForUser(r.Context(), ac.UserID); err != nil {
+		slog.Error("logout-all: revoke failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to revoke sessions")
+		return
+	}
+	clearSessionCookies(w, isSecure(r))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- helpers ---
 
-func generateActivationToken() string {
+// generateOpaqueToken returns a fresh 16-byte hex-encoded random token,
+// used for email activation links and password reset links.
+func generateOpaqueToken() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		panic(fmt.Sprintf("crypto/rand failed: %v", err))
@@ -528,7 +601,9 @@ func generateActivationToken() string {
 	return hex.EncodeToString(b)
 }
 
-func hashActivationToken(raw string) string {
+// hashOpaqueToken returns the SHA-256 hex digest of raw, used as the
+// lookup key for one-shot tokens stored in Redis.
+func hashOpaqueToken(raw string) string {
 	h := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(h[:])
 }

@@ -2,17 +2,16 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
@@ -20,12 +19,47 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/internal/models"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
-	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
-	"git.omukk.dev/wrenn/wrenn/internal/uffd"
 	"git.omukk.dev/wrenn/wrenn/internal/vm"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 )
+
+// Sentinel errors. Use errors.Is to detect them rather than string-matching.
+var (
+	// ErrNotFound is returned when a sandbox is not present in the in-memory map.
+	ErrNotFound = errors.New("sandbox not found")
+	// ErrNotRunning is returned when an operation requires StatusRunning but
+	// the sandbox is in another state (or its envd client has been cleared
+	// concurrently by a pause).
+	ErrNotRunning = errors.New("sandbox not running")
+	// ErrNotPaused is returned when an operation requires StatusPaused but
+	// the sandbox is in another state.
+	ErrNotPaused = errors.New("sandbox not paused")
+	// ErrInvalidRange is returned when a metrics range parameter is invalid.
+	ErrInvalidRange = errors.New("invalid range")
+)
+
+// MinTimeoutSec is the minimum inactivity TTL accepted by Create/Resume.
+// 0 keeps the "no TTL" semantic; any positive value below this is clamped.
+//
+// Rationale: very short TTLs race the post-create/post-resume startup window
+// (m.boxes insertion → /init → startMemoryLoader). With memLoadDone unset
+// for a brief moment, the reaper guard does not fire and a sub-second
+// TimeoutSec could auto-pause a sandbox before its memory loader arms,
+// producing a stale ch.snapshot. 60s is well above the startup envelope.
+const MinTimeoutSec = 60
+
+// clampTimeout normalises a caller-supplied TTL. 0 means "no TTL" and is
+// preserved; positive values are floored at MinTimeoutSec.
+func clampTimeout(timeoutSec int) int {
+	if timeoutSec <= 0 {
+		return 0
+	}
+	if timeoutSec < MinTimeoutSec {
+		return MinTimeoutSec
+	}
+	return timeoutSec
+}
 
 // Config holds the paths and defaults for the sandbox manager.
 type Config struct {
@@ -34,11 +68,26 @@ type Config struct {
 	DefaultRootfsSizeMB int // target size for template rootfs images; 0 → DefaultDiskSizeMB
 
 	// Resolved at startup by the host agent.
-	KernelPath         string // path to the latest vmlinux-x.y.z
-	KernelVersion      string // semver extracted from filename
-	FirecrackerBin     string // path to the firecracker binary
-	FirecrackerVersion string // semver from firecracker --version
-	AgentVersion       string // host agent version (injected via ldflags)
+	KernelPath    string // path to the latest vmlinux-x.y.z
+	KernelVersion string // semver extracted from filename
+	VMMBin        string // path to the cloud-hypervisor binary
+	VMMVersion    string // semver from cloud-hypervisor --version
+	AgentVersion  string // host agent version (injected via ldflags)
+}
+
+// LifecycleEvent describes an autonomous state change initiated by the agent.
+type LifecycleEvent struct {
+	Event     string
+	SandboxID string
+}
+
+// EventSender sends autonomous lifecycle events to the control plane.
+// SendAsync is fire-and-forget; Send blocks with retries and returns the
+// final error so callers running under a shutdown deadline can guarantee
+// delivery before process exit.
+type EventSender interface {
+	SendAsync(event LifecycleEvent)
+	Send(ctx context.Context, event LifecycleEvent) error
 }
 
 // Manager orchestrates sandbox lifecycle: VM, network, filesystem, envd.
@@ -51,12 +100,14 @@ type Manager struct {
 	boxes  map[string]*sandboxState
 	stopCh chan struct{}
 
-	autoPausedMu  sync.Mutex
-	autoPausedIDs []string
-
 	// onDestroy is called with the sandbox ID after cleanup completes.
 	// Used by ProxyHandler to evict cached reverse proxies.
 	onDestroy func(sandboxID string)
+
+	// eventSender sends autonomous lifecycle events (auto-pause, auto-destroy)
+	// to the CP via HTTP callback. Optional — nil means events are only
+	// propagated through the HostMonitor reconciler.
+	eventSender EventSender
 }
 
 // SetOnDestroy registers a callback invoked after each sandbox is cleaned up.
@@ -64,69 +115,56 @@ func (m *Manager) SetOnDestroy(fn func(sandboxID string)) {
 	m.onDestroy = fn
 }
 
+// SetEventSender registers the callback sender for autonomous lifecycle events.
+func (m *Manager) SetEventSender(sender EventSender) {
+	m.eventSender = sender
+}
+
 // sandboxState holds the runtime state for a single sandbox.
 type sandboxState struct {
 	models.Sandbox
-	lifecycleMu    sync.Mutex // serializes Pause/Destroy/Resume on this sandbox
-	slot           *network.Slot
-	client         *envdclient.Client
-	connTracker    *ConnTracker // tracks in-flight proxy connections for pre-pause drain
-	uffdSocketPath string       // non-empty for sandboxes restored from snapshot
-	dmDevice       *devicemapper.SnapshotDevice
-	baseImagePath  string // path to the base template rootfs (for loop registry release)
+	lifecycleMu sync.Mutex // serializes Pause/Destroy/Resume on this sandbox
+	slot        *network.Slot
+	// client is published via atomic.Pointer so Exec/Pty/Process callers can
+	// load it without holding lifecycleMu. Pause's releaseRuntime stores nil;
+	// Resume stores a fresh client. Callers MUST nil-check after Load.
+	client        atomic.Pointer[envdclient.Client]
+	connTracker   *ConnTracker // tracks in-flight proxy connections for pre-pause drain
+	dmDevice      *devicemapper.SnapshotDevice
+	baseImagePath string // path to the base template rootfs (for loop registry release)
 
-	// parent holds the snapshot header and diff file paths from which this
-	// sandbox was restored. Non-nil means re-pause should use "Diff" snapshot
-	// type instead of "Full", avoiding the UFFD fault-in storm.
-	parent *snapshotParent
+	// sandboxDirOverride, when non-empty, pins this sandbox's VMConfig.SandboxDir
+	// to a path other than the default vm.SandboxTmpDir(sb.ID). Set when the
+	// sandbox was launched from a snapshot template — CH's saved config.json
+	// hardcodes the *original* source sandbox's tmpfs path, so every subsequent
+	// restore (Resume, PauseAll/restart) must reuse that same path or CH cannot
+	// find rootfs.ext4 in the new mount namespace.
+	sandboxDirOverride string
+
+	// Background memory loading state (set during Resume for UFFD sandboxes).
+	// nil for freshly-created sandboxes. For resumed sandboxes, memLoadDone
+	// is closed when the background loader finishes (success or failure).
+	memLoadDone   chan struct{}      // closed when background memory loader exits
+	memLoadCancel context.CancelFunc // cancels the background loader goroutine
 
 	// Metrics sampling state.
-	fcPID         int                // Firecracker process PID (child of unshare wrapper)
+	vmmPID        int                // VMM process PID (child of unshare wrapper)
 	ring          *metricsRing       // tiered ring buffers for CPU/mem/disk metrics
 	samplerCancel context.CancelFunc // cancels the per-sandbox sampling goroutine
 	samplerDone   chan struct{}      // closed when the sampling goroutine exits
 }
 
-// snapshotParent stores the previous generation's snapshot state so that
-// re-pause can produce an incremental diff instead of a full memory dump.
-type snapshotParent struct {
-	header    *snapshot.Header
-	diffPaths map[string]string // build ID → file path
-}
-
-// maxDiffGenerations caps how many incremental diff generations we chain
-// before merging diffs into a single file. Since UFFD lazy-loads memory
-// anyway, we merge on every re-pause to keep exactly 1 diff file per
-// snapshot — no accumulated chain, no extra restore overhead.
-const maxDiffGenerations = 1
-
 // buildMetadata constructs the metadata map with version information.
 func (m *Manager) buildMetadata(envdVersion string) map[string]string {
 	meta := map[string]string{
-		"kernel_version":      m.cfg.KernelVersion,
-		"firecracker_version": m.cfg.FirecrackerVersion,
-		"agent_version":       m.cfg.AgentVersion,
+		"kernel_version": m.cfg.KernelVersion,
+		"vmm_version":    m.cfg.VMMVersion,
+		"agent_version":  m.cfg.AgentVersion,
 	}
 	if envdVersion != "" {
 		meta["envd_version"] = envdVersion
 	}
 	return meta
-}
-
-// resolveKernelPath returns the kernel path for the given version hint.
-// If the exact version exists on disk, it is used. Otherwise, falls back to
-// the latest kernel (m.cfg.KernelPath).
-func (m *Manager) resolveKernelPath(versionHint string) string {
-	if versionHint == "" {
-		return m.cfg.KernelPath
-	}
-	exact := layout.KernelPathVersioned(m.cfg.WrennDir, versionHint)
-	if _, err := os.Stat(exact); err == nil {
-		return exact
-	}
-	slog.Warn("requested kernel version not found, using latest",
-		"requested", versionHint, "latest", m.cfg.KernelVersion)
-	return m.cfg.KernelPath
 }
 
 // New creates a new sandbox manager.
@@ -144,9 +182,21 @@ func New(cfg Config) *Manager {
 	}
 }
 
-// Create boots a new sandbox: clone rootfs, set up network, start VM, wait for envd.
+// Create boots a new sandbox. If the template's TemplateDir contains a CH
+// memory snapshot (state.json + config.json) it is restored via CH's
+// --restore + UFFD lazy memory; otherwise a fresh boot from the flattened
+// rootfs is performed. defaultUser/defaultEnv are forwarded to envd's /init
+// in both paths.
+//
 // If sandboxID is empty, a new ID is generated.
-func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID, vcpus, memoryMB, timeoutSec, diskSizeMB int) (*models.Sandbox, error) {
+func (m *Manager) Create(
+	ctx context.Context,
+	sandboxID string,
+	teamID, templateID pgtype.UUID,
+	vcpus, memoryMB, timeoutSec, diskSizeMB int,
+	defaultUser string,
+	defaultEnv map[string]string,
+) (*models.Sandbox, error) {
 	if sandboxID == "" {
 		sandboxID = id.FormatSandboxID(id.NewSandboxID())
 	}
@@ -160,11 +210,19 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	if diskSizeMB <= 0 {
 		diskSizeMB = 5120 // 5 GB default
 	}
+	timeoutSec = clampTimeout(timeoutSec)
 
-	// Check if template refers to a snapshot (has snapfile + memfile + header + rootfs).
-	tmplDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
-	if _, err := os.Stat(filepath.Join(tmplDir, snapshot.SnapFileName)); err == nil {
-		return m.createFromSnapshot(ctx, sandboxID, teamID, templateID, vcpus, memoryMB, timeoutSec, diskSizeMB)
+	// Snapshot template? Route to the CH-restore path; the launcher manages
+	// its own resource lifecycle and registers the sandbox itself.
+	//
+	// The minimal base template never carries a memory snapshot; guarding
+	// here prevents a stray state.json (e.g. from a failed CreateSnapshot
+	// that mis-targeted minimal) from silently rerouting fresh boots into
+	// the restore path with a confusing error downstream.
+	templateDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
+	if !layout.IsMinimal(teamID, templateID) && layout.IsSnapshotTemplate(templateDir) {
+		return m.createFromSnapshotTemplate(ctx, sandboxID, teamID, templateID,
+			vcpus, memoryMB, timeoutSec, diskSizeMB, defaultUser, defaultEnv)
 	}
 
 	// Resolve base rootfs image.
@@ -190,7 +248,11 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	// rewritten, the CoW stores a full copy. Undersized CoW causes
 	// dm-snapshot invalidation → EIO on all guest I/O.
 	dmName := "wrenn-" + sandboxID
-	cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s.cow", sandboxID))
+	if err := os.MkdirAll(layout.SandboxDir(m.cfg.WrennDir, sandboxID), 0o755); err != nil {
+		m.loops.Release(baseRootfs)
+		return nil, fmt.Errorf("create sandbox dir: %w", err)
+	}
+	cowPath := layout.SandboxCowPath(m.cfg.WrennDir, sandboxID)
 	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
 	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
@@ -198,26 +260,32 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 		return nil, fmt.Errorf("create dm-snapshot: %w", err)
 	}
 
+	res := &createResources{
+		sandboxID: sandboxID,
+		loops:     m.loops,
+		loopImage: baseRootfs,
+		dmDevice:  dmDev,
+		cowPath:   cowPath,
+		slots:     m.slots,
+	}
+
 	// Allocate network slot.
 	slotIdx, err := m.slots.Allocate()
 	if err != nil {
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("allocate network slot: %w", err)
 	}
+	res.slotIdx = slotIdx
 	slot := network.NewSlot(slotIdx)
 
 	// Set up network.
 	if err := network.CreateNetwork(slot); err != nil {
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("create network: %w", err)
 	}
+	res.slot = slot
 
-	// Boot VM — Firecracker gets the dm device path.
+	// Boot VM — CH gets the dm device path.
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
 		TemplateID:       id.UUIDString(templateID),
@@ -231,17 +299,15 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 		GuestIP:          slot.GuestIP,
 		GatewayIP:        slot.TapIP,
 		NetMask:          slot.GuestNetMask,
-		FirecrackerBin:   m.cfg.FirecrackerBin,
+		VMMBin:           m.cfg.VMMBin,
+		LogDir:           filepath.Join(m.cfg.WrennDir, "logs"),
 	}
 
 	if _, err := m.vm.Create(ctx, vmCfg); err != nil {
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("create VM: %w", err)
 	}
+	res.vm = m.vm
 
 	// Wait for envd to be ready.
 	client := envdclient.New(slot.HostIP.String())
@@ -249,17 +315,21 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 	defer waitCancel()
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
-		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
+		res.rollback()
 		return nil, fmt.Errorf("wait for envd: %w", err)
 	}
 
 	// Fetch envd version (best-effort).
 	envdVersion, _ := client.FetchVersion(ctx)
+
+	// Apply template defaults via envd /init (no-op when both empty).
+	if defaultUser != "" || len(defaultEnv) > 0 {
+		initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
+		if err := client.PostInitWithDefaults(initCtx, defaultUser, defaultEnv, sandboxID, id.UUIDString(templateID)); err != nil {
+			slog.Warn("post-create PostInit failed", "id", sandboxID, "error", err)
+		}
+		initCancel()
+	}
 
 	now := time.Now()
 	sb := &sandboxState{
@@ -279,17 +349,18 @@ func (m *Manager) Create(ctx context.Context, sandboxID string, teamID, template
 			Metadata:       m.buildMetadata(envdVersion),
 		},
 		slot:          slot,
-		client:        client,
 		connTracker:   &ConnTracker{},
 		dmDevice:      dmDev,
 		baseImagePath: baseRootfs,
 	}
+	sb.client.Store(client)
 
 	m.mu.Lock()
 	m.boxes[sandboxID] = sb
 	m.mu.Unlock()
 
 	m.startSampler(sb)
+	m.startCrashWatcher(sb)
 
 	slog.Info("sandbox created",
 		"id", sandboxID,
@@ -334,6 +405,12 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 
 // cleanup tears down all resources for a sandbox.
 func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
+	if sb.memLoadCancel != nil {
+		sb.memLoadCancel()
+		if sb.memLoadDone != nil {
+			<-sb.memLoadDone
+		}
+	}
 	m.stopSampler(sb)
 	if err := m.vm.Destroy(ctx, sb.ID); err != nil {
 		slog.Warn("vm destroy error", "id", sb.ID, "error", err)
@@ -350,1041 +427,60 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 		}
 		os.Remove(sb.dmDevice.CowPath)
 	}
+	// Paused branch: dm-snapshot and loop were already released by
+	// releaseRuntime; the CoW file inside the sandbox dir is removed by
+	// Destroy's os.RemoveAll(SandboxDir) below.
 	if sb.baseImagePath != "" {
 		m.loops.Release(sb.baseImagePath)
 	}
-
-	if sb.uffdSocketPath != "" {
-		os.Remove(sb.uffdSocketPath)
-	}
 }
 
-// Pause takes a snapshot of a running sandbox, then destroys all resources.
-// The sandbox's snapshot files are stored at SnapshotsDir/{sandboxID}/.
-// After this call, the sandbox is no longer running but can be resumed.
-func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
-	sb, err := m.get(sandboxID)
-	if err != nil {
-		return err
-	}
+// Pause, Resume, CreateSnapshot, FlattenRootfs, DeleteSnapshot, PauseAll
+// are implemented in pause.go.
 
-	// Serialize lifecycle operations on this sandbox to prevent concurrent
-	// Pause/Destroy calls from corrupting Firecracker state.
-	sb.lifecycleMu.Lock()
-	defer sb.lifecycleMu.Unlock()
-
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	// Mark sandbox as pausing to block new exec/file/PTY operations.
-	m.mu.Lock()
-	sb.Status = models.StatusPausing
-	m.mu.Unlock()
-
-	// restoreRunning reverts state if any pre-freeze step fails.
-	restoreRunning := func() {
-		_ = m.vm.UpdateBalloon(context.Background(), sandboxID, 0)
-		sb.connTracker.Reset()
-		m.mu.Lock()
-		sb.Status = models.StatusRunning
-		m.mu.Unlock()
-		m.startSampler(sb)
-	}
-
-	// Stop the metrics sampler goroutine before tearing down any resources
-	// it reads (dm device, Firecracker PID). Without this, the sampler
-	// leaks on every successful pause.
-	m.stopSampler(sb)
-
-	// ── Step 1: Isolate from external traffic ─────────────────────────
-	// Drain in-flight proxy connections (grace period for clean shutdown).
-	sb.connTracker.Drain(5 * time.Second)
-	// Force-close any connections that didn't finish during grace period.
-	sb.connTracker.ForceClose()
-	slog.Debug("pause: external connections closed", "id", sandboxID)
-
-	// Close host-side idle connections to envd so FIN packets propagate
-	// to the guest kernel before snapshot.
-	sb.client.CloseIdleConnections()
-
-	// ── Step 2: Drop page cache ──────────────────────────────────────
-	// Signal envd to quiesce: drops page cache, stops port subsystem,
-	// marks connections for post-restore cleanup. Page cache drop can
-	// take significant time on large-memory VMs (20GB+).
-	func() {
-		prepCtx, prepCancel := context.WithTimeout(ctx, 30*time.Second)
-		defer prepCancel()
-		if err := sb.client.PrepareSnapshot(prepCtx); err != nil {
-			slog.Warn("pause: pre-snapshot quiesce failed (best-effort)", "id", sandboxID, "error", err)
-		} else {
-			slog.Debug("pause: envd quiesced", "id", sandboxID)
-		}
-	}()
-
-	// ── Step 3: Inflate balloon to reclaim free guest memory ─────────
-	// Freed pages become zero from FC's perspective, so ProcessMemfile
-	// skips them → dramatically smaller memfile (e.g. 20GB → 1GB).
-	func() {
-		memUsed, err := readEnvdMemUsed(sb.client)
-		if err != nil {
-			slog.Debug("pause: could not read guest memory, skipping balloon inflate", "id", sandboxID, "error", err)
-			return
-		}
-		usedMiB := int(memUsed / (1024 * 1024))
-		keepMiB := max(usedMiB*2, 256) + 128
-		inflateMiB := sb.MemoryMB - keepMiB
-		if inflateMiB <= 0 {
-			slog.Debug("pause: not enough free memory for balloon inflate", "id", sandboxID, "used_mib", usedMiB, "total_mib", sb.MemoryMB)
-			return
-		}
-		balloonCtx, balloonCancel := context.WithTimeout(ctx, 10*time.Second)
-		defer balloonCancel()
-		if err := m.vm.UpdateBalloon(balloonCtx, sandboxID, inflateMiB); err != nil {
-			slog.Debug("pause: balloon inflate failed (non-fatal)", "id", sandboxID, "error", err)
-			return
-		}
-		time.Sleep(2 * time.Second)
-		slog.Info("pause: balloon inflated", "id", sandboxID, "inflate_mib", inflateMiB, "guest_used_mib", usedMiB)
-	}()
-
-	// ── Step 4: Freeze vCPUs ─────────────────────────────────────────
-	pauseStart := time.Now()
-
-	if err := m.vm.Pause(ctx, sandboxID); err != nil {
-		restoreRunning()
-		return fmt.Errorf("pause VM: %w", err)
-	}
-	slog.Debug("pause: VM paused", "id", sandboxID, "elapsed", time.Since(pauseStart))
-
-	// Always use Diff when we have a parent snapshot — Diff only captures
-	// changed pages and is much faster than Full (which dumps all memory).
-	// For first-time pauses (no parent) we must use Full.
-	snapshotType := "Full"
-	if sb.parent != nil {
-		snapshotType = "Diff"
-	}
-
-	// resumeOnError unpauses the VM so the sandbox stays usable when a
-	// post-freeze step fails. If the resume itself fails, the sandbox is
-	// frozen and unrecoverable — destroy it to avoid a zombie.
-	resumeOnError := func() {
-		// Use a fresh context — the caller's ctx may already be cancelled.
-		resumeCtx, resumeCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer resumeCancel()
-		if err := m.vm.Resume(resumeCtx, sandboxID); err != nil {
-			slog.Error("failed to resume VM after pause error — destroying frozen sandbox", "id", sandboxID, "error", err)
-			m.cleanup(context.Background(), sb)
-			m.mu.Lock()
-			delete(m.boxes, sandboxID)
-			m.mu.Unlock()
-			if m.onDestroy != nil {
-				m.onDestroy(sandboxID)
-			}
-			return
-		}
-		restoreRunning()
-	}
-
-	// Step 2: Take VM state snapshot (snapfile + memfile).
-	pauseDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sandboxID)
-	if err := os.MkdirAll(pauseDir, 0755); err != nil {
-		resumeOnError()
-		return fmt.Errorf("create snapshot dir: %w", err)
-	}
-
-	rawMemPath := filepath.Join(pauseDir, "memfile.raw")
-	snapPath := filepath.Join(pauseDir, snapshot.SnapFileName)
-
-	snapshotStart := time.Now()
-	if err := m.vm.Snapshot(ctx, sandboxID, snapPath, rawMemPath, snapshotType); err != nil {
-		slog.Error("pause: snapshot failed", "id", sandboxID, "type", snapshotType, "elapsed", time.Since(snapshotStart), "error", err)
-		warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-		resumeOnError()
-		return fmt.Errorf("create VM snapshot: %w", err)
-	}
-	slog.Debug("pause: FC snapshot created", "id", sandboxID, "type", snapshotType, "elapsed", time.Since(snapshotStart))
-
-	// Step 3: Process the raw memfile into a compact diff + header.
-	buildID := uuid.New()
-	headerPath := filepath.Join(pauseDir, snapshot.MemHeaderName)
-
-	processStart := time.Now()
-	if sb.parent != nil {
-		// Diff: process against parent header, producing only changed blocks.
-		diffPath := snapshot.MemDiffPathForBuild(pauseDir, "", buildID)
-		if _, err := snapshot.ProcessMemfileWithParent(rawMemPath, diffPath, headerPath, sb.parent.header, buildID); err != nil {
-			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-			resumeOnError()
-			return fmt.Errorf("process memfile with parent: %w", err)
-		}
-
-		// Copy previous generation diff files into the snapshot directory.
-		for prevBuildID, prevPath := range sb.parent.diffPaths {
-			dstPath := snapshot.MemDiffPathForBuild(pauseDir, "", uuid.MustParse(prevBuildID))
-			if prevPath != dstPath {
-				if err := copyFile(prevPath, dstPath); err != nil {
-					warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-					resumeOnError()
-					return fmt.Errorf("copy parent diff file: %w", err)
-				}
-			}
-		}
-
-		// If the generation cap is reached, merge all diff files into a
-		// single file to collapse the chain. This is a file-level operation
-		// (no Firecracker involvement) so it's fast and reliable.
-		generation := sb.parent.header.Metadata.Generation + 1
-		if generation >= maxDiffGenerations {
-			slog.Debug("pause: merging diff generations", "id", sandboxID, "generation", generation)
-
-			// Load the header we just wrote (it references all generations).
-			headerData, err := os.ReadFile(headerPath)
-			if err != nil {
-				warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-				resumeOnError()
-				return fmt.Errorf("read header for merge: %w", err)
-			}
-			currentHeader, err := snapshot.Deserialize(headerData)
-			if err != nil {
-				warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-				resumeOnError()
-				return fmt.Errorf("deserialize header for merge: %w", err)
-			}
-
-			// Locate all diff files referenced by the header.
-			diffFiles, err := snapshot.ListDiffFiles(pauseDir, "", currentHeader)
-			if err != nil {
-				warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-				resumeOnError()
-				return fmt.Errorf("list diff files for merge: %w", err)
-			}
-
-			// Merge into a single new diff file.
-			mergedPath := snapshot.MemDiffPath(pauseDir, "")
-			if _, err := snapshot.MergeDiffs(currentHeader, diffFiles, mergedPath, headerPath); err != nil {
-				warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-				resumeOnError()
-				return fmt.Errorf("merge diff files: %w", err)
-			}
-
-			// Remove the old per-generation diff files.
-			removeStaleMemDiffs(pauseDir)
-			slog.Debug("pause: diff merge complete", "id", sandboxID)
-		}
-	} else {
-		// Full: first pause — no parent to diff against.
-		diffPath := snapshot.MemDiffPath(pauseDir, "")
-		if _, err := snapshot.ProcessMemfile(rawMemPath, diffPath, headerPath, buildID); err != nil {
-			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-			resumeOnError()
-			return fmt.Errorf("process memfile: %w", err)
-		}
-	}
-	slog.Debug("pause: memfile processed", "id", sandboxID, "type", snapshotType, "elapsed", time.Since(processStart))
-
-	// Remove the raw memfile — we only keep the compact diff(s).
-	os.Remove(rawMemPath)
-
-	// Step 4: Destroy the VM first so Firecracker releases the dm device.
-	if err := m.vm.Destroy(ctx, sb.ID); err != nil {
-		slog.Warn("vm destroy error during pause", "id", sb.ID, "error", err)
-	}
-
-	// Step 5: Now that FC is gone, safely remove the dm-snapshot and save the CoW.
-	if sb.dmDevice != nil {
-		if err := devicemapper.RemoveSnapshot(ctx, sb.dmDevice); err != nil {
-			// Hard error: if the dm device isn't removed, the CoW file is still
-			// in use and we can't safely move it. The VM is already destroyed so
-			// the sandbox is unrecoverable — clean up remaining resources.
-			// Note: we intentionally skip m.loops.Release here because the stale
-			// dm device still references the origin loop device. Detaching it now
-			// would corrupt the dm device. CleanupStaleDevices handles this on
-			// next agent startup.
-			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
-			m.slots.Release(sb.SlotIndex)
-			if sb.uffdSocketPath != "" {
-				os.Remove(sb.uffdSocketPath)
-			}
-			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-			m.mu.Lock()
-			delete(m.boxes, sandboxID)
-			m.mu.Unlock()
-			return fmt.Errorf("remove dm-snapshot: %w", err)
-		}
-
-		// Move (not copy) the CoW file into the snapshot directory.
-		snapshotCow := snapshot.CowPath(pauseDir, "")
-		if err := os.Rename(sb.dmDevice.CowPath, snapshotCow); err != nil {
-			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-			// VM and dm-snapshot are already gone — clean up remaining resources.
-			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
-			m.slots.Release(sb.SlotIndex)
-			if sb.baseImagePath != "" {
-				m.loops.Release(sb.baseImagePath)
-			}
-			if sb.uffdSocketPath != "" {
-				os.Remove(sb.uffdSocketPath)
-			}
-			m.mu.Lock()
-			delete(m.boxes, sandboxID)
-			m.mu.Unlock()
-			return fmt.Errorf("move cow file: %w", err)
-		}
-
-		// Record which base template this CoW was built against.
-		if err := snapshot.WriteMeta(pauseDir, "", &snapshot.RootfsMeta{
-			BaseTemplate: sb.baseImagePath,
-			TemplateID:   uuid.UUID(sb.TemplateID).String(),
-		}); err != nil {
-			warnErr("snapshot dir cleanup error", sandboxID, os.RemoveAll(pauseDir))
-			// VM and dm-snapshot are already gone — clean up remaining resources.
-			warnErr("network cleanup error during pause", sandboxID, network.RemoveNetwork(sb.slot))
-			m.slots.Release(sb.SlotIndex)
-			if sb.baseImagePath != "" {
-				m.loops.Release(sb.baseImagePath)
-			}
-			if sb.uffdSocketPath != "" {
-				os.Remove(sb.uffdSocketPath)
-			}
-			m.mu.Lock()
-			delete(m.boxes, sandboxID)
-			m.mu.Unlock()
-			return fmt.Errorf("write rootfs meta: %w", err)
-		}
-	}
-
-	// Step 6: Clean up remaining resources (network, loop device, uffd socket).
-	if err := network.RemoveNetwork(sb.slot); err != nil {
-		slog.Warn("network cleanup error during pause", "id", sb.ID, "error", err)
-	}
-	m.slots.Release(sb.SlotIndex)
-	if sb.baseImagePath != "" {
-		m.loops.Release(sb.baseImagePath)
-	}
-	if sb.uffdSocketPath != "" {
-		os.Remove(sb.uffdSocketPath)
-	}
-
-	m.mu.Lock()
-	delete(m.boxes, sandboxID)
-	m.mu.Unlock()
-
-	slog.Info("sandbox paused", "id", sandboxID, "snapshot_type", snapshotType, "total_elapsed", time.Since(pauseStart))
-	return nil
-}
-
-// Resume restores a paused sandbox from its snapshot using UFFD for
-// lazy memory loading. The sandbox gets a new network slot.
-// Optional defaultUser and defaultEnv are applied via a single PostInit
-// call so that template defaults are set without an extra round-trip.
-func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, kernelVersion string, defaultUser string, defaultEnv map[string]string) (*models.Sandbox, error) {
-	pauseDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sandboxID)
-	if _, err := os.Stat(pauseDir); err != nil {
-		return nil, fmt.Errorf("no snapshot found for sandbox %s", sandboxID)
-	}
-
-	// Read the header to set up the UFFD memory source.
-	headerData, err := os.ReadFile(filepath.Join(pauseDir, snapshot.MemHeaderName))
-	if err != nil {
-		return nil, fmt.Errorf("read header: %w", err)
-	}
-
-	header, err := snapshot.Deserialize(headerData)
-	if err != nil {
-		return nil, fmt.Errorf("deserialize header: %w", err)
-	}
-
-	// Build diff file map — supports both single-generation and multi-generation.
-	diffPaths, err := snapshot.ListDiffFiles(pauseDir, "", header)
-	if err != nil {
-		return nil, fmt.Errorf("list diff files: %w", err)
-	}
-
-	source, err := uffd.NewDiffFileSource(header, diffPaths)
-	if err != nil {
-		return nil, fmt.Errorf("create memory source: %w", err)
-	}
-
-	// Read rootfs metadata to find the base template image.
-	meta, err := snapshot.ReadMeta(pauseDir, "")
-	if err != nil {
-		source.Close()
-		return nil, fmt.Errorf("read rootfs meta: %w", err)
-	}
-
-	// Acquire the base image loop device and restore dm-snapshot from saved CoW.
-	baseImagePath := meta.BaseTemplate
-	originLoop, err := m.loops.Acquire(baseImagePath)
-	if err != nil {
-		source.Close()
-		return nil, fmt.Errorf("acquire loop device: %w", err)
-	}
-
-	originSize, err := devicemapper.OriginSizeBytes(originLoop)
-	if err != nil {
-		source.Close()
-		m.loops.Release(baseImagePath)
-		return nil, fmt.Errorf("get origin size: %w", err)
-	}
-
-	// Move CoW file from snapshot dir to sandboxes dir for the running sandbox.
-	savedCow := snapshot.CowPath(pauseDir, "")
-	cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s.cow", sandboxID))
-	if err := os.Rename(savedCow, cowPath); err != nil {
-		source.Close()
-		m.loops.Release(baseImagePath)
-		return nil, fmt.Errorf("move cow file: %w", err)
-	}
-
-	// rollbackCow attempts to move the CoW file back to the snapshot dir.
-	// Best-effort — logs a warning if it fails.
-	rollbackCow := func() {
-		if err := os.Rename(cowPath, savedCow); err != nil {
-			slog.Warn("failed to rollback cow file", "src", cowPath, "dst", savedCow, "error", err)
-		}
-	}
-
-	// Restore dm-snapshot from existing persistent CoW file.
-	dmName := "wrenn-" + sandboxID
-	dmDev, err := devicemapper.RestoreSnapshot(ctx, dmName, originLoop, cowPath, originSize)
-	if err != nil {
-		source.Close()
-		m.loops.Release(baseImagePath)
-		rollbackCow()
-		return nil, fmt.Errorf("restore dm-snapshot: %w", err)
-	}
-
-	// Allocate network slot.
-	slotIdx, err := m.slots.Allocate()
-	if err != nil {
-		source.Close()
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		rollbackCow()
-		m.loops.Release(baseImagePath)
-		return nil, fmt.Errorf("allocate network slot: %w", err)
-	}
-	slot := network.NewSlot(slotIdx)
-
-	if err := network.CreateNetwork(slot); err != nil {
-		source.Close()
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		rollbackCow()
-		m.loops.Release(baseImagePath)
-		return nil, fmt.Errorf("create network: %w", err)
-	}
-
-	// Start UFFD server.
-	uffdSocketPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s-uffd.sock", sandboxID))
-	os.Remove(uffdSocketPath) // Clean stale socket.
-	uffdServer := uffd.NewServer(uffdSocketPath, source)
-	if err := uffdServer.Start(ctx); err != nil {
-		source.Close()
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		rollbackCow()
-		m.loops.Release(baseImagePath)
-		return nil, fmt.Errorf("start uffd server: %w", err)
-	}
-
-	// Restore VM from snapshot.
-	vmCfg := vm.VMConfig{
-		SandboxID:        sandboxID,
-		TemplateID:       meta.TemplateID,
-		KernelPath:       m.resolveKernelPath(kernelVersion),
-		RootfsPath:       dmDev.DevicePath,
-		VCPUs:            1,                                         // Placeholder; overridden by snapshot.
-		MemoryMB:         int(header.Metadata.Size / (1024 * 1024)), // Placeholder; overridden by snapshot.
-		NetworkNamespace: slot.NamespaceID,
-		TapDevice:        slot.TapName,
-		TapMAC:           slot.TapMAC,
-		GuestIP:          slot.GuestIP,
-		GatewayIP:        slot.TapIP,
-		NetMask:          slot.GuestNetMask,
-		FirecrackerBin:   m.cfg.FirecrackerBin,
-	}
-
-	resumeSnapPath := filepath.Join(pauseDir, snapshot.SnapFileName)
-	if _, err := m.vm.CreateFromSnapshot(ctx, vmCfg, resumeSnapPath, uffdSocketPath); err != nil {
-		warnErr("uffd server stop error", sandboxID, uffdServer.Stop())
-		source.Close()
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		rollbackCow()
-		m.loops.Release(baseImagePath)
-		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
-	}
-
-	// Start prefetching all guest memory pages in the background.
-	// This runs concurrently with envd startup and eliminates on-demand
-	// page fault latency for subsequent RPC calls.
-	uffdServer.Prefetch()
-
-	// Wait for envd to be ready.
-	client := envdclient.New(slot.HostIP.String())
-	waitCtx, waitCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-
-	if err := client.WaitUntilReady(waitCtx); err != nil {
-		waitCancel()
-		warnErr("uffd server stop error", sandboxID, uffdServer.Stop())
-		source.Close()
-		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		rollbackCow()
-		m.loops.Release(baseImagePath)
-		return nil, fmt.Errorf("wait for envd: %w", err)
-	}
-	waitCancel()
-
-	// PostInit gets its own timeout — WaitUntilReady may have consumed most
-	// of EnvdTimeout, starving PostInit of time for RestoreAfterSnapshot.
-	initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-	defer initCancel()
-
-	if err := client.PostInitWithDefaults(initCtx, defaultUser, defaultEnv); err != nil {
-		slog.Warn("post-init failed after resume, metadata files may be stale", "sandbox", sandboxID, "error", err)
-	}
-
-	// Deflate balloon — the snapshot was taken with an inflated balloon to
-	// reduce memfile size, so restore the guest's full memory allocation.
-	if err := m.vm.UpdateBalloon(ctx, sandboxID, 0); err != nil {
-		slog.Debug("resume: balloon deflate failed (non-fatal)", "id", sandboxID, "error", err)
-	}
-
-	// Fetch envd version (best-effort).
-	envdVersion, _ := client.FetchVersion(ctx)
-
-	now := time.Now()
-	sb := &sandboxState{
-		Sandbox: models.Sandbox{
-			ID:           sandboxID,
-			Status:       models.StatusRunning,
-			VCPUs:        vmCfg.VCPUs,
-			MemoryMB:     vmCfg.MemoryMB,
-			TimeoutSec:   timeoutSec,
-			SlotIndex:    slotIdx,
-			HostIP:       slot.HostIP,
-			RootfsPath:   dmDev.DevicePath,
-			CreatedAt:    now,
-			LastActiveAt: now,
-			Metadata:     m.buildMetadata(envdVersion),
-		},
-		slot:           slot,
-		client:         client,
-		connTracker:    &ConnTracker{},
-		uffdSocketPath: uffdSocketPath,
-		dmDevice:       dmDev,
-		baseImagePath:  baseImagePath,
-		// Preserve parent snapshot info so re-pause can use Diff snapshots.
-		parent: &snapshotParent{
-			header:    header,
-			diffPaths: diffPaths,
-		},
-	}
-
-	m.mu.Lock()
-	m.boxes[sandboxID] = sb
-	m.mu.Unlock()
-
-	m.startSampler(sb)
-
-	// Don't delete snapshot dir — diff files are needed for re-pause.
-	// The CoW file was already moved out. The dir will be cleaned up
-	// on destroy or overwritten on re-pause.
-
-	slog.Info("sandbox resumed from snapshot",
-		"id", sandboxID,
-		"host_ip", slot.HostIP.String(),
-		"dm_device", dmDev.DevicePath,
-		"generation", header.Metadata.Generation,
-	)
-
-	return &sb.Sandbox, nil
-}
-
-// CreateSnapshot creates a reusable template from a sandbox. Works on both
-// running and paused sandboxes. If the sandbox is running, it is paused first.
-// The sandbox remains paused after this call (it can still be resumed).
+// activeClient resolves sandboxID to its envd client when the sandbox is in
+// StatusRunning and the client has not been cleared by a concurrent pause.
+// It bumps LastActiveAt as a side effect. Returns ErrNotFound if missing or
+// ErrNotRunning (wrapped with context) otherwise.
 //
-// The rootfs is flattened (base + CoW merged) into a new standalone rootfs.ext4
-// so the template has no dependency on the original base image. Memory state
-// and VM snapshot files are copied as-is.
-func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID) (int64, error) {
-	// If the sandbox is running, pause it first.
-	if _, err := m.get(sandboxID); err == nil {
-		if err := m.Pause(ctx, sandboxID); err != nil {
-			return 0, fmt.Errorf("pause sandbox: %w", err)
-		}
-	}
-
-	// At this point, pause snapshot files must exist.
-	pauseDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sandboxID)
-	if _, err := os.Stat(pauseDir); err != nil {
-		return 0, fmt.Errorf("no snapshot found for sandbox %s", sandboxID)
-	}
-
-	// Create template directory.
-	dstDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
-	if err := os.MkdirAll(dstDir, 0755); err != nil {
-		return 0, fmt.Errorf("create template dir: %w", err)
-	}
-
-	// Copy VM snapshot file and memory header.
-	srcDir := pauseDir
-
-	for _, fname := range []string{snapshot.SnapFileName, snapshot.MemHeaderName} {
-		src := filepath.Join(srcDir, fname)
-		dst := filepath.Join(dstDir, fname)
-		if err := copyFile(src, dst); err != nil {
-			warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-			return 0, fmt.Errorf("copy %s: %w", fname, err)
-		}
-	}
-
-	// Copy all memory diff files referenced by the header (supports multi-generation).
-	headerData, err := os.ReadFile(filepath.Join(srcDir, snapshot.MemHeaderName))
-	if err != nil {
-		warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-		return 0, fmt.Errorf("read header for template: %w", err)
-	}
-	srcHeader, err := snapshot.Deserialize(headerData)
-	if err != nil {
-		warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-		return 0, fmt.Errorf("deserialize header for template: %w", err)
-	}
-	srcDiffPaths, err := snapshot.ListDiffFiles(pauseDir, "", srcHeader)
-	if err != nil {
-		warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-		return 0, fmt.Errorf("list diff files for template: %w", err)
-	}
-	for _, srcPath := range srcDiffPaths {
-		dstPath := filepath.Join(dstDir, filepath.Base(srcPath))
-		if err := copyFile(srcPath, dstPath); err != nil {
-			warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-			return 0, fmt.Errorf("copy diff file %s: %w", filepath.Base(srcPath), err)
-		}
-	}
-
-	// Flatten rootfs: temporarily set up dm device from base + CoW, dd to new image.
-	meta, err := snapshot.ReadMeta(pauseDir, "")
-	if err != nil {
-		warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-		return 0, fmt.Errorf("read rootfs meta: %w", err)
-	}
-
-	originLoop, err := m.loops.Acquire(meta.BaseTemplate)
-	if err != nil {
-		warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-		return 0, fmt.Errorf("acquire loop device for flatten: %w", err)
-	}
-
-	originSize, err := devicemapper.OriginSizeBytes(originLoop)
-	if err != nil {
-		m.loops.Release(meta.BaseTemplate)
-		warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-		return 0, fmt.Errorf("get origin size: %w", err)
-	}
-
-	// Temporarily restore the dm-snapshot to read the merged view.
-	cowPath := snapshot.CowPath(pauseDir, "")
-	tmpDmName := "wrenn-flatten-" + sandboxID
-	tmpDev, err := devicemapper.RestoreSnapshot(ctx, tmpDmName, originLoop, cowPath, originSize)
-	if err != nil {
-		m.loops.Release(meta.BaseTemplate)
-		warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-		return 0, fmt.Errorf("restore dm-snapshot for flatten: %w", err)
-	}
-
-	// Flatten to new standalone rootfs.
-	flattenedPath := filepath.Join(dstDir, snapshot.RootfsFileName)
-	flattenErr := devicemapper.FlattenSnapshot(tmpDev.DevicePath, flattenedPath)
-
-	// Always clean up the temporary dm device.
-	warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), tmpDev))
-	m.loops.Release(meta.BaseTemplate)
-
-	if flattenErr != nil {
-		warnErr("template dir cleanup error", dstDir, os.RemoveAll(dstDir))
-		return 0, fmt.Errorf("flatten rootfs: %w", flattenErr)
-	}
-
-	sizeBytes, err := snapshot.DirSize(dstDir, "")
-	if err != nil {
-		slog.Warn("failed to calculate snapshot size", "error", err)
-	}
-
-	slog.Info("template snapshot created (rootfs flattened)",
-		"sandbox", sandboxID,
-		"team_id", teamID,
-		"template_id", templateID,
-		"size_bytes", sizeBytes,
-	)
-	return sizeBytes, nil
-}
-
-// FlattenRootfs stops a running sandbox, flattens its device-mapper CoW
-// rootfs into a standalone rootfs.ext4, and cleans up all resources.
-// The result is an image-only template (no VM memory/CPU state) stored in
-// ImagesDir/{name}/rootfs.ext4.
-func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID) (int64, error) {
-	m.mu.Lock()
-	sb, ok := m.boxes[sandboxID]
-	if ok {
-		delete(m.boxes, sandboxID)
-	}
-	m.mu.Unlock()
-
-	if !ok {
-		return 0, fmt.Errorf("sandbox %s not found", sandboxID)
-	}
-
-	// Flush guest page cache to disk before stopping the VM. Without this,
-	// files written by the build (e.g. pip-installed packages) may exist in the
-	// guest's page cache but not yet on the dm block device — flatten would then
-	// capture 0-byte files.
-	func() {
-		syncCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		if _, err := sb.client.Exec(syncCtx, "/bin/sync"); err != nil {
-			slog.Warn("flatten: guest sync failed (non-fatal)", "id", sb.ID, "error", err)
-		}
-	}()
-
-	// Stop the VM but keep the dm device alive for flattening.
-	m.stopSampler(sb)
-	if err := m.vm.Destroy(ctx, sb.ID); err != nil {
-		slog.Warn("vm destroy error during flatten", "id", sb.ID, "error", err)
-	}
-
-	// Release network resources — not needed after VM is stopped.
-	if err := network.RemoveNetwork(sb.slot); err != nil {
-		slog.Warn("network cleanup error during flatten", "id", sb.ID, "error", err)
-	}
-	m.slots.Release(sb.SlotIndex)
-
-	if sb.uffdSocketPath != "" {
-		os.Remove(sb.uffdSocketPath)
-	}
-
-	// Create template directory and flatten the dm-snapshot.
-	flattenDstDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
-	if err := os.MkdirAll(flattenDstDir, 0755); err != nil {
-		m.cleanupDM(sb)
-		return 0, fmt.Errorf("create template dir: %w", err)
-	}
-
-	outputPath := filepath.Join(flattenDstDir, snapshot.RootfsFileName)
-	if sb.dmDevice == nil {
-		m.cleanupDM(sb)
-		warnErr("template dir cleanup error", flattenDstDir, os.RemoveAll(flattenDstDir))
-		return 0, fmt.Errorf("sandbox %s has no dm device", sandboxID)
-	}
-
-	if err := devicemapper.FlattenSnapshot(sb.dmDevice.DevicePath, outputPath); err != nil {
-		m.cleanupDM(sb)
-		warnErr("template dir cleanup error", flattenDstDir, os.RemoveAll(flattenDstDir))
-		return 0, fmt.Errorf("flatten rootfs: %w", err)
-	}
-
-	// Clean up dm device and loop device now that flatten is complete.
-	m.cleanupDM(sb)
-
-	// Shrink the flattened image to its minimum size, then re-expand to the
-	// configured default rootfs size so sandboxes see the full disk from boot.
-	if out, err := exec.Command("e2fsck", "-fy", outputPath).CombinedOutput(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() > 1 {
-			slog.Warn("e2fsck before shrink failed (non-fatal)", "output", string(out), "error", err)
-		}
-	}
-	if out, err := exec.Command("resize2fs", "-M", outputPath).CombinedOutput(); err != nil {
-		slog.Warn("resize2fs -M failed (non-fatal)", "output", string(out), "error", err)
-	}
-
-	// Re-expand to default rootfs size.
-	targetMB := m.cfg.DefaultRootfsSizeMB
-	if targetMB <= 0 {
-		targetMB = DefaultDiskSizeMB
-	}
-	if err := expandImage(outputPath, int64(targetMB)*1024*1024, targetMB); err != nil {
-		slog.Warn("failed to expand template to default size (non-fatal)", "error", err)
-	}
-
-	sizeBytes, err := snapshot.DirSize(flattenDstDir, "")
-	if err != nil {
-		slog.Warn("failed to calculate template size", "error", err)
-	}
-
-	slog.Info("rootfs flattened to image-only template",
-		"sandbox", sandboxID,
-		"team_id", teamID,
-		"template_id", templateID,
-		"size_bytes", sizeBytes,
-	)
-	return sizeBytes, nil
-}
-
-// cleanupDM tears down the dm-snapshot device and releases the base image loop device.
-func (m *Manager) cleanupDM(sb *sandboxState) {
-	if sb.dmDevice != nil {
-		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
-			slog.Warn("dm-snapshot remove error", "id", sb.ID, "error", err)
-		}
-		os.Remove(sb.dmDevice.CowPath)
-	}
-	if sb.baseImagePath != "" {
-		m.loops.Release(sb.baseImagePath)
-	}
-}
-
-// DeleteSnapshot removes a snapshot template from disk.
-func (m *Manager) DeleteSnapshot(teamID, templateID pgtype.UUID) error {
-	return os.RemoveAll(layout.TemplateDir(m.cfg.WrennDir, teamID, templateID))
-}
-
-// createFromSnapshot creates a new sandbox by restoring from a snapshot template
-// in ImagesDir/{snapshotName}/. Uses UFFD for lazy memory loading.
-// The template's rootfs.ext4 is a flattened standalone image — we create a
-// dm-snapshot on top of it just like a normal Create.
-func (m *Manager) createFromSnapshot(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID, vcpus, _, timeoutSec, diskSizeMB int) (*models.Sandbox, error) {
-	tmplDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
-
-	// Read the header.
-	headerData, err := os.ReadFile(filepath.Join(tmplDir, snapshot.MemHeaderName))
-	if err != nil {
-		return nil, fmt.Errorf("read snapshot header: %w", err)
-	}
-
-	header, err := snapshot.Deserialize(headerData)
-	if err != nil {
-		return nil, fmt.Errorf("deserialize header: %w", err)
-	}
-
-	// Snapshot determines memory size.
-	memoryMB := int(header.Metadata.Size / (1024 * 1024))
-
-	// Build diff file map — supports multi-generation templates.
-	diffPaths, err := snapshot.ListDiffFiles(tmplDir, "", header)
-	if err != nil {
-		return nil, fmt.Errorf("list diff files: %w", err)
-	}
-
-	source, err := uffd.NewDiffFileSource(header, diffPaths)
-	if err != nil {
-		return nil, fmt.Errorf("create memory source: %w", err)
-	}
-
-	// Set up dm-snapshot on the template's flattened rootfs.
-	baseRootfs := filepath.Join(tmplDir, snapshot.RootfsFileName)
-	originLoop, err := m.loops.Acquire(baseRootfs)
-	if err != nil {
-		source.Close()
-		return nil, fmt.Errorf("acquire loop device: %w", err)
-	}
-
-	originSize, err := devicemapper.OriginSizeBytes(originLoop)
-	if err != nil {
-		source.Close()
-		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("get origin size: %w", err)
-	}
-
-	dmName := "wrenn-" + sandboxID
-	cowPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s.cow", sandboxID))
-	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
-	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
-	if err != nil {
-		source.Close()
-		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("create dm-snapshot: %w", err)
-	}
-
-	// Allocate network.
-	slotIdx, err := m.slots.Allocate()
-	if err != nil {
-		source.Close()
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("allocate network slot: %w", err)
-	}
-	slot := network.NewSlot(slotIdx)
-
-	if err := network.CreateNetwork(slot); err != nil {
-		source.Close()
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("create network: %w", err)
-	}
-
-	// Start UFFD server.
-	uffdSocketPath := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir), fmt.Sprintf("%s-uffd.sock", sandboxID))
-	os.Remove(uffdSocketPath)
-	uffdServer := uffd.NewServer(uffdSocketPath, source)
-	if err := uffdServer.Start(ctx); err != nil {
-		source.Close()
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("start uffd server: %w", err)
-	}
-
-	// Restore VM.
-	vmCfg := vm.VMConfig{
-		SandboxID:        sandboxID,
-		TemplateID:       id.UUIDString(templateID),
-		KernelPath:       m.cfg.KernelPath,
-		RootfsPath:       dmDev.DevicePath,
-		VCPUs:            vcpus,
-		MemoryMB:         memoryMB,
-		NetworkNamespace: slot.NamespaceID,
-		TapDevice:        slot.TapName,
-		TapMAC:           slot.TapMAC,
-		GuestIP:          slot.GuestIP,
-		GatewayIP:        slot.TapIP,
-		NetMask:          slot.GuestNetMask,
-		FirecrackerBin:   m.cfg.FirecrackerBin,
-	}
-
-	snapPath := filepath.Join(tmplDir, snapshot.SnapFileName)
-	if _, err := m.vm.CreateFromSnapshot(ctx, vmCfg, snapPath, uffdSocketPath); err != nil {
-		warnErr("uffd server stop error", sandboxID, uffdServer.Stop())
-		source.Close()
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("restore VM from snapshot: %w", err)
-	}
-
-	// Start prefetching all guest memory pages in the background.
-	uffdServer.Prefetch()
-
-	// Wait for envd.
-	client := envdclient.New(slot.HostIP.String())
-	waitCtx, waitCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-
-	if err := client.WaitUntilReady(waitCtx); err != nil {
-		waitCancel()
-		warnErr("uffd server stop error", sandboxID, uffdServer.Stop())
-		source.Close()
-		warnErr("vm destroy error", sandboxID, m.vm.Destroy(context.Background(), sandboxID))
-		warnErr("network cleanup error", sandboxID, network.RemoveNetwork(slot))
-		m.slots.Release(slotIdx)
-		warnErr("dm-snapshot remove error", sandboxID, devicemapper.RemoveSnapshot(context.Background(), dmDev))
-		os.Remove(cowPath)
-		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("wait for envd: %w", err)
-	}
-	waitCancel()
-
-	// PostInit gets its own timeout — WaitUntilReady may have consumed most
-	// of EnvdTimeout, starving PostInit of time for RestoreAfterSnapshot.
-	initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-	defer initCancel()
-
-	if err := client.PostInit(initCtx); err != nil {
-		slog.Warn("post-init failed after template restore, metadata files may be stale", "sandbox", sandboxID, "error", err)
-	}
-
-	// Deflate balloon — template snapshot was taken with an inflated balloon.
-	if err := m.vm.UpdateBalloon(ctx, sandboxID, 0); err != nil {
-		slog.Debug("create-from-snapshot: balloon deflate failed (non-fatal)", "id", sandboxID, "error", err)
-	}
-
-	// Fetch envd version (best-effort).
-	envdVersion, _ := client.FetchVersion(ctx)
-
-	now := time.Now()
-	sb := &sandboxState{
-		Sandbox: models.Sandbox{
-			ID:             sandboxID,
-			Status:         models.StatusRunning,
-			TemplateTeamID: teamID.Bytes,
-			TemplateID:     templateID.Bytes,
-			VCPUs:          vcpus,
-			MemoryMB:       memoryMB,
-			TimeoutSec:     timeoutSec,
-			SlotIndex:      slotIdx,
-			HostIP:         slot.HostIP,
-			RootfsPath:     dmDev.DevicePath,
-			CreatedAt:      now,
-			LastActiveAt:   now,
-			Metadata:       m.buildMetadata(envdVersion),
-		},
-		slot:           slot,
-		client:         client,
-		connTracker:    &ConnTracker{},
-		uffdSocketPath: uffdSocketPath,
-		dmDevice:       dmDev,
-		baseImagePath:  baseRootfs,
-		// Template-spawned sandboxes also get diff re-pause support.
-		parent: &snapshotParent{
-			header:    header,
-			diffPaths: diffPaths,
-		},
-	}
-
-	m.mu.Lock()
-	m.boxes[sandboxID] = sb
-	m.mu.Unlock()
-
-	m.startSampler(sb)
-
-	slog.Info("sandbox created from snapshot",
-		"id", sandboxID,
-		"team_id", teamID,
-		"template_id", templateID,
-		"host_ip", slot.HostIP.String(),
-		"dm_device", dmDev.DevicePath,
-	)
-
-	return &sb.Sandbox, nil
-}
-
-// Exec runs a command inside a sandbox.
-func (m *Manager) Exec(ctx context.Context, sandboxID string, cmd string, args ...string) (*envdclient.ExecResult, error) {
+// All Exec/Pty/Process methods funnel through this — it is the single
+// chokepoint that guarantees we never deref a stale sb.client.
+func (m *Manager) activeClient(sandboxID string) (*envdclient.Client, error) {
 	sb, err := m.get(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-
 	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+		return nil, fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
-
+	c := sb.client.Load()
+	if c == nil {
+		// Race: status flipped from Running between m.get and Load (pause's
+		// releaseRuntime cleared the pointer).
+		return nil, fmt.Errorf("%w: %s (client cleared)", ErrNotRunning, sandboxID)
+	}
 	m.mu.Lock()
 	sb.LastActiveAt = time.Now()
 	m.mu.Unlock()
+	return c, nil
+}
 
-	return sb.client.Exec(ctx, cmd, args...)
+// Exec runs a command inside a sandbox.
+func (m *Manager) Exec(ctx context.Context, sandboxID string, cmd string, args []string, opts *envdclient.ExecOpts) (*envdclient.ExecResult, error) {
+	c, err := m.activeClient(sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	return c.Exec(ctx, cmd, args, opts)
 }
 
 // ExecStream runs a command inside a sandbox and returns a channel of streaming events.
 func (m *Manager) ExecStream(ctx context.Context, sandboxID string, cmd string, args ...string) (<-chan envdclient.ExecStreamEvent, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-
-	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.ExecStream(ctx, cmd, args...)
+	return c.ExecStream(ctx, cmd, args...)
 }
 
 // List returns all sandboxes.
@@ -1408,16 +504,21 @@ func (m *Manager) Get(sandboxID string) (*models.Sandbox, error) {
 	return &sb.Sandbox, nil
 }
 
-// GetClient returns the envd client for a sandbox.
+// GetClient returns the envd client for a sandbox without bumping
+// LastActiveAt. Used by the proxy path which has its own activity bookkeeping.
 func (m *Manager) GetClient(sandboxID string) (*envdclient.Client, error) {
 	sb, err := m.get(sandboxID)
 	if err != nil {
 		return nil, err
 	}
 	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+		return nil, fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
-	return sb.client, nil
+	c := sb.client.Load()
+	if c == nil {
+		return nil, fmt.Errorf("%w: %s (client cleared)", ErrNotRunning, sandboxID)
+	}
+	return c, nil
 }
 
 // SetDefaults calls envd's PostInit to configure the default user and
@@ -1427,146 +528,87 @@ func (m *Manager) SetDefaults(ctx context.Context, sandboxID, defaultUser string
 	if defaultUser == "" && len(defaultEnv) == 0 {
 		return nil
 	}
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-	return sb.client.PostInitWithDefaults(ctx, defaultUser, defaultEnv)
+	return c.PostInitWithDefaults(ctx, defaultUser, defaultEnv, "", "")
 }
 
 // PtyAttach starts a new PTY process or reconnects to an existing one.
 // If cmd is non-empty, starts a new process. If empty, reconnects using tag.
 func (m *Manager) PtyAttach(ctx context.Context, sandboxID, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd string) (<-chan envdclient.PtyEvent, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
 	if cmd != "" {
-		return sb.client.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd)
+		return c.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd)
 	}
-	return sb.client.PtyConnect(ctx, tag)
+	return c.PtyConnect(ctx, tag)
 }
 
 // PtySendInput sends raw bytes to a PTY process in a sandbox.
 func (m *Manager) PtySendInput(ctx context.Context, sandboxID, tag string, data []byte) error {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.PtySendInput(ctx, tag, data)
+	return c.PtySendInput(ctx, tag, data)
 }
 
 // PtyResize updates the terminal dimensions for a PTY process in a sandbox.
 func (m *Manager) PtyResize(ctx context.Context, sandboxID, tag string, cols, rows uint32) error {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	return sb.client.PtyResize(ctx, tag, cols, rows)
+	return c.PtyResize(ctx, tag, cols, rows)
 }
 
 // PtyKill sends SIGKILL to a PTY process in a sandbox.
 func (m *Manager) PtyKill(ctx context.Context, sandboxID, tag string) error {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	return sb.client.PtyKill(ctx, tag)
+	return c.PtyKill(ctx, tag)
 }
 
 // StartBackground starts a background process inside a sandbox.
 func (m *Manager) StartBackground(ctx context.Context, sandboxID, tag, cmd string, args []string, envs map[string]string, cwd string) (uint32, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return 0, err
 	}
-	if sb.Status != models.StatusRunning {
-		return 0, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.StartBackground(ctx, tag, cmd, args, envs, cwd)
+	return c.StartBackground(ctx, tag, cmd, args, envs, cwd)
 }
 
 // ConnectProcess re-attaches to a running process inside a sandbox.
 func (m *Manager) ConnectProcess(ctx context.Context, sandboxID string, pid uint32, tag string) (<-chan envdclient.ExecStreamEvent, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.ConnectProcess(ctx, pid, tag)
+	return c.ConnectProcess(ctx, pid, tag)
 }
 
 // ListProcesses returns all running processes inside a sandbox.
 func (m *Manager) ListProcesses(ctx context.Context, sandboxID string) ([]envdclient.ProcessInfo, error) {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-	if sb.Status != models.StatusRunning {
-		return nil, fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.ListProcesses(ctx)
+	return c.ListProcesses(ctx)
 }
 
 // KillProcess sends a signal to a process inside a sandbox.
 func (m *Manager) KillProcess(ctx context.Context, sandboxID string, pid uint32, tag string, signal envdpb.Signal) error {
-	sb, err := m.get(sandboxID)
+	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return err
 	}
-	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
-	}
-
-	m.mu.Lock()
-	sb.LastActiveAt = time.Now()
-	m.mu.Unlock()
-
-	return sb.client.KillProcess(ctx, pid, tag, signal)
+	return c.KillProcess(ctx, pid, tag, signal)
 }
 
 // AcquireProxyConn atomically looks up a sandbox by ID and registers an
@@ -1595,24 +637,21 @@ func (m *Manager) Ping(sandboxID string) error {
 
 	sb, ok := m.boxes[sandboxID]
 	if !ok {
-		return fmt.Errorf("sandbox not found: %s", sandboxID)
+		return fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 	if sb.Status != models.StatusRunning {
-		return fmt.Errorf("sandbox %s is not running (status: %s)", sandboxID, sb.Status)
+		return fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
 	sb.LastActiveAt = time.Now()
 	return nil
 }
 
-// DrainAutoPausedIDs returns and clears the list of sandbox IDs that were
-// automatically paused by the TTL reaper since the last call.
+// DrainAutoPausedIDs returns IDs that auto-paused since the last drain.
+// The autonomous pause paths (TTL reaper, PauseAll on shutdown / heartbeat
+// failure) emit per-sandbox events through eventSender directly, so this
+// list is currently unused. Retained for proto compatibility.
 func (m *Manager) DrainAutoPausedIDs() []string {
-	m.autoPausedMu.Lock()
-	defer m.autoPausedMu.Unlock()
-
-	ids := m.autoPausedIDs
-	m.autoPausedIDs = nil
-	return ids
+	return nil
 }
 
 func (m *Manager) get(sandboxID string) (*sandboxState, error) {
@@ -1621,7 +660,7 @@ func (m *Manager) get(sandboxID string) (*sandboxState, error) {
 
 	sb, ok := m.boxes[sandboxID]
 	if !ok {
-		return nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 	return sb, nil
 }
@@ -1657,6 +696,14 @@ func (m *Manager) reapExpired(_ context.Context) {
 		if sb.Status != models.StatusRunning {
 			continue
 		}
+		// Skip sandboxes still loading memory — they're initializing.
+		if sb.memLoadDone != nil {
+			select {
+			case <-sb.memLoadDone:
+			default:
+				continue
+			}
+		}
 		if now.Sub(sb.LastActiveAt) > time.Duration(sb.TimeoutSec)*time.Second {
 			expired = append(expired, id)
 		}
@@ -1665,9 +712,6 @@ func (m *Manager) reapExpired(_ context.Context) {
 
 	for _, id := range expired {
 		slog.Info("TTL expired, auto-pausing sandbox", "id", id)
-		// Use a detached context so that an app shutdown does not cancel
-		// a pause mid-flight, which would leave the VM frozen without a
-		// valid snapshot.
 		pauseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		err := m.Pause(pauseCtx, id)
 		cancel()
@@ -1675,25 +719,53 @@ func (m *Manager) reapExpired(_ context.Context) {
 			slog.Warn("TTL auto-pause failed, destroying sandbox", "id", id, "error", err)
 			if destroyErr := m.Destroy(context.Background(), id); destroyErr != nil {
 				slog.Warn("TTL destroy after failed pause also failed", "id", id, "error", destroyErr)
+			} else if m.eventSender != nil {
+				m.eventSender.SendAsync(LifecycleEvent{
+					Event:     "sandbox.stopped",
+					SandboxID: id,
+				})
 			}
 			continue
 		}
-		m.autoPausedMu.Lock()
-		m.autoPausedIDs = append(m.autoPausedIDs, id)
-		m.autoPausedMu.Unlock()
+
+		if m.eventSender != nil {
+			m.eventSender.SendAsync(LifecycleEvent{
+				Event:     "sandbox.auto_paused",
+				SandboxID: id,
+			})
+		}
 	}
 }
 
-// Shutdown destroys all sandboxes, releases loop devices, and stops the TTL reaper.
+// Shutdown gracefully drains the manager. Running sandboxes are paused so
+// their state survives across agent restarts; any sandboxes still holding
+// runtime resources after PauseAll (e.g. paused failed, or status was
+// Starting/Resuming/Error) are destroyed to release VM / dm / loop / netns.
+// Finally the shared loop registry is fully released.
 func (m *Manager) Shutdown(ctx context.Context) {
 	close(m.stopCh)
 
-	m.mu.Lock()
+	// Snapshot every running sandbox. PauseAll calls Pause per-sandbox which
+	// internally calls releaseRuntime → frees VM, network, dm-snapshot, and
+	// the base-image loop refcount.
+	slog.Info("shutdown: pausing running sandboxes")
+	m.PauseAll(ctx)
+
+	// Destroy anything still holding runtime resources. A Paused sandbox has
+	// already had releaseRuntime called, so re-destroying it is harmless but
+	// also unnecessary — we destroy regardless to remove it from the boxes
+	// map and to handle states where Pause failed or wasn't applicable.
+	m.mu.RLock()
 	ids := make([]string, 0, len(m.boxes))
-	for id := range m.boxes {
+	for id, sb := range m.boxes {
+		// Paused sandboxes already had runtime freed by PauseAll. Leave the
+		// snapshot dir on disk so the next agent instance can resume them.
+		if sb.Status == models.StatusPaused {
+			continue
+		}
 		ids = append(ids, id)
 	}
-	m.mu.Unlock()
+	m.mu.RUnlock()
 
 	for _, sbID := range ids {
 		slog.Info("shutdown: destroying sandbox", "id", sbID)
@@ -1705,45 +777,6 @@ func (m *Manager) Shutdown(ctx context.Context) {
 	m.loops.ReleaseAll()
 }
 
-// PauseAll pauses every running sandbox managed by this host agent.
-// Called when the host loses connectivity to the control plane to avoid
-// leaving running VMs unmanaged. It is best-effort: failures for individual
-// sandboxes are logged but do not stop the rest.
-func (m *Manager) PauseAll(ctx context.Context) {
-	m.mu.RLock()
-	ids := make([]string, 0, len(m.boxes))
-	for id, sb := range m.boxes {
-		if sb.Status == models.StatusRunning {
-			ids = append(ids, id)
-		}
-	}
-	m.mu.RUnlock()
-
-	slog.Info("pausing all running sandboxes due to CP connection loss", "count", len(ids))
-	for _, sbID := range ids {
-		if err := m.Pause(ctx, sbID); err != nil {
-			slog.Warn("PauseAll: failed to pause sandbox", "id", sbID, "error", err)
-		}
-	}
-}
-
-// removeStaleMemDiffs removes memfile.{uuid} diff files from a snapshot
-// directory. Called before writing a Full snapshot to prevent orphaned diffs
-// from accumulating across generation resets.
-func removeStaleMemDiffs(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		name := e.Name()
-		// Match "memfile.{uuid}" but not "memfile", "memfile.header", or "memfile.raw".
-		if strings.HasPrefix(name, "memfile.") && name != snapshot.MemHeaderName && name != "memfile.raw" {
-			os.Remove(filepath.Join(dir, name))
-		}
-	}
-}
-
 // warnErr logs a warning if err is non-nil. Used for best-effort cleanup
 // in error paths where the primary error has already been captured.
 func warnErr(msg string, id string, err error) {
@@ -1752,8 +785,132 @@ func warnErr(msg string, id string, err error) {
 	}
 }
 
-// startSampler resolves the Firecracker PID and starts a background goroutine
-// that samples CPU/mem/disk at 500ms intervals into the ring buffer.
+// createResources tracks partially-acquired resources during sandbox creation
+// so they can be rolled back in reverse order on failure.
+type createResources struct {
+	sandboxID string
+	loops     *devicemapper.LoopRegistry
+	vm        *vm.Manager
+	loopImage string
+	dmDevice  *devicemapper.SnapshotDevice
+	cowPath   string
+	slotIdx   int
+	slots     *network.SlotAllocator
+	slot      *network.Slot
+	rollCow   func() // optional custom cow rollback (e.g. rename back)
+}
+
+func (r *createResources) rollback() {
+	if r.vm != nil && r.sandboxID != "" {
+		warnErr("vm destroy error", r.sandboxID, r.vm.Destroy(context.Background(), r.sandboxID))
+	}
+	if r.slot != nil {
+		warnErr("network cleanup error", r.sandboxID, network.RemoveNetwork(r.slot))
+	}
+	if r.slots != nil && r.slotIdx > 0 {
+		r.slots.Release(r.slotIdx)
+	}
+	if r.dmDevice != nil {
+		warnErr("dm-snapshot remove error", r.sandboxID, devicemapper.RemoveSnapshot(context.Background(), r.dmDevice))
+	}
+	if r.rollCow != nil {
+		r.rollCow()
+	} else if r.cowPath != "" {
+		os.Remove(r.cowPath)
+	}
+	if r.loopImage != "" {
+		r.loops.Release(r.loopImage)
+	}
+}
+
+// startCrashWatcher monitors the VM process for unexpected exits.
+// If the process exits while the sandbox is still in m.boxes (i.e. not a
+// deliberate Destroy), the sandbox is cleaned up and a sandbox.error event
+// is pushed to the control plane.
+func (m *Manager) startCrashWatcher(sb *sandboxState) {
+	v, ok := m.vm.Get(sb.ID)
+	if !ok {
+		return
+	}
+	go func() {
+		select {
+		case <-v.Exited():
+		case <-m.stopCh:
+			return
+		}
+
+		// Check if this was a deliberate Destroy/Pause (sandbox already removed
+		// from boxes, or Pause owns the cleanup). StatusPaused must also bail
+		// because the crash watcher races with Pause flipping status to Paused
+		// after vm.Destroy is called as part of releaseRuntime.
+		m.mu.Lock()
+		_, stillAlive := m.boxes[sb.ID]
+		if stillAlive && (sb.Status == models.StatusPausing || sb.Status == models.StatusPaused) {
+			stillAlive = false
+		}
+		if stillAlive {
+			delete(m.boxes, sb.ID)
+		}
+		m.mu.Unlock()
+
+		if !stillAlive {
+			return
+		}
+
+		slog.Error("VM process crashed, cleaning up", "id", sb.ID)
+
+		sb.lifecycleMu.Lock()
+		m.cleanupAfterCrash(sb)
+		sb.lifecycleMu.Unlock()
+
+		if m.onDestroy != nil {
+			m.onDestroy(sb.ID)
+		}
+
+		if m.eventSender != nil {
+			m.eventSender.SendAsync(LifecycleEvent{
+				Event:     "sandbox.error",
+				SandboxID: sb.ID,
+			})
+		}
+	}()
+}
+
+// cleanupAfterCrash tears down sandbox resources after a VM crash.
+// The VM process is already dead so we skip vm.Destroy and just clean up
+// network, device-mapper, and loop devices.
+func (m *Manager) cleanupAfterCrash(sb *sandboxState) {
+	if sb.memLoadCancel != nil {
+		sb.memLoadCancel()
+		if sb.memLoadDone != nil {
+			<-sb.memLoadDone
+		}
+	}
+	m.stopSampler(sb)
+
+	// Remove the VM from the vm.Manager's map (process is already dead).
+	_ = m.vm.Destroy(context.Background(), sb.ID)
+
+	if err := network.RemoveNetwork(sb.slot); err != nil {
+		slog.Warn("crash cleanup: network error", "id", sb.ID, "error", err)
+	}
+	m.slots.Release(sb.SlotIndex)
+
+	if sb.dmDevice != nil {
+		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
+			slog.Warn("crash cleanup: dm-snapshot error", "id", sb.ID, "error", err)
+		}
+	}
+	if sb.baseImagePath != "" {
+		m.loops.Release(sb.baseImagePath)
+	}
+	if err := os.RemoveAll(layout.SandboxDir(m.cfg.WrennDir, sb.ID)); err != nil {
+		slog.Warn("crash cleanup: sandbox dir error", "id", sb.ID, "error", err)
+	}
+}
+
+// startSampler resolves the VMM PID and starts a background goroutine
+// that samples CPU/mem/disk at 1s intervals into the ring buffer.
 // Must be called after the sandbox is registered in m.boxes.
 func (m *Manager) startSampler(sb *sandboxState) {
 	v, ok := m.vm.Get(sb.ID)
@@ -1763,13 +920,11 @@ func (m *Manager) startSampler(sb *sandboxState) {
 	}
 
 	// v.PID() is the cmd.Process.Pid of the "unshare -m -- bash -c script"
-	// invocation. Because unshare(2) modifies the current process's namespace
-	// before exec-replacing itself with bash, and bash exec-replaces itself
-	// with ip-netns-exec, which exec-replaces itself with firecracker, the
-	// entire exec chain occupies the same PID. v.PID() IS the Firecracker PID.
-	fcPID := v.PID()
+	// invocation. The exec chain (unshare → bash → ip netns exec → cloud-hypervisor)
+	// occupies the same PID. v.PID() IS the VMM PID.
+	vmmPID := v.PID()
 
-	sb.fcPID = fcPID
+	sb.vmmPID = vmmPID
 	sb.ring = newMetricsRing()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1778,17 +933,17 @@ func (m *Manager) startSampler(sb *sandboxState) {
 
 	// Read initial CPU counters for delta calculation.
 	// Passed to goroutine as local state — no shared mutation.
-	initialCPU, err := readCPUStat(fcPID)
+	initialCPU, err := readCPUStat(vmmPID)
 	if err != nil {
 		slog.Warn("metrics: could not read initial CPU stat", "id", sb.ID, "error", err)
 	}
 
-	go m.samplerLoop(ctx, sb, fcPID, sb.VCPUs, initialCPU)
+	go m.samplerLoop(ctx, sb, vmmPID, sb.VCPUs, initialCPU)
 }
 
 // samplerLoop samples metrics at 1s intervals.
 // lastCPU is goroutine-local to avoid shared-state races.
-func (m *Manager) samplerLoop(ctx context.Context, sb *sandboxState, fcPID, vcpus int, lastCPU cpuStat) {
+func (m *Manager) samplerLoop(ctx context.Context, sb *sandboxState, vmmPID, vcpus int, lastCPU cpuStat) {
 	defer close(sb.samplerDone)
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -1808,7 +963,7 @@ func (m *Manager) samplerLoop(ctx context.Context, sb *sandboxState, fcPID, vcpu
 
 			// CPU: delta jiffies / (elapsed * CLK_TCK * vcpus) * 100
 			var cpuPct float64
-			cur, err := readCPUStat(fcPID)
+			cur, err := readCPUStat(vmmPID)
 			if err == nil {
 				if cpuInitialized && elapsed > 0 && vcpus > 0 {
 					deltaJiffies := float64((cur.utime + cur.stime) - (lastCPU.utime + lastCPU.stime))
@@ -1825,10 +980,10 @@ func (m *Manager) samplerLoop(ctx context.Context, sb *sandboxState, fcPID, vcpu
 			}
 
 			// Memory: guest-reported used memory from envd /metrics.
-			// VmRSS of the Firecracker process includes guest page cache
-			// and never decreases, so we use the guest's own view which
-			// reports total - available (actual process memory).
-			memBytes, _ := readEnvdMemUsed(sb.client)
+			// VmRSS of the VMM process includes guest page cache and never
+			// decreases, so we use the guest's own view which reports
+			// total - available (actual process memory).
+			memBytes, _ := readEnvdMemUsed(ctx, sb.client.Load())
 
 			// Disk: allocated bytes of the CoW sparse file.
 			var diskBytes int64
@@ -1862,7 +1017,7 @@ func (m *Manager) GetMetrics(sandboxID, rangeTier string) ([]MetricPoint, error)
 	sb, ok := m.boxes[sandboxID]
 	m.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 	if sb.ring == nil {
 		return nil, nil
@@ -1894,7 +1049,7 @@ func (m *Manager) GetMetrics(sandboxID, rangeTier string) ([]MetricPoint, error)
 		points = sb.ring.Get24h()
 		cutoff = 24 * time.Hour
 	default:
-		return nil, fmt.Errorf("invalid range: %s (valid: 5m, 10m, 1h, 2h, 6h, 12h, 24h)", rangeTier)
+		return nil, fmt.Errorf("%w: %s (valid: 5m, 10m, 1h, 2h, 6h, 12h, 24h)", ErrInvalidRange, rangeTier)
 	}
 
 	// Filter points to the requested time window.
@@ -1915,7 +1070,7 @@ func (m *Manager) FlushMetrics(sandboxID string) (pts10m, pts2h, pts24h []Metric
 	sb, ok := m.boxes[sandboxID]
 	m.mu.RUnlock()
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+		return nil, nil, nil, fmt.Errorf("%w: %s", ErrNotFound, sandboxID)
 	}
 
 	m.stopSampler(sb)
@@ -1924,25 +1079,4 @@ func (m *Manager) FlushMetrics(sandboxID string) (pts10m, pts2h, pts24h []Metric
 	}
 	pts10m, pts2h, pts24h = sb.ring.Flush()
 	return pts10m, pts2h, pts24h, nil
-}
-
-// copyFile copies a regular file from src to dst using streaming I/O.
-func copyFile(src, dst string) error {
-	sf, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", src, err)
-	}
-	defer sf.Close()
-
-	df, err := os.Create(dst)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", dst, err)
-	}
-	defer df.Close()
-
-	if _, err := df.ReadFrom(sf); err != nil {
-		os.Remove(dst)
-		return fmt.Errorf("copy %s → %s: %w", src, dst, err)
-	}
-	return nil
 }

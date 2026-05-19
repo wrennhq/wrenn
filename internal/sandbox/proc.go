@@ -1,9 +1,11 @@
 package sandbox
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -50,10 +52,15 @@ func readCPUStat(pid int) (cpuStat, error) {
 
 // readEnvdMemUsed fetches mem_used from envd's /metrics endpoint. Returns
 // guest-side total - MemAvailable (actual process memory, excluding reclaimable
-// page cache). VmRSS of the Firecracker process includes guest page cache and
+// page cache). VmRSS of the VMM process includes guest page cache and
 // never decreases, so this is the accurate metric for dashboard display.
-func readEnvdMemUsed(client *envdclient.Client) (int64, error) {
-	resp, err := client.HTTPClient().Get(client.BaseURL() + "/metrics")
+func readEnvdMemUsed(ctx context.Context, client *envdclient.Client) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, client.BaseURL()+"/metrics", nil)
+	if err != nil {
+		return 0, fmt.Errorf("build metrics request: %w", err)
+	}
+
+	resp, err := client.HTTPClient().Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("fetch envd metrics: %w", err)
 	}

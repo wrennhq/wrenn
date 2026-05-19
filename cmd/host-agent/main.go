@@ -24,6 +24,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/internal/vm"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/logging"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
@@ -63,7 +64,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Clean up stale resources from a previous crash.
+	// Clean up stale resources from a previous crash. Order matters:
+	// kill stale CH processes first — they hold dm-snapshot devices open and
+	// would otherwise cause "Device or resource busy" on dmsetup remove.
+	vm.CleanupStaleProcesses()
 	devicemapper.CleanupStaleDevices()
 	network.CleanupStaleNamespaces()
 
@@ -126,26 +130,36 @@ func main() {
 	}
 	slog.Info("resolved kernel", "version", kernelVersion, "path", kernelPath)
 
-	// Detect firecracker version.
-	fcBin := envOrDefault("WRENN_FIRECRACKER_BIN", "/usr/local/bin/firecracker")
-	fcVersion, err := sandbox.DetectFirecrackerVersion(fcBin)
+	// Detect cloud-hypervisor version.
+	chBin := envOrDefault("WRENN_CH_BIN", "/usr/local/bin/cloud-hypervisor")
+	chVersion, err := sandbox.DetectCHVersion(chBin)
 	if err != nil {
-		slog.Error("failed to detect firecracker version", "error", err)
+		slog.Error("failed to detect cloud-hypervisor version", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("resolved firecracker", "version", fcVersion, "path", fcBin)
+	slog.Info("resolved cloud-hypervisor", "version", chVersion, "path", chBin)
 
 	cfg := sandbox.Config{
 		WrennDir:            rootDir,
 		DefaultRootfsSizeMB: defaultRootfsSizeMB,
 		KernelPath:          kernelPath,
 		KernelVersion:       kernelVersion,
-		FirecrackerBin:      fcBin,
-		FirecrackerVersion:  fcVersion,
+		VMMBin:              chBin,
+		VMMVersion:          chVersion,
 		AgentVersion:        version,
 	}
 
+	// Remove any *.staging-* / *.trash-* directories left behind by a
+	// previous Pause that crashed before completing the atomic swap. Must
+	// run before any Resume so we don't race with a sandbox restoration.
+	sandbox.CleanupOrphanPauseDirs(rootDir)
+
 	mgr := sandbox.New(cfg)
+
+	// Set up lifecycle event callback sender so autonomous events
+	// (auto-pause, auto-destroy) are pushed to the CP proactively.
+	cb := hostagent.NewCallbackSender(cpURL, credsFile, creds.HostID)
+	mgr.SetEventSender(hostagent.NewEventSender(cb))
 
 	mgr.StartTTLReaper(ctx)
 
@@ -190,7 +204,12 @@ func main() {
 		shutdownOnce.Do(func() {
 			slog.Info("shutting down", "reason", reason)
 			cancel()
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			// Shutdown pauses every running sandbox in parallel (PauseAll uses
+			// a worker pool). Per-sandbox Pause can take 10–30s (memory loader
+			// wait + ch.snapshot of guest RAM). 5 minutes is enough headroom for
+			// a busy host while still bounded so a wedged sandbox can't keep the
+			// process alive indefinitely — a second signal force-exits anyway.
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer shutdownCancel()
 			mgr.Shutdown(shutdownCtx)
 			sandbox.ShrinkMinimalImage(rootDir)
@@ -226,8 +245,9 @@ func main() {
 		func() {
 			doShutdown("host deleted from CP")
 		},
-		// onCredsRefreshed: hot-swap the TLS certificate after a JWT refresh.
+		// onCredsRefreshed: hot-swap the TLS certificate and update callback JWT.
 		func(tf *hostagent.TokenFile) {
+			cb.UpdateJWT(tf.JWT)
 			if tf.CertPEM == "" || tf.KeyPEM == "" {
 				return
 			}
@@ -239,12 +259,16 @@ func main() {
 		},
 	)
 
-	// Graceful shutdown on SIGINT/SIGTERM.
+	// Graceful shutdown on SIGINT/SIGTERM. A second signal force-exits
+	// so the operator can always kill the process if shutdown hangs.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		doShutdown("signal: " + sig.String())
+		go doShutdown("signal: " + sig.String())
+		sig = <-sigCh
+		slog.Error("received second signal, force exiting", "signal", sig.String())
+		os.Exit(1)
 	}()
 
 	slog.Info("host agent starting", "addr", listenAddr, "host_id", creds.HostID, "version", version, "commit", commit)
@@ -286,7 +310,7 @@ func checkPrivileges() error {
 		name string
 	}{
 		{1, "CAP_DAC_OVERRIDE"}, // /dev/loop*, /dev/mapper/*, /dev/net/tun
-		{5, "CAP_KILL"},         // SIGTERM/SIGKILL to Firecracker processes
+		{5, "CAP_KILL"},         // SIGTERM/SIGKILL to cloud-hypervisor processes
 		{12, "CAP_NET_ADMIN"},   // netlink, iptables, routing, TAP/veth
 		{13, "CAP_NET_RAW"},     // raw sockets (iptables)
 		{19, "CAP_SYS_PTRACE"},  // reading /proc/self/ns/net (netns.Get)

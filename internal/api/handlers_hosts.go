@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -21,10 +22,11 @@ type hostHandler struct {
 	svc     *service.HostService
 	queries *db.Queries
 	audit   *audit.AuditLogger
+	monitor *HostMonitor
 }
 
-func newHostHandler(svc *service.HostService, queries *db.Queries, al *audit.AuditLogger) *hostHandler {
-	return &hostHandler{svc: svc, queries: queries, audit: al}
+func newHostHandler(svc *service.HostService, queries *db.Queries, al *audit.AuditLogger, monitor *HostMonitor) *hostHandler {
+	return &hostHandler{svc: svc, queries: queries, audit: al, monitor: monitor}
 }
 
 // Request/response types.
@@ -426,9 +428,12 @@ func (h *hostHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Log marked_up if the host just recovered from unreachable.
+	// If the host just recovered from unreachable, log it and trigger immediate
+	// reconciliation so "missing" sandboxes are resolved without waiting for the
+	// next monitor tick.
 	if prevHost.Status == "unreachable" {
 		h.audit.LogHostMarkedUp(r.Context(), prevHost.TeamID, hc.HostID)
+		go h.monitor.ReconcileHost(context.Background(), hc.HostID)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

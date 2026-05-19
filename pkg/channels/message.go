@@ -14,27 +14,55 @@ func FormatMessage(e events.Event) string {
 
 	b.WriteString(formatSummary(e))
 	fmt.Fprintf(&b, "\n\nEvent: %s", e.Event)
+	if e.Outcome != "" {
+		fmt.Fprintf(&b, "\nOutcome: %s", e.Outcome)
+	}
 	fmt.Fprintf(&b, "\nResource: %s %s", e.Resource.Type, e.Resource.ID)
 	fmt.Fprintf(&b, "\nActor: %s", formatActor(e.Actor))
 	fmt.Fprintf(&b, "\nTeam: %s", e.TeamID)
 	fmt.Fprintf(&b, "\nTime: %s", e.Timestamp)
+	if e.Error != "" {
+		fmt.Fprintf(&b, "\nError: %s", e.Error)
+	}
+	if reason, ok := e.Metadata["reason"]; ok {
+		fmt.Fprintf(&b, "\nReason: %s", reason)
+	}
 
 	return b.String()
 }
 
 func formatSummary(e events.Event) string {
+	failed := e.Outcome == events.OutcomeError
 	switch e.Event {
-	case events.CapsuleCreated:
+	case events.CapsuleCreate:
+		if failed {
+			return fmt.Sprintf("Capsule %s failed to create", e.Resource.ID)
+		}
 		return fmt.Sprintf("Capsule %s created", e.Resource.ID)
-	case events.CapsuleRunning:
-		return fmt.Sprintf("Capsule %s is running", e.Resource.ID)
-	case events.CapsulePaused:
+	case events.CapsulePause:
+		if failed {
+			return fmt.Sprintf("Capsule %s failed to pause", e.Resource.ID)
+		}
 		return fmt.Sprintf("Capsule %s paused", e.Resource.ID)
-	case events.CapsuleDestroyed:
+	case events.CapsuleResume:
+		if failed {
+			return fmt.Sprintf("Capsule %s failed to resume", e.Resource.ID)
+		}
+		return fmt.Sprintf("Capsule %s resumed", e.Resource.ID)
+	case events.CapsuleDestroy:
+		if failed {
+			return fmt.Sprintf("Capsule %s failed to destroy", e.Resource.ID)
+		}
 		return fmt.Sprintf("Capsule %s destroyed", e.Resource.ID)
-	case events.SnapshotCreated:
+	case events.SnapshotCreate:
+		if failed {
+			return fmt.Sprintf("Template snapshot %s failed to create", e.Resource.ID)
+		}
 		return fmt.Sprintf("Template snapshot %s created", e.Resource.ID)
-	case events.SnapshotDeleted:
+	case events.SnapshotDelete:
+		if failed {
+			return fmt.Sprintf("Template snapshot %s failed to delete", e.Resource.ID)
+		}
 		return fmt.Sprintf("Template snapshot %s deleted", e.Resource.ID)
 	case events.HostUp:
 		return fmt.Sprintf("Host %s is up", e.Resource.ID)

@@ -11,19 +11,21 @@ import (
 
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 type usersHandler struct {
-	db    *db.Queries
-	svc   *service.UserService
-	audit *audit.AuditLogger
+	db       *db.Queries
+	svc      *service.UserService
+	audit    *audit.AuditLogger
+	sessions *session.Service
 }
 
-func newUsersHandler(db *db.Queries, svc *service.UserService, al *audit.AuditLogger) *usersHandler {
-	return &usersHandler{db: db, svc: svc, audit: al}
+func newUsersHandler(db *db.Queries, svc *service.UserService, al *audit.AuditLogger, sessions *session.Service) *usersHandler {
+	return &usersHandler{db: db, svc: svc, audit: al, sessions: sessions}
 }
 
 // Search handles GET /v1/users/search?email=<prefix>
@@ -158,6 +160,10 @@ func (h *usersHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	if req.Active {
 		h.audit.LogUserActivate(r.Context(), ac, userID, user.Email)
 	} else {
+		// Disabled users must be kicked out of every active session.
+		if err := h.sessions.RevokeAllForUser(r.Context(), userID); err != nil {
+			_ = err
+		}
 		h.audit.LogUserDeactivate(r.Context(), ac, userID, user.Email)
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -215,5 +221,14 @@ func (h *usersHandler) SetUserAdmin(w http.ResponseWriter, r *http.Request) {
 		}
 		h.audit.LogUserRevokeAdmin(r.Context(), ac, userID, user.Email)
 	}
+
+	// Invalidate cached session blobs so the new is_admin flag is reflected
+	// on the user's next request without waiting for the Redis TTL.
+	if err := h.sessions.InvalidateCacheForUser(r.Context(), userID); err != nil {
+		// Cache is best-effort; the DB is authoritative and requireAdmin
+		// always re-reads it.
+		_ = err
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }

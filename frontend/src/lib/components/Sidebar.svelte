@@ -100,7 +100,7 @@
 		teamPopoverOpen = false;
 		const result = await switchTeam(teamId);
 		if (result.ok) {
-			auth.login(result.data);
+			auth.setUser(result.data);
 			window.location.reload();
 		}
 	}
@@ -113,7 +113,7 @@
 		if (result.ok) {
 			const switchResult = await switchTeam(result.data.id);
 			if (switchResult.ok) {
-				auth.login(switchResult.data);
+				auth.setUser(switchResult.data);
 				window.location.reload();
 			} else {
 				createTeamError = switchResult.error;

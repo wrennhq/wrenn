@@ -176,7 +176,7 @@ func NewSlot(index int) *Slot {
 // CreateNetwork sets up the full network topology for a sandbox:
 //   - Named network namespace
 //   - Veth pair bridging host and namespace
-//   - TAP device inside namespace for Firecracker
+//   - TAP device inside namespace for Cloud Hypervisor
 //   - Routes and NAT rules for connectivity
 //
 // On error, all partially created resources are rolled back.
@@ -430,6 +430,9 @@ func CreateNetwork(slot *Slot) error {
 		rollback()
 		return fmt.Errorf("add masquerade rule: %w", err)
 	}
+	rollbacks = append(rollbacks, func() {
+		_ = iptablesHost("-t", "nat", "-D", "POSTROUTING", "-s", fmt.Sprintf("%s/32", slot.VpeerIP.String()), "-o", defaultIface, "-j", "MASQUERADE")
+	})
 
 	slog.Info("network created",
 		"ns", slot.NamespaceID,
@@ -444,6 +447,9 @@ func CreateNetwork(slot *Slot) error {
 // All steps are attempted even if earlier ones fail. Returns a combined
 // error describing which cleanup steps failed.
 func RemoveNetwork(slot *Slot) error {
+	if slot == nil {
+		return nil
+	}
 	var errs []error
 
 	defaultIface, _ := getDefaultInterface()
