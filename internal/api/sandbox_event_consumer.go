@@ -134,13 +134,13 @@ func (c *SandboxEventConsumer) handleMessage(ctx context.Context, msg redis.XMes
 		if event.Outcome == events.OutcomeSuccess {
 			c.handleStarted(ctx, sandboxID, event, "starting")
 		} else {
-			c.handleFailed(ctx, sandboxID)
+			c.handleFailed(ctx, sandboxID, event)
 		}
 	case events.CapsuleResume:
 		if event.Outcome == events.OutcomeSuccess {
 			c.handleStarted(ctx, sandboxID, event, "resuming")
 		} else {
-			c.handleFailed(ctx, sandboxID)
+			c.handleFailed(ctx, sandboxID, event)
 		}
 	case events.CapsulePause:
 		if event.Outcome == events.OutcomeSuccess {
@@ -257,13 +257,54 @@ func (c *SandboxEventConsumer) handleStopped(ctx context.Context, sandboxID pgty
 	}
 }
 
-// handleFailed marks a sandbox as "error" when a verb event reports failure.
-func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtype.UUID) {
+// handleFailed marks a sandbox as "error" when a verb event reports failure
+// and writes a system audit row. The DB update is idempotent — the
+// SandboxService background goroutine usually wrote "error" already on the
+// fast-fail path, which settles in seconds and so never reaches the
+// HostMonitor's transient-timeout reconciliation.
+//
+// audit.Log writes the row only — it does NOT republish an event, which would
+// loop back into this consumer. Do not switch to LogSandboxCreateSystem here.
+func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtype.UUID, event events.Event) {
 	for _, fromStatus := range []string{"running", "starting", "pausing", "resuming"} {
 		if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 			ID: sandboxID, Status: fromStatus, Status_2: "error",
 		}); err == nil {
-			return
+			break
 		}
 	}
+
+	// The HostMonitor transient-timeout reconciler emits failure events via
+	// LogSandboxCreateSystem / LogSandboxResumeSystem, which already write
+	// their own audit row before publishing — auditing again here would
+	// double-count. Those helpers publish with reason="transient_timeout";
+	// the un-audited fast-fail (createInBackground) and host-callback paths
+	// do not, so only they need a row written here.
+	if event.Metadata["reason"] == "transient_timeout" {
+		return
+	}
+
+	action := "create"
+	if event.Event == events.CapsuleResume {
+		action = "resume"
+	}
+	reason := event.Metadata["reason"]
+	if reason == "" {
+		reason = action + "_failed"
+	}
+	meta := map[string]any{"reason": reason}
+	if event.Error != "" {
+		meta["error"] = event.Error
+	}
+	teamID, _ := id.ParseTeamID(event.TeamID)
+	c.audit.Log(ctx, audit.Entry{
+		TeamID:       teamID,
+		ActorType:    "system",
+		ResourceType: "sandbox",
+		ResourceID:   id.FormatSandboxID(sandboxID),
+		Action:       action,
+		Scope:        "team",
+		Status:       "error",
+		Metadata:     meta,
+	})
 }

@@ -454,11 +454,23 @@ func serviceEventToCanonical(e service.SandboxStateEvent) (events.Event, bool) {
 		eventType = events.CapsuleDestroy
 		outcome = events.OutcomeSuccess
 	case "sandbox.pause_failed":
+		// reason must be non-empty or channels.isRedundantSystemFollowup
+		// filters this system-actor event out of webhook delivery.
 		eventType = events.CapsulePause
 		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "pause_failed"}
 	case "sandbox.resume_failed":
 		eventType = events.CapsuleResume
 		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "resume_failed"}
+	case "sandbox.failed":
+		// First-boot failure from the createInBackground goroutine. Without
+		// this case the event falls through to default and is dropped — no
+		// SSE push, no channel delivery, no DB reconciliation. reason must be
+		// non-empty or channels.isRedundantSystemFollowup filters it out.
+		eventType = events.CapsuleCreate
+		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "create_failed"}
 	default:
 		return events.Event{}, false
 	}

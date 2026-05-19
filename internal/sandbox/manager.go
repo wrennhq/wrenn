@@ -61,6 +61,26 @@ func clampTimeout(timeoutSec int) int {
 	return timeoutSec
 }
 
+// envdReadyTimeoutFloor is the minimum time to wait for envd's /health to
+// answer after a fresh boot or restore.
+const envdReadyTimeoutFloor = 120 * time.Second
+
+// envdReadyTimeoutPerGB scales the wait budget with guest RAM: larger VMs
+// take longer to cold-boot (struct-page init, multi-vCPU bringup, cold
+// dm-snapshot I/O).
+const envdReadyTimeoutPerGB = 8 * time.Second
+
+// envdReadyTimeout returns the WaitUntilReady deadline for a VM with the given
+// memory size: 8s per GiB of RAM, floored at 120s. A 20 GiB guest gets 160s.
+func envdReadyTimeout(memoryMB int) time.Duration {
+	gb := (memoryMB + 1023) / 1024 // round up
+	scaled := time.Duration(gb) * envdReadyTimeoutPerGB
+	if scaled < envdReadyTimeoutFloor {
+		return envdReadyTimeoutFloor
+	}
+	return scaled
+}
+
 // Config holds the paths and defaults for the sandbox manager.
 type Config struct {
 	WrennDir            string // root directory (e.g. /var/lib/wrenn); all sub-paths derived via layout package
@@ -99,6 +119,12 @@ type Manager struct {
 	mu     sync.RWMutex
 	boxes  map[string]*sandboxState
 	stopCh chan struct{}
+
+	// creates tracks in-flight Create calls by sandbox ID. An entry exists
+	// only while Create is acquiring resources / booting the VM, before the
+	// sandbox lands in boxes. Destroy consults it to abort a create that
+	// would otherwise leak its half-built VM. Guarded by mu.
+	creates map[string]*createHandle
 
 	// onDestroy is called with the sandbox ID after cleanup completes.
 	// Used by ProxyHandler to evict cached reverse proxies.
@@ -167,18 +193,27 @@ func (m *Manager) buildMetadata(envdVersion string) map[string]string {
 	return meta
 }
 
+// createHandle coordinates an in-flight Create with a concurrent Destroy.
+// cancel aborts the creation context; done is closed once Create has fully
+// finished — whether it succeeded or rolled back a partial failure.
+type createHandle struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 // New creates a new sandbox manager.
 func New(cfg Config) *Manager {
 	if cfg.EnvdTimeout == 0 {
 		cfg.EnvdTimeout = 30 * time.Second
 	}
 	return &Manager{
-		cfg:    cfg,
-		vm:     vm.NewManager(),
-		slots:  network.NewSlotAllocator(),
-		loops:  devicemapper.NewLoopRegistry(),
-		boxes:  make(map[string]*sandboxState),
-		stopCh: make(chan struct{}),
+		cfg:     cfg,
+		vm:      vm.NewManager(),
+		slots:   network.NewSlotAllocator(),
+		loops:   devicemapper.NewLoopRegistry(),
+		boxes:   make(map[string]*sandboxState),
+		creates: make(map[string]*createHandle),
+		stopCh:  make(chan struct{}),
 	}
 }
 
@@ -211,6 +246,37 @@ func (m *Manager) Create(
 		diskSizeMB = 5120 // 5 GB default
 	}
 	timeoutSec = clampTimeout(timeoutSec)
+
+	// Register an in-flight create handle before acquiring any resources so a
+	// concurrent Destroy can abort this creation and wait for its rollback.
+	// Without this, a Destroy that arrives while the VM is still booting finds
+	// nothing in m.boxes, no-ops, and Create races on to register a VM that no
+	// caller owns — a permanent VM / dm / network / loop leak.
+	createCtx, cancelCreate := context.WithCancel(ctx)
+	handle := &createHandle{cancel: cancelCreate, done: make(chan struct{})}
+	m.mu.Lock()
+	if _, exists := m.boxes[sandboxID]; exists {
+		m.mu.Unlock()
+		cancelCreate()
+		return nil, fmt.Errorf("sandbox %s already exists", sandboxID)
+	}
+	if _, inflight := m.creates[sandboxID]; inflight {
+		m.mu.Unlock()
+		cancelCreate()
+		return nil, fmt.Errorf("sandbox %s create already in progress", sandboxID)
+	}
+	m.creates[sandboxID] = handle
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.creates, sandboxID)
+		m.mu.Unlock()
+		cancelCreate()
+		close(handle.done)
+	}()
+	// All subsequent steps run under the cancellable create context so a
+	// concurrent Destroy can interrupt a slow VM boot / envd readiness wait.
+	ctx = createCtx
 
 	// Snapshot template? Route to the CH-restore path; the launcher manages
 	// its own resource lifecycle and registers the sandbox itself.
@@ -309,9 +375,10 @@ func (m *Manager) Create(
 	}
 	res.vm = m.vm
 
-	// Wait for envd to be ready.
+	// Wait for envd to be ready. The budget scales with guest RAM — a large
+	// VM cold-boots slower than the minimal default.
 	client := envdclient.New(slot.HostIP.String())
-	waitCtx, waitCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
+	waitCtx, waitCancel := context.WithTimeout(ctx, envdReadyTimeout(memoryMB))
 	defer waitCancel()
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
@@ -377,6 +444,18 @@ func (m *Manager) Create(
 // network, and rootfs are torn down. Any pause snapshot files are also removed.
 func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 	m.mu.Lock()
+	if handle, inflight := m.creates[sandboxID]; inflight {
+		// A create is still in flight. Cancel it and wait for its rollback to
+		// finish, otherwise the half-built VM / dm-snapshot / network / loop
+		// device it acquired would leak with no owner. If the create instead
+		// raced to success, it will have registered the sandbox in m.boxes by
+		// the time done is closed — the normal teardown below then runs.
+		m.mu.Unlock()
+		slog.Info("destroy: aborting in-flight sandbox create", "id", sandboxID)
+		handle.cancel()
+		<-handle.done
+		m.mu.Lock()
+	}
 	sb, ok := m.boxes[sandboxID]
 	if ok {
 		delete(m.boxes, sandboxID)
@@ -744,6 +823,22 @@ func (m *Manager) reapExpired(_ context.Context) {
 // Finally the shared loop registry is fully released.
 func (m *Manager) Shutdown(ctx context.Context) {
 	close(m.stopCh)
+
+	// Cancel in-flight Create calls and wait for them to settle. A slow create
+	// (envd readiness wait scales up to ~160s for large VMs) would otherwise
+	// register its VM in m.boxes after the destroy loop below has run, leaking
+	// it. After the wait each create has either rolled back or registered in
+	// m.boxes — where PauseAll / the destroy loop pick it up.
+	m.mu.Lock()
+	inflight := make([]*createHandle, 0, len(m.creates))
+	for _, h := range m.creates {
+		h.cancel()
+		inflight = append(inflight, h)
+	}
+	m.mu.Unlock()
+	for _, h := range inflight {
+		<-h.done
+	}
 
 	// Snapshot every running sandbox. PauseAll calls Pause per-sandbox which
 	// internally calls releaseRuntime → frees VM, network, dm-snapshot, and
