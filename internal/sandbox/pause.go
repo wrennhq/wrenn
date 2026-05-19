@@ -808,13 +808,24 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 	}
 	defer os.RemoveAll(stageDir)
 
-	if err := m.vm.Pause(ctx, sandboxID); err != nil {
-		return 0, fmt.Errorf("vm pause for flatten: %w", err)
+	// quiesceAndPauseCH drains connections and calls envd /snapshot/prepare
+	// (sync + drop_caches) before ch.pause. A plain ch.pause only freezes the
+	// vCPUs — guest VFS page-cache writes (e.g. freshly pip-installed files)
+	// would not yet have reached the block device, so the flattened rootfs
+	// would capture empty files. Matches CreateSnapshot and Pause.
+	if err := m.quiesceAndPauseCH(ctx, sb); err != nil {
+		// quiesceAndPauseCH force-closes tracked connections before ch.pause.
+		// On failure, resume and reset so the sandbox doesn't get stuck
+		// refusing new proxy connections. Mirrors CreateSnapshot.
+		_ = m.vm.Resume(context.Background(), sandboxID)
+		sb.connTracker.Reset()
+		return 0, fmt.Errorf("quiesce for flatten: %w", err)
 	}
 	flattenErr := devicemapper.FlattenSnapshot(sb.dmDevice.DevicePath, filepath.Join(stageDir, "rootfs.ext4"))
 	if rerr := m.vm.Resume(context.Background(), sandboxID); rerr != nil {
 		slog.Warn("vm resume after flatten", "id", sandboxID, "error", rerr)
 	}
+	sb.connTracker.Reset()
 	if flattenErr != nil {
 		return 0, fmt.Errorf("flatten: %w", flattenErr)
 	}

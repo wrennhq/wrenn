@@ -169,11 +169,22 @@ pub fn spawn_process(
         env.push((k.clone(), v.clone()));
     }
 
+    // Reset the child's nice value only when envd itself was started at an
+    // elevated nice value (delta > 0 means raising the nice number / lowering
+    // priority, which is permitted for non-root processes). A non-root process
+    // cannot improve its priority, so skip the `nice` wrapper otherwise — it
+    // would fail with EPERM ("cannot set niceness: permission denied") for
+    // commands run as a non-root user. Writing 100 to the process's own
+    // oom_score_adj is always permitted (raising the score).
     let nice_delta = 0 - current_nice();
-    let oom_script = format!(
-        r#"echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n {} "${{@}}""#,
-        nice_delta
-    );
+    let oom_script = if nice_delta > 0 {
+        format!(
+            r#"echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n {} "${{@}}""#,
+            nice_delta
+        )
+    } else {
+        r#"echo 100 > /proc/$$/oom_score_adj && exec "$@""#.to_string()
+    };
     let mut wrapper_args = vec![
         "-c".to_string(),
         oom_script,
@@ -435,6 +446,8 @@ fn current_nice() -> i32 {
         if *libc::__errno_location() != 0 {
             return 0;
         }
-        20 - prio
+        // getpriority(PRIO_PROCESS, 0) returns the nice value directly,
+        // in the range [-20, 19]; the normal default is 0.
+        prio
     }
 }
