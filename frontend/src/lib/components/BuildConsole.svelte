@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import type { Build } from '$lib/api/builds';
 	import { createBuildConsole } from '$lib/build-console-ws.svelte';
 	import BuildStepList from './BuildStepList.svelte';
@@ -11,7 +11,7 @@
 	};
 	let { buildId, build, onStatusChange }: Props = $props();
 
-	const bc = createBuildConsole(buildId);
+	const bc = createBuildConsole(untrack(() => buildId));
 
 	let containerRef = $state<HTMLDivElement>();
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
