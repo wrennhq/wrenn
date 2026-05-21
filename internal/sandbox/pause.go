@@ -57,6 +57,20 @@ const (
 	// drainTimeout is how long pause waits for in-flight proxy connections
 	// to release before forcibly cancelling them.
 	drainTimeout = 5 * time.Second
+
+	// prepareSnapshotTimeout bounds the in-guest /snapshot/prepare call.
+	// Short on purpose: envd PrepareSnapshot is best-effort, and a wedged
+	// guest must not block the host-side pause path.
+	prepareSnapshotTimeout = 5 * time.Second
+
+	// vmInfoProbeTimeout bounds the CH /vm.info liveness probe issued
+	// before destructive CH ops (pause/snapshot). Local unix-socket call —
+	// kept tight so a dead socket fails fast.
+	vmInfoProbeTimeout = 3 * time.Second
+
+	// vmPauseTimeout bounds ch.pause. Pause itself is fast; the deadline
+	// guards against a wedged CH unix socket hanging the request.
+	vmPauseTimeout = 30 * time.Second
 )
 
 // snapshotMeta is persisted into every snapshot directory. It captures the
@@ -320,13 +334,34 @@ func (m *Manager) quiesceAndPauseCH(ctx context.Context, sb *sandboxState) error
 	sb.connTracker.ForceClose()
 
 	if c := sb.client.Load(); c != nil {
-		if err := c.PrepareSnapshot(ctx); err != nil {
+		// Bound the in-guest prepare call. If envd is wedged or the netns
+		// is half-torn-down the connect/read can block for the full envd
+		// client timeout (2m), which the user perceives as a hung snapshot.
+		prepCtx, prepCancel := context.WithTimeout(ctx, prepareSnapshotTimeout)
+		err := c.PrepareSnapshot(prepCtx)
+		prepCancel()
+		if err != nil {
 			slog.Warn("envd prepare-snapshot failed (continuing)", "id", sb.ID, "error", err)
 		}
 		c.CloseIdleConnections()
 	}
 
-	if err := m.vm.Pause(ctx, sb.ID); err != nil {
+	// Verify CH is still alive before issuing destructive ops. Without this
+	// a second snapshot attempt against a sandbox whose CH process died
+	// would block on vm.pause until the unix-socket dial times out.
+	probeCtx, probeCancel := context.WithTimeout(ctx, vmInfoProbeTimeout)
+	state, err := m.vm.Info(probeCtx, sb.ID)
+	probeCancel()
+	if err != nil {
+		return fmt.Errorf("ch.vm.info probe: %w", err)
+	}
+	if state != "Running" {
+		return fmt.Errorf("ch.vm.info: VM in state %q, not Running", state)
+	}
+
+	pauseCtx, pauseCancel := context.WithTimeout(ctx, vmPauseTimeout)
+	defer pauseCancel()
+	if err := m.vm.Pause(pauseCtx, sb.ID); err != nil {
 		return fmt.Errorf("ch.pause: %w", err)
 	}
 	return nil

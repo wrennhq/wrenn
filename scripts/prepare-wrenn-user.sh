@@ -319,6 +319,14 @@ RestartSec=5
 LimitNOFILE=65536
 LimitNPROC=4096
 
+# IO priority + cgroup weight. Large-VM snapshot writes (CH memfile dump,
+# zero-page hole punching, dm-snapshot flatten) can saturate a single-disk
+# host and starve sshd/journal reads. Best-effort scheduling class +
+# below-default cgroup weight lets latency-sensitive workloads keep up.
+IOSchedulingClass=best-effort
+IOSchedulingPriority=5
+IOWeight=50
+
 # Protect host filesystem — only allow access to what's needed.
 ProtectHome=true
 ReadWritePaths=/var/lib/wrenn /tmp /run/netns /dev/mapper

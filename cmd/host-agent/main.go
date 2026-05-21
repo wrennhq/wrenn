@@ -69,6 +69,7 @@ func main() {
 	// would otherwise cause "Device or resource busy" on dmsetup remove.
 	vm.CleanupStaleProcesses()
 	devicemapper.CleanupStaleDevices()
+	devicemapper.LogLoopState()
 	network.CleanupStaleNamespaces()
 
 	listenAddr := envOrDefault("WRENN_HOST_LISTEN_ADDR", ":50051")
