@@ -77,7 +77,7 @@ func (m *Manager) launchRestoredVM(ctx context.Context, vmCfg vm.VMConfig, hostI
 	}
 
 	client := envdclient.New(hostIP)
-	waitCtx, waitCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
+	waitCtx, waitCancel := context.WithTimeout(ctx, envdReadyTimeout(vmCfg.MemoryMB))
 	defer waitCancel()
 	if err := client.WaitUntilReady(waitCtx); err != nil {
 		_ = m.vm.Destroy(context.Background(), vmCfg.SandboxID)

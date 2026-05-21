@@ -465,7 +465,7 @@ func (h *oauthHandler) issueSessionAndRedirect(
 	if err != nil {
 		return err
 	}
-	setSessionCookies(w, sess.ID, sess.CSRFToken, isSecure(r))
+	setSessionCookies(w, sess.RawSID, sess.CSRFToken, isSecure(r))
 	// Send the user to the callback page so the SPA can probe /v1/me and
 	// trigger any post-OAuth UX (e.g. the new-signup name confirmation).
 	http.Redirect(w, r, redirectBase, http.StatusFound)

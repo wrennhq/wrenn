@@ -106,6 +106,18 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string) error {
 	return vm.client.resumeVM(ctx)
 }
 
+// Info returns the CH VM state (e.g. "Running", "Paused", "Shutdown") via
+// the CH unix-socket API. Returns an error if the socket is dead or the VM
+// is not registered. Use to probe liveness before issuing destructive ops
+// like pause or snapshot.
+func (m *Manager) Info(ctx context.Context, sandboxID string) (string, error) {
+	vm, ok := m.Get(sandboxID)
+	if !ok {
+		return "", fmt.Errorf("VM not found: %s", sandboxID)
+	}
+	return vm.client.vmInfo(ctx)
+}
+
 // UpdateBalloon adjusts the balloon target for a running VM.
 // amountMiB is memory to take FROM the guest (0 = give all back).
 func (m *Manager) UpdateBalloon(ctx context.Context, sandboxID string, amountMiB int) error {

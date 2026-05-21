@@ -45,6 +45,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/models"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
+	"git.omukk.dev/wrenn/wrenn/internal/vm"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
@@ -56,26 +57,58 @@ const (
 	// drainTimeout is how long pause waits for in-flight proxy connections
 	// to release before forcibly cancelling them.
 	drainTimeout = 5 * time.Second
+
+	// prepareSnapshotTimeout bounds the in-guest /snapshot/prepare call.
+	// Short on purpose: envd PrepareSnapshot is best-effort, and a wedged
+	// guest must not block the host-side pause path.
+	prepareSnapshotTimeout = 5 * time.Second
+
+	// vmInfoProbeTimeout bounds the CH /vm.info liveness probe issued
+	// before destructive CH ops (pause/snapshot). Local unix-socket call —
+	// kept tight so a dead socket fails fast.
+	vmInfoProbeTimeout = 3 * time.Second
+
+	// vmPauseTimeout bounds ch.pause. Pause itself is fast; the deadline
+	// guards against a wedged CH unix socket hanging the request.
+	vmPauseTimeout = 30 * time.Second
 )
 
 // snapshotMeta is persisted into every snapshot directory. It captures the
 // minimum information needed to restore the sandbox or build a new sandbox
 // from a template, independent of the in-memory state in m.boxes.
 type snapshotMeta struct {
-	SandboxID    string `json:"sandbox_id"`
+	// TemplateName is the human-readable template name. Set for snapshot
+	// templates (CreateSnapshot); empty for pause snapshots.
+	TemplateName string `json:"template_name,omitempty"`
 	TeamID       string `json:"team_id"`
 	TemplateID   string `json:"template_id"`
 	VCPUs        int    `json:"vcpus"`
 	MemoryMB     int    `json:"memory_mb"`
 	TimeoutSec   int    `json:"timeout_sec"`
-	SlotIndex    int    `json:"slot_index"`
+	// SlotIndex is the retained network slot. Only meaningful for pause
+	// snapshots — resume re-acquires the same slot so the host-IP is stable.
+	// Omitted for snapshot templates, which allocate a fresh slot per launch.
+	SlotIndex    int    `json:"slot_index,omitempty"`
 	BaseTemplate string `json:"base_template"`
 	CowPath      string `json:"cow_path,omitempty"`
-	// SandboxDir, when set, pins the CH SandboxDir on restore. Required for
-	// sandboxes launched from snapshot templates: their CH config.json holds
-	// the original source sandbox's tmpfs path, which Resume must reuse.
-	SandboxDir string    `json:"sandbox_dir,omitempty"`
+	// SandboxDir pins the CH SandboxDir on restore — the tmpfs path baked
+	// into CH's saved config.json. Always set: a restored sandbox gets a
+	// fresh ID, but config.json keeps the tmpfs path of the sandbox the
+	// snapshot was taken from, so the launcher must reconstruct it exactly.
+	// For a snapshot-of-a-snapshot this is the root ancestor's path, carried
+	// forward verbatim through the chain.
+	SandboxDir string    `json:"sandbox_dir"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+// effectiveSandboxDir returns the tmpfs SandboxDir the running VM uses — the
+// path baked into CH's config.json. A fresh-boot sandbox derives it from its
+// own ID; a sandbox launched from a snapshot template inherits the override.
+func effectiveSandboxDir(sb *sandboxState) string {
+	if sb.sandboxDirOverride != "" {
+		return sb.sandboxDirOverride
+	}
+	return vm.SandboxTmpDir(sb.ID)
 }
 
 func writeSnapshotMeta(dir string, m *snapshotMeta) error {
@@ -188,7 +221,6 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	punchZeroPagesInDir(stageDir)
 
 	meta := &snapshotMeta{
-		SandboxID:    sb.ID,
 		TeamID:       id.UUIDString(pgtype.UUID{Bytes: sb.TemplateTeamID, Valid: true}),
 		TemplateID:   id.UUIDString(pgtype.UUID{Bytes: sb.TemplateID, Valid: true}),
 		VCPUs:        sb.VCPUs,
@@ -197,7 +229,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		SlotIndex:    sb.SlotIndex,
 		BaseTemplate: sb.baseImagePath,
 		CowPath:      sb.dmDevice.CowPath,
-		SandboxDir:   sb.sandboxDirOverride,
+		SandboxDir:   effectiveSandboxDir(sb),
 		CreatedAt:    time.Now(),
 	}
 	if err := writeSnapshotMeta(stageDir, meta); err != nil {
@@ -302,13 +334,34 @@ func (m *Manager) quiesceAndPauseCH(ctx context.Context, sb *sandboxState) error
 	sb.connTracker.ForceClose()
 
 	if c := sb.client.Load(); c != nil {
-		if err := c.PrepareSnapshot(ctx); err != nil {
+		// Bound the in-guest prepare call. If envd is wedged or the netns
+		// is half-torn-down the connect/read can block for the full envd
+		// client timeout (2m), which the user perceives as a hung snapshot.
+		prepCtx, prepCancel := context.WithTimeout(ctx, prepareSnapshotTimeout)
+		err := c.PrepareSnapshot(prepCtx)
+		prepCancel()
+		if err != nil {
 			slog.Warn("envd prepare-snapshot failed (continuing)", "id", sb.ID, "error", err)
 		}
 		c.CloseIdleConnections()
 	}
 
-	if err := m.vm.Pause(ctx, sb.ID); err != nil {
+	// Verify CH is still alive before issuing destructive ops. Without this
+	// a second snapshot attempt against a sandbox whose CH process died
+	// would block on vm.pause until the unix-socket dial times out.
+	probeCtx, probeCancel := context.WithTimeout(ctx, vmInfoProbeTimeout)
+	state, err := m.vm.Info(probeCtx, sb.ID)
+	probeCancel()
+	if err != nil {
+		return fmt.Errorf("ch.vm.info probe: %w", err)
+	}
+	if state != "Running" {
+		return fmt.Errorf("ch.vm.info: VM in state %q, not Running", state)
+	}
+
+	pauseCtx, pauseCancel := context.WithTimeout(ctx, vmPauseTimeout)
+	defer pauseCancel()
+	if err := m.vm.Pause(pauseCtx, sb.ID); err != nil {
 		return fmt.Errorf("ch.pause: %w", err)
 	}
 	return nil
@@ -405,6 +458,9 @@ func (m *Manager) releaseRuntime(sb *sandboxState, cow cowDisposition) {
 // The remaining args (defaultUser, env, etc.) are forwarded to envd's /init
 // so the resumed sandbox sees the same execution environment as before.
 func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, defaultUser, _ string, envVars map[string]string) (*models.Sandbox, error) {
+	if m.draining.Load() {
+		return nil, ErrDraining
+	}
 	sb, err := m.get(sandboxID)
 	if err != nil {
 		return nil, err
@@ -528,6 +584,12 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 	sb.client.Store(client)
 	sb.dmDevice = dmDev
 	sb.sandboxDirOverride = meta.SandboxDir
+	// baseImagePath pairs the loop refcount we just Acquire'd with the
+	// matching Release inside cleanup() / releaseRuntime(). For a sandbox
+	// rehydrated from RestorePausedSandboxes this is the first time
+	// baseImagePath is populated — the restored entry intentionally leaves
+	// it empty so a Destroy-before-Resume cannot underflow the registry.
+	sb.baseImagePath = meta.BaseTemplate
 	sb.connTracker.Reset()
 	sb.HostIP = slot.HostIP
 	sb.RootfsPath = dmDev.DevicePath
@@ -638,7 +700,7 @@ func (m *Manager) waitForMemoryLoader(ctx context.Context, sb *sandboxState) err
 // memory snapshot, then the sandbox is resumed.
 //
 // Returns the total size (in bytes) of the artefacts written.
-func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID) (int64, error) {
+func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID, name string) (int64, error) {
 	sb, err := m.get(sandboxID)
 	if err != nil {
 		return 0, err
@@ -703,15 +765,18 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 		return 0, fmt.Errorf("flatten rootfs: %w", err)
 	}
 
+	// SlotIndex is intentionally omitted: a snapshot template allocates a
+	// fresh network slot on every launch, so the source sandbox's slot is
+	// meaningless. SandboxDir, however, must be recorded — see snapshotMeta.
 	meta := &snapshotMeta{
-		SandboxID:    sb.ID,
+		TemplateName: name,
 		TeamID:       id.UUIDString(teamID),
 		TemplateID:   id.UUIDString(templateID),
 		VCPUs:        sb.VCPUs,
 		MemoryMB:     sb.MemoryMB,
 		TimeoutSec:   sb.TimeoutSec,
-		SlotIndex:    sb.SlotIndex,
 		BaseTemplate: sb.baseImagePath,
+		SandboxDir:   effectiveSandboxDir(sb),
 		CreatedAt:    time.Now(),
 	}
 	if err := writeSnapshotMeta(stageDir, meta); err != nil {
@@ -779,8 +844,24 @@ func (m *Manager) DeleteSnapshot(teamID, templateID pgtype.UUID) error {
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove snapshot dir: %w", err)
 	}
+	// Prune the parent team directory if this was the team's last template,
+	// so deleting a template leaves no residual directory behind.
+	pruneEmptyDir(filepath.Dir(dir))
 	slog.Info("template snapshot deleted", "team_id", teamID, "template_id", templateID)
 	return nil
+}
+
+// pruneEmptyDir removes dir only when it is empty. Best-effort: a non-empty
+// dir or any filesystem error is silently ignored. Used to clean up a team's
+// template parent directory once its last template has been removed.
+func pruneEmptyDir(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) > 0 {
+		return
+	}
+	if err := os.Remove(dir); err != nil {
+		slog.Warn("prune empty template dir", "path", dir, "error", err)
+	}
 }
 
 // FlattenRootfs writes the current dm-snapshot state to a new template
@@ -808,13 +889,24 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 	}
 	defer os.RemoveAll(stageDir)
 
-	if err := m.vm.Pause(ctx, sandboxID); err != nil {
-		return 0, fmt.Errorf("vm pause for flatten: %w", err)
+	// quiesceAndPauseCH drains connections and calls envd /snapshot/prepare
+	// (sync + drop_caches) before ch.pause. A plain ch.pause only freezes the
+	// vCPUs — guest VFS page-cache writes (e.g. freshly pip-installed files)
+	// would not yet have reached the block device, so the flattened rootfs
+	// would capture empty files. Matches CreateSnapshot and Pause.
+	if err := m.quiesceAndPauseCH(ctx, sb); err != nil {
+		// quiesceAndPauseCH force-closes tracked connections before ch.pause.
+		// On failure, resume and reset so the sandbox doesn't get stuck
+		// refusing new proxy connections. Mirrors CreateSnapshot.
+		_ = m.vm.Resume(context.Background(), sandboxID)
+		sb.connTracker.Reset()
+		return 0, fmt.Errorf("quiesce for flatten: %w", err)
 	}
 	flattenErr := devicemapper.FlattenSnapshot(sb.dmDevice.DevicePath, filepath.Join(stageDir, "rootfs.ext4"))
 	if rerr := m.vm.Resume(context.Background(), sandboxID); rerr != nil {
 		slog.Warn("vm resume after flatten", "id", sandboxID, "error", rerr)
 	}
+	sb.connTracker.Reset()
 	if flattenErr != nil {
 		return 0, fmt.Errorf("flatten: %w", flattenErr)
 	}

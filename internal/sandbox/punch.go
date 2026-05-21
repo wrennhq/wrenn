@@ -20,7 +20,19 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const punchBlockSize = 4096
+const (
+	// punchBlockSize is the granularity at which we test for zero runs and
+	// issue FALLOC_FL_PUNCH_HOLE. Matches the kernel page size and the
+	// minimum hole size on ext4.
+	punchBlockSize = 4096
+
+	// punchReadSize is the IO chunk size used by the scan loop. We read
+	// many blocks per syscall and split them in-memory so a 20 GiB
+	// memory-ranges file costs ~20K read(2) syscalls instead of ~5M.
+	// Crucial under single-disk hosts where each syscall otherwise
+	// contends with sshd / journal IO.
+	punchReadSize = 1 << 20 // 1 MiB = 256 blocks
+)
 
 // punchZeroPagesInDir runs punchZeroPages on every memory* file in dir.
 // CH writes its memory dump as one or more files prefixed "memory" inside
@@ -73,7 +85,7 @@ func punchZeroPages(path string) (int64, int64, error) {
 	}
 	size := fi.Size()
 
-	buf := make([]byte, punchBlockSize)
+	buf := make([]byte, punchReadSize)
 	off := int64(0)
 
 	for off < size {
@@ -93,26 +105,35 @@ func punchZeroPages(path string) (int64, int64, error) {
 			return 0, 0, fmt.Errorf("seek_hole @ %d: %w", off, err)
 		}
 
-		// Scan [off, endData) block by block; batch zero runs.
+		// Scan [off, endData) chunk by chunk; batch zero runs across both
+		// intra-chunk and inter-chunk boundaries so a contiguous zero
+		// region is punched in a single fallocate.
 		zeroStart := int64(-1)
 		cur := off
 		for cur < endData {
-			n, err := readAt(f, buf, cur)
+			toRead := min(int64(len(buf)), endData-cur)
+			n, err := readAt(f, buf[:toRead], cur)
 			if err != nil {
 				return 0, 0, fmt.Errorf("read @ %d: %w", cur, err)
 			}
 			if n == 0 {
 				break
 			}
-			if isZero(buf[:n]) && n == punchBlockSize {
-				if zeroStart < 0 {
-					zeroStart = cur
+			// Walk the chunk one block at a time, tracking zero runs.
+			for blkOff := 0; blkOff < n; blkOff += punchBlockSize {
+				blkEnd := min(blkOff+punchBlockSize, n)
+				blk := buf[blkOff:blkEnd]
+				blkAbs := cur + int64(blkOff)
+				if isZero(blk) && len(blk) == punchBlockSize {
+					if zeroStart < 0 {
+						zeroStart = blkAbs
+					}
+				} else if zeroStart >= 0 {
+					if err := punch(f, zeroStart, blkAbs-zeroStart); err != nil {
+						return 0, 0, err
+					}
+					zeroStart = -1
 				}
-			} else if zeroStart >= 0 {
-				if err := punch(f, zeroStart, cur-zeroStart); err != nil {
-					return 0, 0, err
-				}
-				zeroStart = -1
 			}
 			cur += int64(n)
 		}

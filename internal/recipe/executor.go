@@ -41,6 +41,28 @@ type ExecFunc func(ctx context.Context, req *connect.Request[pb.ExecRequest]) (*
 // accumulated log entries. Used for per-step DB progress updates.
 type ProgressFunc func(step int, entries []BuildLogEntry)
 
+// StepStartFunc is called immediately before a step begins executing.
+type StepStartFunc func(step int, phase string, st Step)
+
+// OutputChunkFunc is called with each raw output chunk produced by a streaming
+// RUN step, as it arrives.
+type OutputChunkFunc func(step int, data []byte)
+
+// PtyChunk is one event from a streaming PTY exec: either an output chunk
+// (Data set) or the terminal result (Done set, Exit/Err populated).
+type PtyChunk struct {
+	Data []byte
+	Done bool
+	Exit int32
+	Err  error
+}
+
+// StreamExecFunc runs shellCmd in a PTY inside sandboxID and returns a channel
+// of PtyChunk events. The channel is closed after a Done chunk (or an Err
+// chunk). It is the streaming counterpart of ExecFunc, used for RUN steps so
+// build output reaches the client live.
+type StreamExecFunc func(ctx context.Context, sandboxID, shellCmd string) (<-chan PtyChunk, error)
+
 // Execute runs steps sequentially against sandboxID using execFn.
 //
 //   - phase labels the log entries (e.g., "pre-build", "recipe", "post-build").
@@ -63,6 +85,9 @@ func Execute(
 	defaultTimeout time.Duration,
 	bctx *ExecContext,
 	execFn ExecFunc,
+	streamFn StreamExecFunc,
+	onStepStart StepStartFunc,
+	onChunk OutputChunkFunc,
 	onProgress ProgressFunc,
 ) (entries []BuildLogEntry, nextStep int, ok bool) {
 	if defaultTimeout <= 0 {
@@ -73,6 +98,9 @@ func Execute(
 	for _, st := range steps {
 		step++
 		slog.Info("executing build step", "phase", phase, "step", step, "instruction", st.Raw)
+		if onStepStart != nil {
+			onStepStart(step, phase, st)
+		}
 
 		switch st.Kind {
 		case KindENV:
@@ -120,7 +148,13 @@ func Execute(
 			if st.Timeout > 0 {
 				timeout = st.Timeout
 			}
-			entry, succeeded := execRun(ctx, st, sandboxID, phase, step, timeout, bctx, execFn)
+			var entry BuildLogEntry
+			var succeeded bool
+			if streamFn != nil {
+				entry, succeeded = execRunStreaming(ctx, st, sandboxID, phase, step, timeout, bctx, streamFn, onChunk)
+			} else {
+				entry, succeeded = execRun(ctx, st, sandboxID, phase, step, timeout, bctx, execFn)
+			}
 			entries = append(entries, entry)
 			if !succeeded {
 				return entries, step, false
@@ -168,6 +202,66 @@ func execRun(
 	entry.Stderr = string(resp.Msg.Stderr)
 	entry.Exit = resp.Msg.ExitCode
 	entry.Ok = resp.Msg.ExitCode == 0
+	return entry, entry.Ok
+}
+
+// execRunStreaming runs a RUN step in a PTY via streamFn, forwarding each
+// output chunk to onChunk as it arrives. The merged PTY output is also
+// accumulated into the returned BuildLogEntry.Stdout for cold log viewing.
+// A PTY merges stdout and stderr onto one stream, so Stderr stays empty
+// unless the exec itself fails to start.
+func execRunStreaming(
+	ctx context.Context,
+	st Step,
+	sandboxID, phase string,
+	step int,
+	timeout time.Duration,
+	bctx *ExecContext,
+	streamFn StreamExecFunc,
+	onChunk OutputChunkFunc,
+) (BuildLogEntry, bool) {
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	start := time.Now()
+	entry := BuildLogEntry{Step: step, Phase: phase, Cmd: st.Raw}
+
+	ch, err := streamFn(execCtx, sandboxID, bctx.WrappedCommand(st.Shell))
+	if err != nil {
+		entry.Stderr = fmt.Sprintf("exec error: %v", err)
+		entry.Elapsed = time.Since(start).Milliseconds()
+		return entry, false
+	}
+
+	var out []byte
+	gotDone := false
+	for chunk := range ch {
+		if chunk.Err != nil {
+			entry.Stdout = string(out)
+			entry.Stderr = fmt.Sprintf("exec error: %v", chunk.Err)
+			entry.Elapsed = time.Since(start).Milliseconds()
+			return entry, false
+		}
+		if chunk.Done {
+			entry.Exit = chunk.Exit
+			gotDone = true
+			continue
+		}
+		out = append(out, chunk.Data...)
+		if onChunk != nil {
+			onChunk(step, chunk.Data)
+		}
+	}
+
+	entry.Stdout = string(out)
+	entry.Elapsed = time.Since(start).Milliseconds()
+	// A channel that closes without a Done chunk means the stream ended
+	// early (cancelled/aborted). Treat that as a failure, never a success.
+	if !gotDone {
+		entry.Stderr = "exec error: build step stream ended without completion"
+		return entry, false
+	}
+	entry.Ok = entry.Exit == 0
 	return entry, entry.Ok
 }
 

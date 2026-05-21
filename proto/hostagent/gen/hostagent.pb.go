@@ -534,7 +534,8 @@ func (x *ResumeSandboxResponse) GetMetadata() map[string]string {
 type CreateSnapshotRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	// Deprecated: use team_id + template_id instead.
+	// Human-readable template name, recorded into the snapshot's
+	// wrenn-snapshot.json metadata.
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	// Team UUID that will own the new template.
 	TeamId string `protobuf:"bytes,3,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`

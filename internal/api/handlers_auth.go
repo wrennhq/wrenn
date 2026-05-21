@@ -190,7 +190,7 @@ func (h *authHandler) issueSession(
 	if err != nil {
 		return err
 	}
-	setSessionCookies(w, sess.ID, sess.CSRFToken, isSecure(r))
+	setSessionCookies(w, sess.RawSID, sess.CSRFToken, isSecure(r))
 	return nil
 }
 
@@ -554,7 +554,7 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to switch team")
 		return
 	}
-	setSessionCookies(w, newSess.ID, newSess.CSRFToken, isSecure(r))
+	setSessionCookies(w, newSess.RawSID, newSess.CSRFToken, isSecure(r))
 
 	writeJSON(w, http.StatusOK, authResponse{
 		UserID:  id.FormatUserID(ac.UserID),

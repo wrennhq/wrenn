@@ -261,6 +261,29 @@ func CleanupStaleDevices() {
 	}
 }
 
+// LogLoopState enumerates currently-attached loop devices that back wrenn
+// rootfs images and logs them at INFO. Diagnostic only — meant to be called
+// once at agent startup so leaked loop attachments from a prior crash are
+// visible in the journal before the LoopRegistry starts refcounting.
+func LogLoopState() {
+	out, err := exec.Command("losetup", "-l", "--noheadings", "--output", "NAME,BACK-FILE").CombinedOutput()
+	if err != nil {
+		slog.Debug("losetup -l failed", "error", err)
+		return
+	}
+	wrennCount := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if !strings.Contains(line, "/var/lib/wrenn/") {
+			continue
+		}
+		wrennCount++
+		slog.Info("pre-existing loop attachment", "entry", strings.TrimSpace(line))
+	}
+	if wrennCount == 0 {
+		slog.Info("no pre-existing wrenn loop attachments")
+	}
+}
+
 // --- low-level helpers ---
 
 // losetupCreate attaches a file as a read-only loop device.

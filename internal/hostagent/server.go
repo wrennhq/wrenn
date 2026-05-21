@@ -80,6 +80,9 @@ func (s *Server) CreateSandbox(
 		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb),
 		msg.DefaultUser, msg.DefaultEnv)
 	if err != nil {
+		if errors.Is(err, sandbox.ErrDraining) {
+			return nil, connect.NewError(connect.CodeUnavailable, err)
+		}
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create sandbox: %w", err))
 	}
 
@@ -135,12 +138,12 @@ func (s *Server) CreateSnapshot(
 	if err != nil {
 		return nil, err
 	}
-	size, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, teamID, templateID)
+	size, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, teamID, templateID, req.Msg.Name)
 	if err != nil {
 		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.CreateSnapshotResponse{
-		Name:      req.Msg.TemplateId,
+		Name:      req.Msg.Name,
 		SizeBytes: size,
 	}), nil
 }
@@ -185,6 +188,8 @@ func mapSandboxError(err error) error {
 		return connect.NewError(connect.CodeNotFound, err)
 	case errors.Is(err, sandbox.ErrNotRunning), errors.Is(err, sandbox.ErrNotPaused):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
+	case errors.Is(err, sandbox.ErrDraining):
+		return connect.NewError(connect.CodeUnavailable, err)
 	case errors.Is(err, sandbox.ErrInvalidRange):
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	default:
@@ -570,6 +575,14 @@ func (s *Server) ListSandboxes(
 
 	infos := make([]*pb.SandboxInfo, len(sandboxes))
 	for i, sb := range sandboxes {
+		// Paused / restored-paused sandboxes have no active network slot, so
+		// HostIP is nil — net.IP(nil).String() returns the literal "<nil>"
+		// which would leak into DB host_ip columns and SDK responses. Emit
+		// empty string instead.
+		hostIP := ""
+		if sb.HostIP != nil {
+			hostIP = sb.HostIP.String()
+		}
 		infos[i] = &pb.SandboxInfo{
 			SandboxId:        sb.ID,
 			Status:           string(sb.Status),
@@ -577,7 +590,7 @@ func (s *Server) ListSandboxes(
 			TemplateId:       uuid.UUID(sb.TemplateID).String(),
 			Vcpus:            int32(sb.VCPUs),
 			MemoryMb:         int32(sb.MemoryMB),
-			HostIp:           sb.HostIP.String(),
+			HostIp:           hostIP,
 			CreatedAtUnix:    sb.CreatedAt.Unix(),
 			LastActiveAtUnix: sb.LastActiveAt.Unix(),
 			TimeoutSec:       int32(sb.TimeoutSec),

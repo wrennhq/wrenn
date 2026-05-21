@@ -21,7 +21,6 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/internal/models"
 	"git.omukk.dev/wrenn/wrenn/internal/network"
-	"git.omukk.dev/wrenn/wrenn/internal/vm"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
@@ -46,10 +45,10 @@ func (m *Manager) createFromSnapshotTemplate(
 	if err != nil {
 		return nil, fmt.Errorf("read snapshot meta: %w", err)
 	}
-	if meta.SandboxID == "" {
-		// Required to rebuild the SandboxDir that CH's saved config.json
-		// expects. A snapshot template without this field cannot be launched.
-		return nil, fmt.Errorf("snapshot template %s missing sandbox_id in meta", templateDir)
+	if meta.SandboxDir == "" {
+		// CH's saved config.json hardcodes a tmpfs disk path; meta.SandboxDir
+		// is that exact path. A snapshot template without it cannot be launched.
+		return nil, fmt.Errorf("snapshot template %s missing sandbox_dir in meta", templateDir)
 	}
 
 	// Acquire shared read-only loop on the flattened rootfs. Many sandboxes
@@ -101,12 +100,11 @@ func (m *Manager) createFromSnapshotTemplate(
 	}
 	res.slot = slot
 
-	// CH's saved config.json hardcodes the original sandbox's tmpfs disk
-	// path. The launcher mounts a fresh tmpfs at SandboxDir inside its
-	// private mount namespace and symlinks rootfs.ext4 → our new dm device.
-	// Override SandboxDir so the symlink lives where CH expects to find it.
-	originalSandboxDir := vm.SandboxTmpDir(meta.SandboxID)
-
+	// CH's saved config.json hardcodes a tmpfs disk path; meta.SandboxDir is
+	// that exact path (carried forward verbatim across template chains, so a
+	// snapshot-of-a-snapshot resolves to the root ancestor's path). The
+	// launcher mounts a fresh tmpfs there inside its private mount namespace
+	// and symlinks rootfs.ext4 → our new dm device.
 	vmCfg := m.buildRestoreVMConfig(restoreInputs{
 		sandboxID:  sandboxID,
 		templateID: id.UUIDString(templateID),
@@ -115,7 +113,7 @@ func (m *Manager) createFromSnapshotTemplate(
 		vcpus:      vcpus,
 		memoryMB:   memoryMB,
 		slot:       slot,
-		sandboxDir: originalSandboxDir,
+		sandboxDir: meta.SandboxDir,
 	})
 
 	client, err := m.launchRestoredVM(ctx, vmCfg, slot.HostIP.String())
@@ -148,7 +146,7 @@ func (m *Manager) createFromSnapshotTemplate(
 		connTracker:        &ConnTracker{},
 		dmDevice:           dmDev,
 		baseImagePath:      baseRootfs,
-		sandboxDirOverride: originalSandboxDir,
+		sandboxDirOverride: meta.SandboxDir,
 	}
 	sb.client.Store(client)
 
@@ -169,7 +167,7 @@ func (m *Manager) createFromSnapshotTemplate(
 		"id", sandboxID,
 		"team_id", teamID,
 		"template_id", templateID,
-		"source_sandbox", meta.SandboxID,
+		"sandbox_dir", meta.SandboxDir,
 		"host_ip", slot.HostIP.String(),
 		"dm_device", dmDev.DevicePath,
 	)

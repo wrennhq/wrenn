@@ -39,7 +39,7 @@ e2b/
 .mcp.json
 
 ## Builds
-builds/
+/builds/
 
 ## Rust
 envd-rs/target/
