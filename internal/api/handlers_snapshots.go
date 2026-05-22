@@ -131,22 +131,18 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	ac := auth.MustFromContext(r.Context())
 
-	tmpl, err := h.sandboxSvc.CreateSnapshot(r.Context(), sandboxID, ac.TeamID, req.Name)
-	name := req.Name
-	if err == nil {
-		name = tmpl.Name
-	}
-	h.audit.LogSnapshotCreate(r.Context(), ac, name, err)
+	// Async: the VM briefly pauses to a "snapshotting" state, then resumes. The
+	// template is registered by a background goroutine; clients learn of the
+	// result via the SSE template.snapshot.create event (or by polling).
+	sb, name, err := h.sandboxSvc.CreateSnapshot(r.Context(), sandboxID, ac.TeamID, req.Name)
 	if err != nil {
-		if name != "" {
-			h.audit.LogSnapshotDeleteSystem(r.Context(), ac.TeamID, name, "cleanup_after_create_error", nil)
-		}
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
+	h.audit.LogSnapshotCreateRequested(r.Context(), ac, name)
 
-	writeJSON(w, http.StatusCreated, templateToResponse(tmpl))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
 // List handles GET /v1/snapshots.

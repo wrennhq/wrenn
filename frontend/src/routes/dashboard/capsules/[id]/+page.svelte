@@ -434,7 +434,7 @@
 			case 'running': return 'var(--color-accent)';
 			case 'paused':  return 'var(--color-amber)';
 			case 'error':   return 'var(--color-red)';
-			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+			case 'starting': case 'resuming': case 'pausing': case 'snapshotting': case 'stopping':
 				return 'var(--color-blue)';
 			default:        return 'var(--color-text-muted)';
 		}
@@ -445,7 +445,7 @@
 			case 'running': return 'rgba(94,140,88,0.12)';
 			case 'paused':  return 'rgba(212,167,60,0.12)';
 			case 'error':   return 'rgba(207,129,114,0.12)';
-			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+			case 'starting': case 'resuming': case 'pausing': case 'snapshotting': case 'stopping':
 				return 'rgba(90,159,212,0.12)';
 			default:        return 'rgba(255,255,255,0.05)';
 		}
@@ -456,7 +456,7 @@
 			case 'running': return 'rgba(94,140,88,0.3)';
 			case 'paused':  return 'rgba(212,167,60,0.3)';
 			case 'error':   return 'rgba(207,129,114,0.3)';
-			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+			case 'starting': case 'resuming': case 'pausing': case 'snapshotting': case 'stopping':
 				return 'rgba(90,159,212,0.3)';
 			default:        return 'rgba(255,255,255,0.08)';
 		}

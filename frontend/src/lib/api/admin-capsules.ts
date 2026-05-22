@@ -18,7 +18,9 @@ export async function destroyAdminCapsule(id: string): Promise<ApiResult<void>> 
 	return apiFetch('DELETE', `/api/v1/admin/capsules/${id}`);
 }
 
-export async function snapshotAdminCapsule(id: string, name?: string): Promise<ApiResult<Snapshot>> {
+// Async: returns 202 with the capsule now in the "snapshotting" state. The
+// template lands later (watch template.snapshot.create or poll templates).
+export async function snapshotAdminCapsule(id: string, name?: string): Promise<ApiResult<Capsule>> {
 	return apiFetch('POST', `/api/v1/admin/capsules/${id}/snapshot`, { name });
 }
 

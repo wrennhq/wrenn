@@ -158,6 +158,11 @@ func (h *sandboxEventHandler) verbForFailure(ctx context.Context, sandboxID pgty
 		return events.CapsuleResume
 	case "pausing":
 		return events.CapsulePause
+	case "snapshotting":
+		// A snapshot pauses then resumes the VM; a host-side failure leaves the
+		// sandbox errored, not destroyed. Route through CapsuleCreate so the
+		// consumer's handleFailed marks it "error" rather than removing the row.
+		return events.CapsuleCreate
 	default:
 		return events.CapsuleDestroy
 	}

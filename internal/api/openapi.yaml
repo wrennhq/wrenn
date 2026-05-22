@@ -1421,10 +1421,14 @@ paths:
         - apiKeyAuth: []
         - sessionAuth: []
       description: |
-        Live snapshot: briefly pauses the capsule, writes its VM state +
-        memory + flattened rootfs to a new template directory, then resumes
-        the capsule. The source capsule keeps running after the snapshot;
-        the resulting template can be used to create new capsules.
+        Live snapshot, processed asynchronously. The call returns immediately
+        with the capsule in the `snapshotting` state; in the background the
+        capsule briefly pauses while its VM state + memory + flattened rootfs
+        are written to a new template, then it resumes to `running`.
+
+        Because it is async, the response does NOT contain the template. Watch
+        for the `template.snapshot.create` SSE event (its `outcome` reports
+        success or failure) or poll `GET /v1/snapshots` to observe completion.
 
         Snapshots are immutable: each call must use a fresh name. Re-using
         an existing name returns 409 Conflict.
@@ -1435,12 +1439,12 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateSnapshotRequest"
       responses:
-        "201":
-          description: Snapshot created
+        "202":
+          description: Snapshot accepted; capsule is now snapshotting
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Template"
+                $ref: "#/components/schemas/Capsule"
         "409":
           description: Name already exists or capsule not running
           content:
@@ -2997,21 +3001,22 @@ paths:
           required: true
           schema: {type: string}
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               type: object
-              required: [name]
               properties:
-                name: {type: string}
+                name:
+                  type: string
+                  description: Optional; an auto-generated name is used when omitted.
       responses:
-        "201":
-          description: Snapshot created
+        "202":
+          description: Snapshot accepted; capsule is now snapshotting
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Template"
+                $ref: "#/components/schemas/Capsule"
 
   /v1/admin/capsules/{id}/exec:
     parameters:
@@ -3610,7 +3615,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, starting, running, pausing, paused, resuming, stopping, hibernated, stopped, missing, error]
+          enum: [pending, starting, running, pausing, paused, snapshotting, resuming, stopping, hibernated, stopped, missing, error]
         template:
           type: string
         vcpus:

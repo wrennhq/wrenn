@@ -461,59 +461,137 @@ func (s *SandboxService) resumeInBackground(
 	})
 }
 
-// CreateSnapshot takes a live snapshot of a running sandbox, publishing
-// the result as a new template owned by the sandbox's team. Returns the
-// inserted template record.
-func (s *SandboxService) CreateSnapshot(ctx context.Context, sandboxID, teamID pgtype.UUID, name string) (db.Template, error) {
+// CreateSnapshot asynchronously takes a live snapshot of a running sandbox,
+// publishing the result as a new template owned by the sandbox's team. The DB
+// CAS from "running" to "snapshotting" is the authoritative gate against
+// concurrent Pause/Snapshot/Destroy calls; if it loses, no agent RPC fires.
+// The agent briefly pauses Cloud Hypervisor while it dumps memory + flattens
+// the rootfs, then resumes — so the sandbox returns to "running" on completion.
+// Returns the sandbox (now "snapshotting") and the resolved snapshot name.
+func (s *SandboxService) CreateSnapshot(ctx context.Context, sandboxID, teamID pgtype.UUID, name string) (db.Sandbox, string, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return db.Template{}, fmt.Errorf("sandbox not found: %w", err)
+		return db.Sandbox{}, "", fmt.Errorf("sandbox not found: %w", err)
 	}
 	if sb.Status != "running" {
-		return db.Template{}, fmt.Errorf("sandbox is not running (status: %s)", sb.Status)
+		return db.Sandbox{}, "", fmt.Errorf("sandbox is not running (status: %s)", sb.Status)
 	}
 
 	if name == "" {
 		name = id.NewSnapshotName()
 	}
 	if err := validate.SafeName(name); err != nil {
-		return db.Template{}, fmt.Errorf("invalid name: %w", err)
+		return db.Sandbox{}, "", fmt.Errorf("invalid name: %w", err)
+	}
+	// Reject duplicate names up front so we don't pause the VM and dump memory
+	// only to fail on the template insert at the very end.
+	if _, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: name, TeamID: teamID}); err == nil {
+		return db.Sandbox{}, "", fmt.Errorf("conflict: a snapshot named %q already exists", name)
+	}
+
+	if _, err := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+		ID: sandboxID, Status: "running", Status_2: "snapshotting",
+	}); err != nil {
+		return db.Sandbox{}, "", fmt.Errorf("sandbox not in running state (current: %s)", sb.Status)
 	}
 
 	agent, err := s.agentForHost(ctx, sb.HostID)
 	if err != nil {
-		return db.Template{}, err
+		// Roll back the CAS so the sandbox isn't stuck in "snapshotting".
+		if _, rerr := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+			ID: sandboxID, Status: "snapshotting", Status_2: "running",
+		}); rerr != nil {
+			slog.Warn("failed to roll back snapshotting→running", "id", id.FormatSandboxID(sandboxID), "error", rerr)
+		}
+		return db.Sandbox{}, "", err
 	}
+
+	sandboxIDStr := id.FormatSandboxID(sandboxID)
+	hostIDStr := id.FormatHostID(sb.HostID)
+	teamIDStr := id.FormatTeamID(sb.TeamID)
+
+	// Notify other clients that the badge moved to "snapshotting".
+	s.publishStateChanged(ctx, sandboxIDStr, teamIDStr, hostIDStr, "running", "snapshotting")
+
+	go s.snapshotInBackground(sandboxID, sandboxIDStr, hostIDStr, teamIDStr, teamID, agent, name, sb.Vcpus, sb.MemoryMb)
+
+	sb.Status = "snapshotting"
+	return sb, name, nil
+}
+
+func (s *SandboxService) snapshotInBackground(
+	sandboxID pgtype.UUID, sandboxIDStr, hostIDStr, teamIDStr string, teamID pgtype.UUID,
+	agent hostagentClient, name string, vcpus, memoryMB int32,
+) {
+	bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
 	newTemplateID := id.NewSandboxID() // any random UUID
 	templateUUID := pgtype.UUID{Bytes: newTemplateID.Bytes, Valid: true}
 
-	resp, err := agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
-		SandboxId:  id.FormatSandboxID(sandboxID),
+	resp, err := agent.CreateSnapshot(bgCtx, connect.NewRequest(&pb.CreateSnapshotRequest{
+		SandboxId:  sandboxIDStr,
 		Name:       name,
 		TeamId:     id.UUIDString(teamID),
 		TemplateId: id.UUIDString(templateUUID),
 	}))
-	if err != nil {
-		return db.Template{}, fmt.Errorf("agent snapshot: %w", err)
+
+	// Either way, the VM has resumed host-side; return the badge to running.
+	// Use a CAS so a concurrent Destroy (which sets "stopping") wins: if the
+	// CAS misses, the sandbox is no longer ours and we must NOT announce it as
+	// running. The snapshot itself is still valid and is registered below — a
+	// snapshot template outlives its source sandbox.
+	if _, derr := s.DB.UpdateSandboxStatusIf(bgCtx, db.UpdateSandboxStatusIfParams{
+		ID: sandboxID, Status: "snapshotting", Status_2: "running",
+	}); derr != nil {
+		slog.Warn("snapshotting→running CAS missed (sandbox moved on); skipping state signal", "sandbox_id", sandboxIDStr, "error", derr)
+	} else {
+		s.publishStateChanged(bgCtx, sandboxIDStr, teamIDStr, hostIDStr, "snapshotting", "running")
 	}
 
-	tmpl, err := s.DB.InsertTemplate(ctx, db.InsertTemplateParams{
+	if err != nil {
+		slog.Warn("background snapshot failed", "sandbox_id", sandboxIDStr, "error", err)
+		s.publishEvent(bgCtx, SandboxStateEvent{
+			Event: "sandbox.snapshot_failed", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
+			Metadata: map[string]string{"name": name}, Error: err.Error(), Timestamp: time.Now().Unix(),
+		})
+		return
+	}
+
+	if _, err := s.DB.InsertTemplate(bgCtx, db.InsertTemplateParams{
 		ID:          templateUUID,
 		Name:        name,
 		Type:        "snapshot",
-		Vcpus:       sb.Vcpus,
-		MemoryMb:    sb.MemoryMb,
+		Vcpus:       vcpus,
+		MemoryMb:    memoryMB,
 		SizeBytes:   resp.Msg.SizeBytes,
 		TeamID:      teamID,
 		DefaultUser: "",
 		DefaultEnv:  []byte("{}"),
 		Metadata:    []byte("{}"),
-	})
-	if err != nil {
-		return db.Template{}, fmt.Errorf("insert template: %w", err)
+	}); err != nil {
+		slog.Warn("failed to insert snapshot template", "sandbox_id", sandboxIDStr, "name", name, "error", err)
+		s.publishEvent(bgCtx, SandboxStateEvent{
+			Event: "sandbox.snapshot_failed", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
+			Metadata: map[string]string{"name": name}, Error: "failed to register snapshot", Timestamp: time.Now().Unix(),
+		})
+		return
 	}
-	return tmpl, nil
+
+	s.publishEvent(bgCtx, SandboxStateEvent{
+		Event: "sandbox.snapshotted", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
+		Metadata: map[string]string{"name": name}, Timestamp: time.Now().Unix(),
+	})
+}
+
+// publishStateChanged emits a transient capsule.state.changed event so the
+// dashboard flips the status badge during a transition that has no terminal
+// lifecycle verb of its own (e.g. the snapshotting round-trip).
+func (s *SandboxService) publishStateChanged(ctx context.Context, sandboxIDStr, teamIDStr, hostIDStr, from, to string) {
+	s.publishEvent(ctx, SandboxStateEvent{
+		Event: "sandbox.state_changed", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
+		Metadata: map[string]string{"from": from, "to": to}, Timestamp: time.Now().Unix(),
+	})
 }
 
 // Destroy stops a sandbox asynchronously. Pre-marks the DB status as

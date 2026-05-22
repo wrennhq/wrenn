@@ -9,12 +9,13 @@ import (
 type SandboxStatus string
 
 const (
-	StatusPending SandboxStatus = "pending"
-	StatusRunning SandboxStatus = "running"
-	StatusPausing SandboxStatus = "pausing"
-	StatusPaused  SandboxStatus = "paused"
-	StatusStopped SandboxStatus = "stopped"
-	StatusError   SandboxStatus = "error"
+	StatusPending      SandboxStatus = "pending"
+	StatusRunning      SandboxStatus = "running"
+	StatusPausing      SandboxStatus = "pausing"
+	StatusPaused       SandboxStatus = "paused"
+	StatusSnapshotting SandboxStatus = "snapshotting"
+	StatusStopped      SandboxStatus = "stopped"
+	StatusError        SandboxStatus = "error"
 )
 
 // Sandbox holds all state for a running sandbox on this host.

@@ -63,11 +63,12 @@
 		snapshotError = null;
 		const result = await snapshotAdminCapsule(capsuleId, snapshotName.trim() || undefined);
 		if (result.ok) {
-			toast.success(`Snapshot "${result.data.name}" created`);
+			toast.success('Snapshot started');
 			showSnapshot = false;
 			snapshotName = '';
-			// Capsule keeps running after a live snapshot; refresh local state.
-			void loadCapsule();
+			// Async: the capsule is now snapshotting and will return to running
+			// once the template has been written.
+			capsule = result.data;
 		} else {
 			snapshotError = result.error;
 		}
@@ -79,7 +80,7 @@
 			case 'running': return 'var(--color-accent)';
 			case 'paused': case 'hibernated':  return 'var(--color-amber)';
 			case 'error':   return 'var(--color-red)';
-			case 'pending': case 'starting': case 'resuming': case 'pausing': case 'stopping':
+			case 'pending': case 'starting': case 'resuming': case 'pausing': case 'snapshotting': case 'stopping':
 				return 'var(--color-blue)';
 			default:        return 'var(--color-text-muted)';
 		}
@@ -90,7 +91,7 @@
 			case 'running': return 'rgba(94,140,88,0.12)';
 			case 'paused': case 'hibernated':  return 'rgba(212,167,60,0.12)';
 			case 'error':   return 'rgba(207,129,114,0.12)';
-			case 'pending': case 'starting': case 'resuming': case 'pausing': case 'stopping':
+			case 'pending': case 'starting': case 'resuming': case 'pausing': case 'snapshotting': case 'stopping':
 				return 'rgba(90,159,212,0.12)';
 			default:        return 'rgba(255,255,255,0.05)';
 		}
@@ -101,7 +102,7 @@
 			case 'running': return 'rgba(94,140,88,0.3)';
 			case 'paused': case 'hibernated':  return 'rgba(212,167,60,0.3)';
 			case 'error':   return 'rgba(207,129,114,0.3)';
-			case 'pending': case 'starting': case 'resuming': case 'pausing': case 'stopping':
+			case 'pending': case 'starting': case 'resuming': case 'pausing': case 'snapshotting': case 'stopping':
 				return 'rgba(90,159,212,0.3)';
 			default:        return 'rgba(255,255,255,0.08)';
 		}
@@ -295,7 +296,7 @@
 			</div>
 
 			<div class="px-6 pt-5 pb-6 space-y-4">
-				<p class="text-ui text-[var(--color-text-tertiary)]">Live snapshot: the capsule briefly pauses, its memory + disk are written to a new platform template available to all teams, then the capsule resumes — your session keeps running.</p>
+				<p class="text-ui text-[var(--color-text-tertiary)]">The capsule moves to a <span class="font-mono text-[var(--color-blue)]">snapshotting</span> state while its memory and disk are written to a new platform template available to all teams, then returns to running. This runs in the background.</p>
 
 				{#if snapshotError}
 					<div class="rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
@@ -317,7 +318,7 @@
 						placeholder="e.g. python-3.12, node-22-dev"
 						onkeydown={(e) => { if (e.key === 'Enter' && !snapshotting) handleSnapshot(); }}
 					/>
-					<p class="mt-1.5 text-meta text-[var(--color-text-muted)]">Leave blank for an auto-generated name. If the name already exists, it will be overwritten.</p>
+					<p class="mt-1.5 text-meta text-[var(--color-text-muted)]">Leave blank for an auto-generated name. Each snapshot needs a unique name.</p>
 				</div>
 
 				<div class="flex justify-end gap-3 pt-1">

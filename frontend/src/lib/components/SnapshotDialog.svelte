@@ -65,7 +65,7 @@
 			</div>
 
 			<div class="px-6 pt-5 pb-6 space-y-4">
-				<p class="text-ui text-[var(--color-text-tertiary)]">Live snapshot: the capsule briefly pauses, its memory + disk are written to a new template, then the capsule resumes — your session keeps running.</p>
+				<p class="text-ui text-[var(--color-text-tertiary)]">The capsule moves to a <span class="font-mono text-[var(--color-blue)]">snapshotting</span> state while its memory and disk are written to a new template, then returns to running. This runs in the background; you'll be notified when it completes.</p>
 
 				{#if error}
 					<div class="rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
@@ -107,9 +107,9 @@
 							<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<path d="M21 12a9 9 0 1 1-6.219-8.56" />
 							</svg>
-							Capturing...
+							Starting...
 						{:else}
-							Capture snapshot
+							Start snapshot
 						{/if}
 					</button>
 				</div>
