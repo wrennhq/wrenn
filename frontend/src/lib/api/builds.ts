@@ -97,6 +97,8 @@ export type AdminTemplate = {
 	size_bytes: number;
 	team_id: string;
 	created_at: string;
+	/** True for built-in system base templates, which cannot be deleted. */
+	protected: boolean;
 };
 
 export async function listAdminTemplates(): Promise<ApiResult<AdminTemplate[]>> {

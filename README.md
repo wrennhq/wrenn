@@ -22,7 +22,7 @@ Produces three binaries: `wrenn-cp` (control plane), `wrenn-agent` (host agent),
 
 ## Host setup
 
-The host agent needs a kernel, a minimal rootfs image, and working directories on the host machine.
+The host agent needs a kernel, the system base rootfs images, and working directories on the host machine.
 
 ### Directory structure
 
@@ -31,58 +31,73 @@ The host agent needs a kernel, a minimal rootfs image, and working directories o
 ├── kernels/
 │   └── vmlinux              # uncompressed Linux kernel (not bzImage)
 ├── images/
-│   └── minimal/
-│       └── rootfs.ext4      # base rootfs (all other templates snapshot from this)
+│   └── teams/
+│       └── 0000000000000000000000000/   # platform team (base36 all-zeros)
+│           ├── 0000000000000000000000000/rootfs.ext4   # minimal-ubuntu (id 0)
+│           ├── 0000000000000000000000001/rootfs.ext4   # minimal-alpine (id 1)
+│           ├── 0000000000000000000000002/rootfs.ext4   # minimal-arch   (id 2)
+│           └── 0000000000000000000000003/rootfs.ext4   # minimal-fedora (id 3)
 ├── sandboxes/               # per-sandbox CoW files (created at runtime)
 └── snapshots/               # pause/hibernate snapshot files (created at runtime)
 ```
 
-Create the directories:
+Create the base directories (the per-template image dirs are created by the build scripts):
 
 ```bash
-sudo mkdir -p /var/lib/wrenn/{kernels,images/minimal,sandboxes,snapshots}
+sudo mkdir -p /var/lib/wrenn/{kernels,images,sandboxes,snapshots}
 ```
 
 ### Kernel
 
 Place an uncompressed `vmlinux` kernel at `/var/lib/wrenn/kernels/vmlinux`. Versioned kernels (`vmlinux-{semver}`) are also supported — the agent picks the latest by semver.
 
-### Minimal rootfs
+### System base rootfs images
 
-The minimal rootfs is the base image that all other templates (Python, Node, etc.) are built on top of via device-mapper snapshots. It must contain:
+There are four built-in **system base templates** — one per distro — that all other
+templates snapshot from via device-mapper. They are platform-owned (visible to every
+team) and protected from deletion (reserved template IDs 0–1024):
+
+| Template | Distro | ID |
+|----------|--------|----|
+| `minimal-ubuntu` | `ubuntu:26.04` | 0 |
+| `minimal-alpine` | `alpine:3.22` | 1 |
+| `minimal-arch` | `archlinux:base` | 2 |
+| `minimal-fedora` | `fedora:45` | 3 |
+
+`minimal-ubuntu` is the default template for new sandboxes and builds. The same
+statically-linked `envd` + `tini` run on all four regardless of the distro's libc
+(glibc on Ubuntu/Arch/Fedora, musl on Alpine).
+
+Each image contains these packages plus a `wrenn-user` account with passwordless `sudo`:
 
 | Package | Why |
 |---------|-----|
 | `socat` | Bidirectional relay for port forwarding |
 | `chrony` | Time sync from KVM PTP clock (`/dev/ptp0`) |
-| `tini` | PID 1 zombie reaper (injected by build script, not apt) |
+| `iproute2` (`iproute` on Fedora) | `ip` for guest network setup in `wrenn-init` |
+| `tini` | PID 1 zombie reaper |
 | `sudo` | User privilege management inside the guest |
 | `wget` | HTTP fetching |
 | `curl` | HTTP client |
 | `ca-certificates` | TLS certificate verification |
+| `git` | Version control |
 
-**To build a rootfs from a Docker container:**
+**To build all four images** (each spawns a distro container, installs the packages +
+`wrenn-user`, builds `envd`, injects `wrenn-init` + `tini`, and exports to the
+team-scoped path). Requires Docker + sudo:
 
-1. Create and configure a container with the required packages:
-   ```bash
-   docker run -it --name wrenn-minimal debian:bookworm bash
-   # Inside the container:
-   apt update && apt install -y socat chrony sudo wget curl ca-certificates
-   exit
-   ```
+```bash
+make images
+```
 
-2. Export to a rootfs image (builds envd, injects wrenn-init + tini, shrinks to minimum size):
-   ```bash
-   sudo bash scripts/rootfs-from-container.sh wrenn-minimal minimal
-   ```
+Or build a single distro: `make rootfs-ubuntu` / `rootfs-alpine` / `rootfs-arch` / `rootfs-fedora`.
 
-**To update an existing rootfs** after changing envd or `wrenn-init.sh`:
+**To update the images** after changing `envd` or `wrenn-init.sh` (rebuilds `envd` once,
+then re-injects `envd` + `wrenn-init` + `tini` into every system base image):
 
 ```bash
 bash scripts/update-minimal-rootfs.sh
 ```
-
-This rebuilds envd via `make build-envd` and copies the fresh binaries into the mounted rootfs image.
 
 ### IP forwarding
 

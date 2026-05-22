@@ -390,16 +390,25 @@ func (l *AuditLogger) LogSandboxStateChanged(ctx context.Context, teamID, sandbo
 
 // --- Snapshot events (scope: team) ---
 
-func (l *AuditLogger) LogSnapshotCreate(ctx context.Context, ac auth.AuthContext, name string, err error) {
-	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "snapshot", name, "create", auditStatusFor(err, "success"), mergeMeta(nil, err)))
-	l.publish(ctx, events.Event{
-		Event:     events.SnapshotCreate,
-		Outcome:   outcomeFromErr(err),
-		Timestamp: events.Now(),
-		TeamID:    id.FormatTeamID(ac.TeamID),
-		Actor:     actorToEvent(ac),
-		Resource:  events.Resource{ID: name, Type: "snapshot"},
-		Error:     errString(err),
+// LogSnapshotCreateRequested records that a user requested an async snapshot.
+// It writes the user-attributed audit row only — the terminal success/failure
+// event is published later by the background goroutine (system actor). Mirrors
+// the accept-time audit pattern used by LogSandboxPause.
+func (l *AuditLogger) LogSnapshotCreateRequested(ctx context.Context, ac auth.AuthContext, name string) {
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "snapshot", name, "create", "success", nil))
+}
+
+// LogSnapshotCreateSystem records a system-actor snapshot transition inferred
+// by a reconciler (e.g. the HostMonitor recovering or failing a sandbox stuck
+// in "snapshotting"). It writes an audit row only and does NOT publish a
+// SnapshotCreate event: the reconciler has no template name, and emitting one
+// would surface a spurious "snapshot captured/failed" toast.
+func (l *AuditLogger) LogSnapshotCreateSystem(ctx context.Context, teamID, sandboxID pgtype.UUID, reason string, err error) {
+	l.Log(ctx, Entry{
+		TeamID: teamID, ActorType: "system",
+		ResourceType: "sandbox", ResourceID: id.FormatSandboxID(sandboxID),
+		Action: "snapshot", Scope: "team", Status: auditStatusFor(err, "info"),
+		Metadata: mergeMeta(map[string]any{"reason": reason}, err),
 	})
 }
 

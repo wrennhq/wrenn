@@ -15,20 +15,19 @@ import (
 
 func timeNowNano() int64 { return time.Now().UnixNano() }
 
-// IsMinimal reports whether the given team and template IDs represent the
-// built-in "minimal" template (both all-zeros).
-func IsMinimal(teamID, templateID pgtype.UUID) bool {
-	return teamID.Bytes == id.PlatformTeamID.Bytes && templateID.Bytes == id.MinimalTemplateID.Bytes
+// IsSystemTemplate reports whether the given team and template IDs represent a
+// built-in system base template (minimal-ubuntu / -alpine / -arch / -fedora):
+// platform-owned with a template ID in the reserved range. System templates are
+// protected from deletion.
+func IsSystemTemplate(teamID, templateID pgtype.UUID) bool {
+	return teamID.Bytes == id.PlatformTeamID.Bytes && id.IsReservedTemplateID(templateID)
 }
 
-// TemplateDir returns the on-disk directory for a template.
+// TemplateDir returns the on-disk directory for a template. Every template —
+// including the built-in system base templates — lives under the teams tree:
 //
-//	minimal (zeros, zeros): {wrennDir}/images/minimal
-//	all others:             {wrennDir}/images/teams/{base36(teamID)}/{base36(templateID)}
+//	{wrennDir}/images/teams/{base36(teamID)}/{base36(templateID)}
 func TemplateDir(wrennDir string, teamID, templateID pgtype.UUID) string {
-	if IsMinimal(teamID, templateID) {
-		return filepath.Join(wrennDir, "images", "minimal")
-	}
 	return filepath.Join(wrennDir, "images", "teams",
 		id.UUIDToBase36(teamID.Bytes),
 		id.UUIDToBase36(templateID.Bytes))

@@ -128,13 +128,15 @@ src/
 After building the static binary, copy it into the rootfs:
 
 ```bash
-bash scripts/update-debug-rootfs.sh [rootfs_path]
+bash scripts/update-minimal-rootfs.sh [rootfs_path]
 ```
 
-Or manually:
+With no argument it updates all four system base images; pass a path to target one.
+
+Or manually (example path: the minimal-ubuntu image, platform team + template id 0):
 
 ```bash
-sudo mount -o loop /var/lib/wrenn/images/minimal.ext4 /mnt
-sudo cp target/x86_64-unknown-linux-musl/release/envd /mnt/usr/bin/envd
+sudo mount -o loop /var/lib/wrenn/images/teams/0000000000000000000000000/0000000000000000000000000/rootfs.ext4 /mnt
+sudo cp target/x86_64-unknown-linux-musl/release/envd /mnt/usr/local/bin/envd
 sudo umount /mnt
 ```

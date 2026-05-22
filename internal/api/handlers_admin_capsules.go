@@ -137,22 +137,15 @@ func (h *adminCapsuleHandler) Snapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tmpl, err := h.svc.CreateSnapshot(r.Context(), sandboxID, id.PlatformTeamID, req.Name)
-	ac := auth.MustFromContext(r.Context())
-	ac.TeamID = id.PlatformTeamID
-	name := req.Name
-	if err == nil {
-		name = tmpl.Name
-	}
-	h.audit.LogSnapshotCreate(r.Context(), ac, name, err)
+	sb, name, err := h.svc.CreateSnapshot(r.Context(), sandboxID, id.PlatformTeamID, req.Name)
 	if err != nil {
-		if name != "" {
-			h.audit.LogSnapshotDeleteSystem(r.Context(), id.PlatformTeamID, name, "cleanup_after_create_error", nil)
-		}
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
+	ac := auth.MustFromContext(r.Context())
+	ac.TeamID = id.PlatformTeamID
+	h.audit.LogSnapshotCreateRequested(r.Context(), ac, name)
 
-	writeJSON(w, http.StatusCreated, templateToResponse(tmpl))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }

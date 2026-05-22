@@ -106,7 +106,7 @@ func (s *BuildService) takeArchive(buildID string) []byte {
 // Create inserts a new build record and enqueues it to Redis.
 func (s *BuildService) Create(ctx context.Context, p BuildCreateParams) (db.TemplateBuild, error) {
 	if p.BaseTemplate == "" {
-		p.BaseTemplate = "minimal"
+		p.BaseTemplate = "minimal-ubuntu"
 	}
 	if p.VCPUs <= 0 {
 		p.VCPUs = 1
@@ -447,17 +447,15 @@ func (s *BuildService) provisionBuildSandbox(
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 	log.Info("provisioning build sandbox", "sandbox_id", sandboxIDStr, "host_id", id.FormatHostID(host.ID))
 
-	baseTeamID := id.PlatformTeamID
-	baseTemplateID := id.MinimalTemplateID
-	if build.BaseTemplate != "minimal" {
-		baseTmpl, err := s.DB.GetPlatformTemplateByName(ctx, build.BaseTemplate)
-		if err != nil {
-			s.failBuild(ctx, buildID, fmt.Sprintf("base template %q not found: %v", build.BaseTemplate, err))
-			return nil, "", nil, err
-		}
-		baseTeamID = baseTmpl.TeamID
-		baseTemplateID = baseTmpl.ID
+	// All base templates — including the built-in system ones — are
+	// platform-owned rows, so resolve the path from the DB record.
+	baseTmpl, err := s.DB.GetPlatformTemplateByName(ctx, build.BaseTemplate)
+	if err != nil {
+		s.failBuild(ctx, buildID, fmt.Sprintf("base template %q not found: %v", build.BaseTemplate, err))
+		return nil, "", nil, err
 	}
+	baseTeamID := baseTmpl.TeamID
+	baseTemplateID := baseTmpl.ID
 
 	resp, err := agent.CreateSandbox(ctx, connect.NewRequest(&pb.CreateSandboxRequest{
 		SandboxId:  sandboxIDStr,
@@ -480,6 +478,23 @@ func (s *BuildService) provisionBuildSandbox(
 		SandboxID: sandboxID,
 		HostID:    host.ID,
 	})
+
+	if _, err := s.DB.InsertSandbox(ctx, db.InsertSandboxParams{
+		ID:             sandboxID,
+		TeamID:         id.PlatformTeamID,
+		HostID:         host.ID,
+		Template:       build.BaseTemplate,
+		Status:         "running",
+		Vcpus:          build.Vcpus,
+		MemoryMb:       build.MemoryMb,
+		TimeoutSec:     0,
+		DiskSizeMb:     5120,
+		TemplateID:     baseTemplateID,
+		TemplateTeamID: baseTeamID,
+		Metadata:       []byte("{}"),
+	}); err != nil {
+		log.Warn("failed to insert builder sandbox record", "error", err)
+	}
 
 	archive := s.takeArchive(buildIDStr)
 	if len(archive) > 0 {
@@ -602,6 +617,7 @@ func (s *BuildService) finalizeBuild(
 	}
 	s.publishStatus(ctx, buildID, "success", build.TotalSteps, build.TotalSteps, "")
 
+	s.destroySandbox(ctx, agent, sandboxIDStr)
 	log.Info("template build completed successfully", "name", build.Name)
 }
 
@@ -795,6 +811,13 @@ func (s *BuildService) destroySandbox(_ context.Context, agent buildAgentClient,
 		SandboxId: sandboxIDStr,
 	})); err != nil {
 		slog.Warn("failed to destroy build sandbox", "sandbox_id", sandboxIDStr, "error", err)
+	}
+	if sbID, err := id.ParseSandboxID(sandboxIDStr); err == nil {
+		if _, err := s.DB.UpdateSandboxStatus(ctx, db.UpdateSandboxStatusParams{
+			ID: sbID, Status: "stopped",
+		}); err != nil {
+			slog.Warn("failed to mark builder sandbox stopped", "sandbox_id", sandboxIDStr, "error", err)
+		}
 	}
 }
 

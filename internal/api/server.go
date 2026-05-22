@@ -83,7 +83,13 @@ func New(
 	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
 	sandboxSvc.PublishEvent = func(ctx context.Context, event service.SandboxStateEvent) {
 		if evt, ok := serviceEventToCanonical(event); ok {
-			eventPub.Publish(ctx, evt)
+			// State-change events are ephemeral UI signals — mirror them to the
+			// dashboard via Pub/Sub only, never to durable channel subscribers.
+			if evt.Event == events.CapsuleStateChanged {
+				eventPub.PublishTransient(ctx, evt)
+			} else {
+				eventPub.Publish(ctx, evt)
+			}
 		}
 	}
 	apiKeySvc := &service.APIKeyService{DB: queries}
@@ -482,6 +488,39 @@ func serviceEventToCanonical(e service.SandboxStateEvent) (events.Event, bool) {
 		eventType = events.CapsuleCreate
 		outcome = events.OutcomeError
 		metadata = map[string]string{"reason": "create_failed"}
+	case "sandbox.snapshotted":
+		// Completion of an async snapshot. The resource is the template name,
+		// not the sandbox, so the dashboard's snapshot list refreshes.
+		return events.Event{
+			Event:     events.SnapshotCreate,
+			Outcome:   events.OutcomeSuccess,
+			Timestamp: events.Now(),
+			TeamID:    e.TeamID,
+			Actor:     events.SystemActor(),
+			Resource:  events.Resource{ID: e.Metadata["name"], Type: "snapshot"},
+		}, true
+	case "sandbox.snapshot_failed":
+		return events.Event{
+			Event:     events.SnapshotCreate,
+			Outcome:   events.OutcomeError,
+			Timestamp: events.Now(),
+			TeamID:    e.TeamID,
+			Actor:     events.SystemActor(),
+			Resource:  events.Resource{ID: e.Metadata["name"], Type: "snapshot"},
+			Metadata:  map[string]string{"reason": "snapshot_failed"},
+			Error:     e.Error,
+		}, true
+	case "sandbox.state_changed":
+		// Transient badge transition with no terminal verb of its own. Carries
+		// from/to in metadata; routed via Pub/Sub only by the caller.
+		return events.Event{
+			Event:     events.CapsuleStateChanged,
+			Timestamp: events.Now(),
+			TeamID:    e.TeamID,
+			Actor:     events.SystemActor(),
+			Resource:  events.Resource{ID: e.SandboxID, Type: "sandbox"},
+			Metadata:  e.Metadata,
+		}, true
 	default:
 		return events.Event{}, false
 	}

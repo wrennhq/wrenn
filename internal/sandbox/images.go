@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
@@ -29,13 +31,9 @@ func EnsureImageSizes(wrennDir string, targetMB int) error {
 	}
 	targetBytes := int64(targetMB) * 1024 * 1024
 
-	// Expand the built-in minimal image.
-	minimalRootfs := layout.TemplateRootfs(wrennDir, id.PlatformTeamID, id.MinimalTemplateID)
-	if err := expandImage(minimalRootfs, targetBytes, targetMB); err != nil {
-		return err
-	}
-
-	// Walk teams/{teamDir}/{templateDir}/rootfs.ext4 two levels deep.
+	// Walk teams/{teamDir}/{templateDir}/rootfs.ext4 two levels deep. The
+	// built-in system base templates live under teams/{base36(0)}/... so this
+	// covers them too.
 	teamsDir := layout.TeamsDir(wrennDir)
 	teamEntries, err := os.ReadDir(teamsDir)
 	if err != nil {
@@ -104,12 +102,19 @@ func ParseSizeToMB(s string) (int, error) {
 	}
 }
 
-// ShrinkMinimalImage shrinks the built-in minimal rootfs back to its minimum
-// size using resize2fs -M. This is the inverse of EnsureImageSizes and should
-// be called during graceful shutdown so the image is stored compactly on disk.
-func ShrinkMinimalImage(wrennDir string) {
-	minimalRootfs := layout.TemplateRootfs(wrennDir, id.PlatformTeamID, id.MinimalTemplateID)
-	shrinkImage(minimalRootfs)
+// ShrinkSystemImages shrinks the built-in system base rootfs images back to
+// their minimum size using resize2fs -M. This is the inverse of
+// EnsureImageSizes and should be called during graceful shutdown so the images
+// are stored compactly on disk.
+func ShrinkSystemImages(wrennDir string) {
+	for _, tmplID := range []pgtype.UUID{
+		id.UbuntuTemplateID,
+		id.AlpineTemplateID,
+		id.ArchTemplateID,
+		id.FedoraTemplateID,
+	} {
+		shrinkImage(layout.TemplateRootfs(wrennDir, id.PlatformTeamID, tmplID))
+	}
 }
 
 // shrinkImage shrinks a single rootfs image to its minimum size.
