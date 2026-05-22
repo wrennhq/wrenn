@@ -66,7 +66,9 @@ SELECT
     COALESCE(owner_u.name, '') AS owner_name,
     COALESCE(owner_u.email, '') AS owner_email,
     (SELECT COUNT(*) FROM sandboxes s WHERE s.team_id = t.id AND s.status IN ('running', 'paused', 'starting'))::int AS active_sandbox_count,
-    (SELECT COUNT(*) FROM channels c WHERE c.team_id = t.id)::int AS channel_count
+    (SELECT COUNT(*) FROM channels c WHERE c.team_id = t.id)::int AS channel_count,
+    COALESCE((SELECT SUM(s.vcpus) FROM sandboxes s WHERE s.team_id = t.id AND s.status IN ('running', 'paused', 'starting')), 0)::int AS running_vcpus,
+    COALESCE((SELECT SUM(s.memory_mb) FROM sandboxes s WHERE s.team_id = t.id AND s.status IN ('running', 'paused', 'starting')), 0)::int AS running_memory_mb
 FROM teams t
 LEFT JOIN users_teams owner_ut ON owner_ut.team_id = t.id AND owner_ut.role = 'owner'
 LEFT JOIN users owner_u ON owner_u.id = owner_ut.user_id

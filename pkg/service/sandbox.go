@@ -698,6 +698,40 @@ func (s *SandboxService) persistMetricPoints(ctx context.Context, sandboxID pgty
 	}
 }
 
+// GetDiskUsage returns the current disk usage in bytes for a sandbox.
+// For running or paused sandboxes, it queries the host agent for live data.
+// For other states or when the agent is unreachable, it falls back to the
+// last known metric point from the database.
+func (s *SandboxService) GetDiskUsage(ctx context.Context, sandboxID, teamID pgtype.UUID) (int64, error) {
+	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
+	if err != nil {
+		return 0, fmt.Errorf("sandbox not found: %w", err)
+	}
+
+	// For running or paused sandboxes, try the agent for live disk usage.
+	if sb.Status == "running" || sb.Status == "paused" {
+		sandboxIDStr := id.FormatSandboxID(sandboxID)
+		agent, hostErr := s.agentForHost(ctx, sb.HostID)
+		if hostErr == nil {
+			resp, err := agent.GetSandboxMetrics(ctx, connect.NewRequest(&pb.GetSandboxMetricsRequest{
+				SandboxId: sandboxIDStr,
+				Range:     "5m",
+			}))
+			if err == nil && len(resp.Msg.Points) > 0 {
+				last := resp.Msg.Points[len(resp.Msg.Points)-1]
+				return last.DiskBytes, nil
+			}
+		}
+	}
+
+	// Fallback: query the database for the last known metric point.
+	point, err := s.DB.GetLatestSandboxMetricPoint(ctx, sandboxID)
+	if err != nil {
+		return 0, err
+	}
+	return point.DiskBytes, nil
+}
+
 // Ping resets the inactivity timer for a running sandbox.
 func (s *SandboxService) Ping(ctx context.Context, sandboxID, teamID pgtype.UUID) error {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})

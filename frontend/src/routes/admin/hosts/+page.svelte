@@ -3,12 +3,13 @@
 	import { toast } from '$lib/toast.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
 	import {
-		listHosts,
+		listAdminHosts,
 		createHost,
 		deleteHost,
 		getDeletePreview,
 		statusColor,
 		formatSpecs,
+		type AdminHost,
 		type Host,
 		type CreateHostResult
 	} from '$lib/api/hosts';
@@ -18,7 +19,7 @@
 	let activeTab = $state<'platform' | 'byoc'>('platform');
 
 	// All hosts fetched once
-	let allHosts = $state<Host[]>([]);
+	let allHosts = $state<AdminHost[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -29,7 +30,7 @@
 	let byocHosts = $derived(allHosts.filter((h) => h.type === 'byoc'));
 	let byocPage = $state(0);
 
-	type TeamGroup = { teamId: string | null; teamName: string; hosts: Host[] };
+	type TeamGroup = { teamId: string | null; teamName: string; hosts: AdminHost[] };
 
 	let byocGroups = $derived.by<TeamGroup[]>(() => {
 		const map = new Map<string, TeamGroup>();
@@ -56,6 +57,14 @@
 	let onlineCount = $derived(allHosts.filter((h) => h.status === 'online').length);
 	let pendingCount = $derived(allHosts.filter((h) => h.status === 'pending').length);
 	let totalCount = $derived(allHosts.length);
+	let totalCpuCores = $derived(allHosts.reduce((sum, h) => sum + (h.cpu_cores ?? 0), 0));
+	let totalMemoryMb = $derived(allHosts.reduce((sum, h) => sum + (h.memory_mb ?? 0), 0));
+	let totalRunningVcpus = $derived(allHosts.reduce((sum, h) => sum + h.running_vcpus, 0));
+	let totalRunningMemoryMb = $derived(allHosts.reduce((sum, h) => sum + h.running_memory_mb, 0));
+
+	function formatMem(mb: number): string {
+		return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;
+	}
 
 	// Create dialog (platform hosts)
 	let showCreate = $state(false);
@@ -69,7 +78,7 @@
 	let checkmarkVisible = $state(false);
 
 	// Delete confirmation
-	let deleteTarget = $state<Host | null>(null);
+	let deleteTarget = $state<AdminHost | null>(null);
 	let deletePreviewCapsules = $state<string[]>([]);
 	let deletePreviewLoading = $state(false);
 	let deleting = $state(false);
@@ -81,7 +90,7 @@
 	async function fetchHosts() {
 		loading = true;
 		error = null;
-		const result = await listHosts();
+		const result = await listAdminHosts();
 		if (result.ok) {
 			allHosts = result.data;
 		} else {
@@ -114,7 +123,7 @@
 		creating = false;
 	}
 
-	async function openDeleteConfirm(host: Host) {
+	async function openDeleteConfirm(host: AdminHost) {
 		deleteTarget = host;
 		deleteError = null;
 		deletePreviewCapsules = [];
@@ -187,7 +196,7 @@
 				<div class="relative flex items-center gap-3 px-8 pb-5">
 					<div class="stat-pill border-[var(--color-border)] bg-[var(--color-bg-2)]">
 						<span class="font-mono text-body font-bold tabular-nums text-[var(--color-text-bright)]">{totalCount}</span>
-						<span class="text-label text-[var(--color-text-muted)]">total</span>
+						<span class="text-label text-[var(--color-text-muted)]">hosts</span>
 					</div>
 					<div class="stat-pill border-[var(--color-accent)]/25 bg-[var(--color-accent)]/8 gap-2">
 						<span class="relative flex h-2 w-2 shrink-0">
@@ -201,6 +210,18 @@
 						<div class="stat-pill border-[var(--color-amber)]/25 bg-[var(--color-amber)]/8">
 							<span class="font-mono text-body font-bold tabular-nums text-[var(--color-amber)]">{pendingCount}</span>
 							<span class="text-label text-[var(--color-amber)]/70">pending</span>
+						</div>
+					{/if}
+					{#if totalCpuCores > 0}
+						<div class="stat-pill border-[var(--color-border)] bg-[var(--color-bg-2)]">
+							<span class="font-mono text-body font-bold tabular-nums text-[var(--color-text-bright)]">{totalRunningVcpus}/{totalCpuCores}</span>
+							<span class="text-label text-[var(--color-text-muted)]">vCPU used</span>
+						</div>
+					{/if}
+					{#if totalMemoryMb > 0}
+						<div class="stat-pill border-[var(--color-border)] bg-[var(--color-bg-2)]">
+							<span class="font-mono text-body font-bold tabular-nums text-[var(--color-text-bright)]">{formatMem(totalRunningMemoryMb)}</span>
+							<span class="text-label text-[var(--color-text-muted)]">RAM of {formatMem(totalMemoryMb)}</span>
 						</div>
 					{/if}
 				</div>
@@ -312,6 +333,9 @@
 					<th class="table-header">Host</th>
 					<th class="table-header">Status</th>
 					<th class="table-header hidden md:table-cell">Specs</th>
+					<th class="table-header hidden xl:table-cell">vCPU</th>
+					<th class="table-header hidden xl:table-cell">Memory</th>
+					<th class="table-header hidden xl:table-cell">Disk</th>
 					<th class="table-header hidden lg:table-cell">Last Heartbeat</th>
 					<th class="table-header w-20"></th>
 				</tr>
@@ -329,6 +353,15 @@
 						<td class="hidden px-5 py-3.5 md:table-cell">
 							<div class="skeleton h-3 w-24 rounded"></div>
 						</td>
+						<td class="hidden px-5 py-3.5 xl:table-cell">
+							<div class="skeleton h-3 w-16 rounded"></div>
+						</td>
+						<td class="hidden px-5 py-3.5 xl:table-cell">
+							<div class="skeleton h-3 w-16 rounded"></div>
+						</td>
+						<td class="hidden px-5 py-3.5 xl:table-cell">
+							<div class="skeleton h-3 w-16 rounded"></div>
+						</td>
 						<td class="hidden px-5 py-3.5 lg:table-cell">
 							<div class="skeleton h-3 w-20 rounded"></div>
 						</td>
@@ -342,7 +375,7 @@
 	</div>
 {/snippet}
 
-{#snippet hostsTable(hosts: Host[], _showTeam: boolean)}
+{#snippet hostsTable(hosts: AdminHost[], _showTeam: boolean)}
 	{#if hosts.length === 0}
 		{@render emptyState('platform')}
 	{:else}
@@ -353,6 +386,9 @@
 						<th class="table-header">Host</th>
 						<th class="table-header">Status</th>
 						<th class="table-header hidden md:table-cell">Specs</th>
+						<th class="table-header hidden xl:table-cell">vCPU</th>
+						<th class="table-header hidden xl:table-cell">Memory</th>
+						<th class="table-header hidden xl:table-cell">Disk</th>
 						<th class="table-header hidden lg:table-cell">Last Heartbeat</th>
 						<th class="table-header w-20"></th>
 					</tr>
@@ -392,6 +428,15 @@
 							</td>
 							<td class="hidden px-5 py-3.5 md:table-cell">
 								<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">{formatSpecs(host)}</span>
+							</td>
+							<td class="hidden px-5 py-3.5 xl:table-cell">
+								<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">{host.running_vcpus > 0 ? `${host.running_vcpus} / ${host.cpu_cores ?? '—'}` : '—'}</span>
+							</td>
+							<td class="hidden px-5 py-3.5 xl:table-cell">
+								<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">{host.running_memory_mb > 0 ? `${formatMem(host.running_memory_mb)} / ${host.memory_mb ? formatMem(host.memory_mb) : '—'}` : '—'}</span>
+							</td>
+							<td class="hidden px-5 py-3.5 xl:table-cell">
+								<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">{host.running_disk_mb > 0 ? formatMem(host.running_disk_mb) : '—'}</span>
 							</td>
 							<td class="hidden px-5 py-3.5 lg:table-cell">
 								<span class="text-meta text-[var(--color-text-muted)]" title={host.last_heartbeat_at ? formatDate(host.last_heartbeat_at) : undefined}>

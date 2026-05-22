@@ -433,6 +433,12 @@ func (s *HostService) List(ctx context.Context, teamID pgtype.UUID, isAdmin bool
 	return s.DB.ListHostsByTeam(ctx, teamID)
 }
 
+// ListAdmin returns all hosts with aggregated resource consumption.
+// Admin-only — caller must verify admin status.
+func (s *HostService) ListAdmin(ctx context.Context) ([]db.ListHostsAdminRow, error) {
+	return s.DB.ListHostsAdmin(ctx)
+}
+
 // Get returns a single host, enforcing access control.
 func (s *HostService) Get(ctx context.Context, hostID, teamID pgtype.UUID, isAdmin bool) (db.Host, error) {
 	host, err := s.DB.GetHost(ctx, hostID)

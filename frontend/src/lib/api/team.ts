@@ -97,6 +97,8 @@ export type AdminTeam = {
 	owner_email: string;
 	active_sandbox_count: number;
 	channel_count: number;
+	running_vcpus: number;
+	running_memory_mb: number;
 };
 
 export type AdminTeamsResponse = {

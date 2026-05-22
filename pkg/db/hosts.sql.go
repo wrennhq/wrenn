@@ -427,6 +427,111 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 	return items, nil
 }
 
+const listHostsAdmin = `-- name: ListHostsAdmin :many
+SELECT
+    h.id,
+    h.type,
+    h.team_id,
+    h.provider,
+    h.availability_zone,
+    h.arch,
+    h.cpu_cores,
+    h.memory_mb,
+    h.disk_gb,
+    h.address,
+    h.status,
+    h.last_heartbeat_at,
+    h.metadata,
+    h.created_by,
+    h.created_at,
+    h.updated_at,
+    h.cert_fingerprint,
+    h.cert_expires_at,
+    COALESCE(SUM(s.vcpus)       FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_vcpus,
+    COALESCE(SUM(s.memory_mb)   FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_memory_mb,
+    COALESCE(SUM(s.disk_size_mb) FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_disk_mb,
+    COALESCE(SUM(s.memory_mb)   FILTER (WHERE s.status = 'paused'), 0)::int AS paused_memory_mb,
+    COALESCE(SUM(s.disk_size_mb) FILTER (WHERE s.status = 'paused'), 0)::int AS paused_disk_mb
+FROM hosts h
+LEFT JOIN sandboxes s ON s.host_id = h.id
+    AND s.status IN ('running', 'paused', 'starting', 'pending')
+GROUP BY h.id
+ORDER BY h.created_at DESC
+`
+
+type ListHostsAdminRow struct {
+	ID               pgtype.UUID        `json:"id"`
+	Type             string             `json:"type"`
+	TeamID           pgtype.UUID        `json:"team_id"`
+	Provider         string             `json:"provider"`
+	AvailabilityZone string             `json:"availability_zone"`
+	Arch             string             `json:"arch"`
+	CpuCores         int32              `json:"cpu_cores"`
+	MemoryMb         int32              `json:"memory_mb"`
+	DiskGb           int32              `json:"disk_gb"`
+	Address          string             `json:"address"`
+	Status           string             `json:"status"`
+	LastHeartbeatAt  pgtype.Timestamptz `json:"last_heartbeat_at"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	CertFingerprint  string             `json:"cert_fingerprint"`
+	CertExpiresAt    pgtype.Timestamptz `json:"cert_expires_at"`
+	RunningVcpus     int32              `json:"running_vcpus"`
+	RunningMemoryMb  int32              `json:"running_memory_mb"`
+	RunningDiskMb    int32              `json:"running_disk_mb"`
+	PausedMemoryMb   int32              `json:"paused_memory_mb"`
+	PausedDiskMb     int32              `json:"paused_disk_mb"`
+}
+
+// Returns all hosts with per-host sandbox resource consumption aggregated.
+// Unlike GetHostsWithLoad, this returns ALL hosts (not just online) so admins
+// can see resource usage across the entire fleet including offline/pending hosts.
+func (q *Queries) ListHostsAdmin(ctx context.Context) ([]ListHostsAdminRow, error) {
+	rows, err := q.db.Query(ctx, listHostsAdmin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHostsAdminRow
+	for rows.Next() {
+		var i ListHostsAdminRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.TeamID,
+			&i.Provider,
+			&i.AvailabilityZone,
+			&i.Arch,
+			&i.CpuCores,
+			&i.MemoryMb,
+			&i.DiskGb,
+			&i.Address,
+			&i.Status,
+			&i.LastHeartbeatAt,
+			&i.Metadata,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CertFingerprint,
+			&i.CertExpiresAt,
+			&i.RunningVcpus,
+			&i.RunningMemoryMb,
+			&i.RunningDiskMb,
+			&i.PausedMemoryMb,
+			&i.PausedDiskMb,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHostsByStatus = `-- name: ListHostsByStatus :many
 SELECT id, type, team_id, provider, availability_zone, arch, cpu_cores, memory_mb, disk_gb, address, status, last_heartbeat_at, metadata, created_by, created_at, updated_at, cert_fingerprint, cert_expires_at FROM hosts WHERE status = $1 ORDER BY created_at DESC
 `
