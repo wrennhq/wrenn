@@ -34,6 +34,11 @@
 	// Stats
 	let byocCount = $derived(teams.filter((t) => t.is_byoc).length);
 	let totalActiveSandboxes = $derived(teams.reduce((sum, t) => sum + t.active_sandbox_count, 0));
+	let totalVcpus = $derived(teams.reduce((sum, t) => sum + t.running_vcpus, 0));
+	let totalMemoryMb = $derived(teams.reduce((sum, t) => sum + t.running_memory_mb, 0));
+	function formatMem(mb: number): string {
+		return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;
+	}
 
 	async function fetchTeams(page: number = 1) {
 		const wasEmpty = teams.length === 0;
@@ -106,7 +111,7 @@
 <style>
 	.team-grid {
 		display: grid;
-		grid-template-columns: 1.4fr 0.5fr 1.4fr 0.6fr 0.6fr 0.5fr 1fr 0.5fr;
+		grid-template-columns: 1.4fr 0.5fr 1.4fr 0.6fr 0.5fr 0.85fr 0.5fr 0.8fr 0.5fr;
 	}
 
 	.stat-pill {
@@ -177,6 +182,18 @@
 							<span class="text-label text-[var(--color-accent-bright)]/70">active</span>
 						</div>
 					{/if}
+					{#if totalVcpus > 0}
+						<div class="stat-pill border-[var(--color-border)] bg-[var(--color-bg-2)]">
+							<span class="font-mono text-body font-bold tabular-nums text-[var(--color-text-bright)]">{totalVcpus}</span>
+							<span class="text-label text-[var(--color-text-muted)]">vCPU</span>
+						</div>
+					{/if}
+					{#if totalMemoryMb > 0}
+						<div class="stat-pill border-[var(--color-border)] bg-[var(--color-bg-2)]">
+							<span class="font-mono text-body font-bold tabular-nums text-[var(--color-text-bright)]">{formatMem(totalMemoryMb)}</span>
+							<span class="text-label text-[var(--color-text-muted)]">RAM</span>
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</header>
@@ -200,7 +217,8 @@
 					<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Members</div>
 					<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Owner</div>
 					<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">BYOC</div>
-					<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Capsules</div>
+					<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Active</div>
+					<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Resources</div>
 					<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Channels</div>
 					<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Created</div>
 					<div class="px-5 py-3 text-right text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Actions</div>
@@ -290,7 +308,7 @@
 								{/if}
 							</div>
 
-							<!-- Capsules -->
+							<!-- Active -->
 							<div class="px-5 py-4">
 								{#if team.active_sandbox_count > 0}
 									<span class="flex items-center gap-1.5">
@@ -302,6 +320,22 @@
 									</span>
 								{:else}
 									<span class="font-mono text-ui text-[var(--color-text-muted)]">0</span>
+								{/if}
+							</div>
+
+							<!-- Resources -->
+							<div class="px-5 py-4">
+								{#if team.running_vcpus > 0 || team.running_memory_mb > 0}
+									<div class="flex flex-col gap-0.5">
+										{#if team.running_vcpus > 0}
+											<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">{team.running_vcpus} vCPU</span>
+										{/if}
+										{#if team.running_memory_mb > 0}
+											<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">{formatMem(team.running_memory_mb)}</span>
+										{/if}
+									</div>
+								{:else}
+									<span class="font-mono text-ui text-[var(--color-text-muted)]">&mdash;</span>
 								{/if}
 							</div>
 

@@ -133,6 +133,33 @@ func (q *Queries) GetDailyUsage(ctx context.Context, arg GetDailyUsageParams) ([
 	return items, nil
 }
 
+const getLatestSandboxMetricPoint = `-- name: GetLatestSandboxMetricPoint :one
+SELECT ts, cpu_pct, mem_bytes, disk_bytes
+FROM sandbox_metric_points
+WHERE sandbox_id = $1
+ORDER BY ts DESC
+LIMIT 1
+`
+
+type GetLatestSandboxMetricPointRow struct {
+	Ts        int64   `json:"ts"`
+	CpuPct    float64 `json:"cpu_pct"`
+	MemBytes  int64   `json:"mem_bytes"`
+	DiskBytes int64   `json:"disk_bytes"`
+}
+
+func (q *Queries) GetLatestSandboxMetricPoint(ctx context.Context, sandboxID pgtype.UUID) (GetLatestSandboxMetricPointRow, error) {
+	row := q.db.QueryRow(ctx, getLatestSandboxMetricPoint, sandboxID)
+	var i GetLatestSandboxMetricPointRow
+	err := row.Scan(
+		&i.Ts,
+		&i.CpuPct,
+		&i.MemBytes,
+		&i.DiskBytes,
+	)
+	return i, err
+}
+
 const getLiveMetrics = `-- name: GetLiveMetrics :one
 SELECT
     (COUNT(*) FILTER (WHERE status IN ('running', 'starting')))::INTEGER                                              AS running_count,

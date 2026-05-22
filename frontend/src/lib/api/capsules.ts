@@ -46,7 +46,8 @@ export type Capsule = {
 	last_active_at?: string;
 	last_updated: string;
 	metadata?: Record<string, string>;
-	disk_size_mb?: number;
+	disk_size_mb: number;
+	disk_used_mb?: number;
 };
 
 

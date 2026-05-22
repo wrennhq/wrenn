@@ -479,6 +479,8 @@ type AdminTeamRow struct {
 	OwnerEmail         string
 	ActiveSandboxCount int32
 	ChannelCount       int32
+	RunningVcpus       int32
+	RunningMemoryMb    int32
 }
 
 // AdminListTeams returns a paginated list of all teams (excluding the platform
@@ -511,6 +513,8 @@ func (s *TeamService) AdminListTeams(ctx context.Context, limit, offset int32) (
 			OwnerEmail:         t.OwnerEmail,
 			ActiveSandboxCount: t.ActiveSandboxCount,
 			ChannelCount:       t.ChannelCount,
+			RunningVcpus:       t.RunningVcpus,
+			RunningMemoryMb:    t.RunningMemoryMb,
 		}
 		if t.DeletedAt.Valid {
 			deletedAt := t.DeletedAt.Time

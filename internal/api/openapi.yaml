@@ -3661,7 +3661,11 @@ components:
             agent_version, envd_version) when running.
         disk_size_mb:
           type: integer
+          description: Maximum disk capacity in MiB.
+        disk_used_mb:
+          type: integer
           nullable: true
+          description: Current disk usage in MiB. Only populated on individual capsule GET; null in list responses.
 
     CreateSnapshotRequest:
       type: object

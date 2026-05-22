@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -15,6 +16,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
+	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 )
 
@@ -70,6 +72,61 @@ func upgradeAndAuthenticate(w http.ResponseWriter, r *http.Request) (*websocket.
 		return nil, auth.AuthContext{}, fmt.Errorf("websocket upgrade: %w", err)
 	}
 	return conn, ac, nil
+}
+
+// resolveTemplateSizes queries a host agent for the actual disk usage of any
+// templates with size_bytes <= 0 (e.g. system base templates seeded with
+// size_bytes = 0 before the rootfs was built). Results are persisted to the
+// DB so subsequent requests serve the correct size without an RPC call.
+// Errors are logged but do not prevent the caller from serving the templates.
+func resolveTemplateSizes(ctx context.Context, queries *db.Queries, pool *lifecycle.HostClientPool, templates []db.Template) []db.Template {
+	needResolve := false
+	for _, t := range templates {
+		if t.SizeBytes <= 0 {
+			needResolve = true
+			break
+		}
+	}
+	if !needResolve {
+		return templates
+	}
+
+	hosts, err := queries.ListActiveHosts(ctx)
+	if err != nil || len(hosts) == 0 {
+		slog.Warn("resolveTemplateSizes: no active hosts available", "error", err)
+		return templates
+	}
+
+	agent, err := pool.GetForHost(hosts[0])
+	if err != nil {
+		slog.Warn("resolveTemplateSizes: failed to connect to host",
+			"host_id", id.UUIDString(hosts[0].ID), "error", err)
+		return templates
+	}
+
+	for i, t := range templates {
+		if t.SizeBytes > 0 {
+			continue
+		}
+		resp, err := agent.GetTemplateSize(ctx, connect.NewRequest(&pb.GetTemplateSizeRequest{
+			TeamId:     formatUUIDForRPC(t.TeamID),
+			TemplateId: formatUUIDForRPC(t.ID),
+		}))
+		if err != nil {
+			slog.Warn("resolveTemplateSizes: failed to get size from host",
+				"template", t.Name, "error", err)
+			continue
+		}
+		templates[i].SizeBytes = resp.Msg.SizeBytes
+		if err := queries.UpdateTemplateSize(ctx, db.UpdateTemplateSizeParams{
+			ID:        t.ID,
+			SizeBytes: resp.Msg.SizeBytes,
+		}); err != nil {
+			slog.Warn("resolveTemplateSizes: failed to persist size",
+				"template", t.Name, "error", err)
+		}
+	}
+	return templates
 }
 
 // updateLastActive updates the sandbox last_active_at timestamp.

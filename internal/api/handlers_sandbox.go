@@ -37,6 +37,8 @@ type sandboxResponse struct {
 	VCPUs        int32             `json:"vcpus"`
 	MemoryMB     int32             `json:"memory_mb"`
 	TimeoutSec   int32             `json:"timeout_sec"`
+	DiskSizeMB   int32             `json:"disk_size_mb"`
+	DiskUsedMB   *int64            `json:"disk_used_mb,omitempty"`
 	GuestIP      string            `json:"guest_ip,omitempty"`
 	HostIP       string            `json:"host_ip,omitempty"`
 	CreatedAt    string            `json:"created_at"`
@@ -54,6 +56,7 @@ func sandboxToResponse(sb db.Sandbox) sandboxResponse {
 		VCPUs:      sb.Vcpus,
 		MemoryMB:   sb.MemoryMb,
 		TimeoutSec: sb.TimeoutSec,
+		DiskSizeMB: sb.DiskSizeMb,
 		GuestIP:    sb.GuestIp,
 		HostIP:     sb.HostIp,
 	}
@@ -148,7 +151,15 @@ func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
+	resp := sandboxToResponse(sb)
+
+	diskBytes, err := h.svc.GetDiskUsage(r.Context(), sandboxID, ac.TeamID)
+	if err == nil {
+		diskUsedMB := diskBytes / (1024 * 1024)
+		resp.DiskUsedMB = &diskUsedMB
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Pause handles POST /v1/capsules/{id}/pause.

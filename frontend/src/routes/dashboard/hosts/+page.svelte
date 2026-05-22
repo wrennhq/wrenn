@@ -44,6 +44,10 @@
 	let flashHostId = $state<string | null>(null);
 	let newHostId = $state<string | null>(null);
 
+	function formatMem(mb: number): string {
+		return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;
+	}
+
 	// Derived stats
 	let onlineCount = $derived(hosts.filter((h) => h.status === 'online').length);
 	let offlineCount = $derived(hosts.filter((h) => h.status === 'offline' || h.status === 'unreachable').length);
@@ -223,6 +227,9 @@
 							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Host</div>
 							<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Status</div>
 							<div class="hidden px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] md:block">Specs</div>
+							<div class="hidden px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] xl:block">vCPU</div>
+							<div class="hidden px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] xl:block">Memory</div>
+							<div class="hidden px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] xl:block">Disk</div>
 							<div class="hidden px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] lg:block">Last Heartbeat</div>
 							<div class="hidden px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)] lg:block">Registered</div>
 							{#if canManage}
@@ -281,6 +288,27 @@
 									<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">{formatSpecs(host)}</span>
 								</div>
 
+								<!-- vCPU -->
+								<div class="hidden px-5 py-4 xl:block">
+									<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">
+										{host.running_vcpus > 0 ? `${host.running_vcpus} / ${host.cpu_cores ?? '—'}` : '—'}
+									</span>
+								</div>
+
+								<!-- Memory -->
+								<div class="hidden px-5 py-4 xl:block">
+									<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">
+										{host.running_memory_mb > 0 ? `${formatMem(host.running_memory_mb)} / ${host.memory_mb ? formatMem(host.memory_mb) : '—'}` : '—'}
+									</span>
+								</div>
+
+								<!-- Disk -->
+								<div class="hidden px-5 py-4 xl:block">
+									<span class="font-mono text-meta tabular-nums text-[var(--color-text-secondary)]">
+										{host.running_disk_mb > 0 ? formatMem(host.running_disk_mb) : '—'}
+									</span>
+								</div>
+
 								<!-- Last heartbeat -->
 								<div class="hidden px-5 py-4 lg:block">
 									<span class="text-meta text-[var(--color-text-muted)]" title={host.last_heartbeat_at ? formatDate(host.last_heartbeat_at) : undefined}>
@@ -333,6 +361,9 @@
 			<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Host</div>
 			<div class="px-5 py-3 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Status</div>
 			<div class="hidden px-5 py-3 md:block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Specs</div>
+			<div class="hidden px-5 py-3 xl:block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">vCPU</div>
+			<div class="hidden px-5 py-3 xl:block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Memory</div>
+			<div class="hidden px-5 py-3 xl:block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Disk</div>
 			<div class="hidden px-5 py-3 lg:block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Last Heartbeat</div>
 			<div class="hidden px-5 py-3 lg:block text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]">Registered</div>
 		</div>
@@ -347,6 +378,15 @@
 				</div>
 				<div class="hidden px-5 py-4 md:block">
 					<div class="skeleton h-3 w-28 rounded"></div>
+				</div>
+				<div class="hidden px-5 py-4 xl:block">
+					<div class="skeleton h-3 w-12 rounded"></div>
+				</div>
+				<div class="hidden px-5 py-4 xl:block">
+					<div class="skeleton h-3 w-16 rounded"></div>
+				</div>
+				<div class="hidden px-5 py-4 xl:block">
+					<div class="skeleton h-3 w-12 rounded"></div>
 				</div>
 				<div class="hidden px-5 py-4 lg:block">
 					<div class="skeleton h-3 w-16 rounded"></div>
@@ -623,7 +663,13 @@
 <style>
 	/* Grid layout — matches keys page pattern */
 	.host-grid {
-		grid-template-columns: 2fr 1fr 1.4fr 1.2fr 1fr 80px;
+		grid-template-columns: 2fr 1fr 1.4fr 0.7fr 0.7fr 0.7fr 1.2fr 1fr 80px;
+	}
+
+	@media (max-width: 1279px) {
+		.host-grid {
+			grid-template-columns: 2fr 1fr 1.4fr 1.2fr 1fr 80px;
+		}
 	}
 
 	@media (max-width: 1023px) {

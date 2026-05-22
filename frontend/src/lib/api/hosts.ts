@@ -17,7 +17,14 @@ export type Host = {
 	created_by: string;
 	created_at: string;
 	updated_at: string;
+	running_vcpus: number;
+	running_memory_mb: number;
+	running_disk_mb: number;
+	paused_memory_mb: number;
+	paused_disk_mb: number;
 };
+
+export type AdminHost = Host;
 
 export type CreateHostParams = {
 	type: 'regular' | 'byoc';
@@ -33,6 +40,10 @@ export type CreateHostResult = {
 
 export async function listHosts(): Promise<{ ok: true; data: Host[] } | { ok: false; error: string }> {
 	return apiFetch<Host[]>('GET', '/api/v1/hosts');
+}
+
+export async function listAdminHosts(): Promise<{ ok: true; data: AdminHost[] } | { ok: false; error: string }> {
+	return apiFetch<AdminHost[]>('GET', '/api/v1/admin/hosts');
 }
 
 export async function createHost(

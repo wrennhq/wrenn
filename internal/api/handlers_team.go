@@ -457,6 +457,8 @@ func (h *teamHandler) AdminListTeams(w http.ResponseWriter, r *http.Request) {
 		OwnerEmail         string  `json:"owner_email"`
 		ActiveSandboxCount int32   `json:"active_sandbox_count"`
 		ChannelCount       int32   `json:"channel_count"`
+		RunningVcpus       int32   `json:"running_vcpus"`
+		RunningMemoryMb    int32   `json:"running_memory_mb"`
 	}
 
 	resp := make([]adminTeamResponse, len(teams))
@@ -472,6 +474,8 @@ func (h *teamHandler) AdminListTeams(w http.ResponseWriter, r *http.Request) {
 			OwnerEmail:         t.OwnerEmail,
 			ActiveSandboxCount: t.ActiveSandboxCount,
 			ChannelCount:       t.ChannelCount,
+			RunningVcpus:       t.RunningVcpus,
+			RunningMemoryMb:    t.RunningMemoryMb,
 		}
 		if t.DeletedAt != nil {
 			s := t.DeletedAt.Format(time.RFC3339)

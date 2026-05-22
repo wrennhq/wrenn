@@ -335,6 +335,7 @@ func New(
 			r.Get("/teams", teamH.AdminListTeams)
 			r.Put("/teams/{id}/byoc", teamH.SetBYOC)
 			r.Delete("/teams/{id}", teamH.AdminDeleteTeam)
+			r.Get("/hosts", hostH.AdminList)
 			r.Get("/users", usersH.AdminListUsers)
 			r.Put("/users/{id}/active", usersH.SetUserActive)
 			r.Put("/users/{id}/admin", usersH.SetUserAdmin)
