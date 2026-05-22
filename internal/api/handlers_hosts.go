@@ -367,76 +367,6 @@ func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	writeError(w, status, code, msg)
 }
 
-type adminHostResponse struct {
-	ID               string  `json:"id"`
-	Type             string  `json:"type"`
-	TeamID           *string `json:"team_id,omitempty"`
-	TeamName         *string `json:"team_name,omitempty"`
-	Provider         *string `json:"provider,omitempty"`
-	AvailabilityZone *string `json:"availability_zone,omitempty"`
-	Arch             *string `json:"arch,omitempty"`
-	CPUCores         *int32  `json:"cpu_cores,omitempty"`
-	MemoryMB         *int32  `json:"memory_mb,omitempty"`
-	DiskGB           *int32  `json:"disk_gb,omitempty"`
-	Address          *string `json:"address,omitempty"`
-	Status           string  `json:"status"`
-	LastHeartbeatAt  *string `json:"last_heartbeat_at,omitempty"`
-	CreatedBy        string  `json:"created_by"`
-	CreatedAt        string  `json:"created_at"`
-	UpdatedAt        string  `json:"updated_at"`
-	RunningVcpus     int32   `json:"running_vcpus"`
-	RunningMemoryMb  int32   `json:"running_memory_mb"`
-	RunningDiskMb    int32   `json:"running_disk_mb"`
-	PausedMemoryMb   int32   `json:"paused_memory_mb"`
-	PausedDiskMb     int32   `json:"paused_disk_mb"`
-}
-
-func adminHostToResponse(h db.ListHostsAdminRow) adminHostResponse {
-	resp := adminHostResponse{
-		ID:              id.FormatHostID(h.ID),
-		Type:            h.Type,
-		Status:          h.Status,
-		CreatedBy:       id.FormatUserID(h.CreatedBy),
-		RunningVcpus:    h.RunningVcpus,
-		RunningMemoryMb: h.RunningMemoryMb,
-		RunningDiskMb:   h.RunningDiskMb,
-		PausedMemoryMb:  h.PausedMemoryMb,
-		PausedDiskMb:    h.PausedDiskMb,
-	}
-	if h.TeamID.Valid {
-		s := id.FormatTeamID(h.TeamID)
-		resp.TeamID = &s
-	}
-	if h.Provider != "" {
-		resp.Provider = &h.Provider
-	}
-	if h.AvailabilityZone != "" {
-		resp.AvailabilityZone = &h.AvailabilityZone
-	}
-	if h.Arch != "" {
-		resp.Arch = &h.Arch
-	}
-	if h.CpuCores != 0 {
-		resp.CPUCores = &h.CpuCores
-	}
-	if h.MemoryMb != 0 {
-		resp.MemoryMB = &h.MemoryMb
-	}
-	if h.DiskGb != 0 {
-		resp.DiskGB = &h.DiskGb
-	}
-	if h.Address != "" {
-		resp.Address = &h.Address
-	}
-	if h.LastHeartbeatAt.Valid {
-		s := h.LastHeartbeatAt.Time.Format(time.RFC3339)
-		resp.LastHeartbeatAt = &s
-	}
-	resp.CreatedAt = h.CreatedAt.Time.Format(time.RFC3339)
-	resp.UpdatedAt = h.UpdatedAt.Time.Format(time.RFC3339)
-	return resp
-}
-
 // AdminList handles GET /v1/admin/hosts.
 // Returns all hosts with per-host resource consumption. Admin-only.
 func (h *hostHandler) AdminList(w http.ResponseWriter, r *http.Request) {
@@ -471,9 +401,9 @@ func (h *hostHandler) AdminList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := make([]adminHostResponse, len(hosts))
+	resp := make([]hostResponse, len(hosts))
 	for i, host := range hosts {
-		resp[i] = adminHostToResponse(host)
+		resp[i] = hostToResponseWithLoad(db.ListHostsByTeamRow(host))
 		if host.TeamID.Valid {
 			key := id.FormatTeamID(host.TeamID)
 			if name, ok := teamNames[key]; ok {
