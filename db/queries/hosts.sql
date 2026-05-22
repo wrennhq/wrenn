@@ -13,7 +13,36 @@ SELECT * FROM hosts ORDER BY created_at DESC;
 SELECT * FROM hosts WHERE type = $1 ORDER BY created_at DESC;
 
 -- name: ListHostsByTeam :many
-SELECT * FROM hosts WHERE team_id = $1 AND type = 'byoc' ORDER BY created_at DESC;
+-- Returns hosts by team with per-host sandbox resource consumption aggregated.
+-- Follows the same aggregation pattern as ListHostsAdmin and GetHostsWithLoad.
+SELECT
+    h.id,
+    h.type,
+    h.team_id,
+    h.provider,
+    h.availability_zone,
+    h.arch,
+    h.cpu_cores,
+    h.memory_mb,
+    h.disk_gb,
+    h.address,
+    h.status,
+    h.last_heartbeat_at,
+    h.metadata,
+    h.created_by,
+    h.created_at,
+    h.updated_at,
+    COALESCE(SUM(s.vcpus)       FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_vcpus,
+    COALESCE(SUM(s.memory_mb)   FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_memory_mb,
+    COALESCE(SUM(s.disk_size_mb) FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_disk_mb,
+    COALESCE(SUM(s.memory_mb)   FILTER (WHERE s.status = 'paused'), 0)::int AS paused_memory_mb,
+    COALESCE(SUM(s.disk_size_mb) FILTER (WHERE s.status = 'paused'), 0)::int AS paused_disk_mb
+FROM hosts h
+LEFT JOIN sandboxes s ON s.host_id = h.id
+    AND s.status IN ('running', 'paused', 'starting', 'pending')
+WHERE h.team_id = $1 AND h.type = 'byoc'
+GROUP BY h.id
+ORDER BY h.created_at DESC;
 
 -- name: ListHostsByStatus :many
 SELECT * FROM hosts WHERE status = $1 ORDER BY created_at DESC;

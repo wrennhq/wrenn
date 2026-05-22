@@ -426,9 +426,17 @@ func (s *HostService) Heartbeat(ctx context.Context, hostID pgtype.UUID) error {
 
 // List returns hosts visible to the caller.
 // Admins see all hosts; non-admins see only BYOC hosts belonging to their team.
-func (s *HostService) List(ctx context.Context, teamID pgtype.UUID, isAdmin bool) ([]db.Host, error) {
+func (s *HostService) List(ctx context.Context, teamID pgtype.UUID, isAdmin bool) ([]db.ListHostsByTeamRow, error) {
 	if isAdmin {
-		return s.DB.ListHosts(ctx)
+		rows, err := s.DB.ListHostsAdmin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		result := make([]db.ListHostsByTeamRow, len(rows))
+		for i, r := range rows {
+			result[i] = db.ListHostsByTeamRow(r)
+		}
+		return result, nil
 	}
 	return s.DB.ListHostsByTeam(ctx, teamID)
 }

@@ -17,15 +17,14 @@ export type Host = {
 	created_by: string;
 	created_at: string;
 	updated_at: string;
-};
-
-export type AdminHost = Host & {
 	running_vcpus: number;
 	running_memory_mb: number;
 	running_disk_mb: number;
 	paused_memory_mb: number;
 	paused_disk_mb: number;
 };
+
+export type AdminHost = Host;
 
 export type CreateHostParams = {
 	type: 'regular' | 'byoc';
