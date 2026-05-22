@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"connectrpc.com/connect"
@@ -195,6 +196,26 @@ func mapSandboxError(err error) error {
 	default:
 		return connect.NewError(connect.CodeInternal, err)
 	}
+}
+
+func (s *Server) GetTemplateSize(
+	ctx context.Context,
+	req *connect.Request[pb.GetTemplateSizeRequest],
+) (*connect.Response[pb.GetTemplateSizeResponse], error) {
+	teamID, templateID, err := parseSandboxIDs(req.Msg.TeamId, req.Msg.TemplateId)
+	if err != nil {
+		return nil, err
+	}
+	size, err := s.mgr.TemplateRootfsSize(teamID, templateID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get template size: %w", err))
+	}
+	return connect.NewResponse(&pb.GetTemplateSizeResponse{
+		SizeBytes: size,
+	}), nil
 }
 
 func (s *Server) PingSandbox(

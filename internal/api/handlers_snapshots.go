@@ -158,6 +158,11 @@ func (h *snapshotHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve actual on-disk sizes for templates with unknown size (e.g.
+	// system base templates seeded with size_bytes = 0). This queries a host
+	// agent and persists the result to the DB for subsequent requests.
+	templates = resolveTemplateSizes(r.Context(), h.db, h.pool, templates)
+
 	resp := make([]snapshotResponse, len(templates))
 	for i, t := range templates {
 		resp[i] = templateToResponse(t)

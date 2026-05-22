@@ -238,6 +238,9 @@ func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve actual on-disk sizes for templates with unknown size.
+	templates = resolveTemplateSizes(r.Context(), h.db, h.pool, templates)
+
 	type templateResponse struct {
 		Name      string `json:"name"`
 		Type      string `json:"type"`

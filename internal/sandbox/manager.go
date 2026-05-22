@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -225,6 +226,22 @@ func New(cfg Config) *Manager {
 		creates: make(map[string]*createHandle),
 		stopCh:  make(chan struct{}),
 	}
+}
+
+// TemplateRootfsSize returns the actual disk usage of a template's rootfs
+// file on this host. Uses block-level accounting (stat.Blocks * 512) so
+// sparse files (even after EnsureImageSizes expansion) report only the
+// blocks that are actually allocated on disk.
+func (m *Manager) TemplateRootfsSize(teamID, templateID pgtype.UUID) (int64, error) {
+	path := layout.TemplateRootfs(m.cfg.WrennDir, teamID, templateID)
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, fmt.Errorf("stat template rootfs: %w", err)
+	}
+	if sys, ok := info.Sys().(*syscall.Stat_t); ok {
+		return sys.Blocks * 512, nil
+	}
+	return info.Size(), nil
 }
 
 // Create boots a new sandbox. If the template's TemplateDir contains a CH

@@ -172,8 +172,6 @@ SELECT
     h.created_by,
     h.created_at,
     h.updated_at,
-    h.cert_fingerprint,
-    h.cert_expires_at,
     COALESCE(SUM(s.vcpus)       FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_vcpus,
     COALESCE(SUM(s.memory_mb)   FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_memory_mb,
     COALESCE(SUM(s.disk_size_mb) FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_disk_mb,
@@ -205,8 +203,6 @@ type GetHostsWithLoadRow struct {
 	CreatedBy        pgtype.UUID        `json:"created_by"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	CertFingerprint  string             `json:"cert_fingerprint"`
-	CertExpiresAt    pgtype.Timestamptz `json:"cert_expires_at"`
 	RunningVcpus     int32              `json:"running_vcpus"`
 	RunningMemoryMb  int32              `json:"running_memory_mb"`
 	RunningDiskMb    int32              `json:"running_disk_mb"`
@@ -242,8 +238,6 @@ func (q *Queries) GetHostsWithLoad(ctx context.Context) ([]GetHostsWithLoadRow, 
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.CertFingerprint,
-			&i.CertExpiresAt,
 			&i.RunningVcpus,
 			&i.RunningMemoryMb,
 			&i.RunningDiskMb,
@@ -445,8 +439,6 @@ SELECT
     h.created_by,
     h.created_at,
     h.updated_at,
-    h.cert_fingerprint,
-    h.cert_expires_at,
     COALESCE(SUM(s.vcpus)       FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_vcpus,
     COALESCE(SUM(s.memory_mb)   FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_memory_mb,
     COALESCE(SUM(s.disk_size_mb) FILTER (WHERE s.status IN ('running', 'starting', 'pending')), 0)::int AS running_disk_mb,
@@ -476,8 +468,6 @@ type ListHostsAdminRow struct {
 	CreatedBy        pgtype.UUID        `json:"created_by"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	CertFingerprint  string             `json:"cert_fingerprint"`
-	CertExpiresAt    pgtype.Timestamptz `json:"cert_expires_at"`
 	RunningVcpus     int32              `json:"running_vcpus"`
 	RunningMemoryMb  int32              `json:"running_memory_mb"`
 	RunningDiskMb    int32              `json:"running_disk_mb"`
@@ -514,8 +504,6 @@ func (q *Queries) ListHostsAdmin(ctx context.Context) ([]ListHostsAdminRow, erro
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.CertFingerprint,
-			&i.CertExpiresAt,
 			&i.RunningVcpus,
 			&i.RunningMemoryMb,
 			&i.RunningDiskMb,

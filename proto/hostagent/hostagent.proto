@@ -104,6 +104,11 @@ service HostAgentService {
   // ConnectProcess re-attaches to a running process and streams its output.
   rpc ConnectProcess(ConnectProcessRequest) returns (stream ConnectProcessResponse);
 
+  // GetTemplateSize returns the actual disk usage of a template's rootfs file.
+  // Used by the control plane to populate size_bytes for templates that have
+  // size 0 in the database (e.g. system base templates seeded before the
+  // rootfs was built).
+  rpc GetTemplateSize(GetTemplateSizeRequest) returns (GetTemplateSizeResponse);
 }
 
 message CreateSandboxRequest {
@@ -440,6 +445,19 @@ message FlattenRootfsRequest {
 }
 
 message FlattenRootfsResponse {
+  int64 size_bytes = 1;
+}
+
+message GetTemplateSizeRequest {
+  // Team UUID that owns the template (hex string). All-zeros = platform.
+  string team_id = 1;
+  // Template UUID (hex string).
+  string template_id = 2;
+}
+
+message GetTemplateSizeResponse {
+  // Actual disk usage of the template rootfs in bytes. Uses block-level
+  // accounting so sparse files report only allocated blocks.
   int64 size_bytes = 1;
 }
 
