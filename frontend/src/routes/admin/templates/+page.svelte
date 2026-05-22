@@ -44,7 +44,7 @@
 	let showCreate = $state(false);
 	let createForm = $state({
 		name: '',
-		base_template: 'minimal',
+		base_template: 'minimal-ubuntu',
 		vcpus: 1,
 		memory_mb: 512,
 		recipe: '',
@@ -80,7 +80,7 @@
 	const PLATFORM_TEAM_ID = 'team-0000000000000000000000000';
 
 	function canDeleteTemplate(tmpl: AdminTemplate): boolean {
-		if (tmpl.name === 'minimal') return false;
+		if (tmpl.protected) return false;
 		return tmpl.team_id === PLATFORM_TEAM_ID;
 	}
 
@@ -140,7 +140,7 @@
 
 		const result = await createBuild({
 			name: createForm.name.trim(),
-			base_template: createForm.base_template.trim() || 'minimal',
+			base_template: createForm.base_template.trim() || 'minimal-ubuntu',
 			recipe: lines,
 			healthcheck: createForm.healthcheck.trim() || undefined,
 			vcpus: createForm.vcpus,
@@ -152,7 +152,7 @@
 
 		if (result.ok) {
 			showCreate = false;
-			createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null };
+			createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null };
 			toast.success('Build queued');
 			goto(`/admin/templates/builds/${result.data.id}`);
 		} else {
@@ -246,7 +246,7 @@
 					</p>
 				</div>
 				<button
-					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
+					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
 					class="group flex items-center gap-2.5 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white shadow-sm transition-all duration-200 hover:shadow-[0_0_20px_var(--color-accent-glow-mid)] hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 				>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform duration-200 group-hover:rotate-90"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -397,7 +397,7 @@
 		</p>
 		{#if type === 'templates'}
 			<button
-				onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
+				onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
 				class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 px-4 py-2 text-ui font-medium text-[var(--color-accent-bright)] transition-all duration-200 hover:bg-[var(--color-accent)]/20 hover:border-[var(--color-accent)]/50"
 			>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -476,7 +476,7 @@
 							<button
 								onclick={() => { deleteTarget = tmpl; deleteError = null; }}
 								disabled={!canDeleteTemplate(tmpl)}
-								title={tmpl.name === 'minimal' ? 'The minimal template cannot be deleted' : !canDeleteTemplate(tmpl) ? 'Cannot delete templates owned by other teams' : undefined}
+								title={tmpl.protected ? 'System base templates cannot be deleted' : !canDeleteTemplate(tmpl) ? 'Cannot delete templates owned by other teams' : undefined}
 								class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta transition-all duration-150 {canDeleteTemplate(tmpl)
 									? 'text-[var(--color-text-tertiary)] hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]'
 									: 'text-[var(--color-text-muted)] cursor-not-allowed opacity-40'}"

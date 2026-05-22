@@ -90,6 +90,8 @@ export type Snapshot = {
 	size_bytes: number;
 	created_at: string;
 	platform: boolean;
+	/** True for built-in system base templates, which cannot be deleted. */
+	protected?: boolean;
 };
 
 // Snapshots are async: the call returns 202 with the capsule now in the

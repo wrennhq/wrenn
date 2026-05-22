@@ -294,12 +294,12 @@ func (m *Manager) Create(
 	// Snapshot template? Route to the CH-restore path; the launcher manages
 	// its own resource lifecycle and registers the sandbox itself.
 	//
-	// The minimal base template never carries a memory snapshot; guarding
-	// here prevents a stray state.json (e.g. from a failed CreateSnapshot
-	// that mis-targeted minimal) from silently rerouting fresh boots into
+	// System base templates never carry a memory snapshot; guarding here
+	// prevents a stray state.json (e.g. from a failed CreateSnapshot that
+	// mis-targeted a base template) from silently rerouting fresh boots into
 	// the restore path with a confusing error downstream.
 	templateDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
-	if !layout.IsMinimal(teamID, templateID) && layout.IsSnapshotTemplate(templateDir) {
+	if !layout.IsSystemTemplate(teamID, templateID) && layout.IsSnapshotTemplate(templateDir) {
 		return m.createFromSnapshotTemplate(ctx, sandboxID, teamID, templateID,
 			vcpus, memoryMB, timeoutSec, diskSizeMB, defaultUser, defaultEnv)
 	}

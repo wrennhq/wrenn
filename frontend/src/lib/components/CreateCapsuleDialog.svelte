@@ -11,7 +11,7 @@
 	};
 	let { open, onclose, oncreated, templateSource = 'team' }: Props = $props();
 
-	let createForm = $state<CreateCapsuleParams>({ template: 'minimal', vcpus: 1, memory_mb: 512, timeout_sec: 0 });
+	let createForm = $state<CreateCapsuleParams>({ template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, timeout_sec: 0 });
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
 
@@ -120,8 +120,8 @@
 			const creator = templateSource === 'platform' ? createAdminCapsule : createCapsule;
 			const result = await creator(createForm);
 			if (result.ok) {
-				createForm = { template: 'minimal', vcpus: 1, memory_mb: 512, timeout_sec: 0 };
-				templateQuery = 'minimal';
+				createForm = { template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, timeout_sec: 0 };
+				templateQuery = 'minimal-ubuntu';
 				onclose();
 				oncreated?.(result.data);
 			} else {

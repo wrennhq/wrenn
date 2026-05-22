@@ -23,9 +23,11 @@ echo "+cpu +memory +io" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || t
 { echo 0 > /sys/block/vda/queue/write_zeroes_max_bytes; } 2>/dev/null || true
 { echo 0 > /sys/block/vda/queue/discard_max_bytes; } 2>/dev/null || true
 
-# Set hostname and make it resolvable (sudo requires this).
-hostname capsule
-echo "127.0.0.1 capsule" >> /etc/hosts
+# Set hostname and make it resolvable (sudo requires this). Use the kernel knob
+# directly so we don't depend on the `hostname` binary, which is absent from
+# minimal Arch/Fedora images. Guard so a failure never aborts init under set -e.
+echo capsule > /proc/sys/kernel/hostname 2>/dev/null || hostname capsule 2>/dev/null || true
+echo "127.0.0.1 capsule" >> /etc/hosts 2>/dev/null || true
 
 # Configure networking if the kernel ip= boot arg did not already set it up.
 if ! ip addr show eth0 2>/dev/null | grep -q "169.254.0.21"; then
@@ -35,9 +37,14 @@ if ! ip addr show eth0 2>/dev/null | grep -q "169.254.0.21"; then
     ip route add default via 169.254.0.22 2>/dev/null || true
 fi
 
-# Configure DNS resolver.
-echo "nameserver 8.8.8.8" > /etc/resolv.conf
-echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+# Configure DNS resolver. Drop any existing symlink first — on some distros
+# (e.g. Fedora) /etc/resolv.conf is a dangling symlink into systemd-resolved,
+# and writing through it would fail and abort init under set -e.
+rm -f /etc/resolv.conf 2>/dev/null || true
+{
+    echo "nameserver 8.8.8.8"
+    echo "nameserver 8.8.4.4"
+} > /etc/resolv.conf 2>/dev/null || true
 
 # Set a standard PATH so envd and all child processes can find common binaries.
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games

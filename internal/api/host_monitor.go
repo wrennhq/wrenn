@@ -367,7 +367,7 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 
 	for _, sb := range transientSandboxes {
 		sbIDStr := id.FormatSandboxID(sb.ID)
-		if _, ok := aliveStatus[sbIDStr]; ok {
+		if agentStatus, ok := aliveStatus[sbIDStr]; ok {
 			// Sandbox is alive on host — the background goroutine should
 			// finalize the transition. For starting/resuming, if the sandbox
 			// is alive it means creation/resume succeeded.
@@ -378,15 +378,23 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 					slog.Info("host monitor: promoted transient sandbox to running", "sandbox_id", sbIDStr, "from", sb.Status)
 				}
 			}
-			// A snapshot keeps the VM alive throughout, so an alive sandbox does
-			// NOT mean the snapshot finished. Only recover it once it has been
-			// stuck past the snapshot grace period (i.e. the CP crashed mid-op).
+			// A snapshot keeps the source sandbox alive throughout, so an alive
+			// sandbox does NOT mean the snapshot finished. Only recover it once
+			// it has been stuck past the snapshot grace period (i.e. the CP
+			// crashed mid-op). Recover to the sandbox's actual host-side status:
+			// a running sandbox is snapshotted live and stays running, but a
+			// paused sandbox is snapshotted from disk and must return to paused.
 			if sb.Status == "snapshotting" &&
 				sb.LastUpdated.Valid && time.Since(sb.LastUpdated.Time) >= snapshotGracePeriod {
+				recoverTo := agentStatus
+				if recoverTo != "running" && recoverTo != "paused" {
+					// Coerced/unknown agent label — default to running.
+					recoverTo = "running"
+				}
 				if _, err := m.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
-					ID: sb.ID, Status: "snapshotting", Status_2: "running",
+					ID: sb.ID, Status: "snapshotting", Status_2: recoverTo,
 				}); err == nil {
-					slog.Info("host monitor: recovered stuck snapshotting sandbox to running", "sandbox_id", sbIDStr)
+					slog.Info("host monitor: recovered stuck snapshotting sandbox", "sandbox_id", sbIDStr, "to", recoverTo)
 					m.audit.LogSnapshotCreateSystem(ctx, sb.TeamID, sb.ID, "snapshot_recovered", nil)
 				}
 			}

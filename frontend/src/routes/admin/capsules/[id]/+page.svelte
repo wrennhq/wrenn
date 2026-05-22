@@ -6,6 +6,7 @@
 	import FilesTab from '$lib/components/FilesTab.svelte';
 	import MetricsPanel from '$lib/components/MetricsPanel.svelte';
 	import DestroyDialog from '$lib/components/DestroyDialog.svelte';
+	import SnapshotDialog from '$lib/components/SnapshotDialog.svelte';
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { toast } from '$lib/toast.svelte';
 	import {
@@ -29,9 +30,6 @@
 
 	// Snapshot dialog
 	let showSnapshot = $state(false);
-	let snapshotName = $state('');
-	let snapshotting = $state(false);
-	let snapshotError = $state<string | null>(null);
 
 	const metricsAvailable = $derived(
 		capsule?.status === 'running' || capsule?.status === 'paused'
@@ -56,23 +54,6 @@
 			capsuleError = result.error;
 		}
 		capsuleLoading = false;
-	}
-
-	async function handleSnapshot() {
-		snapshotting = true;
-		snapshotError = null;
-		const result = await snapshotAdminCapsule(capsuleId, snapshotName.trim() || undefined);
-		if (result.ok) {
-			toast.success('Snapshot started');
-			showSnapshot = false;
-			snapshotName = '';
-			// Async: the capsule is now snapshotting and will return to running
-			// once the template has been written.
-			capsule = result.data;
-		} else {
-			snapshotError = result.error;
-		}
-		snapshotting = false;
 	}
 
 	function statusColor(status: string): string {
@@ -212,8 +193,7 @@
 					<div class="ml-auto flex items-center gap-2">
 						{#if canSnapshot}
 							<button
-								onclick={() => { showSnapshot = true; snapshotName = ''; snapshotError = null; }}
-								disabled={snapshotting}
+								onclick={() => { showSnapshot = true; }}
 								class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/8 px-3 py-1.5 text-meta font-medium text-[var(--color-accent-bright)] transition-all duration-150 hover:bg-[var(--color-accent)]/15 hover:border-[var(--color-accent)]/50 disabled:opacity-50"
 							>
 								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" /><circle cx="12" cy="15" r="3" /></svg>
@@ -271,83 +251,24 @@
 		</footer>
 </main>
 
-<!-- Snapshot dialog -->
-{#if showSnapshot}
-	<div class="fixed inset-0 z-50 flex items-center justify-center">
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div
-			class="absolute inset-0 bg-black/60"
-			onclick={() => { if (!snapshotting) showSnapshot = false; }}
-			onkeydown={(e) => { if (e.key === 'Escape' && !snapshotting) showSnapshot = false; }}
-		></div>
+{#snippet adminSnapshotDescription()}
+	<p class="text-ui text-[var(--color-text-tertiary)]">The capsule moves to a <span class="font-mono text-[var(--color-blue)]">snapshotting</span> state while its memory and disk are written to a new platform template available to all teams, then returns to running. This runs in the background.</p>
+{/snippet}
 
-		<div class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] overflow-hidden" style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)">
-			<div class="flex items-center gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg-3)] px-6 py-5">
-				<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-input)] bg-[var(--color-accent)]/15 text-[var(--color-accent)] shadow-[0_0_12px_var(--color-accent-glow)]">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M14.5 4h-5L7 7H2v13a2 2 0 002 2h16a2 2 0 002-2V7h-5l-2.5-3z" />
-						<circle cx="12" cy="15" r="3" />
-					</svg>
-				</div>
-				<div>
-					<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Snapshot as platform template</h2>
-					<p class="mt-0.5 text-meta text-[var(--color-text-muted)] font-mono">{capsuleId}</p>
-				</div>
-			</div>
-
-			<div class="px-6 pt-5 pb-6 space-y-4">
-				<p class="text-ui text-[var(--color-text-tertiary)]">The capsule moves to a <span class="font-mono text-[var(--color-blue)]">snapshotting</span> state while its memory and disk are written to a new platform template available to all teams, then returns to running. This runs in the background.</p>
-
-				{#if snapshotError}
-					<div class="rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
-						{snapshotError}
-					</div>
-				{/if}
-
-				<div>
-					<div class="mb-1.5 flex items-baseline justify-between">
-						<label class="text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="admin-snapshot-name">Template name</label>
-						<span class="text-meta text-[var(--color-text-muted)]">optional</span>
-					</div>
-					<input
-						id="admin-snapshot-name"
-						type="text"
-						bind:value={snapshotName}
-						disabled={snapshotting}
-						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)] disabled:opacity-50"
-						placeholder="e.g. python-3.12, node-22-dev"
-						onkeydown={(e) => { if (e.key === 'Enter' && !snapshotting) handleSnapshot(); }}
-					/>
-					<p class="mt-1.5 text-meta text-[var(--color-text-muted)]">Leave blank for an auto-generated name. Each snapshot needs a unique name.</p>
-				</div>
-
-				<div class="flex justify-end gap-3 pt-1">
-					<button
-						onclick={() => { showSnapshot = false; }}
-						disabled={snapshotting}
-						class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
-					>
-						Cancel
-					</button>
-					<button
-						onclick={handleSnapshot}
-						disabled={snapshotting}
-						class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
-					>
-						{#if snapshotting}
-							<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<path d="M21 12a9 9 0 1 1-6.219-8.56" />
-							</svg>
-							Snapshotting...
-						{:else}
-							Snapshot
-						{/if}
-					</button>
-				</div>
-			</div>
-		</div>
-	</div>
-{/if}
+<SnapshotDialog
+	open={showSnapshot}
+	{capsuleId}
+	onclose={() => { showSnapshot = false; }}
+	onsnapshot={(updated) => { toast.success('Snapshot started'); capsule = updated; }}
+	snapshotFn={snapshotAdminCapsule}
+	title="Snapshot as platform template"
+	label="Template name"
+	placeholder="e.g. python-3.12, node-22-dev"
+	hint="Leave blank for an auto-generated name. Each snapshot needs a unique name."
+	confirmLabel="Snapshot"
+	pendingLabel="Snapshotting..."
+	description={adminSnapshotDescription}
+/>
 
 <DestroyDialog
 	open={showDestroy}

@@ -131,32 +131,24 @@ check: fmt vet lint test
 # ═══════════════════════════════════════════════════
 #  Rootfs Images
 # ═══════════════════════════════════════════════════
-.PHONY: images image-minimal image-python image-node
+.PHONY: images rootfs-ubuntu rootfs-alpine rootfs-arch rootfs-fedora
 
-images: build-envd image-minimal image-python image-node
+# Build all four system base rootfs images (ubuntu/alpine/arch/fedora). Each
+# spawns a distro container, installs the required packages + wrenn-user, then
+# exports to images/teams/<platform>/<id>/rootfs.ext4. Requires docker + sudo.
+images: rootfs-ubuntu rootfs-alpine rootfs-arch rootfs-fedora
 
-image-minimal:
-	sudo bash images/templates/minimal/build.sh
+rootfs-ubuntu:
+	bash images/build-ubuntu.sh
 
-image-python:
-	sudo bash images/templates/python312/build.sh
+rootfs-alpine:
+	bash images/build-alpine.sh
 
-image-node:
-	sudo bash images/templates/node20/build.sh
+rootfs-arch:
+	bash images/build-arch.sh
 
-# ═══════════════════════════════════════════════════
-#  Deployment
-# ═══════════════════════════════════════════════════
-.PHONY: setup-host install
-
-setup-host:
-	sudo bash scripts/setup-host.sh
-
-install: build
-	sudo cp $(BIN_DIR)/wrenn-cp /usr/local/bin/
-	sudo cp $(BIN_DIR)/wrenn-agent /usr/local/bin/
-	sudo cp deploy/systemd/*.service /etc/systemd/system/
-	sudo systemctl daemon-reload
+rootfs-fedora:
+	bash images/build-fedora.sh
 
 # ═══════════════════════════════════════════════════
 #  Clean

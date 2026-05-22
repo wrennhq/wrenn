@@ -2,6 +2,7 @@ package id
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -156,10 +157,37 @@ func ParseChannelID(s string) (pgtype.UUID, error)   { return parseUUID(PrefixCh
 // (e.g. base templates, shared infrastructure).
 var PlatformTeamID = pgtype.UUID{Bytes: [16]byte{}, Valid: true}
 
-// MinimalTemplateID is the all-zeros UUID sentinel for the built-in "minimal"
-// template. When both team_id and template_id are zero, the host agent uses
-// the minimal rootfs at WRENN_DIR/images/minimal/.
-var MinimalTemplateID = pgtype.UUID{Bytes: [16]byte{}, Valid: true}
+// SystemTemplateMaxID is the highest template ID reserved for built-in system
+// base templates. Template IDs in [0, SystemTemplateMaxID] under the platform
+// team are protected: they cannot be deleted and live at the well-known
+// teams/{base36(0)}/{base36(id)} on-disk paths.
+const SystemTemplateMaxID = 1024
+
+// templateID returns the all-zeros UUID with its low 64 bits set to n. Used to
+// mint the well-known IDs for the built-in system base templates.
+func templateID(n uint64) pgtype.UUID {
+	var b [16]byte
+	binary.BigEndian.PutUint64(b[8:], n)
+	return pgtype.UUID{Bytes: b, Valid: true}
+}
+
+// Well-known system base template IDs (platform team). The on-disk rootfs for
+// each lives at WRENN_DIR/images/teams/{base36(PlatformTeamID)}/{base36(id)}/.
+var (
+	UbuntuTemplateID = templateID(0) // minimal-ubuntu (replaces the old "minimal")
+	AlpineTemplateID = templateID(1) // minimal-alpine
+	ArchTemplateID   = templateID(2) // minimal-arch
+	FedoraTemplateID = templateID(3) // minimal-fedora
+)
+
+// IsReservedTemplateID reports whether t falls in the reserved system template
+// ID range [0, SystemTemplateMaxID] (i.e. the top 64 bits are zero and the
+// bottom 64 bits are <= SystemTemplateMaxID).
+func IsReservedTemplateID(t pgtype.UUID) bool {
+	hi := binary.BigEndian.Uint64(t.Bytes[:8])
+	lo := binary.BigEndian.Uint64(t.Bytes[8:])
+	return hi == 0 && lo <= SystemTemplateMaxID
+}
 
 // UUIDString converts a pgtype.UUID to a standard hyphenated UUID string
 // (e.g., "6ba7b810-9dad-11d1-80b4-00c04fd430c8"). Used for RPC wire format.

@@ -246,6 +246,7 @@ func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 		SizeBytes int64  `json:"size_bytes"`
 		TeamID    string `json:"team_id"`
 		CreatedAt string `json:"created_at"`
+		Protected bool   `json:"protected"`
 	}
 
 	resp := make([]templateResponse, len(templates))
@@ -257,6 +258,7 @@ func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 			MemoryMB:  t.MemoryMb,
 			SizeBytes: t.SizeBytes,
 			TeamID:    id.FormatTeamID(t.TeamID),
+			Protected: layout.IsSystemTemplate(t.TeamID, t.ID),
 		}
 		if t.CreatedAt.Valid {
 			resp[i].CreatedAt = t.CreatedAt.Time.Format(time.RFC3339)
@@ -280,8 +282,8 @@ func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "template not found")
 		return
 	}
-	if layout.IsMinimal(tmpl.TeamID, tmpl.ID) {
-		writeError(w, http.StatusForbidden, "forbidden", "the minimal template cannot be deleted")
+	if layout.IsSystemTemplate(tmpl.TeamID, tmpl.ID) {
+		writeError(w, http.StatusForbidden, "forbidden", "system base templates cannot be deleted")
 		return
 	}
 

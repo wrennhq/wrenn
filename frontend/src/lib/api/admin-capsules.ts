@@ -37,6 +37,7 @@ export async function listPlatformTemplates(): Promise<ApiResult<Snapshot[]>> {
 		size_bytes: t.size_bytes,
 		created_at: t.created_at,
 		platform: true,
+		protected: t.protected,
 	}));
 	return { ok: true, data: snapshots };
 }

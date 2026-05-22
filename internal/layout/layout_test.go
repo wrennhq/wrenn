@@ -9,7 +9,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
 
-func TestIsMinimal(t *testing.T) {
+func TestIsSystemTemplate(t *testing.T) {
 	tests := []struct {
 		name       string
 		teamID     pgtype.UUID
@@ -17,35 +17,41 @@ func TestIsMinimal(t *testing.T) {
 		want       bool
 	}{
 		{
-			name:       "both zeros",
+			name:       "ubuntu (zeros, zeros)",
 			teamID:     id.PlatformTeamID,
-			templateID: id.MinimalTemplateID,
+			templateID: id.UbuntuTemplateID,
 			want:       true,
 		},
 		{
-			name:       "non-zero team",
-			teamID:     pgtype.UUID{Bytes: [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Valid: true},
-			templateID: id.MinimalTemplateID,
-			want:       false,
-		},
-		{
-			name:       "non-zero template",
+			name:       "fedora (platform, id 3)",
 			teamID:     id.PlatformTeamID,
-			templateID: pgtype.UUID{Bytes: [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Valid: true},
+			templateID: id.FedoraTemplateID,
+			want:       true,
+		},
+		{
+			name:       "platform, max reserved id",
+			teamID:     id.PlatformTeamID,
+			templateID: pgtype.UUID{Bytes: [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x04, 0x00}, Valid: true}, // 1024
+			want:       true,
+		},
+		{
+			name:       "platform, above reserved range",
+			teamID:     id.PlatformTeamID,
+			templateID: pgtype.UUID{Bytes: [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x04, 0x01}, Valid: true}, // 1025
 			want:       false,
 		},
 		{
-			name:       "both non-zero",
-			teamID:     pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
-			templateID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
+			name:       "non-platform team, reserved id",
+			teamID:     pgtype.UUID{Bytes: [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Valid: true},
+			templateID: id.UbuntuTemplateID,
 			want:       false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsMinimal(tt.teamID, tt.templateID); got != tt.want {
-				t.Errorf("IsMinimal() = %v, want %v", got, tt.want)
+			if got := IsSystemTemplate(tt.teamID, tt.templateID); got != tt.want {
+				t.Errorf("IsSystemTemplate() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -54,9 +60,11 @@ func TestIsMinimal(t *testing.T) {
 func TestTemplateDir(t *testing.T) {
 	wrennDir := "/var/lib/wrenn"
 
-	t.Run("minimal", func(t *testing.T) {
-		got := TemplateDir(wrennDir, id.PlatformTeamID, id.MinimalTemplateID)
-		want := filepath.Join(wrennDir, "images", "minimal")
+	t.Run("system base template (ubuntu) lives under teams", func(t *testing.T) {
+		got := TemplateDir(wrennDir, id.PlatformTeamID, id.UbuntuTemplateID)
+		want := filepath.Join(wrennDir, "images", "teams",
+			id.UUIDToBase36(id.PlatformTeamID.Bytes),
+			id.UUIDToBase36(id.UbuntuTemplateID.Bytes))
 		if got != want {
 			t.Errorf("TemplateDir() = %q, want %q", got, want)
 		}
@@ -88,8 +96,11 @@ func TestTemplateDir(t *testing.T) {
 
 func TestTemplateRootfs(t *testing.T) {
 	wrennDir := "/var/lib/wrenn"
-	got := TemplateRootfs(wrennDir, id.PlatformTeamID, id.MinimalTemplateID)
-	want := filepath.Join(wrennDir, "images", "minimal", "rootfs.ext4")
+	got := TemplateRootfs(wrennDir, id.PlatformTeamID, id.UbuntuTemplateID)
+	want := filepath.Join(wrennDir, "images", "teams",
+		id.UUIDToBase36(id.PlatformTeamID.Bytes),
+		id.UUIDToBase36(id.UbuntuTemplateID.Bytes),
+		"rootfs.ext4")
 	if got != want {
 		t.Errorf("TemplateRootfs() = %q, want %q", got, want)
 	}
