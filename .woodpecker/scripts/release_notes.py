@@ -9,12 +9,7 @@ REPO_DIR = "wrenn-releases"
 CAPSULE_OUTPUT = "/tmp/release_notes.md"
 LOCAL_OUTPUT = os.path.join(os.path.dirname(__file__), "..", "release_notes.md")
 
-# Default starting configuration
-ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
-if ZHIPU_API_KEY:
-    DEFAULT_MODEL = "zhipuai-coding-plan/glm-5.1"
-else:
-    DEFAULT_MODEL = "opencode/minimax-m2.5-free"
+DEFAULT_MODEL = "opencode/deepseek-v4-flash-free"
 
 RELEASE_NOTES_EXAMPLE = """
 ## What's new
@@ -50,57 +45,6 @@ def run(capsule: Capsule, cmd: str, cwd: str | None = None, timeout: int = 30) -
         return result.exit_code
     print(f"OK   [{cmd.split()[0]}]")
     return 0
-
-
-def get_tags(capsule: Capsule) -> tuple[str, str | None]:
-    result = capsule.commands.run(
-        f"cd {REPO_DIR} && git tag --sort=-version:refname",
-        cwd=REPO_DIR,
-        timeout=30,
-    )
-    if result.exit_code != 0:
-        print(f"FAIL [git tag]: {result.stderr}", file=sys.stderr)
-        sys.exit(1)
-    tags = [t for t in result.stdout.strip().split("\n") if t]
-    if not tags:
-        print("No tags found", file=sys.stderr)
-        sys.exit(1)
-    current_tag = tags[0]
-    previous_tag = tags[1] if len(tags) > 1 else None
-    print(f"Current tag:  {current_tag}")
-    print(f"Previous tag: {previous_tag}")
-    return current_tag, previous_tag
-
-
-def get_git_context(
-    capsule: Capsule, current_tag: str, previous_tag: str | None
-) -> tuple[str, str]:
-    if previous_tag:
-        # FIX: Removed '-n 2' to ensure we grab ALL commits between the two tags
-        log_cmd = f"cd {REPO_DIR} && git log {previous_tag}..{current_tag} --pretty=format:'%s (%h)'"
-    else:
-        # Fallback to limit log size if this is the very first tag in the repo
-        log_cmd = (
-            f"cd {REPO_DIR} && git log {current_tag} --pretty=format:'%s (%h)' -n 50"
-        )
-
-    log_result = capsule.commands.run(log_cmd, cwd=REPO_DIR, timeout=30)
-    if log_result.exit_code != 0:
-        print(f"FAIL [git log]: {log_result.stderr}", file=sys.stderr)
-        sys.exit(1)
-
-    # git diff natively compares the entire tree state between tags
-    if previous_tag:
-        diff_cmd = f"cd {REPO_DIR} && git diff {previous_tag}..{current_tag} --stat"
-    else:
-        diff_cmd = f"cd {REPO_DIR} && git show {current_tag} --stat"
-
-    diff_result = capsule.commands.run(diff_cmd, cwd=REPO_DIR, timeout=30)
-    if diff_result.exit_code != 0:
-        print(f"FAIL [git diff]: {diff_result.stderr}", file=sys.stderr)
-        sys.exit(1)
-
-    return log_result.stdout.strip(), diff_result.stdout.strip()
 
 
 def generate_release_notes(
@@ -236,17 +180,15 @@ def generate_release_notes(
 
         return cmd_result.exit_code
 
-    # First attempt with the target model
     exit_status = run_opencode_with_model(model)
 
-    # FIX: Catch failures (like Zhipu rate limits) and fallback to MiniMax
     if exit_status != 0:
-        if "zhipu" in model.lower():
+        fallback_model = "opencode/big-pickle"
+        if model != fallback_model:
             print(
-                "\n[!] Zhipu AI failed (likely rate-limited). Falling back to MiniMax...",
+                f"\n[!] Model {model} failed. Falling back to {fallback_model}...",
                 file=sys.stderr,
             )
-            fallback_model = "opencode/minimax-m2.5-free"
             exit_status = run_opencode_with_model(fallback_model)
             if exit_status != 0:
                 print("FAIL: Fallback model also failed. Exiting.", file=sys.stderr)

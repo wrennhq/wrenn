@@ -6,11 +6,8 @@ from wrenn._git import GitCommandError
 
 RUST_VERSION = os.getenv("RUST_VERSION", "1.95.0")
 REPO_URL = "https://git.omukk.dev/wrenn/wrenn.git"
-REPO_DIR = "/opt/wrenn"
+REPO_DIR = "~/wrenn"
 BUILDS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "builds")
-RUST_PATH = (
-    "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-)
 
 
 def read_envd_version(capsule: Capsule) -> str:
@@ -34,40 +31,40 @@ def run(capsule: Capsule, cmd: str, timeout: int = 30, envs={}) -> int:
     return 0
 
 
-def install_rust(capsule: Capsule) -> bool:
-    if run(capsule, "apt update", timeout=120) != 0:
-        return False
-    if (
-        run(
-            capsule,
-            "apt install -y make build-essential file curl musl-tools protobuf-compiler",
-            timeout=300,
-        )
-        != 0
-    ):
-        return False
-    if (
-        run(
-            capsule,
-            f"curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain {RUST_VERSION}",
-            timeout=300,
-        )
-        != 0
-    ):
-        return False
-    if (
-        run(
-            capsule,
-            "/root/.cargo/bin/rustup target add x86_64-unknown-linux-musl",
-            timeout=120,
-        )
-        != 0
-    ):
-        return False
+# def install_rust(capsule: Capsule) -> bool:
+#     if run(capsule, "apt update", timeout=120) != 0:
+#         return False
+#     if (
+#         run(
+#             capsule,
+#             "apt install -y make build-essential file curl musl-tools protobuf-compiler",
+#             timeout=300,
+#         )
+#         != 0
+#     ):
+#         return False
+#     if (
+#         run(
+#             capsule,
+#             f"curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain {RUST_VERSION}",
+#             timeout=300,
+#         )
+#         != 0
+#     ):
+#         return False
+#     if (
+#         run(
+#             capsule,
+#             "/root/.cargo/bin/rustup target add x86_64-unknown-linux-musl",
+#             timeout=120,
+#         )
+#         != 0
+#     ):
+#         return False
 
-    result = capsule.commands.run("/root/.cargo/bin/rustc --version")
-    print(result.stdout.strip())
-    return result.exit_code == 0
+#     result = capsule.commands.run("/root/.cargo/bin/rustc --version")
+#     print(result.stdout.strip())
+#     return result.exit_code == 0
 
 
 def clone_repo(capsule: Capsule) -> bool:
@@ -88,7 +85,6 @@ def build_rust(capsule: Capsule) -> bool:
         "make build-envd",
         background=True,
         cwd=REPO_DIR,
-        envs={"PATH": RUST_PATH},
     )
     print(f"rust build started (pid={handle.pid}), streaming output...")
 
@@ -127,10 +123,8 @@ def download_artifacts(capsule: Capsule) -> bool:
 
 
 def main() -> None:
-    with Capsule(wait=True, vcpus=4, memory_mb=4096) as capsule:
+    with Capsule(template="rust-1.95", wait=True, vcpus=4, memory_mb=4096) as capsule:
         print(f"Capsule: {capsule.capsule_id}")
-        if not install_rust(capsule):
-            sys.exit(1)
         if not clone_repo(capsule):
             sys.exit(1)
         if not build_rust(capsule):
