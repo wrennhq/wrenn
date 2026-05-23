@@ -27,6 +27,7 @@ type createSandboxRequest struct {
 	Template   string `json:"template"`
 	VCPUs      int32  `json:"vcpus"`
 	MemoryMB   int32  `json:"memory_mb"`
+	DiskSizeMB int32  `json:"disk_size_mb"`
 	TimeoutSec int32  `json:"timeout_sec"`
 }
 
@@ -39,8 +40,6 @@ type sandboxResponse struct {
 	TimeoutSec   int32             `json:"timeout_sec"`
 	DiskSizeMB   int32             `json:"disk_size_mb"`
 	DiskUsedMB   *int64            `json:"disk_used_mb,omitempty"`
-	GuestIP      string            `json:"guest_ip,omitempty"`
-	HostIP       string            `json:"host_ip,omitempty"`
 	CreatedAt    string            `json:"created_at"`
 	StartedAt    *string           `json:"started_at,omitempty"`
 	LastActiveAt *string           `json:"last_active_at,omitempty"`
@@ -57,8 +56,6 @@ func sandboxToResponse(sb db.Sandbox) sandboxResponse {
 		MemoryMB:   sb.MemoryMb,
 		TimeoutSec: sb.TimeoutSec,
 		DiskSizeMB: sb.DiskSizeMb,
-		GuestIP:    sb.GuestIp,
-		HostIP:     sb.HostIp,
 	}
 	if len(sb.Metadata) > 0 {
 		var meta map[string]string
@@ -102,6 +99,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Template:   req.Template,
 		VCPUs:      req.VCPUs,
 		MemoryMB:   req.MemoryMB,
+		DiskSizeMB: req.DiskSizeMB,
 		TimeoutSec: req.TimeoutSec,
 	})
 	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, req.Template, err)

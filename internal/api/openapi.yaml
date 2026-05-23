@@ -3646,10 +3646,6 @@ components:
               type: integer
             memory_mb_reserved:
               type: integer
-            sampled_at:
-              type: string
-              format: date-time
-              nullable: true
         peaks:
           type: object
           description: Maximum values over the last 30 days.
@@ -3698,10 +3694,6 @@ components:
           type: integer
         timeout_sec:
           type: integer
-        guest_ip:
-          type: string
-        host_ip:
-          type: string
         created_at:
           type: string
           format: date-time
@@ -3729,8 +3721,8 @@ components:
           description: Maximum disk capacity in MiB.
         disk_used_mb:
           type: integer
-          nullable: true
-          description: Current disk usage in MiB. Only populated on individual capsule GET; null in list responses.
+          format: int64
+          description: Current disk usage in MiB. Only populated on individual capsule GET; omitted in list responses.
 
     CreateSnapshotRequest:
       type: object
