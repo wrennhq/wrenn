@@ -26,28 +26,6 @@ def run(capsule: Capsule, cmd: str, timeout: int = 30) -> int:
     return 0
 
 
-def install_go(capsule: Capsule) -> bool:
-    tarball = f"go{GO_VERSION}.linux-amd64.tar.gz"
-    url = f"https://go.dev/dl/{tarball}"
-
-    if run(capsule, "apt update", timeout=120) != 0:
-        return False
-    if run(capsule, "apt install -y make build-essential file", timeout=300) != 0:
-        return False
-    if run(capsule, f"curl -LO {url}", timeout=120) != 0:
-        return False
-    if run(capsule, f"tar -C /usr/local -xzf {tarball}", timeout=300) != 0:
-        return False
-    if run(capsule, 'echo "export PATH=$PATH:/usr/local/go/bin" >> ~/.profile') != 0:
-        return False
-    if run(capsule, "rm -f " + tarball) != 0:
-        return False
-
-    result = capsule.commands.run("/usr/local/go/bin/go version")
-    print(result.stdout.strip())
-    return result.exit_code == 0
-
-
 def clone_repo(capsule: Capsule) -> bool:
     try:
         capsule.git.clone(REPO_URL, REPO_DIR)
