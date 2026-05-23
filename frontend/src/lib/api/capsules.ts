@@ -8,6 +8,7 @@ export type CapsuleStatus =
 	| 'running'
 	| 'pausing'
 	| 'paused'
+	| 'snapshotting'
 	| 'resuming'
 	| 'stopping'
 	| 'hibernated'
@@ -26,6 +27,7 @@ export const TRANSIENT_STATUSES: ReadonlySet<CapsuleStatus> = new Set([
 	'pending',
 	'starting',
 	'pausing',
+	'snapshotting',
 	'resuming',
 	'stopping'
 ]);
@@ -44,7 +46,8 @@ export type Capsule = {
 	last_active_at?: string;
 	last_updated: string;
 	metadata?: Record<string, string>;
-	disk_size_mb?: number;
+	disk_size_mb: number;
+	disk_used_mb?: number;
 };
 
 
@@ -88,9 +91,14 @@ export type Snapshot = {
 	size_bytes: number;
 	created_at: string;
 	platform: boolean;
+	/** True for built-in system base templates, which cannot be deleted. */
+	protected?: boolean;
 };
 
-export async function createSnapshot(capsuleId: string, name?: string): Promise<ApiResult<Snapshot>> {
+// Snapshots are async: the call returns 202 with the capsule now in the
+// "snapshotting" state. The resulting template arrives later via the
+// template.snapshot.create SSE event (or by polling listSnapshots).
+export async function createSnapshot(capsuleId: string, name?: string): Promise<ApiResult<Capsule>> {
 	return apiFetch('POST', '/api/v1/snapshots', { sandbox_id: capsuleId, name });
 }
 

@@ -32,6 +32,14 @@ const unreachableThreshold = 90 * time.Second
 // that may not have registered the sandbox on the host agent yet.
 const transientGracePeriod = 2 * time.Minute
 
+// snapshotGracePeriod is the grace for a sandbox stuck in "snapshotting" while
+// the VM is still alive on the host. Snapshots dump guest RAM and flatten the
+// rootfs, which can run for minutes on large sandboxes, and the agent reports
+// the VM as alive throughout — so we must not race the in-flight operation.
+// It exceeds the background goroutine's 10-minute deadline, so reaching it
+// means the control plane crashed mid-snapshot and the sandbox needs recovery.
+const snapshotGracePeriod = 15 * time.Minute
+
 // HostMonitor runs on a fixed interval and performs two duties:
 //
 //  1. Passive check: marks hosts whose last_heartbeat_at is stale as
@@ -350,7 +358,7 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 
 	transientSandboxes, err := m.db.ListSandboxesByHostAndStatus(ctx, db.ListSandboxesByHostAndStatusParams{
 		HostID:  host.ID,
-		Column2: []string{"starting", "resuming", "pausing", "stopping"},
+		Column2: []string{"starting", "resuming", "pausing", "stopping", "snapshotting"},
 	})
 	if err != nil {
 		slog.Warn("host monitor: failed to list transient sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
@@ -359,7 +367,7 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 
 	for _, sb := range transientSandboxes {
 		sbIDStr := id.FormatSandboxID(sb.ID)
-		if _, ok := aliveStatus[sbIDStr]; ok {
+		if agentStatus, ok := aliveStatus[sbIDStr]; ok {
 			// Sandbox is alive on host — the background goroutine should
 			// finalize the transition. For starting/resuming, if the sandbox
 			// is alive it means creation/resume succeeded.
@@ -368,6 +376,26 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 					ID: sb.ID, Status: sb.Status, Status_2: "running",
 				}); err == nil {
 					slog.Info("host monitor: promoted transient sandbox to running", "sandbox_id", sbIDStr, "from", sb.Status)
+				}
+			}
+			// A snapshot keeps the source sandbox alive throughout, so an alive
+			// sandbox does NOT mean the snapshot finished. Only recover it once
+			// it has been stuck past the snapshot grace period (i.e. the CP
+			// crashed mid-op). Recover to the sandbox's actual host-side status:
+			// a running sandbox is snapshotted live and stays running, but a
+			// paused sandbox is snapshotted from disk and must return to paused.
+			if sb.Status == "snapshotting" &&
+				sb.LastUpdated.Valid && time.Since(sb.LastUpdated.Time) >= snapshotGracePeriod {
+				recoverTo := agentStatus
+				if recoverTo != "running" && recoverTo != "paused" {
+					// Coerced/unknown agent label — default to running.
+					recoverTo = "running"
+				}
+				if _, err := m.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
+					ID: sb.ID, Status: "snapshotting", Status_2: recoverTo,
+				}); err == nil {
+					slog.Info("host monitor: recovered stuck snapshotting sandbox", "sandbox_id", sbIDStr, "to", recoverTo)
+					m.audit.LogSnapshotCreateSystem(ctx, sb.TeamID, sb.ID, "snapshot_recovered", nil)
 				}
 			}
 			continue
@@ -390,6 +418,9 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 			finalStatus = "paused"
 		case "stopping":
 			finalStatus = "stopped"
+		case "snapshotting":
+			// VM is gone but DB says snapshotting → the snapshot died with the VM.
+			finalStatus = "error"
 		}
 		fromStatus := sb.Status
 		if _, err := m.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
@@ -405,6 +436,9 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 			case "pausing":
 				// Pause assumed to have succeeded host-side; emit success with inferred metadata.
 				m.audit.LogSandboxAutoPause(ctx, sb.TeamID, sb.ID, "transient_timeout_inferred", nil)
+			case "snapshotting":
+				// VM gone mid-snapshot; the sandbox is errored.
+				m.audit.LogSnapshotCreateSystem(ctx, sb.TeamID, sb.ID, "transient_timeout", inferredErr)
 			case "stopping":
 				m.audit.LogSandboxDestroySystem(ctx, sb.TeamID, sb.ID, "transient_timeout_inferred", nil)
 			}

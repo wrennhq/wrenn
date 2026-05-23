@@ -395,7 +395,7 @@
 			</div>
 		{:else}
 			{#each filteredCapsules as capsule, i (capsule.id)}
-				{@const isTransient = ['starting', 'resuming', 'pausing', 'stopping'].includes(capsule.status)}
+				{@const isTransient = ['starting', 'resuming', 'pausing', 'snapshotting', 'stopping'].includes(capsule.status)}
 				{@const stripeColor = capsule.status === 'running' ? 'bg-[var(--color-accent)]' : (capsule.status === 'paused' || capsule.status === 'hibernated') ? 'bg-[var(--color-amber)]' : isTransient ? 'bg-[var(--color-blue)]' : 'bg-[var(--color-text-muted)]'}
 				<div
 					class="capsule-row relative grid grid-cols-[1.6fr_0.8fr_0.5fr_0.5fr_0.6fr_1fr_0.9fr] items-center overflow-hidden border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-bg-3)] last:border-b-0 {newCapsuleId === capsule.id ? 'capsule-born' : ''}"

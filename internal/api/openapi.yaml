@@ -1421,10 +1421,19 @@ paths:
         - apiKeyAuth: []
         - sessionAuth: []
       description: |
-        Live snapshot: briefly pauses the capsule, writes its VM state +
-        memory + flattened rootfs to a new template directory, then resumes
-        the capsule. The source capsule keeps running after the snapshot;
-        the resulting template can be used to create new capsules.
+        Snapshot a capsule, processed asynchronously. The call returns
+        immediately with the capsule in the `snapshotting` state, then it
+        returns to its original state on completion. The capsule must be
+        `running` or `paused`.
+
+        A `running` capsule is snapshotted live: it briefly pauses while its VM
+        state + memory + flattened rootfs are written to a new template, then
+        resumes to `running`. A `paused` capsule is snapshotted directly from
+        its on-disk state without reviving the VM, and stays `paused`.
+
+        Because it is async, the response does NOT contain the template. Watch
+        for the `template.snapshot.create` SSE event (its `outcome` reports
+        success or failure) or poll `GET /v1/snapshots` to observe completion.
 
         Snapshots are immutable: each call must use a fresh name. Re-using
         an existing name returns 409 Conflict.
@@ -1435,14 +1444,14 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateSnapshotRequest"
       responses:
-        "201":
-          description: Snapshot created
+        "202":
+          description: Snapshot accepted; capsule is now snapshotting
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Template"
+                $ref: "#/components/schemas/Capsule"
         "409":
-          description: Name already exists or capsule not running
+          description: Name already exists, or capsule is not running or paused
           content:
             application/json:
               schema:
@@ -2813,7 +2822,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Template"
+                  $ref: "#/components/schemas/AdminTemplate"
 
   /v1/admin/templates/{name}:
     delete:
@@ -2989,6 +2998,10 @@ paths:
       summary: Create snapshot from any capsule (admin)
       operationId: adminCreateSnapshotFromCapsule
       tags: [admin]
+      description: |
+        Snapshots a `running` or `paused` capsule into a platform template,
+        processed asynchronously (see `POST /v1/snapshots`). A running capsule
+        resumes to `running`; a paused capsule stays `paused`.
       security:
         - sessionAuth: []
       parameters:
@@ -2997,21 +3010,22 @@ paths:
           required: true
           schema: {type: string}
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               type: object
-              required: [name]
               properties:
-                name: {type: string}
+                name:
+                  type: string
+                  description: Optional; an auto-generated name is used when omitted.
       responses:
-        "201":
-          description: Snapshot created
+        "202":
+          description: Snapshot accepted; capsule is now snapshotting
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Template"
+                $ref: "#/components/schemas/Capsule"
 
   /v1/admin/capsules/{id}/exec:
     parameters:
@@ -3506,7 +3520,7 @@ components:
       properties:
         template:
           type: string
-          default: minimal
+          default: minimal-ubuntu
         vcpus:
           type: integer
           default: 1
@@ -3610,7 +3624,7 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, starting, running, pausing, paused, resuming, stopping, hibernated, stopped, missing, error]
+          enum: [pending, starting, running, pausing, paused, snapshotting, resuming, stopping, hibernated, stopped, missing, error]
         template:
           type: string
         vcpus:
@@ -3647,7 +3661,11 @@ components:
             agent_version, envd_version) when running.
         disk_size_mb:
           type: integer
+          description: Maximum disk capacity in MiB.
+        disk_used_mb:
+          type: integer
           nullable: true
+          description: Current disk usage in MiB. Only populated on individual capsule GET; null in list responses.
 
     CreateSnapshotRequest:
       type: object
@@ -3684,12 +3702,50 @@ components:
           type: boolean
           description: |
             True when the template is platform-managed (visible to all teams,
-            e.g. the built-in `minimal` rootfs). False for team-owned
+            e.g. the built-in `minimal-ubuntu` rootfs). False for team-owned
             snapshot templates.
+        protected:
+          type: boolean
+          description: |
+            True for built-in system base templates (minimal-ubuntu,
+            minimal-alpine, minimal-arch, minimal-fedora). Protected templates
+            cannot be deleted.
         metadata:
           type: object
           additionalProperties: {type: string}
           nullable: true
+
+    AdminTemplate:
+      type: object
+      description: |
+        Template as returned by the admin templates list. Unlike `Template`
+        (the team-facing snapshot shape), this includes the owning `team_id`
+        and omits `platform`/`metadata`.
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [base, snapshot]
+        vcpus:
+          type: integer
+        memory_mb:
+          type: integer
+        size_bytes:
+          type: integer
+          format: int64
+        team_id:
+          type: string
+          description: Owning team ID (formatted, e.g. `team-…`). Platform team for global templates.
+        created_at:
+          type: string
+          format: date-time
+        protected:
+          type: boolean
+          description: |
+            True for built-in system base templates (minimal-ubuntu,
+            minimal-alpine, minimal-arch, minimal-fedora). Protected templates
+            cannot be deleted.
 
     ExecRequest:
       type: object

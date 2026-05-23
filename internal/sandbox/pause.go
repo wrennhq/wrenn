@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -695,11 +696,12 @@ func (m *Manager) waitForMemoryLoader(ctx context.Context, sb *sandboxState) err
 }
 
 // CreateSnapshot writes a self-contained template snapshot to
-// WRENN_DIR/images/teams/{teamID}/{templateID}/. The sandbox is briefly
-// paused, the dm-snapshot is flattened into rootfs.ext4, CH writes the
-// memory snapshot, then the sandbox is resumed.
+// WRENN_DIR/images/teams/{teamID}/{templateID}/, then returns the total size
+// (in bytes) of the artefacts written.
 //
-// Returns the total size (in bytes) of the artefacts written.
+// A running sandbox is snapshotted live (briefly paused, memory dumped, rootfs
+// flattened, then resumed). A paused sandbox is snapshotted straight from its
+// on-disk pause artefacts without reviving the VM — it stays paused.
 func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, templateID pgtype.UUID, name string) (int64, error) {
 	sb, err := m.get(sandboxID)
 	if err != nil {
@@ -709,10 +711,6 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 	sb.lifecycleMu.Lock()
 	defer sb.lifecycleMu.Unlock()
 
-	if sb.Status != models.StatusRunning {
-		return 0, fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
-	}
-
 	// Refuse silent overwrites: every snapshot must land in a fresh
 	// templateID. Defends against caller bugs and concurrent CreateSnapshot
 	// races for the same destination. User-facing snapshot-name uniqueness
@@ -721,6 +719,22 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 		return 0, fmt.Errorf("snapshot template %s/%s already exists",
 			id.UUIDString(teamID), id.UUIDString(templateID))
 	}
+
+	switch sb.Status {
+	case models.StatusRunning:
+		return m.snapshotRunningToTemplate(ctx, sb, teamID, templateID, name)
+	case models.StatusPaused:
+		return m.snapshotPausedToTemplate(ctx, sb, teamID, templateID, name)
+	default:
+		return 0, fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
+	}
+}
+
+// snapshotRunningToTemplate takes a live snapshot of a running sandbox: pause
+// CH, dump memory + flatten the rootfs into a staging dir, resume CH, then
+// promote the staged template into place. The sandbox returns to running.
+func (m *Manager) snapshotRunningToTemplate(ctx context.Context, sb *sandboxState, teamID, templateID pgtype.UUID, name string) (int64, error) {
+	sandboxID := sb.ID
 
 	// Same rationale as Pause: wait for the background memory loader so the
 	// resulting memory-ranges is self-contained when this sandbox itself was
@@ -819,6 +833,152 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 		"bytes", size,
 	)
 	return size, nil
+}
+
+// snapshotPausedToTemplate builds a self-contained template from a paused
+// sandbox's on-disk artefacts without reviving the VM. The pause snapshot
+// already holds a self-contained CH memory image (Pause blocks on the memory
+// loader before snapshotting), so we copy those memory files verbatim and
+// flatten the persistent CoW into rootfs.ext4. The sandbox stays Paused.
+func (m *Manager) snapshotPausedToTemplate(ctx context.Context, sb *sandboxState, teamID, templateID pgtype.UUID, name string) (int64, error) {
+	snapDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sb.ID)
+	meta, err := readSnapshotMeta(snapDir)
+	if err != nil {
+		return 0, fmt.Errorf("load pause snapshot meta: %w", err)
+	}
+
+	dstDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
+	stageDir := filepath.Join(layout.SandboxesDir(m.cfg.WrennDir),
+		fmt.Sprintf(".stage-%s-%d", sb.ID, time.Now().UnixNano()))
+	if err := os.MkdirAll(stageDir, 0o755); err != nil {
+		return 0, fmt.Errorf("mkdir stage dir: %w", err)
+	}
+	defer os.RemoveAll(stageDir)
+
+	// Flatten the persistent CoW into a standalone rootfs.ext4. The VM is down,
+	// so re-attach a throwaway dm-snapshot over the base image + CoW just long
+	// enough to read through it; the CoW file is left intact for a later Resume.
+	if err := m.flattenPausedCow(ctx, sb.ID, meta, filepath.Join(stageDir, "rootfs.ext4")); err != nil {
+		return 0, err
+	}
+
+	// Copy CH's memory snapshot files verbatim (state.json, config.json,
+	// memory-ranges, …) — everything except the CoW and the pause meta, which
+	// the template replaces with its own rootfs.ext4 and meta below.
+	if err := copyMemorySnapshotFiles(snapDir, stageDir); err != nil {
+		return 0, err
+	}
+
+	// Template meta: no SlotIndex (a template allocates a fresh slot per launch);
+	// SandboxDir + BaseTemplate carried forward so the restore path resolves the
+	// tmpfs disk path baked into CH's config.json.
+	tmplMeta := &snapshotMeta{
+		TemplateName: name,
+		TeamID:       id.UUIDString(teamID),
+		TemplateID:   id.UUIDString(templateID),
+		VCPUs:        meta.VCPUs,
+		MemoryMB:     meta.MemoryMB,
+		TimeoutSec:   meta.TimeoutSec,
+		BaseTemplate: meta.BaseTemplate,
+		SandboxDir:   meta.SandboxDir,
+		CreatedAt:    time.Now(),
+	}
+	if err := writeSnapshotMeta(stageDir, tmplMeta); err != nil {
+		slog.Warn("template meta write failed", "id", sb.ID, "error", err)
+	}
+
+	if err := promoteSnapshotDir(stageDir, dstDir); err != nil {
+		return 0, fmt.Errorf("promote snapshot: %w", err)
+	}
+
+	size, err := snapshot.DirSize(dstDir, "")
+	if err != nil {
+		slog.Warn("snapshot size calc failed", "id", sb.ID, "error", err)
+	}
+	slog.Info("paused snapshot created",
+		"id", sb.ID,
+		"team_id", teamID,
+		"template_id", templateID,
+		"dir", dstDir,
+		"bytes", size,
+	)
+	return size, nil
+}
+
+// flattenPausedCow re-attaches a temporary dm-snapshot over a paused sandbox's
+// base image + persistent CoW, flattens it into outPath, then tears the dm
+// device down. The CoW file is preserved (RemoveSnapshot never deletes it) so a
+// later Resume still works. A distinct dm name avoids colliding with the
+// "wrenn-{id}" device a concurrent Resume would create — though lifecycleMu
+// already serialises the two.
+func (m *Manager) flattenPausedCow(ctx context.Context, sandboxID string, meta *snapshotMeta, outPath string) error {
+	originLoop, err := m.loops.Acquire(meta.BaseTemplate)
+	if err != nil {
+		return fmt.Errorf("acquire loop: %w", err)
+	}
+	defer m.loops.Release(meta.BaseTemplate)
+
+	originSize, err := devicemapper.OriginSizeBytes(originLoop)
+	if err != nil {
+		return fmt.Errorf("origin size: %w", err)
+	}
+
+	dmDev, err := devicemapper.RestoreSnapshot(ctx, "wrenn-flat-"+sandboxID, originLoop, meta.CowPath, originSize)
+	if err != nil {
+		return fmt.Errorf("restore dm-snapshot: %w", err)
+	}
+	defer func() {
+		if rerr := devicemapper.RemoveSnapshot(context.Background(), dmDev); rerr != nil {
+			slog.Warn("dm remove after paused flatten", "id", sandboxID, "error", rerr)
+		}
+	}()
+
+	if err := devicemapper.FlattenSnapshot(dmDev.DevicePath, outPath); err != nil {
+		return fmt.Errorf("flatten rootfs: %w", err)
+	}
+	return nil
+}
+
+// copyMemorySnapshotFiles copies every regular file from a pause snapshot dir
+// into dstDir except the CoW and the wrenn meta — i.e. CH's own memory snapshot
+// artefacts (state.json, config.json, memory-ranges, …). It hardlinks when the
+// dirs share a filesystem (instant, preserves sparseness) and falls back to a
+// sparse-preserving copy across filesystems. Pause never mutates these files in
+// place — the next Pause writes a fresh dir and swaps — so a hardlink stays a
+// valid, immutable view for the template.
+func copyMemorySnapshotFiles(srcDir, dstDir string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return fmt.Errorf("read pause dir: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == layout.SandboxCowName || name == snapshotMetaFile {
+			continue
+		}
+		if err := linkOrCopyFile(filepath.Join(srcDir, name), filepath.Join(dstDir, name)); err != nil {
+			return fmt.Errorf("copy %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// linkOrCopyFile hardlinks from→to, falling back to a sparse-preserving copy
+// when the two paths live on different filesystems (os.Link returns EXDEV). A
+// plain byte copy would materialise the zero pages punched out of memory-ranges
+// — inflating a multi-GB snapshot to its full apparent size — so the fallback
+// uses `cp --sparse=always`, which re-detects and re-punches the holes.
+func linkOrCopyFile(from, to string) error {
+	if err := os.Link(from, to); err == nil {
+		return nil
+	}
+	if out, err := exec.Command("cp", "--sparse=always", from, to).CombinedOutput(); err != nil {
+		return fmt.Errorf("sparse copy: %s: %w", string(out), err)
+	}
+	return nil
 }
 
 // DeleteSnapshot removes a template snapshot directory. Refuses deletion
@@ -983,9 +1143,10 @@ func (m *Manager) PauseAll(ctx context.Context) {
 	wg.Wait()
 }
 
-// CleanupOrphanPauseDirs removes leftover *.staging-* and *.trash-* dirs
-// under sandboxes/ from any Pause that crashed before completing the swap.
-// Safe to call at agent startup before any sandbox is created or restored.
+// CleanupOrphanPauseDirs removes leftover *.staging-*, *.stage-*, and *.trash-*
+// dirs under sandboxes/ from any Pause/snapshot/flatten that crashed before
+// completing its swap or promote. Safe to call at agent startup before any
+// sandbox is created or restored.
 //
 // Per-sandbox cleanup happens implicitly during Destroy (which removes the
 // whole PauseSnapshotDir) — this function only handles agent-crash orphans.
@@ -1001,7 +1162,12 @@ func CleanupOrphanPauseDirs(wrennDir string) {
 			continue
 		}
 		name := e.Name()
-		if !strings.Contains(name, ".staging-") && !strings.Contains(name, ".trash-") {
+		// ".stage-" is the prefix used by snapshot/flatten staging dirs;
+		// ".staging-" + ".trash-" are used by Pause's swap. (".stage-" is not a
+		// substring of ".staging-", so all three need an explicit check.)
+		if !strings.Contains(name, ".stage-") &&
+			!strings.Contains(name, ".staging-") &&
+			!strings.Contains(name, ".trash-") {
 			continue
 		}
 		path := filepath.Join(sandboxesDir, name)

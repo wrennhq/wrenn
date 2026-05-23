@@ -266,7 +266,7 @@ func (c *SandboxEventConsumer) handleStopped(ctx context.Context, sandboxID pgty
 // audit.Log writes the row only — it does NOT republish an event, which would
 // loop back into this consumer. Do not switch to LogSandboxCreateSystem here.
 func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtype.UUID, event events.Event) {
-	for _, fromStatus := range []string{"running", "starting", "pausing", "resuming"} {
+	for _, fromStatus := range []string{"running", "starting", "pausing", "resuming", "snapshotting"} {
 		if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 			ID: sandboxID, Status: fromStatus, Status_2: "error",
 		}); err == nil {

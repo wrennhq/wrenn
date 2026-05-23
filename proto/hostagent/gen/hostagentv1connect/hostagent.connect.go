@@ -119,6 +119,9 @@ const (
 	// HostAgentServiceConnectProcessProcedure is the fully-qualified name of the HostAgentService's
 	// ConnectProcess RPC.
 	HostAgentServiceConnectProcessProcedure = "/hostagent.v1.HostAgentService/ConnectProcess"
+	// HostAgentServiceGetTemplateSizeProcedure is the fully-qualified name of the HostAgentService's
+	// GetTemplateSize RPC.
+	HostAgentServiceGetTemplateSizeProcedure = "/hostagent.v1.HostAgentService/GetTemplateSize"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -193,6 +196,11 @@ type HostAgentServiceClient interface {
 	KillProcess(context.Context, *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error)
 	// ConnectProcess re-attaches to a running process and streams its output.
 	ConnectProcess(context.Context, *connect.Request[gen.ConnectProcessRequest]) (*connect.ServerStreamForClient[gen.ConnectProcessResponse], error)
+	// GetTemplateSize returns the actual disk usage of a template's rootfs file.
+	// Used by the control plane to populate size_bytes for templates that have
+	// size 0 in the database (e.g. system base templates seeded before the
+	// rootfs was built).
+	GetTemplateSize(context.Context, *connect.Request[gen.GetTemplateSizeRequest]) (*connect.Response[gen.GetTemplateSizeResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -380,6 +388,12 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("ConnectProcess")),
 			connect.WithClientOptions(opts...),
 		),
+		getTemplateSize: connect.NewClient[gen.GetTemplateSizeRequest, gen.GetTemplateSizeResponse](
+			httpClient,
+			baseURL+HostAgentServiceGetTemplateSizeProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("GetTemplateSize")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -414,6 +428,7 @@ type hostAgentServiceClient struct {
 	listProcesses       *connect.Client[gen.ListProcessesRequest, gen.ListProcessesResponse]
 	killProcess         *connect.Client[gen.KillProcessRequest, gen.KillProcessResponse]
 	connectProcess      *connect.Client[gen.ConnectProcessRequest, gen.ConnectProcessResponse]
+	getTemplateSize     *connect.Client[gen.GetTemplateSizeRequest, gen.GetTemplateSizeResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -561,6 +576,11 @@ func (c *hostAgentServiceClient) ConnectProcess(ctx context.Context, req *connec
 	return c.connectProcess.CallServerStream(ctx, req)
 }
 
+// GetTemplateSize calls hostagent.v1.HostAgentService.GetTemplateSize.
+func (c *hostAgentServiceClient) GetTemplateSize(ctx context.Context, req *connect.Request[gen.GetTemplateSizeRequest]) (*connect.Response[gen.GetTemplateSizeResponse], error) {
+	return c.getTemplateSize.CallUnary(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -633,6 +653,11 @@ type HostAgentServiceHandler interface {
 	KillProcess(context.Context, *connect.Request[gen.KillProcessRequest]) (*connect.Response[gen.KillProcessResponse], error)
 	// ConnectProcess re-attaches to a running process and streams its output.
 	ConnectProcess(context.Context, *connect.Request[gen.ConnectProcessRequest], *connect.ServerStream[gen.ConnectProcessResponse]) error
+	// GetTemplateSize returns the actual disk usage of a template's rootfs file.
+	// Used by the control plane to populate size_bytes for templates that have
+	// size 0 in the database (e.g. system base templates seeded before the
+	// rootfs was built).
+	GetTemplateSize(context.Context, *connect.Request[gen.GetTemplateSizeRequest]) (*connect.Response[gen.GetTemplateSizeResponse], error)
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -816,6 +841,12 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("ConnectProcess")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServiceGetTemplateSizeHandler := connect.NewUnaryHandler(
+		HostAgentServiceGetTemplateSizeProcedure,
+		svc.GetTemplateSize,
+		connect.WithSchema(hostAgentServiceMethods.ByName("GetTemplateSize")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -876,6 +907,8 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceKillProcessHandler.ServeHTTP(w, r)
 		case HostAgentServiceConnectProcessProcedure:
 			hostAgentServiceConnectProcessHandler.ServeHTTP(w, r)
+		case HostAgentServiceGetTemplateSizeProcedure:
+			hostAgentServiceGetTemplateSizeHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -999,4 +1032,8 @@ func (UnimplementedHostAgentServiceHandler) KillProcess(context.Context, *connec
 
 func (UnimplementedHostAgentServiceHandler) ConnectProcess(context.Context, *connect.Request[gen.ConnectProcessRequest], *connect.ServerStream[gen.ConnectProcessResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.ConnectProcess is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) GetTemplateSize(context.Context, *connect.Request[gen.GetTemplateSizeRequest]) (*connect.Response[gen.GetTemplateSizeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.GetTemplateSize is not implemented"))
 }

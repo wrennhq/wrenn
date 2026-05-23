@@ -385,3 +385,17 @@ func (q *Queries) ListTemplatesByType(ctx context.Context, type_ string) ([]Temp
 	}
 	return items, nil
 }
+
+const updateTemplateSize = `-- name: UpdateTemplateSize :exec
+UPDATE templates SET size_bytes = $2 WHERE id = $1
+`
+
+type UpdateTemplateSizeParams struct {
+	ID        pgtype.UUID `json:"id"`
+	SizeBytes int64       `json:"size_bytes"`
+}
+
+func (q *Queries) UpdateTemplateSize(ctx context.Context, arg UpdateTemplateSizeParams) error {
+	_, err := q.db.Exec(ctx, updateTemplateSize, arg.ID, arg.SizeBytes)
+	return err
+}

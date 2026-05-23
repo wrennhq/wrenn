@@ -79,6 +79,7 @@ type snapshotResponse struct {
 	SizeBytes int64             `json:"size_bytes"`
 	CreatedAt string            `json:"created_at"`
 	Platform  bool              `json:"platform"`
+	Protected bool              `json:"protected"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
@@ -88,6 +89,7 @@ func templateToResponse(t db.Template) snapshotResponse {
 		Type:      t.Type,
 		SizeBytes: t.SizeBytes,
 		Platform:  t.TeamID == id.PlatformTeamID,
+		Protected: layout.IsSystemTemplate(t.TeamID, t.ID),
 	}
 	if t.Vcpus != 0 {
 		resp.VCPUs = &t.Vcpus
@@ -112,8 +114,8 @@ type createSnapshotRequest struct {
 	Name      string `json:"name"`
 }
 
-// Create handles POST /v1/snapshots. Takes a live snapshot of a running
-// sandbox and registers the result as a new template.
+// Create handles POST /v1/snapshots. Snapshots a running or paused sandbox and
+// registers the result as a new template.
 func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createSnapshotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -131,22 +133,18 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	ac := auth.MustFromContext(r.Context())
 
-	tmpl, err := h.sandboxSvc.CreateSnapshot(r.Context(), sandboxID, ac.TeamID, req.Name)
-	name := req.Name
-	if err == nil {
-		name = tmpl.Name
-	}
-	h.audit.LogSnapshotCreate(r.Context(), ac, name, err)
+	// Async: the VM briefly pauses to a "snapshotting" state, then resumes. The
+	// template is registered by a background goroutine; clients learn of the
+	// result via the SSE template.snapshot.create event (or by polling).
+	sb, name, err := h.sandboxSvc.CreateSnapshot(r.Context(), sandboxID, ac.TeamID, req.Name)
 	if err != nil {
-		if name != "" {
-			h.audit.LogSnapshotDeleteSystem(r.Context(), ac.TeamID, name, "cleanup_after_create_error", nil)
-		}
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
+	h.audit.LogSnapshotCreateRequested(r.Context(), ac, name)
 
-	writeJSON(w, http.StatusCreated, templateToResponse(tmpl))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
 // List handles GET /v1/snapshots.
@@ -159,6 +157,11 @@ func (h *snapshotHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list templates")
 		return
 	}
+
+	// Resolve actual on-disk sizes for templates with unknown size (e.g.
+	// system base templates seeded with size_bytes = 0). This queries a host
+	// agent and persists the result to the DB for subsequent requests.
+	templates = resolveTemplateSizes(r.Context(), h.db, h.pool, templates)
 
 	resp := make([]snapshotResponse, len(templates))
 	for i, t := range templates {
@@ -188,8 +191,8 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden", "platform templates cannot be deleted here")
 		return
 	}
-	if layout.IsMinimal(tmpl.TeamID, tmpl.ID) {
-		writeError(w, http.StatusForbidden, "forbidden", "the minimal template cannot be deleted")
+	if layout.IsSystemTemplate(tmpl.TeamID, tmpl.ID) {
+		writeError(w, http.StatusForbidden, "forbidden", "system base templates cannot be deleted")
 		return
 	}
 

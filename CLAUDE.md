@@ -97,7 +97,7 @@ Startup (`cmd/control-plane/main.go`) is a thin wrapper: `cpserver.Run(cpserver.
 
 **Packages:** `internal/hostagent/`, `internal/sandbox/`, `internal/vm/`, `internal/network/`, `internal/devicemapper/`, `internal/envdclient/`, `internal/snapshot/`
 
-**Production deployment:** `scripts/prepare-wrenn-user.sh` creates the `wrenn` system user, sets Linux capabilities (setcap) on wrenn-agent and all child binaries (iptables, losetup, dmsetup, etc.), installs an apt hook to restore capabilities after package updates, configures udev rules for `/dev/net/tun`, loads required kernel modules, and writes systemd unit files for both services. No sudo grants — all privilege is via capabilities.
+**Production deployment:** `make setup-host` (→ `scripts/setup-host.sh`) prepares the host: creates the `wrenn` system user, sets Linux capabilities (setcap) on wrenn-agent and all child binaries (iptables, losetup, dmsetup, etc.), installs an apt hook to restore capabilities after package updates, configures udev rules for `/dev/net/tun`, and loads required kernel modules. No sudo grants — all privilege is via capabilities. `make install` then copies the binaries to `/usr/local/bin` and installs the systemd units from `deploy/systemd/`.
 
 Startup (`cmd/host-agent/main.go`) wires: root/capabilities check → enable IP forwarding → clean up stale dm devices → `sandbox.Manager` (containing `vm.Manager` + `network.SlotAllocator` + `devicemapper.LoopRegistry`) → `hostagent.Server` (Connect RPC handler) → HTTP server.
 
@@ -258,13 +258,14 @@ To add a new query: add it to the appropriate `.sql` file in `db/queries/` → `
 ## Rootfs & Guest Init
 
 - **wrenn-init** (`images/wrenn-init.sh`): the PID 1 init script baked into every rootfs. Mounts virtual filesystems, sets hostname, writes `/etc/resolv.conf`, then execs envd.
-- **Updating the rootfs** after changing envd or wrenn-init: `bash scripts/update-minimal-rootfs.sh`. This builds envd via `make build-envd` (Rust → static musl binary), mounts the rootfs image, copies in the new binaries, and unmounts. Defaults to `/var/lib/wrenn/images/minimal.ext4`.
-- Rootfs images are minimal debootstrap — no systemd, no coreutils beyond busybox. Use `/bin/sh -c` for shell builtins inside the guest.
+- **System base templates**: four built-in distro images — `minimal-ubuntu` (id 0, default), `minimal-alpine` (1), `minimal-arch` (2), `minimal-fedora` (3) — built via `images/build-{ubuntu,alpine,arch,fedora}.sh` (or `make images`). All platform-owned, protected from deletion (reserved IDs 0–1024). Same static envd + tini run on all four. Each has a `wrenn-user` with passwordless sudo.
+- **Updating the rootfs** after changing envd or wrenn-init: `bash scripts/update-minimal-rootfs.sh`. Builds envd via `make build-envd` (Rust → static musl binary), then re-injects envd + wrenn-init + tini into all four system base images.
+- Rootfs images are built from distro containers — no systemd (init is overridden to `wrenn-init`). Use `/bin/sh -c` for shell builtins inside the guest.
 
 ## Fixed Paths (on host machine)
 
 - Kernel: `/var/lib/wrenn/kernels/vmlinux`
-- Base rootfs images: `/var/lib/wrenn/images/{template}.ext4`
+- Base rootfs images: `/var/lib/wrenn/images/teams/{base36(teamID)}/{base36(templateID)}/rootfs.ext4` (system templates use the platform team, base36 all-zeros)
 - Sandbox clones: `/var/lib/wrenn/sandboxes/`
 - Cloud Hypervisor: `/usr/local/bin/cloud-hypervisor`
 

@@ -38,7 +38,9 @@ IMAGE_NAME="$2"
 OUTPUT_DIR="${WRENN_IMAGES_PATH}/${IMAGE_NAME}"
 OUTPUT_FILE="${OUTPUT_DIR}/rootfs.ext4"
 MOUNT_DIR="/tmp/wrenn-rootfs-build"
-TAR_FILE="/tmp/wrenn-rootfs-export-${IMAGE_NAME}.tar"
+# IMAGE_NAME may contain slashes (e.g. teams/<team>/<id>); flatten them so the
+# temp tar is a single file in /tmp rather than a path into a missing dir.
+TAR_FILE="/tmp/wrenn-rootfs-export-${IMAGE_NAME//\//_}.tar"
 
 # Verify the container exists.
 if ! docker inspect "${CONTAINER}" > /dev/null 2>&1; then
@@ -121,16 +123,24 @@ if [ -z "${TINI_BIN}" ]; then
         aarch64) TINI_ARCH="arm64" ;;
         *)        echo "ERROR: Unsupported architecture: ${ARCH}"; exit 1 ;;
     esac
+    # Use the statically linked tini so the binary runs regardless of the
+    # guest's libc (glibc on Ubuntu/Arch/Fedora, musl on Alpine).
     TINI_VERSION="v0.19.0"
-    TINI_URL="https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-${TINI_ARCH}"
-    TINI_TMP="/tmp/tini-${TINI_ARCH}"
-    echo "    Downloading tini ${TINI_VERSION} (${TINI_ARCH})..."
+    TINI_URL="https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-${TINI_ARCH}"
+    TINI_TMP="/tmp/tini-static-${TINI_ARCH}"
+    echo "    Downloading tini ${TINI_VERSION} static (${TINI_ARCH})..."
     curl -fsSL "${TINI_URL}" -o "${TINI_TMP}"
     chmod +x "${TINI_TMP}"
     TINI_BIN="${TINI_TMP}"
 fi
 sudo mkdir -p "${MOUNT_DIR}/sbin"
-sudo cp "${TINI_BIN}" "${MOUNT_DIR}/sbin/tini"
+# On usr-merged distros (e.g. Fedora) /sbin is a symlink to /usr/bin, so a tini
+# already at /usr/bin/tini IS /sbin/tini — copying onto itself errors. Skip then.
+if [ "${TINI_BIN}" -ef "${MOUNT_DIR}/sbin/tini" ]; then
+    echo "    tini already at /sbin/tini (usr-merged); skipping copy"
+else
+    sudo cp "${TINI_BIN}" "${MOUNT_DIR}/sbin/tini"
+fi
 sudo chmod 755 "${MOUNT_DIR}/sbin/tini"
 
 # Step 6: Verify injected binaries and required container packages.

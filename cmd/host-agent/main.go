@@ -228,7 +228,7 @@ func main() {
 			// snapshotted state. User-initiated Pauses already running are
 			// awaited by PauseAll/Destroy's lifecycleMu serialization.
 			mgr.Shutdown(shutdownCtx)
-			sandbox.ShrinkMinimalImage(rootDir)
+			sandbox.ShrinkSystemImages(rootDir)
 			if err := httpServer.Shutdown(shutdownCtx); err != nil {
 				slog.Error("http server shutdown error", "error", err)
 			}

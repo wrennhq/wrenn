@@ -434,7 +434,7 @@
 			case 'running': return 'var(--color-accent)';
 			case 'paused':  return 'var(--color-amber)';
 			case 'error':   return 'var(--color-red)';
-			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+			case 'starting': case 'resuming': case 'pausing': case 'snapshotting': case 'stopping':
 				return 'var(--color-blue)';
 			default:        return 'var(--color-text-muted)';
 		}
@@ -445,7 +445,7 @@
 			case 'running': return 'rgba(94,140,88,0.12)';
 			case 'paused':  return 'rgba(212,167,60,0.12)';
 			case 'error':   return 'rgba(207,129,114,0.12)';
-			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+			case 'starting': case 'resuming': case 'pausing': case 'snapshotting': case 'stopping':
 				return 'rgba(90,159,212,0.12)';
 			default:        return 'rgba(255,255,255,0.05)';
 		}
@@ -456,7 +456,7 @@
 			case 'running': return 'rgba(94,140,88,0.3)';
 			case 'paused':  return 'rgba(212,167,60,0.3)';
 			case 'error':   return 'rgba(207,129,114,0.3)';
-			case 'starting': case 'resuming': case 'pausing': case 'stopping':
+			case 'starting': case 'resuming': case 'pausing': case 'snapshotting': case 'stopping':
 				return 'rgba(90,159,212,0.3)';
 			default:        return 'rgba(255,255,255,0.08)';
 		}
@@ -475,6 +475,10 @@
 		if (sec < 60) return `${sec}s`;
 		if (sec < 3600) return `${Math.round(sec / 60)}m`;
 		return `${Math.round(sec / 3600)}h`;
+	}
+
+	function fmtDiskGB(mb: number): string {
+		return (mb / 1024).toFixed(1) + ' GB';
 	}
 </script>
 
@@ -712,7 +716,18 @@
 					<!-- Disk -->
 					<div class="flex flex-1 flex-col gap-2.5 bg-[var(--color-bg-3)] px-6 py-5">
 						<div class="text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]">Disk</div>
-						<span class="mt-0.5 font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-muted)]">—</span>
+						{#if capsule.disk_size_mb}
+							<div class="mt-0.5 flex items-baseline gap-1.5">
+								<span class="font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-bright)]">
+									{capsule.disk_used_mb != null ? fmtDiskGB(capsule.disk_used_mb) : '?'}
+								</span>
+								<span class="font-mono text-label text-[var(--color-text-muted)]">
+									/ {fmtDiskGB(capsule.disk_size_mb)}
+								</span>
+							</div>
+						{:else}
+							<span class="mt-0.5 font-serif text-[2.571rem] leading-none tracking-[-0.04em] text-[var(--color-text-muted)]">—</span>
+						{/if}
 					</div>
 
 					<!-- Started -->

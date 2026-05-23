@@ -2,7 +2,7 @@
 name = "envd"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 
 [dependencies]
 # Async runtime
