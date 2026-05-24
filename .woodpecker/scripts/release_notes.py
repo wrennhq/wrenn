@@ -208,7 +208,7 @@ def download_release_notes(capsule: Capsule) -> None:
     local_path = os.path.normpath(LOCAL_OUTPUT)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
-    print(f"Downloading release notes from capsule...")
+    print("Downloading release notes from capsule...")
     content = capsule.files.read_bytes(CAPSULE_OUTPUT)
     with open(local_path, "wb") as f:
         f.write(content)
@@ -220,7 +220,7 @@ def download_release_notes(capsule: Capsule) -> None:
 def main() -> None:
     model = os.environ.get("OPENCODE_MODEL", DEFAULT_MODEL)
 
-    with Capsule(template="opencode", wait=True, vcpus=2, memory_mb=2048) as capsule:
+    with Capsule(template="opencode", wait=True) as capsule:
         print(f"Capsule: {capsule.capsule_id}")
 
         capsule.git.clone(

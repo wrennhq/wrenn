@@ -49,6 +49,9 @@ def build_rust(capsule: Capsule) -> bool:
         "make build-envd",
         background=True,
         cwd=REPO_DIR,
+        envs={
+            "PATH": "/home/wrenn-user/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        },
     )
     print(f"rust build started (pid={handle.pid}), streaming output...")
 
@@ -87,7 +90,7 @@ def download_artifacts(capsule: Capsule) -> bool:
 
 
 def main() -> None:
-    with Capsule(template="rust-1.95", wait=True, vcpus=4, memory_mb=4096) as capsule:
+    with Capsule(template="rust-1.95", wait=True) as capsule:
         print(f"Capsule: {capsule.capsule_id}")
         if not clone_repo(capsule):
             sys.exit(1)

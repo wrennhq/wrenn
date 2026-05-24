@@ -97,7 +97,7 @@ def download_artifacts(capsule: Capsule) -> bool:
 
 
 def main() -> None:
-    with Capsule(template="golang", wait=True, vcpus=4, memory_mb=4096) as capsule:
+    with Capsule(template="golang", wait=True) as capsule:
         print(f"Capsule: {capsule.capsule_id}")
         if not clone_repo(capsule):
             sys.exit(1)
