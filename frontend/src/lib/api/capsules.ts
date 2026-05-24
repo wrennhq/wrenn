@@ -39,8 +39,6 @@ export type Capsule = {
 	vcpus: number;
 	memory_mb: number;
 	timeout_sec: number;
-	guest_ip?: string;
-	host_ip?: string;
 	created_at: string;
 	started_at?: string;
 	last_active_at?: string;

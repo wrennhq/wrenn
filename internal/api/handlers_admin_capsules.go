@@ -40,6 +40,7 @@ func (h *adminCapsuleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Template:   req.Template,
 		VCPUs:      req.VCPUs,
 		MemoryMB:   req.MemoryMB,
+		DiskSizeMB: req.DiskSizeMB,
 		TimeoutSec: req.TimeoutSec,
 	})
 	ac.TeamID = id.PlatformTeamID

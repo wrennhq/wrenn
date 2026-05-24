@@ -2716,14 +2716,39 @@ paths:
       tags: [admin]
       security:
         - sessionAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number for pagination.
       responses:
         "200":
-          description: Teams list
+          description: Paginated teams list
           content:
             application/json:
               schema:
-                type: array
-                items: {type: object}
+                type: object
+                properties:
+                  teams:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminTeam"
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  per_page:
+                    type: integer
+                  total_pages:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/admin/teams/{id}/byoc:
     put:
@@ -2743,12 +2768,20 @@ paths:
           application/json:
             schema:
               type: object
-              required: [byoc]
+              required: [enabled]
               properties:
-                byoc: {type: boolean}
+                enabled:
+                  type: boolean
+                  description: true to enable BYOC, false to disable.
       responses:
         "204":
           description: Updated
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/admin/teams/{id}:
     delete:
@@ -2765,6 +2798,38 @@ paths:
       responses:
         "204":
           description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/hosts:
+    get:
+      summary: List all hosts (admin)
+      operationId: adminListHosts
+      tags: [admin]
+      security:
+        - sessionAuth: []
+      description: |
+        Returns all hosts across all teams with per-host resource consumption.
+        Includes team name for hosts associated with a team.
+      responses:
+        "200":
+          description: Hosts list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Host"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/admin/users:
     get:
@@ -3581,10 +3646,6 @@ components:
               type: integer
             memory_mb_reserved:
               type: integer
-            sampled_at:
-              type: string
-              format: date-time
-              nullable: true
         peaks:
           type: object
           description: Maximum values over the last 30 days.
@@ -3633,10 +3694,6 @@ components:
           type: integer
         timeout_sec:
           type: integer
-        guest_ip:
-          type: string
-        host_ip:
-          type: string
         created_at:
           type: string
           format: date-time
@@ -3664,8 +3721,8 @@ components:
           description: Maximum disk capacity in MiB.
         disk_used_mb:
           type: integer
-          nullable: true
-          description: Current disk usage in MiB. Only populated on individual capsule GET; null in list responses.
+          format: int64
+          description: Current disk usage in MiB. Only populated on individual capsule GET; omitted in list responses.
 
     CreateSnapshotRequest:
       type: object
@@ -4017,6 +4074,25 @@ components:
         updated_at:
           type: string
           format: date-time
+        team_name:
+          type: string
+          nullable: true
+          description: Team name (included when listing hosts as an admin).
+        running_vcpus:
+          type: integer
+          description: Total vCPUs allocated to running capsules on this host.
+        running_memory_mb:
+          type: integer
+          description: Total memory in MB allocated to running capsules on this host.
+        running_disk_mb:
+          type: integer
+          description: Total disk in MB allocated to running capsules on this host.
+        paused_memory_mb:
+          type: integer
+          description: Total memory in MB allocated to paused capsules on this host.
+        paused_disk_mb:
+          type: integer
+          description: Total disk in MB allocated to paused capsules on this host.
 
     RefreshHostTokenRequest:
       type: object
@@ -4127,6 +4203,39 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TeamMember"
+
+    AdminTeam:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        is_byoc:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        member_count:
+          type: integer
+        owner_name:
+          type: string
+        owner_email:
+          type: string
+        active_sandbox_count:
+          type: integer
+        channel_count:
+          type: integer
+        running_vcpus:
+          type: integer
+        running_memory_mb:
+          type: integer
 
     CapsuleMetrics:
       type: object

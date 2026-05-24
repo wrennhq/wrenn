@@ -273,7 +273,7 @@ func (m *Manager) Create(
 		memoryMB = 512
 	}
 	if diskSizeMB <= 0 {
-		diskSizeMB = 5120 // 5 GB default
+		diskSizeMB = m.cfg.DefaultRootfsSizeMB
 	}
 	timeoutSec = clampTimeout(timeoutSec)
 
