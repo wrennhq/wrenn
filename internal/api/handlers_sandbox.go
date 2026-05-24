@@ -27,7 +27,6 @@ type createSandboxRequest struct {
 	Template   string `json:"template"`
 	VCPUs      int32  `json:"vcpus"`
 	MemoryMB   int32  `json:"memory_mb"`
-	DiskSizeMB int32  `json:"disk_size_mb"`
 	TimeoutSec int32  `json:"timeout_sec"`
 }
 
@@ -99,7 +98,6 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Template:   req.Template,
 		VCPUs:      req.VCPUs,
 		MemoryMB:   req.MemoryMB,
-		DiskSizeMB: req.DiskSizeMB,
 		TimeoutSec: req.TimeoutSec,
 	})
 	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, req.Template, err)

@@ -410,6 +410,23 @@ func (q *Queries) UpdateLastActive(ctx context.Context, arg UpdateLastActivePara
 	return err
 }
 
+const updateSandboxDiskSize = `-- name: UpdateSandboxDiskSize :exec
+UPDATE sandboxes
+SET disk_size_mb = $2,
+    last_updated = NOW()
+WHERE id = $1
+`
+
+type UpdateSandboxDiskSizeParams struct {
+	ID         pgtype.UUID `json:"id"`
+	DiskSizeMb int32       `json:"disk_size_mb"`
+}
+
+func (q *Queries) UpdateSandboxDiskSize(ctx context.Context, arg UpdateSandboxDiskSizeParams) error {
+	_, err := q.db.Exec(ctx, updateSandboxDiskSize, arg.ID, arg.DiskSizeMb)
+	return err
+}
+
 const updateSandboxMetadata = `-- name: UpdateSandboxMetadata :exec
 UPDATE sandboxes
 SET metadata = $2,

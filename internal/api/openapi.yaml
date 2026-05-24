@@ -3592,13 +3592,6 @@ components:
         memory_mb:
           type: integer
           default: 512
-        disk_size_mb:
-          type: integer
-          default: 5120
-          description: >
-            Maximum size of the per-capsule copy-on-write disk in MB. Capped
-            at 5 GB by default; the actual size is max(disk_size_mb, origin
-            rootfs size).
         timeout_sec:
           type: integer
           minimum: 0

@@ -61,7 +61,6 @@ export type CreateCapsuleParams = {
 	template?: string;
 	vcpus?: number;
 	memory_mb?: number;
-	disk_size_mb?: number;
 	timeout_sec?: number;
 };
 
