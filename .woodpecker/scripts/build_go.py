@@ -6,7 +6,7 @@ from wrenn._git import GitCommandError
 
 GO_VERSION = os.getenv("GO_VERSION", "1.25.8")
 REPO_URL = "https://git.omukk.dev/wrenn/wrenn.git"
-REPO_DIR = "~/wrenn"
+REPO_DIR = "/home/wrenn-user/wrenn"
 BUILDS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "builds")
 
 
@@ -97,7 +97,7 @@ def download_artifacts(capsule: Capsule) -> bool:
 
 
 def main() -> None:
-    with Capsule(template="go-1.25.8", wait=True, vcpus=4, memory_mb=4096) as capsule:
+    with Capsule(template="golang", wait=True, vcpus=4, memory_mb=4096) as capsule:
         print(f"Capsule: {capsule.capsule_id}")
         if not clone_repo(capsule):
             sys.exit(1)

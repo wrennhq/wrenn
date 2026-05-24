@@ -6,7 +6,7 @@ from wrenn._git import GitCommandError
 
 RUST_VERSION = os.getenv("RUST_VERSION", "1.95.0")
 REPO_URL = "https://git.omukk.dev/wrenn/wrenn.git"
-REPO_DIR = "~/wrenn"
+REPO_DIR = "/home/wrenn-user/wrenn"
 BUILDS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "builds")
 
 
@@ -29,42 +29,6 @@ def run(capsule: Capsule, cmd: str, timeout: int = 30, envs={}) -> int:
         return result.exit_code
     print(f"OK   [{cmd.split()[0]}]")
     return 0
-
-
-# def install_rust(capsule: Capsule) -> bool:
-#     if run(capsule, "apt update", timeout=120) != 0:
-#         return False
-#     if (
-#         run(
-#             capsule,
-#             "apt install -y make build-essential file curl musl-tools protobuf-compiler",
-#             timeout=300,
-#         )
-#         != 0
-#     ):
-#         return False
-#     if (
-#         run(
-#             capsule,
-#             f"curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain {RUST_VERSION}",
-#             timeout=300,
-#         )
-#         != 0
-#     ):
-#         return False
-#     if (
-#         run(
-#             capsule,
-#             "/root/.cargo/bin/rustup target add x86_64-unknown-linux-musl",
-#             timeout=120,
-#         )
-#         != 0
-#     ):
-#         return False
-
-#     result = capsule.commands.run("/root/.cargo/bin/rustc --version")
-#     print(result.stdout.strip())
-#     return result.exit_code == 0
 
 
 def clone_repo(capsule: Capsule) -> bool:
