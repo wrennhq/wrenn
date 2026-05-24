@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -21,10 +22,11 @@ type hostHandler struct {
 	svc     *service.HostService
 	queries *db.Queries
 	audit   *audit.AuditLogger
+	monitor *HostMonitor
 }
 
-func newHostHandler(svc *service.HostService, queries *db.Queries, al *audit.AuditLogger) *hostHandler {
-	return &hostHandler{svc: svc, queries: queries, audit: al}
+func newHostHandler(svc *service.HostService, queries *db.Queries, al *audit.AuditLogger, monitor *HostMonitor) *hostHandler {
+	return &hostHandler{svc: svc, queries: queries, audit: al, monitor: monitor}
 }
 
 // Request/response types.
@@ -98,6 +100,11 @@ type hostResponse struct {
 	CreatedBy        string  `json:"created_by"`
 	CreatedAt        string  `json:"created_at"`
 	UpdatedAt        string  `json:"updated_at"`
+	RunningVcpus     int32   `json:"running_vcpus"`
+	RunningMemoryMb  int32   `json:"running_memory_mb"`
+	RunningDiskMb    int32   `json:"running_disk_mb"`
+	PausedMemoryMb   int32   `json:"paused_memory_mb"`
+	PausedDiskMb     int32   `json:"paused_disk_mb"`
 }
 
 func hostToResponse(h db.Host) hostResponse {
@@ -136,9 +143,34 @@ func hostToResponse(h db.Host) hostResponse {
 		s := h.LastHeartbeatAt.Time.Format(time.RFC3339)
 		resp.LastHeartbeatAt = &s
 	}
-	// created_at and updated_at are NOT NULL DEFAULT NOW(), always valid.
 	resp.CreatedAt = h.CreatedAt.Time.Format(time.RFC3339)
 	resp.UpdatedAt = h.UpdatedAt.Time.Format(time.RFC3339)
+	return resp
+}
+
+func hostToResponseWithLoad(h db.ListHostsByTeamRow) hostResponse {
+	resp := hostToResponse(db.Host{
+		ID:               h.ID,
+		Type:             h.Type,
+		TeamID:           h.TeamID,
+		Provider:         h.Provider,
+		AvailabilityZone: h.AvailabilityZone,
+		Arch:             h.Arch,
+		CpuCores:         h.CpuCores,
+		MemoryMb:         h.MemoryMb,
+		DiskGb:           h.DiskGb,
+		Address:          h.Address,
+		Status:           h.Status,
+		LastHeartbeatAt:  h.LastHeartbeatAt,
+		CreatedBy:        h.CreatedBy,
+		CreatedAt:        h.CreatedAt,
+		UpdatedAt:        h.UpdatedAt,
+	})
+	resp.RunningVcpus = h.RunningVcpus
+	resp.RunningMemoryMb = h.RunningMemoryMb
+	resp.RunningDiskMb = h.RunningDiskMb
+	resp.PausedMemoryMb = h.PausedMemoryMb
+	resp.PausedDiskMb = h.PausedDiskMb
 	return resp
 }
 
@@ -233,7 +265,7 @@ func (h *hostHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]hostResponse, len(hosts))
 	for i, host := range hosts {
-		resp[i] = hostToResponse(host)
+		resp[i] = hostToResponseWithLoad(host)
 		if host.TeamID.Valid {
 			key := id.FormatTeamID(host.TeamID)
 			if name, ok := teamNames[key]; ok {
@@ -335,6 +367,54 @@ func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	writeError(w, status, code, msg)
 }
 
+// AdminList handles GET /v1/admin/hosts.
+// Returns all hosts with per-host resource consumption. Admin-only.
+func (h *hostHandler) AdminList(w http.ResponseWriter, r *http.Request) {
+	hosts, err := h.svc.ListAdmin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", "failed to list hosts")
+		return
+	}
+
+	// Collect unique team IDs to fetch team names.
+	var teamNames map[string]string
+	seen := make(map[string]struct{})
+	for _, host := range hosts {
+		if host.TeamID.Valid {
+			key := id.FormatTeamID(host.TeamID)
+			seen[key] = struct{}{}
+		}
+	}
+	if len(seen) > 0 {
+		teamNames = make(map[string]string, len(seen))
+		for _, host := range hosts {
+			if !host.TeamID.Valid {
+				continue
+			}
+			key := id.FormatTeamID(host.TeamID)
+			if _, ok := teamNames[key]; ok {
+				continue
+			}
+			if team, err := h.queries.GetTeam(r.Context(), host.TeamID); err == nil {
+				teamNames[key] = team.Name
+			}
+		}
+	}
+
+	resp := make([]hostResponse, len(hosts))
+	for i, host := range hosts {
+		resp[i] = hostToResponseWithLoad(db.ListHostsByTeamRow(host))
+		if host.TeamID.Valid {
+			key := id.FormatTeamID(host.TeamID)
+			if name, ok := teamNames[key]; ok {
+				resp[i].TeamName = &name
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // RegenerateToken handles POST /v1/hosts/{id}/token.
 func (h *hostHandler) RegenerateToken(w http.ResponseWriter, r *http.Request) {
 	hostIDStr := chi.URLParam(r, "id")
@@ -426,9 +506,12 @@ func (h *hostHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Log marked_up if the host just recovered from unreachable.
+	// If the host just recovered from unreachable, log it and trigger immediate
+	// reconciliation so "missing" sandboxes are resolved without waiting for the
+	// next monitor tick.
 	if prevHost.Status == "unreachable" {
 		h.audit.LogHostMarkedUp(r.Context(), prevHost.TeamID, hc.HostID)
+		go h.monitor.ReconcileHost(context.Background(), hc.HostID)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

@@ -57,7 +57,11 @@ impl ProcessHandle {
     }
 
     pub fn send_signal(&self, sig: Signal) -> Result<(), ConnectError> {
-        signal::kill(Pid::from_raw(self.pid as i32), sig).map_err(|e| {
+        // Signal the whole process group (negative pid), not just the immediate
+        // /bin/sh wrapper. Otherwise children the process spawned are orphaned
+        // and keep running. Both spawn paths make the process a group leader
+        // (setsid for pty, setpgid for pipe), so pgid == pid.
+        signal::kill(Pid::from_raw(-(self.pid as i32)), sig).map_err(|e| {
             ConnectError::new(ErrorCode::Internal, format!("error sending signal: {e}"))
         })
     }
@@ -165,11 +169,22 @@ pub fn spawn_process(
         env.push((k.clone(), v.clone()));
     }
 
+    // Reset the child's nice value only when envd itself was started at an
+    // elevated nice value (delta > 0 means raising the nice number / lowering
+    // priority, which is permitted for non-root processes). A non-root process
+    // cannot improve its priority, so skip the `nice` wrapper otherwise — it
+    // would fail with EPERM ("cannot set niceness: permission denied") for
+    // commands run as a non-root user. Writing 100 to the process's own
+    // oom_score_adj is always permitted (raising the score).
     let nice_delta = 0 - current_nice();
-    let oom_script = format!(
-        r#"echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n {} "${{@}}""#,
-        nice_delta
-    );
+    let oom_script = if nice_delta > 0 {
+        format!(
+            r#"echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n {} "${{@}}""#,
+            nice_delta
+        )
+    } else {
+        r#"echo 100 > /proc/$$/oom_score_adj && exec "$@""#.to_string()
+    };
     let mut wrapper_args = vec![
         "-c".to_string(),
         oom_script,
@@ -264,7 +279,7 @@ pub fn spawn_process(
         let end_rx = handle.subscribe_end();
 
         let data_tx_clone = data_tx.clone();
-        std::thread::spawn(move || {
+        let pty_reader = std::thread::spawn(move || {
             let mut master = master_clone;
             let mut buf = vec![0u8; PTY_CHUNK_SIZE];
             loop {
@@ -282,7 +297,11 @@ pub fn spawn_process(
         let handle_for_waiter = Arc::clone(&handle);
         std::thread::spawn(move || {
             let mut child = child;
-            let end_event = match child.wait() {
+            let status = child.wait();
+            // Drain the pty to EOF before publishing the end event so trailing
+            // output is never lost to a process-exit/pty-read race.
+            let _ = pty_reader.join();
+            let end_event = match status {
                 Ok(s) => EndEvent {
                     exit_code: s.code().unwrap_or(-1),
                     exited: s.code().is_some(),
@@ -320,6 +339,11 @@ pub fn spawn_process(
 
         unsafe {
             command.pre_exec(move || {
+                // Become a process-group leader so SendSignal can kill the
+                // whole group, not just this wrapper. The pty path gets this
+                // for free via setsid().
+                nix::unistd::setpgid(Pid::from_raw(0), Pid::from_raw(0))
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 libc::setgid(gid);
                 libc::setuid(uid);
                 Ok(())
@@ -349,9 +373,11 @@ pub fn spawn_process(
         let data_rx = handle.subscribe_data();
         let end_rx = handle.subscribe_end();
 
+        let mut output_readers: Vec<std::thread::JoinHandle<()>> = Vec::new();
+
         if let Some(mut out) = stdout {
             let tx = data_tx.clone();
-            std::thread::spawn(move || {
+            output_readers.push(std::thread::spawn(move || {
                 let mut buf = vec![0u8; STD_CHUNK_SIZE];
                 loop {
                     match out.read(&mut buf) {
@@ -362,12 +388,12 @@ pub fn spawn_process(
                         Err(_) => break,
                     }
                 }
-            });
+            }));
         }
 
         if let Some(mut err_pipe) = stderr {
             let tx = data_tx.clone();
-            std::thread::spawn(move || {
+            output_readers.push(std::thread::spawn(move || {
                 let mut buf = vec![0u8; STD_CHUNK_SIZE];
                 loop {
                     match err_pipe.read(&mut buf) {
@@ -378,13 +404,19 @@ pub fn spawn_process(
                         Err(_) => break,
                     }
                 }
-            });
+            }));
         }
 
         let end_tx_clone = end_tx.clone();
         let handle_for_waiter = Arc::clone(&handle);
         std::thread::spawn(move || {
-            let end_event = match child.wait() {
+            let status = child.wait();
+            // Drain stdout/stderr to EOF before publishing the end event so
+            // trailing output is never lost to a process-exit/pipe-read race.
+            for reader in output_readers {
+                let _ = reader.join();
+            }
+            let end_event = match status {
                 Ok(s) => EndEvent {
                     exit_code: s.code().unwrap_or(-1),
                     exited: s.code().is_some(),
@@ -414,6 +446,8 @@ fn current_nice() -> i32 {
         if *libc::__errno_location() != 0 {
             return 0;
         }
-        20 - prio
+        // getpriority(PRIO_PROCESS, 0) returns the nice value directly,
+        // in the range [-20, 19]; the normal default is 0.
+        prio
     }
 }

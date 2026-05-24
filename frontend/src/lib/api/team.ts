@@ -1,4 +1,5 @@
 import { apiFetch, type ApiResult } from '$lib/api/client';
+import type { AuthResponse } from '$lib/api/auth';
 
 export type TeamMember = {
 	user_id: string;
@@ -42,9 +43,7 @@ export async function createTeam(name: string): Promise<ApiResult<TeamWithRole>>
 	return apiFetch('POST', '/api/v1/teams', { name });
 }
 
-export async function switchTeam(
-	teamId: string
-): Promise<ApiResult<{ token: string; user_id: string; team_id: string; email: string; name: string }>> {
+export async function switchTeam(teamId: string): Promise<ApiResult<AuthResponse>> {
 	return apiFetch('POST', '/api/v1/auth/switch-team', { team_id: teamId });
 }
 
@@ -98,6 +97,8 @@ export type AdminTeam = {
 	owner_email: string;
 	active_sandbox_count: number;
 	channel_count: number;
+	running_vcpus: number;
+	running_memory_mb: number;
 };
 
 export type AdminTeamsResponse = {

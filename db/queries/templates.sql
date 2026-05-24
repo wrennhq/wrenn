@@ -42,6 +42,9 @@ DELETE FROM templates WHERE name = $1 AND team_id = $2;
 -- Bulk delete all templates owned by a team (for team soft-delete cleanup).
 DELETE FROM templates WHERE team_id = $1;
 
+-- name: UpdateTemplateSize :exec
+UPDATE templates SET size_bytes = $2 WHERE id = $1;
+
 -- name: ListTemplatesByTeamOnly :many
 -- List templates owned by a specific team (NOT including platform templates).
 SELECT * FROM templates WHERE team_id = $1 ORDER BY created_at DESC;

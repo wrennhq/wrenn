@@ -104,6 +104,11 @@ service HostAgentService {
   // ConnectProcess re-attaches to a running process and streams its output.
   rpc ConnectProcess(ConnectProcessRequest) returns (stream ConnectProcessResponse);
 
+  // GetTemplateSize returns the actual disk usage of a template's rootfs file.
+  // Used by the control plane to populate size_bytes for templates that have
+  // size 0 in the database (e.g. system base templates seeded before the
+  // rootfs was built).
+  rpc GetTemplateSize(GetTemplateSizeRequest) returns (GetTemplateSizeResponse);
 }
 
 message CreateSandboxRequest {
@@ -123,8 +128,7 @@ message CreateSandboxRequest {
   // inactivity. 0 means no auto-pause.
   int32 timeout_sec = 4;
 
-  // Disk size in MB for the rootfs. Base images are expanded to this size
-  // at host agent startup. Default: 5120 (5 GB).
+  // Deprecated: disk size is now determined by the host agent.
   int32 disk_size_mb = 6;
 
   // Team UUID that owns the template (hex string). All-zeros = platform.
@@ -146,8 +150,12 @@ message CreateSandboxResponse {
   string host_ip = 3;
 
   // Runtime metadata collected during sandbox creation (e.g. envd_version,
-  // kernel_version, firecracker_version, agent_version).
+  // kernel_version, vmm_version, agent_version).
   map<string, string> metadata = 4;
+
+  // Actual disk size in MB allocated for the sandbox rootfs.
+  // Determined by the host agent (max of requested size and origin rootfs size).
+  int32 disk_size_mb = 5;
 }
 
 message DestroySandboxRequest {
@@ -192,7 +200,8 @@ message ResumeSandboxResponse {
 
 message CreateSnapshotRequest {
   string sandbox_id = 1;
-  // Deprecated: use team_id + template_id instead.
+  // Human-readable template name, recorded into the snapshot's
+  // wrenn-snapshot.json metadata.
   string name = 2;
   // Team UUID that will own the new template.
   string team_id = 3;
@@ -222,6 +231,10 @@ message ExecRequest {
   repeated string args = 3;
   // Timeout for the command in seconds (default: 30).
   int32 timeout_sec = 4;
+  // Environment variables to set for the command.
+  map<string, string> envs = 5;
+  // Working directory for the command.
+  string cwd = 6;
 }
 
 message ExecResponse {
@@ -435,6 +448,19 @@ message FlattenRootfsRequest {
 }
 
 message FlattenRootfsResponse {
+  int64 size_bytes = 1;
+}
+
+message GetTemplateSizeRequest {
+  // Team UUID that owns the template (hex string). All-zeros = platform.
+  string team_id = 1;
+  // Template UUID (hex string).
+  string template_id = 2;
+}
+
+message GetTemplateSizeResponse {
+  // Actual disk usage of the template rootfs in bytes. Uses block-level
+  // accounting so sparse files report only allocated blocks.
   int64 size_bytes = 1;
 }
 

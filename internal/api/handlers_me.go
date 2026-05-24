@@ -2,9 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +17,8 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
@@ -34,40 +33,60 @@ type meHandler struct {
 	db            *db.Queries
 	pool          *pgxpool.Pool
 	rdb           *redis.Client
-	jwtSecret     []byte
+	hmacKey       []byte // HMAC key for OAuth state and link cookies (was jwtSecret)
+	sessions      *session.Service
 	mailer        email.Mailer
 	oauthRegistry *oauth.Registry
 	redirectURL   string
 	teamSvc       *service.TeamService
+	authHooks     []cpextension.AuthHook
 }
 
 func newMeHandler(
 	db *db.Queries,
 	pool *pgxpool.Pool,
 	rdb *redis.Client,
-	jwtSecret []byte,
+	hmacKey []byte,
+	sessions *session.Service,
 	mailer email.Mailer,
 	registry *oauth.Registry,
 	redirectURL string,
 	teamSvc *service.TeamService,
+	hooks []cpextension.AuthHook,
 ) *meHandler {
 	return &meHandler{
 		db:            db,
 		pool:          pool,
 		rdb:           rdb,
-		jwtSecret:     jwtSecret,
+		hmacKey:       hmacKey,
+		sessions:      sessions,
 		mailer:        mailer,
 		oauthRegistry: registry,
 		redirectURL:   strings.TrimRight(redirectURL, "/"),
 		teamSvc:       teamSvc,
+		authHooks:     hooks,
 	}
 }
 
 type meResponse struct {
+	UserID      string   `json:"user_id"`
+	TeamID      string   `json:"team_id"`
 	Name        string   `json:"name"`
 	Email       string   `json:"email"`
+	Role        string   `json:"role"`
+	IsAdmin     bool     `json:"is_admin"`
 	HasPassword bool     `json:"has_password"`
 	Providers   []string `json:"providers"`
+}
+
+type sessionRow struct {
+	ID         string `json:"id"`
+	UserAgent  string `json:"user_agent"`
+	IPAddress  string `json:"ip_address"`
+	CreatedAt  string `json:"created_at"`
+	LastSeenAt string `json:"last_seen_at"`
+	ExpiresAt  string `json:"expires_at"`
+	Current    bool   `json:"current"`
 }
 
 type updateNameRequest struct {
@@ -116,14 +135,19 @@ func (h *meHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, meResponse{
+		UserID:      id.FormatUserID(ac.UserID),
+		TeamID:      id.FormatTeamID(ac.TeamID),
 		Name:        user.Name,
 		Email:       user.Email,
+		Role:        ac.Role,
+		IsAdmin:     user.IsAdmin,
 		HasPassword: user.PasswordHash.Valid,
 		Providers:   providerNames,
 	})
 }
 
-// UpdateName handles PATCH /v1/me — updates the user's name and re-issues a JWT.
+// UpdateName handles PATCH /v1/me — updates the user's name and refreshes
+// any cached session blobs so the new name shows up on next request.
 func (h *meHandler) UpdateName(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 	ctx := r.Context()
@@ -148,31 +172,11 @@ func (h *meHandler) UpdateName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.db.GetUserByID(ctx, ac.UserID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get user")
-		return
+	if err := h.sessions.InvalidateCacheForUser(ctx, ac.UserID); err != nil {
+		slog.Warn("update name: invalidate session cache failed", "error", err)
 	}
 
-	team, role, err := loginTeam(ctx, h.db, ac.UserID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get team")
-		return
-	}
-
-	token, err := auth.SignJWT(h.jwtSecret, ac.UserID, team.ID, user.Email, req.Name, role, user.IsAdmin)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, authResponse{
-		Token:  token,
-		UserID: id.FormatUserID(ac.UserID),
-		TeamID: id.FormatTeamID(team.ID),
-		Email:  user.Email,
-		Name:   req.Name,
-	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ChangePassword handles POST /v1/me/password.
@@ -235,6 +239,14 @@ func (h *meHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Revoke every session for this user — including the caller's — so a new
+	// password resets all device access. Clear cookies on the response so the
+	// caller is signed out immediately.
+	if err := h.sessions.RevokeAllForUser(ctx, ac.UserID); err != nil {
+		slog.Warn("change password: revoke sessions failed", "error", err)
+	}
+	clearSessionCookies(w, isSecure(r))
+
 	isAdding := !user.PasswordHash.Valid
 	go func() {
 		sendCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -285,8 +297,8 @@ func (h *meHandler) RequestPasswordReset(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rawToken := generateResetToken()
-	tokenHash := hashResetToken(rawToken)
+	rawToken := generateOpaqueToken()
+	tokenHash := hashOpaqueToken(rawToken)
 	redisKey := passwordResetKeyPrefix + tokenHash
 
 	if err := h.rdb.Set(ctx, redisKey, id.FormatUserID(user.ID), passwordResetTTL).Err(); err != nil {
@@ -330,7 +342,7 @@ func (h *meHandler) ConfirmPasswordReset(w http.ResponseWriter, r *http.Request)
 	}
 
 	ctx := r.Context()
-	tokenHash := hashResetToken(req.Token)
+	tokenHash := hashOpaqueToken(req.Token)
 	redisKey := passwordResetKeyPrefix + tokenHash
 
 	// GetDel atomically retrieves and removes the token in a single round-trip,
@@ -371,6 +383,11 @@ func (h *meHandler) ConfirmPasswordReset(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Reset invalidates every active session for the user.
+	if err := h.sessions.RevokeAllForUser(ctx, userID); err != nil {
+		slog.Warn("confirm password reset: revoke sessions failed", "error", err)
+	}
+
 	go func() {
 		sendCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -404,7 +421,7 @@ func (h *meHandler) ConnectProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mac := computeHMAC(h.jwtSecret, state+":"+"login")
+	mac := computeHMAC(h.hmacKey, state+":"+"login")
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_state",
 		Value:    state + ":" + mac + ":" + "login",
@@ -416,7 +433,7 @@ func (h *meHandler) ConnectProvider(w http.ResponseWriter, r *http.Request) {
 	})
 
 	userIDStr := id.FormatUserID(ac.UserID)
-	linkMac := computeHMAC(h.jwtSecret, userIDStr)
+	linkMac := computeHMAC(h.hmacKey, userIDStr)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oauth_link_user_id",
 		Value:    userIDStr + ":" + linkMac,
@@ -552,6 +569,14 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Revoke every active session and clear the caller's cookies.
+	if err := h.sessions.RevokeAllForUser(ctx, ac.UserID); err != nil {
+		slog.Warn("delete account: revoke sessions failed", "error", err)
+	}
+	clearSessionCookies(w, isSecure(r))
+
+	fireOnSoftDelete(ctx, h.authHooks, ac.UserID)
+
 	slog.Info("account soft-deleted", "user_id", id.FormatUserID(ac.UserID), "email", user.Email)
 
 	go func() {
@@ -569,17 +594,4 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- helpers ---
-
-func generateResetToken() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("crypto/rand failed: %v", err))
-	}
-	return hex.EncodeToString(b)
-}
-
-func hashResetToken(raw string) string {
-	h := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(h[:])
-}
+// (token helpers live in handlers_auth.go)

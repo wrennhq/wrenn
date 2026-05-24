@@ -42,6 +42,13 @@ ORDER BY ts ASC;
 DELETE FROM sandbox_metric_points
 WHERE sandbox_id = $1;
 
+-- name: GetLatestSandboxMetricPoint :one
+SELECT ts, cpu_pct, mem_bytes, disk_bytes
+FROM sandbox_metric_points
+WHERE sandbox_id = $1
+ORDER BY ts DESC
+LIMIT 1;
+
 -- name: DeleteSandboxMetricPointsByTier :exec
 DELETE FROM sandbox_metric_points
 WHERE sandbox_id = $1 AND tier = $2;

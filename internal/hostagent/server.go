@@ -2,13 +2,14 @@ package hostagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"strings"
+	"os"
 	"time"
 
 	"connectrpc.com/connect"
@@ -19,6 +20,7 @@ import (
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 
+	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
 	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
 )
 
@@ -49,38 +51,48 @@ func parseUUIDString(s string) (pgtype.UUID, error) {
 	return pgtype.UUID{Bytes: parsed, Valid: true}, nil
 }
 
+// parseSandboxIDs parses the team+template UUID pair every snapshot-targeting
+// RPC handler receives, returning a CodeInvalidArgument Connect error on the
+// first failure so the caller can `return nil, err` directly.
+func parseSandboxIDs(teamIDStr, templateIDStr string) (teamID, templateID pgtype.UUID, err error) {
+	teamID, err = parseUUIDString(teamIDStr)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	templateID, err = parseUUIDString(templateIDStr)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return teamID, templateID, nil
+}
+
 func (s *Server) CreateSandbox(
 	ctx context.Context,
 	req *connect.Request[pb.CreateSandboxRequest],
 ) (*connect.Response[pb.CreateSandboxResponse], error) {
 	msg := req.Msg
 
-	teamID, err := parseUUIDString(msg.TeamId)
+	teamID, templateID, err := parseSandboxIDs(msg.TeamId, msg.TemplateId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	templateID, err := parseUUIDString(msg.TemplateId)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, err
 	}
 
-	sb, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID, int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb))
+	sb, diskSizeBytes, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID,
+		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb),
+		msg.DefaultUser, msg.DefaultEnv)
 	if err != nil {
+		if errors.Is(err, sandbox.ErrDraining) {
+			return nil, connect.NewError(connect.CodeUnavailable, err)
+		}
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create sandbox: %w", err))
 	}
 
-	// Apply template defaults (user, env vars) if provided.
-	if msg.DefaultUser != "" || len(msg.DefaultEnv) > 0 {
-		if err := s.mgr.SetDefaults(ctx, sb.ID, msg.DefaultUser, msg.DefaultEnv); err != nil {
-			slog.Warn("failed to set sandbox defaults", "sandbox", sb.ID, "error", err)
-		}
-	}
-
 	return connect.NewResponse(&pb.CreateSandboxResponse{
-		SandboxId: sb.ID,
-		Status:    string(sb.Status),
-		HostIp:    sb.HostIP.String(),
-		Metadata:  sb.Metadata,
+		SandboxId:  sb.ID,
+		Status:     string(sb.Status),
+		HostIp:     sb.HostIP.String(),
+		Metadata:   sb.Metadata,
+		DiskSizeMb: int32(diskSizeBytes / (1024 * 1024)),
 	}), nil
 }
 
@@ -89,7 +101,7 @@ func (s *Server) DestroySandbox(
 	req *connect.Request[pb.DestroySandboxRequest],
 ) (*connect.Response[pb.DestroySandboxResponse], error) {
 	if err := s.mgr.Destroy(ctx, req.Msg.SandboxId); err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.DestroySandboxResponse{}), nil
 }
@@ -99,7 +111,7 @@ func (s *Server) PauseSandbox(
 	req *connect.Request[pb.PauseSandboxRequest],
 ) (*connect.Response[pb.PauseSandboxResponse], error) {
 	if err := s.mgr.Pause(ctx, req.Msg.SandboxId); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.PauseSandboxResponse{}), nil
 }
@@ -108,12 +120,10 @@ func (s *Server) ResumeSandbox(
 	ctx context.Context,
 	req *connect.Request[pb.ResumeSandboxRequest],
 ) (*connect.Response[pb.ResumeSandboxResponse], error) {
-	msg := req.Msg
-	sb, err := s.mgr.Resume(ctx, msg.SandboxId, int(msg.TimeoutSec), msg.KernelVersion, msg.DefaultUser, msg.DefaultEnv)
+	sb, err := s.mgr.Resume(ctx, req.Msg.SandboxId, int(req.Msg.TimeoutSec), req.Msg.DefaultUser, req.Msg.KernelVersion, req.Msg.DefaultEnv)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
-
 	return connect.NewResponse(&pb.ResumeSandboxResponse{
 		SandboxId: sb.ID,
 		Status:    string(sb.Status),
@@ -126,41 +136,30 @@ func (s *Server) CreateSnapshot(
 	ctx context.Context,
 	req *connect.Request[pb.CreateSnapshotRequest],
 ) (*connect.Response[pb.CreateSnapshotResponse], error) {
-	msg := req.Msg
-	teamID, err := parseUUIDString(msg.TeamId)
+	teamID, templateID, err := parseSandboxIDs(req.Msg.TeamId, req.Msg.TemplateId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, err
 	}
-	templateID, err := parseUUIDString(msg.TemplateId)
+	size, err := s.mgr.CreateSnapshot(ctx, req.Msg.SandboxId, teamID, templateID, req.Msg.Name)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-
-	sizeBytes, err := s.mgr.CreateSnapshot(ctx, msg.SandboxId, teamID, templateID)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create snapshot: %w", err))
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.CreateSnapshotResponse{
-		SizeBytes: sizeBytes,
+		Name:      req.Msg.Name,
+		SizeBytes: size,
 	}), nil
 }
 
 func (s *Server) DeleteSnapshot(
-	ctx context.Context,
+	_ context.Context,
 	req *connect.Request[pb.DeleteSnapshotRequest],
 ) (*connect.Response[pb.DeleteSnapshotResponse], error) {
-	msg := req.Msg
-	teamID, err := parseUUIDString(msg.TeamId)
+	teamID, templateID, err := parseSandboxIDs(req.Msg.TeamId, req.Msg.TemplateId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, err
 	}
-	templateID, err := parseUUIDString(msg.TemplateId)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-
 	if err := s.mgr.DeleteSnapshot(teamID, templateID); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("delete snapshot: %w", err))
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.DeleteSnapshotResponse{}), nil
 }
@@ -169,22 +168,54 @@ func (s *Server) FlattenRootfs(
 	ctx context.Context,
 	req *connect.Request[pb.FlattenRootfsRequest],
 ) (*connect.Response[pb.FlattenRootfsResponse], error) {
-	msg := req.Msg
-	teamID, err := parseUUIDString(msg.TeamId)
+	teamID, templateID, err := parseSandboxIDs(req.Msg.TeamId, req.Msg.TemplateId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, err
 	}
-	templateID, err := parseUUIDString(msg.TemplateId)
+	size, err := s.mgr.FlattenRootfs(ctx, req.Msg.SandboxId, teamID, templateID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-
-	sizeBytes, err := s.mgr.FlattenRootfs(ctx, msg.SandboxId, teamID, templateID)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("flatten rootfs: %w", err))
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.FlattenRootfsResponse{
-		SizeBytes: sizeBytes,
+		SizeBytes: size,
+	}), nil
+}
+
+// mapSandboxError translates sandbox.Manager errors to Connect error codes
+// via sentinel errors (errors.Is). Adding a new precondition sentinel in the
+// sandbox package only requires extending this switch — no string sniffing.
+func mapSandboxError(err error) error {
+	switch {
+	case errors.Is(err, sandbox.ErrNotFound):
+		return connect.NewError(connect.CodeNotFound, err)
+	case errors.Is(err, sandbox.ErrNotRunning), errors.Is(err, sandbox.ErrNotPaused):
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	case errors.Is(err, sandbox.ErrDraining):
+		return connect.NewError(connect.CodeUnavailable, err)
+	case errors.Is(err, sandbox.ErrInvalidRange):
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	default:
+		return connect.NewError(connect.CodeInternal, err)
+	}
+}
+
+func (s *Server) GetTemplateSize(
+	ctx context.Context,
+	req *connect.Request[pb.GetTemplateSizeRequest],
+) (*connect.Response[pb.GetTemplateSizeResponse], error) {
+	teamID, templateID, err := parseSandboxIDs(req.Msg.TeamId, req.Msg.TemplateId)
+	if err != nil {
+		return nil, err
+	}
+	size, err := s.mgr.TemplateRootfsSize(teamID, templateID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get template size: %w", err))
+	}
+	return connect.NewResponse(&pb.GetTemplateSizeResponse{
+		SizeBytes: size,
 	}), nil
 }
 
@@ -193,7 +224,7 @@ func (s *Server) PingSandbox(
 	req *connect.Request[pb.PingSandboxRequest],
 ) (*connect.Response[pb.PingSandboxResponse], error) {
 	if err := s.mgr.Ping(req.Msg.SandboxId); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
@@ -215,7 +246,12 @@ func (s *Server) Exec(
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	result, err := s.mgr.Exec(execCtx, msg.SandboxId, msg.Cmd, msg.Args...)
+	var opts *envdclient.ExecOpts
+	if len(msg.Envs) > 0 || msg.Cwd != "" {
+		opts = &envdclient.ExecOpts{Envs: msg.Envs, Cwd: msg.Cwd}
+	}
+
+	result, err := s.mgr.Exec(execCtx, msg.SandboxId, msg.Cmd, msg.Args, opts)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("exec: %w", err))
 	}
@@ -225,6 +261,17 @@ func (s *Server) Exec(
 		Stderr:   result.Stderr,
 		ExitCode: result.ExitCode,
 	}), nil
+}
+
+// envdErr propagates an error from the envd client, preserving its Connect
+// error code (e.g. AlreadyExists, NotFound) so the control plane maps it to
+// the correct HTTP status. Non-Connect errors fall back to CodeInternal.
+func envdErr(action string, err error) error {
+	code := connect.CodeOf(err)
+	if code == connect.CodeUnknown {
+		code = connect.CodeInternal
+	}
+	return connect.NewError(code, fmt.Errorf("%s: %w", action, err))
 }
 
 func (s *Server) WriteFile(
@@ -239,7 +286,7 @@ func (s *Server) WriteFile(
 	}
 
 	if err := client.WriteFile(ctx, msg.Path, msg.Content); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("write file: %w", err))
+		return nil, envdErr("write file", err)
 	}
 
 	return connect.NewResponse(&pb.WriteFileResponse{}), nil
@@ -258,7 +305,7 @@ func (s *Server) ReadFile(
 
 	content, err := client.ReadFile(ctx, msg.Path)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("read file: %w", err))
+		return nil, envdErr("read file", err)
 	}
 
 	return connect.NewResponse(&pb.ReadFileResponse{Content: content}), nil
@@ -277,7 +324,7 @@ func (s *Server) ListDir(
 
 	resp, err := client.ListDir(ctx, msg.Path, msg.Depth)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list dir: %w", err))
+		return nil, envdErr("list dir", err)
 	}
 
 	entries := make([]*pb.FileEntry, 0, len(resp.Entries))
@@ -301,7 +348,7 @@ func (s *Server) MakeDir(
 
 	resp, err := client.MakeDir(ctx, msg.Path)
 	if err != nil {
-		return nil, fmt.Errorf("make dir: %w", err)
+		return nil, envdErr("make dir", err)
 	}
 
 	return connect.NewResponse(&pb.MakeDirResponse{
@@ -321,7 +368,7 @@ func (s *Server) RemovePath(
 	}
 
 	if err := client.Remove(ctx, msg.Path); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("remove: %w", err))
+		return nil, envdErr("remove", err)
 	}
 
 	return connect.NewResponse(&pb.RemovePathResponse{}), nil
@@ -373,6 +420,8 @@ func (s *Server) ExecStream(
 					Error:    ev.Error,
 				},
 			}
+		default:
+			continue
 		}
 		if err := stream.Send(&resp); err != nil {
 			return err
@@ -548,6 +597,14 @@ func (s *Server) ListSandboxes(
 
 	infos := make([]*pb.SandboxInfo, len(sandboxes))
 	for i, sb := range sandboxes {
+		// Paused / restored-paused sandboxes have no active network slot, so
+		// HostIP is nil — net.IP(nil).String() returns the literal "<nil>"
+		// which would leak into DB host_ip columns and SDK responses. Emit
+		// empty string instead.
+		hostIP := ""
+		if sb.HostIP != nil {
+			hostIP = sb.HostIP.String()
+		}
 		infos[i] = &pb.SandboxInfo{
 			SandboxId:        sb.ID,
 			Status:           string(sb.Status),
@@ -555,7 +612,7 @@ func (s *Server) ListSandboxes(
 			TemplateId:       uuid.UUID(sb.TemplateID).String(),
 			Vcpus:            int32(sb.VCPUs),
 			MemoryMb:         int32(sb.MemoryMB),
-			HostIp:           sb.HostIP.String(),
+			HostIp:           hostIP,
 			CreatedAtUnix:    sb.CreatedAt.Unix(),
 			LastActiveAtUnix: sb.LastActiveAt.Unix(),
 			TimeoutSec:       int32(sb.TimeoutSec),
@@ -588,13 +645,7 @@ func (s *Server) GetSandboxMetrics(
 
 	points, err := s.mgr.GetMetrics(msg.SandboxId, msg.Range)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		if strings.Contains(err.Error(), "invalid range") {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
 
 	return connect.NewResponse(&pb.GetSandboxMetricsResponse{Points: metricPointsToPB(points)}), nil
@@ -606,10 +657,7 @@ func (s *Server) FlushSandboxMetrics(
 ) (*connect.Response[pb.FlushSandboxMetricsResponse], error) {
 	pts10m, pts2h, pts24h, err := s.mgr.FlushMetrics(req.Msg.SandboxId)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, mapSandboxError(err)
 	}
 
 	return connect.NewResponse(&pb.FlushSandboxMetricsResponse{
@@ -759,7 +807,7 @@ func (s *Server) StartBackground(
 
 	pid, err := s.mgr.StartBackground(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Envs, msg.Cwd)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("start background: %w", err))
@@ -777,7 +825,7 @@ func (s *Server) ListProcesses(
 ) (*connect.Response[pb.ListProcessesResponse], error) {
 	procs, err := s.mgr.ListProcesses(ctx, req.Msg.SandboxId)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list processes: %w", err))
@@ -828,7 +876,7 @@ func (s *Server) KillProcess(
 	}
 
 	if err := s.mgr.KillProcess(ctx, msg.SandboxId, pid, tag, signal); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("kill process: %w", err))
@@ -857,7 +905,7 @@ func (s *Server) ConnectProcess(
 
 	events, err := s.mgr.ConnectProcess(ctx, msg.SandboxId, pid, tag)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, sandbox.ErrNotFound) {
 			return connect.NewError(connect.CodeNotFound, err)
 		}
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("connect process: %w", err))
@@ -889,6 +937,8 @@ func (s *Server) ConnectProcess(
 					Error:    ev.Error,
 				},
 			}
+		default:
+			continue
 		}
 		if err := stream.Send(&resp); err != nil {
 			return err

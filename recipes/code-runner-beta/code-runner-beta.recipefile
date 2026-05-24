@@ -1,0 +1,14 @@
+RUN --timeout=5m sudo apt install -y python3 python3-pip python3-venv
+ENV PYTHONUNBUFFERED=1
+
+RUN python3 -m venv ~/jupyter-env
+RUN --timeout=5m ~/jupyter-env/bin/pip install --upgrade pip
+RUN --timeout=5m ~/jupyter-env/bin/pip install jupyter-server ipykernel jupyter-client
+RUN --timeout=5m ~/jupyter-env/bin/pip install numpy pandas matplotlib seaborn requests
+
+RUN ~/jupyter-env/bin/python -m ipykernel install --prefix ~/jupyter-env --name "wrenn" --display-name "Wrenn Python Kernel"
+RUN echo 'assert 40+2 == 42' > /tmp/c.py
+RUN --timeout=2m ~/jupyter-env/bin/jupyter run --kernel wrenn /tmp/c.py
+RUN rm /tmp/c.py
+
+START ~/jupyter-env/bin/jupyter server --ServerApp.ip=0.0.0.0 --ServerApp.port=8888 --ServerApp.token='' --ServerApp.password='' --ServerApp.allow_origin='*' --ServerApp.disable_check_xsrf=True --no-browser --log-level=INFO

@@ -22,14 +22,14 @@ export const PROVIDERS = [
 ] as const;
 
 export const EVENT_TYPES = [
-	{ value: 'capsule.created', group: 'Capsule' },
-	{ value: 'capsule.running', group: 'Capsule' },
-	{ value: 'capsule.paused', group: 'Capsule' },
-	{ value: 'capsule.destroyed', group: 'Capsule' },
-	{ value: 'template.snapshot.created', group: 'Template' },
-	{ value: 'template.snapshot.deleted', group: 'Template' },
-	{ value: 'host.up', group: 'Host' },
-	{ value: 'host.down', group: 'Host' }
+	{ value: 'capsule.create', group: 'Capsule', label: 'Capsule create' },
+	{ value: 'capsule.pause', group: 'Capsule', label: 'Capsule pause' },
+	{ value: 'capsule.resume', group: 'Capsule', label: 'Capsule resume' },
+	{ value: 'capsule.destroy', group: 'Capsule', label: 'Capsule destroy' },
+	{ value: 'template.snapshot.create', group: 'Template', label: 'Snapshot create' },
+	{ value: 'template.snapshot.delete', group: 'Template', label: 'Snapshot delete' },
+	{ value: 'host.up', group: 'Host', label: 'Host up' },
+	{ value: 'host.down', group: 'Host', label: 'Host down' }
 ] as const;
 
 export async function listChannels(): Promise<ApiResult<Channel[]>> {

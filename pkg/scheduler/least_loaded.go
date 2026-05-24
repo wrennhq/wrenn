@@ -165,7 +165,5 @@ func hostFromRow(r *db.GetHostsWithLoadRow) db.Host {
 		CreatedBy:        r.CreatedBy,
 		CreatedAt:        r.CreatedAt,
 		UpdatedAt:        r.UpdatedAt,
-		CertFingerprint:  r.CertFingerprint,
-		CertExpiresAt:    r.CertExpiresAt,
 	}
 }

@@ -42,6 +42,43 @@ func CleanupStaleNamespaces() {
 
 	// Clean up any stale wrenn iptables rules referencing old veth interfaces.
 	cleanupStaleIptablesRules()
+
+	// Flush any orphan conntrack rows for sandbox host-IPs. After a wedged
+	// destroy the netfilter conntrack table can retain DNAT/SNAT entries
+	// pointing at vanished interfaces, which makes new flows to recycled
+	// slot IPs misroute. Best-effort; missing conntrack binary is OK.
+	flushStaleConntrack()
+}
+
+// flushStaleConntrack removes conntrack rows referencing the sandbox host
+// IP range (10.11.0.0/16) and the namespace veth range (10.12.0.0/16).
+// Best-effort: silently skipped if conntrack(8) is absent.
+func flushStaleConntrack() {
+	if _, err := exec.LookPath("conntrack"); err != nil {
+		slog.Debug("conntrack binary not found, skipping flush")
+		return
+	}
+	flushed := 0
+	for _, cidr := range []string{"10.11.0.0/16", "10.12.0.0/16"} {
+		for _, dir := range []string{"--src", "--dst"} {
+			out, err := exec.Command("conntrack", "-D", dir, cidr).CombinedOutput()
+			if err != nil {
+				// conntrack -D exits 1 when no entries match; not an
+				// error from our perspective.
+				slog.Debug("conntrack flush", "cidr", cidr, "dir", dir, "error", err)
+				continue
+			}
+			// Output looks like "conntrack v1.4.x ... 3 flow entries have been deleted."
+			// We only log INFO when at least one row was actually removed.
+			if strings.Contains(string(out), "have been deleted") &&
+				!strings.Contains(string(out), "0 flow entries") {
+				flushed++
+			}
+		}
+	}
+	if flushed > 0 {
+		slog.Info("flushed stale conntrack entries", "matched_filters", flushed)
+	}
 }
 
 // cleanupStaleIptablesRules removes host iptables rules that reference
@@ -176,7 +213,7 @@ func NewSlot(index int) *Slot {
 // CreateNetwork sets up the full network topology for a sandbox:
 //   - Named network namespace
 //   - Veth pair bridging host and namespace
-//   - TAP device inside namespace for Firecracker
+//   - TAP device inside namespace for Cloud Hypervisor
 //   - Routes and NAT rules for connectivity
 //
 // On error, all partially created resources are rolled back.
@@ -430,6 +467,9 @@ func CreateNetwork(slot *Slot) error {
 		rollback()
 		return fmt.Errorf("add masquerade rule: %w", err)
 	}
+	rollbacks = append(rollbacks, func() {
+		_ = iptablesHost("-t", "nat", "-D", "POSTROUTING", "-s", fmt.Sprintf("%s/32", slot.VpeerIP.String()), "-o", defaultIface, "-j", "MASQUERADE")
+	})
 
 	slog.Info("network created",
 		"ns", slot.NamespaceID,
@@ -444,6 +484,9 @@ func CreateNetwork(slot *Slot) error {
 // All steps are attempted even if earlier ones fail. Returns a combined
 // error describing which cleanup steps failed.
 func RemoveNetwork(slot *Slot) error {
+	if slot == nil {
+		return nil
+	}
 	var errs []error
 
 	defaultIface, _ := getDefaultInterface()

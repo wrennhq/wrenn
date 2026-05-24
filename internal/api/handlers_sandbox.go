@@ -37,8 +37,8 @@ type sandboxResponse struct {
 	VCPUs        int32             `json:"vcpus"`
 	MemoryMB     int32             `json:"memory_mb"`
 	TimeoutSec   int32             `json:"timeout_sec"`
-	GuestIP      string            `json:"guest_ip,omitempty"`
-	HostIP       string            `json:"host_ip,omitempty"`
+	DiskSizeMB   int32             `json:"disk_size_mb"`
+	DiskUsedMB   *int64            `json:"disk_used_mb,omitempty"`
 	CreatedAt    string            `json:"created_at"`
 	StartedAt    *string           `json:"started_at,omitempty"`
 	LastActiveAt *string           `json:"last_active_at,omitempty"`
@@ -54,8 +54,7 @@ func sandboxToResponse(sb db.Sandbox) sandboxResponse {
 		VCPUs:      sb.Vcpus,
 		MemoryMB:   sb.MemoryMb,
 		TimeoutSec: sb.TimeoutSec,
-		GuestIP:    sb.GuestIp,
-		HostIP:     sb.HostIp,
+		DiskSizeMB: sb.DiskSizeMb,
 	}
 	if len(sb.Metadata) > 0 {
 		var meta map[string]string
@@ -101,14 +100,17 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MemoryMB:   req.MemoryMB,
 		TimeoutSec: req.TimeoutSec,
 	})
+	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, req.Template, err)
 	if err != nil {
+		if sb.ID.Valid {
+			h.audit.LogSandboxDestroySystem(r.Context(), ac.TeamID, sb.ID, "cleanup_after_create_error", nil)
+		}
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, sb.Template)
-	writeJSON(w, http.StatusCreated, sandboxToResponse(sb))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
 // List handles GET /v1/capsules.
@@ -145,7 +147,15 @@ func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
+	resp := sandboxToResponse(sb)
+
+	diskBytes, err := h.svc.GetDiskUsage(r.Context(), sandboxID, ac.TeamID)
+	if err == nil {
+		diskUsedMB := diskBytes / (1024 * 1024)
+		resp.DiskUsedMB = &diskUsedMB
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Pause handles POST /v1/capsules/{id}/pause.
@@ -160,14 +170,14 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sb, err := h.svc.Pause(r.Context(), sandboxID, ac.TeamID)
+	h.audit.LogSandboxPause(r.Context(), ac, sandboxID, err)
 	if err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSandboxPause(r.Context(), ac, sandboxID)
-	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
 // Resume handles POST /v1/capsules/{id}/resume.
@@ -182,14 +192,14 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sb, err := h.svc.Resume(r.Context(), sandboxID, ac.TeamID)
+	h.audit.LogSandboxResume(r.Context(), ac, sandboxID, err)
 	if err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSandboxResume(r.Context(), ac, sandboxID)
-	writeJSON(w, http.StatusOK, sandboxToResponse(sb))
+	writeJSON(w, http.StatusAccepted, sandboxToResponse(sb))
 }
 
 // Ping handles POST /v1/capsules/{id}/ping.
@@ -223,12 +233,13 @@ func (h *sandboxHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Destroy(r.Context(), sandboxID, ac.TeamID); err != nil {
+	err = h.svc.Destroy(r.Context(), sandboxID, ac.TeamID)
+	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID, err)
+	if err != nil {
 		status, code, msg := serviceErrToHTTP(err)
 		writeError(w, status, code, msg)
 		return
 	}
 
-	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID)
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusAccepted)
 }

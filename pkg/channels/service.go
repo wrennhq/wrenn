@@ -45,8 +45,8 @@ var requiredFields = map[string][]string{
 var validEvents map[string]bool
 
 func init() {
-	validEvents = make(map[string]bool, len(events.AllEventTypes))
-	for _, et := range events.AllEventTypes {
+	validEvents = make(map[string]bool, len(events.SubscribableEventTypes))
+	for _, et := range events.SubscribableEventTypes {
 		validEvents[et] = true
 	}
 }

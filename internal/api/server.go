@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"net/http"
@@ -13,9 +14,11 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
+	authsession "git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/channels"
 	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/events"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	"git.omukk.dev/wrenn/wrenn/pkg/scheduler"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
@@ -26,15 +29,19 @@ var openapiYAML []byte
 
 // Server is the control plane HTTP server.
 type Server struct {
-	router   chi.Router
-	BuildSvc *service.BuildService
-	version  string
+	router     chi.Router
+	BuildSvc   *service.BuildService
+	SSERelay   *SSERelay
+	SessionSvc *authsession.Service
+	version    string
 }
 
-// New constructs the chi router and registers all routes.
-// Extensions are called after core routes are registered, allowing cloud
-// or third-party code to add routes and middleware.
+// New constructs the chi router and registers all routes. The jwtSecret is
+// still used to sign host-agent JWTs (long-lived, for the wrenn-agent → cp
+// trust path) and to HMAC OAuth state/link cookies; user authentication has
+// migrated to opaque session cookies backed by the session service.
 func New(
+	ctx context.Context,
 	queries *db.Queries,
 	pool *lifecycle.HostClientPool,
 	sched scheduler.HostScheduler,
@@ -45,10 +52,12 @@ func New(
 	oauthRedirectURL string,
 	ca *auth.CA,
 	al *audit.AuditLogger,
+	eventPub *channels.Publisher,
 	channelSvc *channels.Service,
 	mailer email.Mailer,
 	extensions []cpextension.Extension,
 	sctx cpextension.ServerContext,
+	monitor *HostMonitor,
 	version string,
 ) *Server {
 	r := chi.NewRouter()
@@ -61,8 +70,28 @@ func New(
 		}
 	}
 
+	// Session service backs cookie-based browser auth. The cpserver wires it
+	// through ServerContext so cloud-repo extensions can share the same
+	// instance; fall back to constructing one here if the host program
+	// instantiates the API directly (tests, ad-hoc tooling).
+	sessionSvc := sctx.Sessions
+	if sessionSvc == nil {
+		sessionSvc = authsession.NewService(queries, rdb)
+	}
+
 	// Shared service layer.
 	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
+	sandboxSvc.PublishEvent = func(ctx context.Context, event service.SandboxStateEvent) {
+		if evt, ok := serviceEventToCanonical(event); ok {
+			// State-change events are ephemeral UI signals — mirror them to the
+			// dashboard via Pub/Sub only, never to durable channel subscribers.
+			if evt.Event == events.CapsuleStateChanged {
+				eventPub.PublishTransient(ctx, evt)
+			} else {
+				eventPub.Publish(ctx, evt)
+			}
+		}
+	}
 	apiKeySvc := &service.APIKeyService{DB: queries}
 	templateSvc := &service.TemplateService{DB: queries}
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
@@ -72,30 +101,40 @@ func New(
 	statsSvc := &service.StatsService{DB: queries, Pool: pgPool}
 	usageSvc := &service.UsageService{DB: queries}
 	buildSvc := &service.BuildService{DB: queries, Redis: rdb, Pool: pool, Scheduler: sched}
+	buildBroker := service.NewBuildBroker(rdb)
 
 	sandbox := newSandboxHandler(sandboxSvc, al)
 	exec := newExecHandler(queries, pool)
-	execStream := newExecStreamHandler(queries, pool, jwtSecret)
+	execStream := newExecStreamHandler(queries, pool)
 	files := newFilesHandler(queries, pool)
 	filesStream := newFilesStreamHandler(queries, pool)
 	fsH := newFSHandler(queries, pool)
-	snapshots := newSnapshotHandler(templateSvc, queries, pool, al)
-	authH := newAuthHandler(queries, pgPool, jwtSecret, mailer, rdb, oauthRedirectURL)
-	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, oauthRegistry, oauthRedirectURL)
+	snapshots := newSnapshotHandler(templateSvc, sandboxSvc, queries, pool, al)
+	authHooks := collectAuthHooks(extensions)
+	authH := newAuthHandler(queries, pgPool, sessionSvc, mailer, rdb, oauthRedirectURL, authHooks)
+	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, sessionSvc, oauthRegistry, oauthRedirectURL, authHooks)
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
-	hostH := newHostHandler(hostSvc, queries, al)
-	teamH := newTeamHandler(teamSvc, al, mailer)
-	usersH := newUsersHandler(queries, userSvc, al)
+	hostH := newHostHandler(hostSvc, queries, al, monitor)
+	teamH := newTeamHandler(teamSvc, al, mailer, sessionSvc)
+	usersH := newUsersHandler(queries, userSvc, al, sessionSvc)
 	auditH := newAuditHandler(auditSvc)
 	statsH := newStatsHandler(statsSvc)
 	usageH := newUsageHandler(usageSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
 	buildH := newBuildHandler(buildSvc, queries, pool, al)
+	buildStreamH := newBuildStreamHandler(queries, buildBroker)
 	channelH := newChannelHandler(channelSvc, al)
-	ptyH := newPtyHandler(queries, pool, jwtSecret)
-	processH := newProcessHandler(queries, pool, jwtSecret)
+	ptyH := newPtyHandler(queries, pool)
+	processH := newProcessHandler(queries, pool)
 	adminCapsules := newAdminCapsuleHandler(sandboxSvc, queries, pool, al)
-	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, mailer, oauthRegistry, oauthRedirectURL, teamSvc)
+	sandboxEvtH := newSandboxEventHandler(queries, eventPub)
+	meH := newMeHandler(queries, pgPool, rdb, jwtSecret, sessionSvc, mailer, oauthRegistry, oauthRedirectURL, teamSvc, authHooks)
+	sessionsH := newSessionsHandler(sessionSvc)
+
+	// SSE real-time event streaming.
+	sseBroker := NewSSEBroker()
+	sseRelay := NewSSERelay(rdb, queries, sseBroker)
+	sseH := newSSEHandler(sseBroker)
 
 	// Health check.
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +146,8 @@ func New(
 	r.Get("/openapi.yaml", serveOpenAPI)
 	r.Get("/docs", serveDocs)
 
-	// Unauthenticated auth endpoints.
+	// Unauthenticated auth endpoints. CSRF is not required here — there is
+	// no session cookie yet to be forged.
 	r.Post("/v1/auth/signup", authH.Signup)
 	r.Post("/v1/auth/login", authH.Login)
 	r.Post("/v1/auth/activate", authH.Activate)
@@ -118,31 +158,45 @@ func New(
 	r.Post("/v1/me/password/reset", meH.RequestPasswordReset)
 	r.Post("/v1/me/password/reset/confirm", meH.ConfirmPasswordReset)
 
-	// JWT-authenticated: self-service account management.
+	csrf := requireCSRF()
+
+	// Session-authenticated: logout endpoints (must be inside the session
+	// group so the handler sees the current SID via AuthContext).
+	r.Group(func(r chi.Router) {
+		r.Use(requireSession(queries, sessionSvc))
+		r.Use(csrf)
+		r.Post("/v1/auth/logout", authH.Logout)
+		r.Post("/v1/auth/logout-all", authH.LogoutAll)
+		r.Post("/v1/auth/switch-team", authH.SwitchTeam)
+	})
+
+	// Session-authenticated: self-service account management.
 	r.Route("/v1/me", func(r chi.Router) {
-		r.Use(requireJWT(jwtSecret, queries))
+		r.Use(requireSession(queries, sessionSvc))
+		r.Use(csrf)
 		r.Get("/", meH.GetMe)
 		r.Patch("/", meH.UpdateName)
 		r.Post("/password", meH.ChangePassword)
 		r.Get("/providers/{provider}/connect", meH.ConnectProvider)
 		r.Delete("/providers/{provider}", meH.DisconnectProvider)
 		r.Delete("/", meH.DeleteAccount)
+		r.Get("/sessions", sessionsH.List)
+		r.Delete("/sessions/{id}", sessionsH.Delete)
 	})
 
-	// JWT-authenticated: switch active team.
-	r.With(requireJWT(jwtSecret, queries)).Post("/v1/auth/switch-team", authH.SwitchTeam)
-
-	// JWT-authenticated: API key management.
+	// Session-authenticated: API key management.
 	r.Route("/v1/api-keys", func(r chi.Router) {
-		r.Use(requireJWT(jwtSecret, queries))
+		r.Use(requireSession(queries, sessionSvc))
+		r.Use(csrf)
 		r.Post("/", apiKeys.Create)
 		r.Get("/", apiKeys.List)
 		r.Delete("/{id}", apiKeys.Delete)
 	})
 
-	// JWT-authenticated: team management.
+	// Session-authenticated: team management.
 	r.Route("/v1/teams", func(r chi.Router) {
-		r.Use(requireJWT(jwtSecret, queries))
+		r.Use(requireSession(queries, sessionSvc))
+		r.Use(csrf)
 		r.Get("/", teamH.List)
 		r.Post("/", teamH.Create)
 		r.Route("/{id}", func(r chi.Router) {
@@ -157,14 +211,15 @@ func New(
 		})
 	})
 
-	// JWT-authenticated: user search (for add-member UI).
-	r.With(requireJWT(jwtSecret, queries)).Get("/v1/users/search", usersH.Search)
+	// Session-authenticated: user search (for add-member UI).
+	r.With(requireSession(queries, sessionSvc), csrf).Get("/v1/users/search", usersH.Search)
 
-	// Capsule lifecycle: accepts API key or JWT bearer token.
+	// Capsule lifecycle: API key (SDK) or session cookie (browser).
 	r.Route("/v1/capsules", func(r chi.Router) {
 		// Auth-required routes.
 		r.Group(func(r chi.Router) {
-			r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
+			r.Use(requireSessionOrAPIKey(queries, sessionSvc))
+			r.Use(csrf)
 			r.Post("/", sandbox.Create)
 			r.Get("/", sandbox.List)
 			r.Get("/stats", statsH.GetStats)
@@ -174,7 +229,8 @@ func New(
 		r.Route("/{id}", func(r chi.Router) {
 			// Auth-required non-WS routes.
 			r.Group(func(r chi.Router) {
-				r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
+				r.Use(requireSessionOrAPIKey(queries, sessionSvc))
+				r.Use(csrf)
 				r.Get("/", sandbox.Get)
 				r.Delete("/", sandbox.Destroy)
 				r.Post("/exec", exec.Exec)
@@ -193,11 +249,11 @@ func New(
 				r.Delete("/processes/{selector}", processH.KillProcess)
 			})
 
-			// WebSocket endpoints — handlers authenticate after upgrade.
-			// optionalAPIKeyOrJWT injects auth context from headers when
-			// present (SDK clients) but does not reject when absent (browsers).
+			// WebSocket endpoints — middleware injects auth context from
+			// cookie (browser) or X-API-Key (SDK) before upgrade. CSRF is
+			// not applicable to GET upgrades.
 			r.Group(func(r chi.Router) {
-				r.Use(optionalAPIKeyOrJWT(queries, jwtSecret))
+				r.Use(requireSessionOrAPIKey(queries, sessionSvc))
 				r.Get("/exec/stream", execStream.ExecStream)
 				r.Get("/pty", ptyH.PtySession)
 				r.Get("/processes/{selector}/stream", processH.ConnectProcess)
@@ -205,9 +261,10 @@ func New(
 		})
 	})
 
-	// Snapshot / template management: accepts API key or JWT bearer token.
+	// Snapshot / template management: API key (SDK) or session (browser).
 	r.Route("/v1/snapshots", func(r chi.Router) {
-		r.Use(requireAPIKeyOrJWT(queries, jwtSecret))
+		r.Use(requireSessionOrAPIKey(queries, sessionSvc))
+		r.Use(csrf)
 		r.Post("/", snapshots.Create)
 		r.Get("/", snapshots.List)
 		r.Delete("/{name}", snapshots.Delete)
@@ -221,12 +278,14 @@ func New(
 		// Unauthenticated: refresh token exchange.
 		r.Post("/auth/refresh", hostH.RefreshToken)
 
-		// Host-token-authenticated: heartbeat.
+		// Host-token-authenticated: heartbeat and lifecycle callbacks.
 		r.With(requireHostToken(jwtSecret)).Post("/{id}/heartbeat", hostH.Heartbeat)
+		r.With(requireHostToken(jwtSecret)).Post("/sandbox-events", sandboxEvtH.Handle)
 
-		// JWT-authenticated: host CRUD and tags.
+		// Session-authenticated: host CRUD and tags.
 		r.Group(func(r chi.Router) {
-			r.Use(requireJWT(jwtSecret, queries))
+			r.Use(requireSession(queries, sessionSvc))
+			r.Use(csrf)
 			r.Post("/", hostH.Create)
 			r.Get("/", hostH.List)
 			r.Route("/{id}", func(r chi.Router) {
@@ -241,9 +300,10 @@ func New(
 		})
 	})
 
-	// JWT-authenticated: notification channels.
+	// Session-authenticated: notification channels.
 	r.Route("/v1/channels", func(r chi.Router) {
-		r.Use(requireJWT(jwtSecret, queries))
+		r.Use(requireSession(queries, sessionSvc))
+		r.Use(csrf)
 		r.Post("/", channelH.Create)
 		r.Get("/", channelH.List)
 		r.Post("/test", channelH.Test)
@@ -255,18 +315,27 @@ func New(
 		})
 	})
 
-	// JWT-authenticated: audit log.
-	r.With(requireJWT(jwtSecret, queries)).Get("/v1/audit-logs", auditH.List)
+	// SSE event stream: browser sends wrenn_sid cookie on EventSource
+	// automatically; SDKs may set X-API-Key. Ticket-based auth is gone.
+	r.With(requireSessionOrAPIKey(queries, sessionSvc)).Get("/v1/events/stream", sseH.Stream)
 
-	// Platform admin routes — require JWT + DB-validated admin status.
+	// Session-authenticated: audit log.
+	r.With(requireSession(queries, sessionSvc), csrf).Get("/v1/audit-logs", auditH.List)
+
+	// Platform admin routes — session + DB-validated admin status.
 	r.Route("/v1/admin", func(r chi.Router) {
+		// Admin SSE event stream (sees all teams).
+		r.With(requireSession(queries, sessionSvc), requireAdmin(queries), injectPlatformTeam()).Get("/events/stream", sseH.AdminStream)
+
 		// Auth-required admin routes (non-capsule + capsule list/create).
 		r.Group(func(r chi.Router) {
-			r.Use(requireJWT(jwtSecret, queries))
+			r.Use(requireSession(queries, sessionSvc))
 			r.Use(requireAdmin(queries))
+			r.Use(csrf)
 			r.Get("/teams", teamH.AdminListTeams)
 			r.Put("/teams/{id}/byoc", teamH.SetBYOC)
 			r.Delete("/teams/{id}", teamH.AdminDeleteTeam)
+			r.Get("/hosts", hostH.AdminList)
 			r.Get("/users", usersH.AdminListUsers)
 			r.Put("/users/{id}/active", usersH.SetUserActive)
 			r.Put("/users/{id}/admin", usersH.SetUserAdmin)
@@ -281,11 +350,21 @@ func New(
 			r.Get("/capsules", adminCapsules.List)
 		})
 
+		// Admin build console WebSocket — cookie + admin DB check before
+		// upgrade, no CSRF (WS upgrade). Builds are platform-scoped, not
+		// sandbox-scoped, so this sits outside the /capsules/{id} router.
+		r.Group(func(r chi.Router) {
+			r.Use(requireSession(queries, sessionSvc))
+			r.Use(requireAdmin(queries))
+			r.Get("/builds/{id}/stream", buildStreamH.Stream)
+		})
+
 		r.Route("/capsules/{id}", func(r chi.Router) {
 			// Auth-required non-WS admin capsule routes.
 			r.Group(func(r chi.Router) {
-				r.Use(requireJWT(jwtSecret, queries))
+				r.Use(requireSession(queries, sessionSvc))
 				r.Use(requireAdmin(queries))
+				r.Use(csrf)
 				r.Use(injectPlatformTeam())
 				r.Get("/", adminCapsules.Get)
 				r.Delete("/", adminCapsules.Destroy)
@@ -301,11 +380,13 @@ func New(
 				r.Delete("/processes/{selector}", processH.KillProcess)
 			})
 
-			// Admin WebSocket endpoints — handlers authenticate after upgrade
-			// via wsAuthenticateAdmin. markAdminWS sets the context flag so
-			// handlers know to use admin auth instead of regular auth.
+			// Admin WebSocket endpoints — browser auth via cookie + admin DB check
+			// before upgrade. markAdminWS is retained as a context hint for any
+			// admin-specific behavior downstream.
 			r.Group(func(r chi.Router) {
-				r.Use(markAdminWS)
+				r.Use(requireSession(queries, sessionSvc))
+				r.Use(requireAdmin(queries))
+				r.Use(injectPlatformTeam())
 				r.Get("/exec/stream", execStream.ExecStream)
 				r.Get("/pty", ptyH.PtySession)
 				r.Get("/processes/{selector}/stream", processH.ConnectProcess)
@@ -318,7 +399,7 @@ func New(
 		ext.RegisterRoutes(r, sctx)
 	}
 
-	return &Server{router: r, BuildSvc: buildSvc, version: version}
+	return &Server{router: r, BuildSvc: buildSvc, SSERelay: sseRelay, SessionSvc: sessionSvc, version: version}
 }
 
 // Handler returns the HTTP handler.
@@ -362,4 +443,102 @@ func serveDocs(w http.ResponseWriter, r *http.Request) {
   </script>
 </body>
 </html>`)
+}
+
+// serviceEventToCanonical maps a SandboxService background-goroutine event
+// into the canonical events.Event taxonomy for unified publishing. Returns
+// false for events that should not be broadcast.
+func serviceEventToCanonical(e service.SandboxStateEvent) (events.Event, bool) {
+	var (
+		eventType string
+		outcome   events.Outcome
+		metadata  map[string]string
+	)
+	switch e.Event {
+	case "sandbox.started":
+		eventType = events.CapsuleCreate
+		outcome = events.OutcomeSuccess
+	case "sandbox.resumed":
+		eventType = events.CapsuleResume
+		outcome = events.OutcomeSuccess
+	case "sandbox.paused":
+		eventType = events.CapsulePause
+		outcome = events.OutcomeSuccess
+	case "sandbox.auto_paused":
+		eventType = events.CapsulePause
+		outcome = events.OutcomeSuccess
+		metadata = map[string]string{"reason": "ttl_expired"}
+	case "sandbox.stopped":
+		eventType = events.CapsuleDestroy
+		outcome = events.OutcomeSuccess
+	case "sandbox.pause_failed":
+		// reason must be non-empty or channels.isRedundantSystemFollowup
+		// filters this system-actor event out of webhook delivery.
+		eventType = events.CapsulePause
+		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "pause_failed"}
+	case "sandbox.resume_failed":
+		eventType = events.CapsuleResume
+		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "resume_failed"}
+	case "sandbox.failed":
+		// First-boot failure from the createInBackground goroutine. Without
+		// this case the event falls through to default and is dropped — no
+		// SSE push, no channel delivery, no DB reconciliation. reason must be
+		// non-empty or channels.isRedundantSystemFollowup filters it out.
+		eventType = events.CapsuleCreate
+		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "create_failed"}
+	case "sandbox.snapshotted":
+		// Completion of an async snapshot. The resource is the template name,
+		// not the sandbox, so the dashboard's snapshot list refreshes.
+		return events.Event{
+			Event:     events.SnapshotCreate,
+			Outcome:   events.OutcomeSuccess,
+			Timestamp: events.Now(),
+			TeamID:    e.TeamID,
+			Actor:     events.SystemActor(),
+			Resource:  events.Resource{ID: e.Metadata["name"], Type: "snapshot"},
+		}, true
+	case "sandbox.snapshot_failed":
+		return events.Event{
+			Event:     events.SnapshotCreate,
+			Outcome:   events.OutcomeError,
+			Timestamp: events.Now(),
+			TeamID:    e.TeamID,
+			Actor:     events.SystemActor(),
+			Resource:  events.Resource{ID: e.Metadata["name"], Type: "snapshot"},
+			Metadata:  map[string]string{"reason": "snapshot_failed"},
+			Error:     e.Error,
+		}, true
+	case "sandbox.state_changed":
+		// Transient badge transition with no terminal verb of its own. Carries
+		// from/to in metadata; routed via Pub/Sub only by the caller.
+		return events.Event{
+			Event:     events.CapsuleStateChanged,
+			Timestamp: events.Now(),
+			TeamID:    e.TeamID,
+			Actor:     events.SystemActor(),
+			Resource:  events.Resource{ID: e.SandboxID, Type: "sandbox"},
+			Metadata:  e.Metadata,
+		}, true
+	default:
+		return events.Event{}, false
+	}
+	if e.HostIP != "" {
+		if metadata == nil {
+			metadata = map[string]string{}
+		}
+		metadata["host_ip"] = e.HostIP
+	}
+	return events.Event{
+		Event:     eventType,
+		Outcome:   outcome,
+		Timestamp: events.Now(),
+		TeamID:    e.TeamID,
+		Actor:     events.SystemActor(),
+		Resource:  events.Resource{ID: e.SandboxID, Type: "sandbox"},
+		Metadata:  metadata,
+		Error:     e.Error,
+	}, true
 }

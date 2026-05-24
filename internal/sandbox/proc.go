@@ -1,13 +1,14 @@
 package sandbox
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
 )
@@ -48,42 +49,43 @@ func readCPUStat(pid int) (cpuStat, error) {
 	return cpuStat{utime: utime, stime: stime}, nil
 }
 
-// readEnvdMemUsed fetches mem_used from envd's /metrics endpoint. Returns
-// guest-side total - MemAvailable (actual process memory, excluding reclaimable
-// page cache). VmRSS of the Firecracker process includes guest page cache and
-// never decreases, so this is the accurate metric for dashboard display.
-func readEnvdMemUsed(client *envdclient.Client) (int64, error) {
-	resp, err := client.HTTPClient().Get(client.BaseURL() + "/metrics")
+// envdMetrics holds metric values read from envd's /metrics endpoint.
+type envdMetrics struct {
+	MemBytes  int64
+	DiskBytes int64
+}
+
+// readEnvdMetrics fetches mem_used and disk_used from envd's /metrics endpoint.
+// Returns guest-side process memory (total - available) and filesystem usage
+// from statfs("/"). These are the guest-visible metrics users care about.
+func readEnvdMetrics(ctx context.Context, client *envdclient.Client) (envdMetrics, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, client.BaseURL()+"/metrics", nil)
 	if err != nil {
-		return 0, fmt.Errorf("fetch envd metrics: %w", err)
+		return envdMetrics{}, fmt.Errorf("build metrics request: %w", err)
+	}
+
+	resp, err := client.HTTPClient().Do(req)
+	if err != nil {
+		return envdMetrics{}, fmt.Errorf("fetch envd metrics: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return 0, fmt.Errorf("envd metrics: status %d", resp.StatusCode)
+		return envdMetrics{}, fmt.Errorf("envd metrics: status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, fmt.Errorf("read envd metrics body: %w", err)
+		return envdMetrics{}, fmt.Errorf("read envd metrics body: %w", err)
 	}
 
 	var m struct {
-		MemUsed int64 `json:"mem_used"`
+		MemUsed  int64 `json:"mem_used"`
+		DiskUsed int64 `json:"disk_used"`
 	}
 	if err := json.Unmarshal(body, &m); err != nil {
-		return 0, fmt.Errorf("decode envd metrics: %w", err)
+		return envdMetrics{}, fmt.Errorf("decode envd metrics: %w", err)
 	}
 
-	return m.MemUsed, nil
-}
-
-// readDiskAllocated returns the actual allocated bytes (not apparent size)
-// of the file at path. This uses stat's block count × 512.
-func readDiskAllocated(path string) (int64, error) {
-	var stat syscall.Stat_t
-	if err := syscall.Stat(path, &stat); err != nil {
-		return 0, fmt.Errorf("stat %s: %w", path, err)
-	}
-	return stat.Blocks * 512, nil
+	return envdMetrics{MemBytes: m.MemUsed, DiskBytes: m.DiskUsed}, nil
 }

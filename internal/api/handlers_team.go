@@ -14,19 +14,21 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/email"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
 
 type teamHandler struct {
-	svc    *service.TeamService
-	audit  *audit.AuditLogger
-	mailer email.Mailer
+	svc      *service.TeamService
+	audit    *audit.AuditLogger
+	mailer   email.Mailer
+	sessions *session.Service
 }
 
-func newTeamHandler(svc *service.TeamService, al *audit.AuditLogger, mailer email.Mailer) *teamHandler {
-	return &teamHandler{svc: svc, audit: al, mailer: mailer}
+func newTeamHandler(svc *service.TeamService, al *audit.AuditLogger, mailer email.Mailer, sessions *session.Service) *teamHandler {
+	return &teamHandler{svc: svc, audit: al, mailer: mailer, sessions: sessions}
 }
 
 // teamResponse is the JSON shape for a team.
@@ -366,6 +368,11 @@ func (h *teamHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Drop cached session blobs so the new role propagates immediately.
+	if err := h.sessions.InvalidateCacheForUser(r.Context(), targetUserID); err != nil {
+		_ = err
+	}
+
 	h.audit.LogMemberRoleUpdate(r.Context(), ac, targetUserID, req.Role)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -450,6 +457,8 @@ func (h *teamHandler) AdminListTeams(w http.ResponseWriter, r *http.Request) {
 		OwnerEmail         string  `json:"owner_email"`
 		ActiveSandboxCount int32   `json:"active_sandbox_count"`
 		ChannelCount       int32   `json:"channel_count"`
+		RunningVcpus       int32   `json:"running_vcpus"`
+		RunningMemoryMb    int32   `json:"running_memory_mb"`
 	}
 
 	resp := make([]adminTeamResponse, len(teams))
@@ -465,6 +474,8 @@ func (h *teamHandler) AdminListTeams(w http.ResponseWriter, r *http.Request) {
 			OwnerEmail:         t.OwnerEmail,
 			ActiveSandboxCount: t.ActiveSandboxCount,
 			ChannelCount:       t.ChannelCount,
+			RunningVcpus:       t.RunningVcpus,
+			RunningMemoryMb:    t.RunningMemoryMb,
 		}
 		if t.DeletedAt != nil {
 			s := t.DeletedAt.Format(time.RFC3339)

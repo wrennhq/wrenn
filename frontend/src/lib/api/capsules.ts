@@ -1,18 +1,51 @@
 import { apiFetch, type ApiResult } from '$lib/api/client';
 
+// Mirror of the backend state machine. Keep in sync with the `status` enum
+// on the Capsule schema in internal/api/openapi.yaml.
+export type CapsuleStatus =
+	| 'pending'
+	| 'starting'
+	| 'running'
+	| 'pausing'
+	| 'paused'
+	| 'snapshotting'
+	| 'resuming'
+	| 'stopping'
+	| 'hibernated'
+	| 'stopped'
+	| 'missing'
+	| 'error';
+
+// States from which a user may resume the capsule.
+export const RESUMABLE_STATUSES: ReadonlySet<CapsuleStatus> = new Set([
+	'paused',
+	'hibernated'
+]);
+
+// Transient states where lifecycle actions should be disabled.
+export const TRANSIENT_STATUSES: ReadonlySet<CapsuleStatus> = new Set([
+	'pending',
+	'starting',
+	'pausing',
+	'snapshotting',
+	'resuming',
+	'stopping'
+]);
+
 export type Capsule = {
 	id: string;
-	status: string;
+	status: CapsuleStatus;
 	template: string;
 	vcpus: number;
 	memory_mb: number;
 	timeout_sec: number;
-	guest_ip?: string;
-	host_ip?: string;
 	created_at: string;
 	started_at?: string;
 	last_active_at?: string;
 	last_updated: string;
+	metadata?: Record<string, string>;
+	disk_size_mb: number;
+	disk_used_mb?: number;
 };
 
 
@@ -55,9 +88,14 @@ export type Snapshot = {
 	size_bytes: number;
 	created_at: string;
 	platform: boolean;
+	/** True for built-in system base templates, which cannot be deleted. */
+	protected?: boolean;
 };
 
-export async function createSnapshot(capsuleId: string, name?: string): Promise<ApiResult<Snapshot>> {
+// Snapshots are async: the call returns 202 with the capsule now in the
+// "snapshotting" state. The resulting template arrives later via the
+// template.snapshot.create SSE event (or by polling listSnapshots).
+export async function createSnapshot(capsuleId: string, name?: string): Promise<ApiResult<Capsule>> {
 	return apiFetch('POST', '/api/v1/snapshots', { sandbox_id: capsuleId, name });
 }
 

@@ -1,14 +1,38 @@
 <script lang="ts">
-	import { createSnapshot } from '$lib/api/capsules';
+	import type { Snippet } from 'svelte';
+	import { createSnapshot, type Capsule } from '$lib/api/capsules';
+	import type { ApiResult } from '$lib/api/client';
+
+	type SnapshotFn = (capsuleId: string, name?: string) => Promise<ApiResult<Capsule>>;
 
 	type Props = {
 		open: boolean;
 		capsuleId: string;
-		pauseFirst?: boolean;
 		onclose: () => void;
-		onsnapshot?: () => void;
+		onsnapshot?: (capsule: Capsule) => void;
+		title?: string;
+		label?: string;
+		placeholder?: string;
+		hint?: string;
+		confirmLabel?: string;
+		pendingLabel?: string;
+		snapshotFn?: SnapshotFn;
+		description?: Snippet;
 	};
-	let { open, capsuleId, pauseFirst = false, onclose, onsnapshot }: Props = $props();
+	let {
+		open,
+		capsuleId,
+		onclose,
+		onsnapshot,
+		title = 'Capture snapshot',
+		label = 'Snapshot name',
+		placeholder = 'e.g. after-apt-install, pre-migration',
+		hint = 'Leave blank to use an auto-generated name.',
+		confirmLabel = 'Start snapshot',
+		pendingLabel = 'Starting...',
+		snapshotFn = createSnapshot,
+		description
+	}: Props = $props();
 
 	let snapshotName = $state('');
 	let snapshotting = $state(false);
@@ -22,14 +46,15 @@
 	async function handleConfirm() {
 		snapshotting = true;
 		error = null;
-		const result = await createSnapshot(capsuleId, snapshotName.trim() || undefined);
-		if (result.ok) {
-			reset();
-			onsnapshot?.();
-			onclose();
-		} else {
+		const result = await snapshotFn(capsuleId, snapshotName.trim() || undefined);
+		if (!result.ok) {
 			error = result.error;
+			snapshotting = false;
+			return;
 		}
+		reset();
+		onsnapshot?.(result.data);
+		onclose();
 		snapshotting = false;
 	}
 
@@ -40,6 +65,10 @@
 		}
 	}
 </script>
+
+{#snippet defaultDescription()}
+	<p class="text-ui text-[var(--color-text-tertiary)]">The capsule moves to a <span class="font-mono text-[var(--color-blue)]">snapshotting</span> state while its memory and disk are written to a new template, then returns to running. This runs in the background; you'll be notified when it completes.</p>
+{/snippet}
 
 {#if open}
 	<div class="fixed inset-0 z-50 flex items-center justify-center">
@@ -59,24 +88,13 @@
 					</svg>
 				</div>
 				<div>
-					<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Capture snapshot</h2>
+					<h2 class="font-serif text-heading text-[var(--color-text-bright)]">{title}</h2>
 					<p class="mt-0.5 text-meta text-[var(--color-text-muted)] font-mono">{capsuleId}</p>
 				</div>
 			</div>
 
 			<div class="px-6 pt-5 pb-6 space-y-4">
-				{#if pauseFirst}
-					<div class="flex items-start gap-2.5 rounded-[var(--radius-input)] border border-[var(--color-amber)]/25 bg-[var(--color-amber)]/8 px-3 py-2.5">
-						<svg class="mt-px shrink-0 text-[var(--color-amber)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-							<line x1="12" y1="9" x2="12" y2="13" />
-							<line x1="12" y1="17" x2="12.01" y2="17" />
-						</svg>
-						<p class="text-meta text-[var(--color-amber)] leading-relaxed">This capsule will be <strong class="font-semibold">paused first</strong>, then its full state (memory + disk) will be captured.</p>
-					</div>
-				{:else}
-					<p class="text-ui text-[var(--color-text-tertiary)]">The capsule's current state (memory + disk) will be captured and stored as a reusable snapshot.</p>
-				{/if}
+				{@render (description ?? defaultDescription)()}
 
 				{#if error}
 					<div class="rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
@@ -86,7 +104,7 @@
 
 				<div>
 					<div class="mb-1.5 flex items-baseline justify-between">
-						<label class="text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="snapshot-name">Snapshot name</label>
+						<label class="text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-tertiary)]" for="snapshot-name">{label}</label>
 						<span class="text-meta text-[var(--color-text-muted)]">optional</span>
 					</div>
 					<input
@@ -95,10 +113,10 @@
 						bind:value={snapshotName}
 						disabled={snapshotting}
 						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-4)] px-3 py-2 font-mono text-ui text-[var(--color-text-bright)] outline-none placeholder:text-[var(--color-text-muted)] transition-colors duration-150 focus:border-[var(--color-accent)] disabled:opacity-50"
-						placeholder="e.g. after-apt-install, pre-migration"
+						placeholder={placeholder}
 						onkeydown={(e) => { if (e.key === 'Enter' && !snapshotting) handleConfirm(); }}
 					/>
-					<p class="mt-1.5 text-meta text-[var(--color-text-muted)]">Leave blank to use an auto-generated name.</p>
+					<p class="mt-1.5 text-meta text-[var(--color-text-muted)]">{hint}</p>
 				</div>
 
 				<div class="flex justify-end gap-3 pt-1">
@@ -118,9 +136,9 @@
 							<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 								<path d="M21 12a9 9 0 1 1-6.219-8.56" />
 							</svg>
-							Capturing...
+							{pendingLabel}
 						{:else}
-							Capture snapshot
+							{confirmLabel}
 						{/if}
 					</button>
 				</div>

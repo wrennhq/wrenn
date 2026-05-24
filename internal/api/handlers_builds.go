@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/go-chi/chi/v5"
 
 	"git.omukk.dev/wrenn/wrenn/internal/layout"
@@ -20,7 +19,6 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
 	"git.omukk.dev/wrenn/wrenn/pkg/validate"
-	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
 type buildHandler struct {
@@ -42,6 +40,7 @@ type createBuildRequest struct {
 	VCPUs        int32    `json:"vcpus"`
 	MemoryMB     int32    `json:"memory_mb"`
 	SkipPrePost  bool     `json:"skip_pre_post"`
+	RunAsRoot    bool     `json:"run_as_root"`
 }
 
 type buildResponse struct {
@@ -181,6 +180,7 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 		VCPUs:        req.VCPUs,
 		MemoryMB:     req.MemoryMB,
 		SkipPrePost:  req.SkipPrePost,
+		RunAsRoot:    req.RunAsRoot,
 		Archive:      archive,
 		ArchiveName:  archiveName,
 	})
@@ -238,6 +238,9 @@ func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve actual on-disk sizes for templates with unknown size.
+	templates = resolveTemplateSizes(r.Context(), h.db, h.pool, templates)
+
 	type templateResponse struct {
 		Name      string `json:"name"`
 		Type      string `json:"type"`
@@ -246,6 +249,7 @@ func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 		SizeBytes int64  `json:"size_bytes"`
 		TeamID    string `json:"team_id"`
 		CreatedAt string `json:"created_at"`
+		Protected bool   `json:"protected"`
 	}
 
 	resp := make([]templateResponse, len(templates))
@@ -257,6 +261,7 @@ func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 			MemoryMB:  t.MemoryMb,
 			SizeBytes: t.SizeBytes,
 			TeamID:    id.FormatTeamID(t.TeamID),
+			Protected: layout.IsSystemTemplate(t.TeamID, t.ID),
 		}
 		if t.CreatedAt.Valid {
 			resp[i].CreatedAt = t.CreatedAt.Time.Format(time.RFC3339)
@@ -280,29 +285,17 @@ func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "template not found")
 		return
 	}
-	if layout.IsMinimal(tmpl.TeamID, tmpl.ID) {
-		writeError(w, http.StatusForbidden, "forbidden", "the minimal template cannot be deleted")
+	if layout.IsSystemTemplate(tmpl.TeamID, tmpl.ID) {
+		writeError(w, http.StatusForbidden, "forbidden", "system base templates cannot be deleted")
 		return
 	}
 
-	// Broadcast delete to all online hosts.
-	hosts, _ := h.db.ListActiveHosts(ctx)
-	for _, host := range hosts {
-		if host.Status != "online" {
-			continue
-		}
-		agent, err := h.pool.GetForHost(host)
-		if err != nil {
-			continue
-		}
-		if _, err := agent.DeleteSnapshot(ctx, connect.NewRequest(&pb.DeleteSnapshotRequest{
-			TeamId:     formatUUIDForRPC(tmpl.TeamID),
-			TemplateId: formatUUIDForRPC(tmpl.ID),
-		})); err != nil {
-			if connect.CodeOf(err) != connect.CodeNotFound {
-				slog.Warn("admin: failed to delete template on host", "host_id", id.FormatHostID(host.ID), "name", name, "error", err)
-			}
-		}
+	// Remove the files from every host before dropping the DB record, so a
+	// failure leaves the template intact and retryable rather than orphaned.
+	if err := deleteSnapshotEverywhere(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
+		writeError(w, http.StatusConflict, "delete_failed",
+			"could not remove template files from all hosts: "+err.Error())
+		return
 	}
 
 	if err := h.db.DeleteTemplate(ctx, tmpl.ID); err != nil {

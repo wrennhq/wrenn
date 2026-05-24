@@ -39,7 +39,7 @@ e2b/
 .mcp.json
 
 ## Builds
-builds/
+/builds/
 
 ## Rust
 envd-rs/target/
@@ -55,3 +55,4 @@ internal/dashboard/static/*
 .dual-graph/
 # Added by code-review-graph
 .code-review-graph/
+.mcp.json

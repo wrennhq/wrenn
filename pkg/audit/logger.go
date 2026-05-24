@@ -38,15 +38,54 @@ func (l *AuditLogger) publish(ctx context.Context, e events.Event) {
 	}
 }
 
+// publishTransient mirrors an event on the SSE Pub/Sub channel only.
+func (l *AuditLogger) publishTransient(ctx context.Context, e events.Event) {
+	if l.pub != nil {
+		l.pub.PublishTransient(ctx, e)
+	}
+}
+
+// outcomeFromErr returns OutcomeSuccess when err is nil, OutcomeError otherwise.
+func outcomeFromErr(err error) events.Outcome {
+	if err != nil {
+		return events.OutcomeError
+	}
+	return events.OutcomeSuccess
+}
+
+// auditStatusFor maps an error and success-status into the audit row status.
+// On error → "error"; otherwise the supplied success status (e.g. "success", "warning", "info").
+func auditStatusFor(err error, okStatus string) string {
+	if err != nil {
+		return "error"
+	}
+	return okStatus
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// mergeMeta returns a new map with err added when non-nil, preserving caller fields.
+func mergeMeta(base map[string]any, err error) map[string]any {
+	if err == nil {
+		return base
+	}
+	out := make(map[string]any, len(base)+1)
+	for k, v := range base {
+		out[k] = v
+	}
+	out["error"] = err.Error()
+	return out
+}
+
 // actorToEvent converts auth context fields to an events.Actor.
 func actorToEvent(ac auth.AuthContext) events.Actor {
 	at, aid, aname := actorFields(ac)
 	return events.Actor{Type: events.ActorKind(at), ID: aid, Name: aname}
-}
-
-// systemActor returns an events.Actor for system-initiated events.
-func systemActor() events.Actor {
-	return events.Actor{Type: events.ActorSystem}
 }
 
 // actorFields extracts actor_type, actor_id, and actor_name from an AuthContext.
@@ -171,87 +210,240 @@ func resolveHostTeamID(teamID pgtype.UUID) pgtype.UUID {
 
 // --- Sandbox events (scope: team) ---
 
-func (l *AuditLogger) LogSandboxCreate(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID, template string) {
-	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "create", "success", map[string]any{"template": template}))
+// LogSandboxCreate records the result of a first-boot sandbox creation. err
+// nil ⇒ success; non-nil ⇒ error. Writes audit row and publishes a
+// capsule.create event with the derived outcome.
+func (l *AuditLogger) LogSandboxCreate(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID, template string, err error) {
+	meta := map[string]any{"template": template}
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "create", auditStatusFor(err, "success"), mergeMeta(meta, err)))
 	l.publish(ctx, events.Event{
-		Event:     events.CapsuleCreated,
+		Event:     events.CapsuleCreate,
+		Outcome:   outcomeFromErr(err),
 		Timestamp: events.Now(),
 		TeamID:    id.FormatTeamID(ac.TeamID),
 		Actor:     actorToEvent(ac),
 		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+		Metadata:  map[string]string{"template": template},
+		Error:     errString(err),
 	})
 }
 
-func (l *AuditLogger) LogSandboxPause(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
-	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "pause", "success", nil))
+// LogSandboxPause records a user-initiated pause.
+func (l *AuditLogger) LogSandboxPause(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID, err error) {
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "pause", auditStatusFor(err, "success"), mergeMeta(nil, err)))
 	l.publish(ctx, events.Event{
-		Event:     events.CapsulePaused,
+		Event:     events.CapsulePause,
+		Outcome:   outcomeFromErr(err),
 		Timestamp: events.Now(),
 		TeamID:    id.FormatTeamID(ac.TeamID),
 		Actor:     actorToEvent(ac),
 		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+		Error:     errString(err),
 	})
 }
 
-// LogSandboxAutoPause records a system-initiated auto-pause (TTL or host reconciler).
-func (l *AuditLogger) LogSandboxAutoPause(ctx context.Context, teamID, sandboxID pgtype.UUID) {
+// LogSandboxAutoPause records a system-initiated auto-pause (TTL reaper or
+// reconciler restoration of paused state). Always system actor; metadata
+// carries the reason (e.g. "ttl_expired", "restored_after_host_recovery").
+func (l *AuditLogger) LogSandboxAutoPause(ctx context.Context, teamID, sandboxID pgtype.UUID, reason string, err error) {
+	meta := map[string]any{"reason": reason}
 	l.Log(ctx, Entry{
 		TeamID: teamID, ActorType: "system",
 		ResourceType: "sandbox", ResourceID: id.FormatSandboxID(sandboxID),
-		Action: "pause", Scope: "team", Status: "info",
+		Action: "pause", Scope: "team", Status: auditStatusFor(err, "info"),
+		Metadata: mergeMeta(meta, err),
 	})
 	l.publish(ctx, events.Event{
-		Event:     events.CapsulePaused,
+		Event:     events.CapsulePause,
+		Outcome:   outcomeFromErr(err),
 		Timestamp: events.Now(),
 		TeamID:    id.FormatTeamID(teamID),
-		Actor:     systemActor(),
+		Actor:     events.SystemActor(),
 		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+		Metadata:  map[string]string{"reason": reason},
+		Error:     errString(err),
 	})
 }
 
-func (l *AuditLogger) LogSandboxResume(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
-	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "resume", "success", nil))
+// LogSandboxResume records a user-initiated unpause (resume from paused state).
+func (l *AuditLogger) LogSandboxResume(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID, err error) {
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "resume", auditStatusFor(err, "success"), mergeMeta(nil, err)))
 	l.publish(ctx, events.Event{
-		Event:     events.CapsuleRunning,
+		Event:     events.CapsuleResume,
+		Outcome:   outcomeFromErr(err),
 		Timestamp: events.Now(),
 		TeamID:    id.FormatTeamID(ac.TeamID),
 		Actor:     actorToEvent(ac),
 		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+		Error:     errString(err),
 	})
 }
 
-func (l *AuditLogger) LogSandboxDestroy(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID) {
-	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "destroy", "warning", nil))
+// LogSandboxDestroy records a destroy action. ac carries the actor (user / api_key / system).
+// reason is added to metadata when non-empty (e.g. "orphaned", "cleanup_after_create_error", "ttl_expired").
+func (l *AuditLogger) LogSandboxDestroy(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID, err error) {
+	l.LogSandboxDestroyWithReason(ctx, ac, sandboxID, "", err)
+}
+
+// LogSandboxDestroyWithReason is LogSandboxDestroy with an explicit reason.
+func (l *AuditLogger) LogSandboxDestroyWithReason(ctx context.Context, ac auth.AuthContext, sandboxID pgtype.UUID, reason string, err error) {
+	var (
+		auditMeta map[string]any
+		evtMeta   map[string]string
+	)
+	if reason != "" {
+		auditMeta = map[string]any{"reason": reason}
+		evtMeta = map[string]string{"reason": reason}
+	}
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "sandbox", id.FormatSandboxID(sandboxID), "destroy", auditStatusFor(err, "warning"), mergeMeta(auditMeta, err)))
 	l.publish(ctx, events.Event{
-		Event:     events.CapsuleDestroyed,
+		Event:     events.CapsuleDestroy,
+		Outcome:   outcomeFromErr(err),
 		Timestamp: events.Now(),
 		TeamID:    id.FormatTeamID(ac.TeamID),
 		Actor:     actorToEvent(ac),
 		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+		Metadata:  evtMeta,
+		Error:     errString(err),
+	})
+}
+
+// LogSandboxCreateSystem records a system-derived create outcome (e.g. the
+// reconciler inferring a failed first-boot after the grace period expired).
+// reason is added to metadata; err controls outcome.
+func (l *AuditLogger) LogSandboxCreateSystem(ctx context.Context, teamID, sandboxID pgtype.UUID, reason string, err error) {
+	meta := map[string]any{"reason": reason}
+	l.Log(ctx, Entry{
+		TeamID: teamID, ActorType: "system",
+		ResourceType: "sandbox", ResourceID: id.FormatSandboxID(sandboxID),
+		Action: "create", Scope: "team", Status: auditStatusFor(err, "info"),
+		Metadata: mergeMeta(meta, err),
+	})
+	l.publish(ctx, events.Event{
+		Event:     events.CapsuleCreate,
+		Outcome:   outcomeFromErr(err),
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(teamID),
+		Actor:     events.SystemActor(),
+		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+		Metadata:  map[string]string{"reason": reason},
+		Error:     errString(err),
+	})
+}
+
+// LogSandboxResumeSystem records a system-derived resume outcome (typically
+// reconciler-inferred error after the grace period).
+func (l *AuditLogger) LogSandboxResumeSystem(ctx context.Context, teamID, sandboxID pgtype.UUID, reason string, err error) {
+	meta := map[string]any{"reason": reason}
+	l.Log(ctx, Entry{
+		TeamID: teamID, ActorType: "system",
+		ResourceType: "sandbox", ResourceID: id.FormatSandboxID(sandboxID),
+		Action: "resume", Scope: "team", Status: auditStatusFor(err, "info"),
+		Metadata: mergeMeta(meta, err),
+	})
+	l.publish(ctx, events.Event{
+		Event:     events.CapsuleResume,
+		Outcome:   outcomeFromErr(err),
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(teamID),
+		Actor:     events.SystemActor(),
+		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+		Metadata:  map[string]string{"reason": reason},
+		Error:     errString(err),
+	})
+}
+
+// LogSandboxDestroySystem records a system-initiated destroy (orphan cleanup,
+// cleanup-on-error, reconciler grace-period expiry). Always system actor.
+func (l *AuditLogger) LogSandboxDestroySystem(ctx context.Context, teamID, sandboxID pgtype.UUID, reason string, err error) {
+	meta := map[string]any{"reason": reason}
+	l.Log(ctx, Entry{
+		TeamID: teamID, ActorType: "system",
+		ResourceType: "sandbox", ResourceID: id.FormatSandboxID(sandboxID),
+		Action: "destroy", Scope: "team", Status: auditStatusFor(err, "warning"),
+		Metadata: mergeMeta(meta, err),
+	})
+	l.publish(ctx, events.Event{
+		Event:     events.CapsuleDestroy,
+		Outcome:   outcomeFromErr(err),
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(teamID),
+		Actor:     events.SystemActor(),
+		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+		Metadata:  map[string]string{"reason": reason},
+		Error:     errString(err),
+	})
+}
+
+// LogSandboxStateChanged is a transient (SSE-only) event for ephemeral status
+// transitions (e.g. running → pausing → paused). Writes no audit row.
+func (l *AuditLogger) LogSandboxStateChanged(ctx context.Context, teamID, sandboxID pgtype.UUID, from, to string) {
+	l.publishTransient(ctx, events.Event{
+		Event:     events.CapsuleStateChanged,
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(teamID),
+		Actor:     events.SystemActor(),
+		Resource:  events.Resource{ID: id.FormatSandboxID(sandboxID), Type: "sandbox"},
+		Metadata:  map[string]string{"from": from, "to": to},
 	})
 }
 
 // --- Snapshot events (scope: team) ---
 
-func (l *AuditLogger) LogSnapshotCreate(ctx context.Context, ac auth.AuthContext, name string) {
+// LogSnapshotCreateRequested records that a user requested an async snapshot.
+// It writes the user-attributed audit row only — the terminal success/failure
+// event is published later by the background goroutine (system actor). Mirrors
+// the accept-time audit pattern used by LogSandboxPause.
+func (l *AuditLogger) LogSnapshotCreateRequested(ctx context.Context, ac auth.AuthContext, name string) {
 	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "snapshot", name, "create", "success", nil))
-	l.publish(ctx, events.Event{
-		Event:     events.SnapshotCreated,
-		Timestamp: events.Now(),
-		TeamID:    id.FormatTeamID(ac.TeamID),
-		Actor:     actorToEvent(ac),
-		Resource:  events.Resource{ID: name, Type: "snapshot"},
+}
+
+// LogSnapshotCreateSystem records a system-actor snapshot transition inferred
+// by a reconciler (e.g. the HostMonitor recovering or failing a sandbox stuck
+// in "snapshotting"). It writes an audit row only and does NOT publish a
+// SnapshotCreate event: the reconciler has no template name, and emitting one
+// would surface a spurious "snapshot captured/failed" toast.
+func (l *AuditLogger) LogSnapshotCreateSystem(ctx context.Context, teamID, sandboxID pgtype.UUID, reason string, err error) {
+	l.Log(ctx, Entry{
+		TeamID: teamID, ActorType: "system",
+		ResourceType: "sandbox", ResourceID: id.FormatSandboxID(sandboxID),
+		Action: "snapshot", Scope: "team", Status: auditStatusFor(err, "info"),
+		Metadata: mergeMeta(map[string]any{"reason": reason}, err),
 	})
 }
 
-func (l *AuditLogger) LogSnapshotDelete(ctx context.Context, ac auth.AuthContext, name string) {
-	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "snapshot", name, "delete", "warning", nil))
+func (l *AuditLogger) LogSnapshotDelete(ctx context.Context, ac auth.AuthContext, name string, err error) {
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "snapshot", name, "delete", auditStatusFor(err, "warning"), mergeMeta(nil, err)))
 	l.publish(ctx, events.Event{
-		Event:     events.SnapshotDeleted,
+		Event:     events.SnapshotDelete,
+		Outcome:   outcomeFromErr(err),
 		Timestamp: events.Now(),
 		TeamID:    id.FormatTeamID(ac.TeamID),
 		Actor:     actorToEvent(ac),
 		Resource:  events.Resource{ID: name, Type: "snapshot"},
+		Error:     errString(err),
+	})
+}
+
+// LogSnapshotDeleteSystem records system-initiated snapshot cleanup
+// (e.g. rollback after a failed snapshot create). Always system actor.
+func (l *AuditLogger) LogSnapshotDeleteSystem(ctx context.Context, teamID pgtype.UUID, name, reason string, err error) {
+	meta := map[string]any{"reason": reason}
+	l.Log(ctx, Entry{
+		TeamID: teamID, ActorType: "system",
+		ResourceType: "snapshot", ResourceID: name,
+		Action: "delete", Scope: "team", Status: auditStatusFor(err, "warning"),
+		Metadata: mergeMeta(meta, err),
+	})
+	l.publish(ctx, events.Event{
+		Event:     events.SnapshotDelete,
+		Outcome:   outcomeFromErr(err),
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(teamID),
+		Actor:     events.SystemActor(),
+		Resource:  events.Resource{ID: name, Type: "snapshot"},
+		Metadata:  map[string]string{"reason": reason},
+		Error:     errString(err),
 	})
 }
 
@@ -350,7 +542,7 @@ func (l *AuditLogger) logSystemHostEvent(ctx context.Context, teamID, hostID pgt
 		Event:     ev,
 		Timestamp: events.Now(),
 		TeamID:    id.FormatTeamID(teamID),
-		Actor:     systemActor(),
+		Actor:     events.SystemActor(),
 		Resource:  events.Resource{ID: id.FormatHostID(hostID), Type: "host"},
 	})
 }

@@ -4,14 +4,13 @@
 	import { toast } from '$lib/toast.svelte';
 	import { auth } from '$lib/auth.svelte';
 	import { formatDate, timeAgo } from '$lib/utils/format';
+	import { goto } from '$app/navigation';
 	import {
 		listBuilds,
 		createBuild,
-		cancelBuild,
 		listAdminTemplates,
 		deleteAdminTemplate,
 		type Build,
-		type BuildLogEntry,
 		type AdminTemplate
 	} from '$lib/api/builds';
 	import { listAdminTeams } from '$lib/api/team';
@@ -33,10 +32,6 @@
 	let hasActiveBuilds = $derived(builds.some((b) => b.status === 'pending' || b.status === 'running'));
 	let visibilityHandler: (() => void) | null = null;
 
-	// Build log expansion
-	let expandedBuildId = $state<string | null>(null);
-	let expandedSteps = $state<Set<number>>(new Set());
-
 	// Team name lookup
 	let teamNames = $state<Map<string, string>>(new Map());
 
@@ -49,19 +44,17 @@
 	let showCreate = $state(false);
 	let createForm = $state({
 		name: '',
-		base_template: 'minimal',
+		base_template: 'minimal-ubuntu',
 		vcpus: 1,
 		memory_mb: 512,
 		recipe: '',
 		healthcheck: '',
 		skip_pre_post: false,
+		run_as_root: false,
 		archive: null as File | null
 	});
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
-
-	// Cancel build state
-	let cancelingBuildId = $state<string | null>(null);
 
 	// Stats
 	let templateCount = $derived(templates.length);
@@ -87,7 +80,7 @@
 	const PLATFORM_TEAM_ID = 'team-0000000000000000000000000';
 
 	function canDeleteTemplate(tmpl: AdminTemplate): boolean {
-		if (tmpl.name === 'minimal') return false;
+		if (tmpl.protected) return false;
 		return tmpl.team_id === PLATFORM_TEAM_ID;
 	}
 
@@ -147,23 +140,21 @@
 
 		const result = await createBuild({
 			name: createForm.name.trim(),
-			base_template: createForm.base_template.trim() || 'minimal',
+			base_template: createForm.base_template.trim() || 'minimal-ubuntu',
 			recipe: lines,
 			healthcheck: createForm.healthcheck.trim() || undefined,
 			vcpus: createForm.vcpus,
 			memory_mb: createForm.memory_mb,
 			skip_pre_post: createForm.skip_pre_post,
+			run_as_root: createForm.run_as_root,
 			archive: createForm.archive || undefined
 		});
 
 		if (result.ok) {
 			showCreate = false;
-			createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, archive: null };
-			builds = [result.data, ...builds];
-			activeTab = 'builds';
-			expandedBuildId = result.data.id;
+			createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null };
 			toast.success('Build queued');
-			startPolling();
+			goto(`/admin/templates/builds/${result.data.id}`);
 		} else {
 			createError = result.error;
 		}
@@ -186,36 +177,8 @@
 		deleting = false;
 	}
 
-	async function handleCancelBuild(buildId: string) {
-		cancelingBuildId = buildId;
-		const result = await cancelBuild(buildId);
-		if (result.ok) {
-			builds = builds.map((b) => b.id === buildId ? { ...b, status: 'cancelled' } : b);
-			toast.success('Build cancelled');
-		} else {
-			toast.error(result.error ?? 'Failed to cancel build');
-		}
-		cancelingBuildId = null;
-	}
-
-	function toggleBuildExpand(buildId: string) {
-		if (expandedBuildId === buildId) {
-			expandedBuildId = null;
-			expandedSteps = new Set();
-		} else {
-			expandedBuildId = buildId;
-			expandedSteps = new Set();
-		}
-	}
-
-	function toggleStepExpand(step: number) {
-		const next = new Set(expandedSteps);
-		if (next.has(step)) {
-			next.delete(step);
-		} else {
-			next.add(step);
-		}
-		expandedSteps = next;
+	function openBuild(buildId: string) {
+		goto(`/admin/templates/builds/${buildId}`);
 	}
 
 	function formatBytes(bytes: number): string {
@@ -242,25 +205,6 @@
 			case 'running': return 'var(--color-blue)';
 			case 'cancelled': return 'var(--color-amber)';
 			default: return 'var(--color-text-muted)';
-		}
-	}
-
-	// Returns [keyword, rest] from a recipe instruction string.
-	function splitInstruction(cmd: string): [string, string] {
-		const idx = cmd.indexOf(' ');
-		if (idx === -1) return [cmd.toUpperCase(), ''];
-		return [cmd.slice(0, idx).toUpperCase(), cmd.slice(idx + 1)];
-	}
-
-	function keywordColor(keyword: string): string {
-		switch (keyword) {
-			case 'RUN':     return 'var(--color-blue)';
-			case 'START':   return 'var(--color-accent-bright)';
-			case 'ENV':     return 'var(--color-amber)';
-			case 'USER':    return 'var(--color-accent)';
-			case 'COPY':    return 'var(--color-text-bright)';
-			case 'WORKDIR': return 'var(--color-text-tertiary)';
-			default:        return 'var(--color-text-muted)';
 		}
 	}
 
@@ -302,7 +246,7 @@
 					</p>
 				</div>
 				<button
-					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, archive: null }; }}
+					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
 					class="group flex items-center gap-2.5 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white shadow-sm transition-all duration-200 hover:shadow-[0_0_20px_var(--color-accent-glow-mid)] hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 				>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform duration-200 group-hover:rotate-90"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -453,7 +397,7 @@
 		</p>
 		{#if type === 'templates'}
 			<button
-				onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, archive: null }; }}
+				onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
 				class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 px-4 py-2 text-ui font-medium text-[var(--color-accent-bright)] transition-all duration-200 hover:bg-[var(--color-accent)]/20 hover:border-[var(--color-accent)]/50"
 			>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -532,7 +476,7 @@
 							<button
 								onclick={() => { deleteTarget = tmpl; deleteError = null; }}
 								disabled={!canDeleteTemplate(tmpl)}
-								title={tmpl.name === 'minimal' ? 'The minimal template cannot be deleted' : !canDeleteTemplate(tmpl) ? 'Cannot delete templates owned by other teams' : undefined}
+								title={tmpl.protected ? 'System base templates cannot be deleted' : !canDeleteTemplate(tmpl) ? 'Cannot delete templates owned by other teams' : undefined}
 								class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta transition-all duration-150 {canDeleteTemplate(tmpl)
 									? 'text-[var(--color-text-tertiary)] hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]'
 									: 'text-[var(--color-text-muted)] cursor-not-allowed opacity-40'}"
@@ -564,22 +508,22 @@
 			<tbody>
 				{#each builds as build, i (build.id)}
 					<tr
-						class="table-row-animate border-b border-[var(--color-border)] last:border-0 cursor-pointer transition-colors duration-200
-							{expandedBuildId === build.id ? 'bg-[var(--color-bg-2)]' : 'hover:bg-[var(--color-bg-2)]'}
+						class="build-row group table-row-animate border-b border-[var(--color-border)] last:border-0 cursor-pointer transition-colors duration-200 hover:bg-[var(--color-bg-2)]
 							{build.status === 'running' ? 'build-row-active' : ''}"
 						style="animation-delay: {i * 30}ms"
-						onclick={() => toggleBuildExpand(build.id)}
+						onclick={() => openBuild(build.id)}
 					>
 						<td class="px-5 py-3.5">
 							<div class="flex items-center gap-2.5">
+								<span class="font-mono text-meta text-[var(--color-text-primary)]">{build.id}</span>
 								<svg
 									width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
 									stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-									class="shrink-0 text-[var(--color-text-muted)] transition-transform duration-200 {expandedBuildId === build.id ? 'rotate-90' : ''}"
+									aria-hidden="true"
+									class="shrink-0 text-[var(--color-text-muted)] opacity-0 transition-opacity duration-150 group-hover:opacity-100"
 								>
 									<polyline points="9 18 15 12 9 6"/>
 								</svg>
-								<span class="font-mono text-meta text-[var(--color-text-primary)]">{build.id}</span>
 							</div>
 						</td>
 						<td class="px-5 py-3.5">
@@ -631,132 +575,6 @@
 							</span>
 						</td>
 					</tr>
-					<!-- Expanded build logs -->
-					{#if expandedBuildId === build.id}
-						<tr>
-							<td colspan="7" class="border-b border-[var(--color-border)] last:border-0">
-								<div class="bg-[var(--color-bg-0)] px-6 py-5" style="animation: fadeUp 0.15s ease both">
-									{#if build.status === 'pending' || build.status === 'running'}
-										<div class="mb-4 flex justify-end">
-											<button
-												onclick={(e) => { e.stopPropagation(); handleCancelBuild(build.id); }}
-												disabled={cancelingBuildId === build.id}
-												class="flex items-center gap-1.5 rounded-[var(--radius-button)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/8 px-3 py-1.5 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/15 disabled:opacity-50"
-											>
-												{#if cancelingBuildId === build.id}
-													<svg class="animate-spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-												{:else}
-													<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-												{/if}
-												Cancel build
-											</button>
-										</div>
-									{/if}
-									{#if build.error}
-										<div class="mb-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
-											{build.error}
-										</div>
-									{/if}
-
-									{#if build.logs && build.logs.length > 0}
-										<div class="space-y-1">
-											{#each build.logs as log, i (i)}
-												{@const isInternal = log.phase === 'pre-build' || log.phase === 'post-build'}
-												{@const recipeIdx = log.phase === 'recipe' ? build.logs.filter(l => l.phase === 'recipe' && l.step <= log.step).length : 0}
-												{@const phaseLabel = isInternal ? (log.phase === 'pre-build' ? 'Pre-build' : 'Post-build') : `Step ${recipeIdx}`}
-												{@const [kw, kwRest] = splitInstruction(log.cmd)}
-												<div class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-1)] overflow-hidden">
-													<!-- Step header -->
-													<button
-														onclick={(e) => { e.stopPropagation(); toggleStepExpand(log.step); }}
-														class="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-[var(--color-bg-2)]"
-													>
-														<!-- Status icon -->
-														{#if log.ok}
-															<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent-bright)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-														{:else}
-															<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-														{/if}
-														<span class="shrink-0 text-label font-semibold text-[var(--color-text-tertiary)]">{phaseLabel}</span>
-														<code class="flex-1 truncate font-mono text-meta"><span style="color: {keywordColor(kw)}">{kw}</span>{#if kwRest}{' '}<span class="text-[var(--color-text-secondary)]">{kwRest}</span>{/if}</code>
-														<span class="shrink-0 font-mono text-label text-[var(--color-text-muted)]">{log.elapsed_ms}ms</span>
-														{#if log.exit !== 0}
-															<span class="shrink-0 rounded-full bg-[var(--color-red)]/10 px-1.5 py-0.5 font-mono text-label text-[var(--color-red)]">
-																exit {log.exit}
-															</span>
-														{/if}
-														<svg
-															width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-															stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-															class="shrink-0 text-[var(--color-text-muted)] transition-transform duration-200 {expandedSteps.has(log.step) ? 'rotate-90' : ''}"
-														>
-															<polyline points="9 18 15 12 9 6"/>
-														</svg>
-													</button>
-
-													<!-- Step output -->
-													{#if expandedSteps.has(log.step)}
-														<div class="border-t border-[var(--color-border)] bg-[var(--color-bg-0)] px-3 py-3" style="animation: fadeUp 0.12s ease both">
-															{#if log.stdout}
-																<div class="mb-2">
-																	<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">stdout</span>
-																	<pre class="mt-1 max-h-48 overflow-auto rounded-[var(--radius-input)] bg-[var(--color-bg-1)] px-3 py-2 font-mono text-meta leading-relaxed text-[var(--color-text-secondary)]">{log.stdout}</pre>
-																</div>
-															{/if}
-															{#if log.stderr}
-																<div>
-																	<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">stderr</span>
-																	<pre class="mt-1 max-h-48 overflow-auto rounded-[var(--radius-input)] bg-[var(--color-bg-1)] px-3 py-2 font-mono text-meta leading-relaxed text-[var(--color-red)]/80">{log.stderr}</pre>
-																</div>
-															{/if}
-															{#if !log.stdout && !log.stderr}
-																<span class="text-meta text-[var(--color-text-muted)]">No output</span>
-															{/if}
-														</div>
-													{/if}
-												</div>
-											{/each}
-										</div>
-									{:else}
-										<div class="flex items-center gap-2 text-meta text-[var(--color-text-muted)]">
-											{#if build.status === 'pending' || build.status === 'running'}
-												<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-												{build.status === 'pending' ? 'Waiting for worker…' : 'Running…'}
-											{:else}
-												No build logs recorded.
-											{/if}
-										</div>
-									{/if}
-
-									<!-- Recipe reference -->
-									{#if build.recipe && build.recipe.length > 0}
-										<div class="mt-4 border-t border-[var(--color-border)] pt-4">
-											<div class="flex items-center gap-1.5">
-												<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Recipe</span>
-												<CopyButton value={build.recipe.join('\n')} />
-											</div>
-											<div class="mt-2 rounded-[var(--radius-input)] bg-[var(--color-bg-1)] border border-[var(--color-border)] px-3 py-2">
-												{#each build.recipe as cmd, i}
-													{@const [kw, kwRest] = splitInstruction(cmd)}
-													<div class="flex gap-2 py-0.5">
-														<span class="shrink-0 font-mono text-label text-[var(--color-text-muted)] tabular-nums">{i + 1}.</span>
-														<code class="font-mono text-meta"><span style="color: {keywordColor(kw)}">{kw}</span>{#if kwRest}{' '}<span class="text-[var(--color-text-secondary)]">{kwRest}</span>{/if}</code>
-													</div>
-												{/each}
-											</div>
-										</div>
-									{/if}
-
-									{#if build.healthcheck}
-										<div class="mt-3">
-											<span class="text-label font-semibold uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">Healthcheck</span>
-											<code class="ml-2 font-mono text-meta text-[var(--color-text-secondary)]">{build.healthcheck}</code>
-										</div>
-									{/if}
-								</div>
-							</td>
-						</tr>
-					{/if}
 				{/each}
 			</tbody>
 		</table>
@@ -917,15 +735,32 @@
 					</p>
 				</div>
 
-				<label class="flex cursor-pointer items-center gap-2.5">
-					<input
-						type="checkbox"
-						bind:checked={createForm.skip_pre_post}
-						disabled={creating}
-						class="h-4 w-4 cursor-pointer rounded border border-[var(--color-border)] bg-[var(--color-bg-4)] accent-[var(--color-accent)]"
-					/>
-					<span class="text-ui text-[var(--color-text-secondary)]">Skip pre-build and post-build steps</span>
-				</label>
+				<div class="space-y-3">
+					<label class="flex cursor-pointer items-center gap-2.5">
+						<input
+							type="checkbox"
+							bind:checked={createForm.skip_pre_post}
+							disabled={creating}
+							class="h-4 w-4 cursor-pointer rounded border border-[var(--color-border)] bg-[var(--color-bg-4)] accent-[var(--color-accent)]"
+						/>
+						<span class="text-ui text-[var(--color-text-secondary)]">Skip pre-build and post-build steps</span>
+					</label>
+
+					<label class="flex cursor-pointer items-start gap-2.5">
+						<input
+							type="checkbox"
+							bind:checked={createForm.run_as_root}
+							disabled={creating}
+							class="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border border-[var(--color-border)] bg-[var(--color-bg-4)] accent-[var(--color-accent)]"
+						/>
+						<span class="text-ui text-[var(--color-text-secondary)]">
+							Run recipe as root
+							<span class="mt-0.5 block text-label text-[var(--color-text-muted)]">
+								Default runs the recipe as an unprivileged build user. Enable only when root is required; no build user is created.
+							</span>
+						</span>
+					</label>
+				</div>
 			</div>
 
 			<div class="mt-6 flex justify-end gap-3">

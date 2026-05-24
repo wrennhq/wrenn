@@ -8,11 +8,9 @@ import (
 	"net/http"
 
 	"connectrpc.com/connect"
-	"github.com/go-chi/chi/v5"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
-	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
@@ -30,23 +28,11 @@ func newFilesStreamHandler(db *db.Queries, pool *lifecycle.HostClientPool) *file
 // Expects multipart/form-data with "path" text field and "file" file field.
 // Streams file content directly from the request body to the host agent without buffering.
 func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request) {
-	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
 
-	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
-		return
-	}
-
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+	sb, _, sandboxIDStr, ok := requireRunningSandbox(w, r, h.db, ac.TeamID)
+	if !ok {
 		return
 	}
 
@@ -103,6 +89,12 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 
 	// Open client-streaming RPC to host agent.
 	stream := agent.WriteFileStream(ctx)
+	var streamClosed bool
+	defer func() {
+		if !streamClosed {
+			_, _ = stream.CloseAndReceive()
+		}
+	}()
 
 	// Send metadata first.
 	if err := stream.Send(&pb.WriteFileStreamRequest{
@@ -141,6 +133,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	// Close and receive response.
+	streamClosed = true
 	if _, err := stream.CloseAndReceive(); err != nil {
 		status, code, msg := agentErrToHTTP(err)
 		writeError(w, status, code, msg)
@@ -153,23 +146,11 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 // StreamDownload handles POST /v1/capsules/{id}/files/stream/read.
 // Accepts JSON body with path, streams file content back without buffering.
 func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Request) {
-	sandboxIDStr := chi.URLParam(r, "id")
 	ctx := r.Context()
 	ac := auth.MustFromContext(ctx)
 
-	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
-		return
-	}
-
-	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return
-	}
-	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running")
+	sb, _, sandboxIDStr, ok := requireRunningSandbox(w, r, h.db, ac.TeamID)
+	if !ok {
 		return
 	}
 

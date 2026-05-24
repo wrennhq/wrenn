@@ -1,0 +1,63 @@
+when:
+  - event: push
+    branch: main
+
+steps:
+  build-go:
+    image: python:3.13
+    environment:
+      WRENN_API_KEY:
+        from_secret: wrenn_api_key
+    commands:
+      - pip install wrenn httpx
+      - export GO_VERSION=$$(grep '^go ' go.mod | cut -d' ' -f2)
+      - python .woodpecker/scripts/build_go.py
+    depends_on: []
+
+  build-rust:
+    image: python:3.13
+    environment:
+      WRENN_API_KEY:
+        from_secret: wrenn_api_key
+    commands:
+      - pip install wrenn
+      - export RUST_VERSION=$$(grep '^rust-version ' envd-rs/Cargo.toml | cut -d'"' -f2)
+      - python .woodpecker/scripts/build_rust.py
+    depends_on: []
+
+  tag-release:
+    image: python:3.13
+    environment:
+      GITEA_TOKEN:
+        from_secret: gitea_token
+    commands:
+      - VERSION=$$(cat VERSION_CP)
+      - git config user.name "R3dRum92"
+      - git config user.email "tksadik@omukk.dev"
+      - git tag "v$${VERSION}"
+      - git push "https://tksadik92:$${GITEA_TOKEN}@git.omukk.dev/wrenn/wrenn.git" "v$${VERSION}"
+    depends_on: [build-go, build-rust]
+
+  release-notes:
+    image: python:3.13
+    environment:
+      WRENN_API_KEY:
+        from_secret: wrenn_api_key
+      GITEA_TOKEN:
+        from_secret: gitea_token
+      ZHIPU_API_KEY:
+        from_secret: zhipu_api_key
+    commands:
+      - pip install wrenn
+      - python .woodpecker/scripts/release_notes.py
+    depends_on: [tag-release]
+
+  publish-github:
+    image: python:3.13
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
+    commands:
+      - pip install httpx
+      - python .woodpecker/scripts/publish_github.py
+    depends_on: [release-notes]

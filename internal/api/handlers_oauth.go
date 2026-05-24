@@ -14,10 +14,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
+	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
@@ -25,18 +27,22 @@ import (
 type oauthHandler struct {
 	db          *db.Queries
 	pool        *pgxpool.Pool
-	jwtSecret   []byte
+	hmacKey     []byte // HMAC key for OAuth state and link cookies
+	sessions    *session.Service
 	registry    *oauth.Registry
 	redirectURL string // base frontend URL (e.g. "https://app.wrenn.dev")
+	authHooks   []cpextension.AuthHook
 }
 
-func newOAuthHandler(db *db.Queries, pool *pgxpool.Pool, jwtSecret []byte, registry *oauth.Registry, redirectURL string) *oauthHandler {
+func newOAuthHandler(db *db.Queries, pool *pgxpool.Pool, hmacKey []byte, sessions *session.Service, registry *oauth.Registry, redirectURL string, hooks []cpextension.AuthHook) *oauthHandler {
 	return &oauthHandler{
 		db:          db,
 		pool:        pool,
-		jwtSecret:   jwtSecret,
+		hmacKey:     hmacKey,
+		sessions:    sessions,
 		registry:    registry,
 		redirectURL: strings.TrimRight(redirectURL, "/"),
+		authHooks:   hooks,
 	}
 }
 
@@ -61,7 +67,7 @@ func (h *oauthHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 		intent = "login"
 	}
 
-	mac := computeHMAC(h.jwtSecret, state+":"+intent)
+	mac := computeHMAC(h.hmacKey, state+":"+intent)
 	cookieVal := state + ":" + mac + ":" + intent
 
 	http.SetCookie(w, &http.Cookie{
@@ -121,7 +127,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 3 && parts[2] == "signup" {
 		intent = "signup"
 	}
-	if !hmac.Equal([]byte(computeHMAC(h.jwtSecret, nonce+":"+intent)), []byte(expectedMAC)) {
+	if !hmac.Equal([]byte(computeHMAC(h.hmacKey, nonce+":"+intent)), []byte(expectedMAC)) {
 		redirectWithError(w, r, redirectBase, "invalid_state")
 		return
 	}
@@ -164,7 +170,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 		// Verify the HMAC to prevent cookie forgery.
 		linkParts := strings.SplitN(linkCookie.Value, ":", 2)
-		if len(linkParts) != 2 || !hmac.Equal([]byte(computeHMAC(h.jwtSecret, linkParts[0])), []byte(linkParts[1])) {
+		if len(linkParts) != 2 || !hmac.Equal([]byte(computeHMAC(h.hmacKey, linkParts[0])), []byte(linkParts[1])) {
 			slog.Warn("oauth link: invalid or tampered link cookie")
 			http.Redirect(w, r, settingsBase+"?connect_error=invalid_state", http.StatusFound)
 			return
@@ -244,13 +250,12 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		isAdmin := user.IsAdmin || isFirstUser
-		token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, isAdmin)
-		if err != nil {
-			slog.Error("oauth login: failed to sign jwt", "error", err)
+		if err := h.issueSessionAndRedirect(w, r, user.ID, team.ID, user.Email, user.Name, role, isAdmin, redirectBase); err != nil {
+			slog.Error("oauth login: failed to issue session", "error", err)
 			redirectWithError(w, r, redirectBase, "internal_error")
 			return
 		}
-		redirectWithToken(w, r, redirectBase, token, id.FormatUserID(user.ID), id.FormatTeamID(team.ID), user.Email, user.Name)
+		fireOnLogin(ctx, h.authHooks, user.ID)
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -374,10 +379,10 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.SignJWT(h.jwtSecret, userID, teamID, email, profile.Name, "owner", isFirstUser)
-	if err != nil {
-		slog.Error("oauth: failed to sign jwt", "error", err)
-		redirectWithError(w, r, redirectBase, "internal_error")
+	// Fire OnSignup before session issuance — billing must succeed first.
+	if hookErr := fireOnSignup(ctx, h.authHooks, userID, teamID, email); hookErr != nil {
+		slog.Error("oauth signup: OnSignup hook failed", "user_id", id.FormatUserID(userID), "error", hookErr)
+		redirectWithError(w, r, redirectBase, "signup_hook_failed")
 		return
 	}
 
@@ -385,14 +390,19 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "wrenn_oauth_new_signup",
 		Value:    "1",
-		Path:     "/auth/",
+		Path:     "/",
 		MaxAge:   60,
 		HttpOnly: false,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   isSecure(r),
 	})
 
-	redirectWithToken(w, r, redirectBase, token, id.FormatUserID(userID), id.FormatTeamID(teamID), email, profile.Name)
+	if err := h.issueSessionAndRedirect(w, r, userID, teamID, email, profile.Name, "owner", isFirstUser, redirectBase); err != nil {
+		slog.Error("oauth: failed to issue session", "error", err)
+		redirectWithError(w, r, redirectBase, "internal_error")
+		return
+	}
+	fireOnLogin(ctx, h.authHooks, userID)
 }
 
 // retryAsLogin handles the race where a concurrent request already created the user.
@@ -431,33 +441,35 @@ func (h *oauthHandler) retryAsLogin(w http.ResponseWriter, r *http.Request, prov
 		return
 	}
 	isAdmin := user.IsAdmin || isFirstUser
-	token, err := auth.SignJWT(h.jwtSecret, user.ID, team.ID, user.Email, user.Name, role, isAdmin)
-	if err != nil {
-		slog.Error("oauth: retry login: failed to sign jwt", "error", err)
+	if err := h.issueSessionAndRedirect(w, r, user.ID, team.ID, user.Email, user.Name, role, isAdmin, redirectBase); err != nil {
+		slog.Error("oauth: retry login: failed to issue session", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
 		return
 	}
-	redirectWithToken(w, r, redirectBase, token, id.FormatUserID(user.ID), id.FormatTeamID(team.ID), user.Email, user.Name)
+	fireOnLogin(ctx, h.authHooks, user.ID)
 }
 
-func redirectWithToken(w http.ResponseWriter, r *http.Request, base, token, userID, teamID, email, name string) {
-	// Set auth data as short-lived cookies instead of URL query parameters.
-	// This prevents token leakage via server access logs, Referer headers, and browser history.
-	for _, c := range []http.Cookie{
-		{Name: "wrenn_oauth_token", Value: token},
-		{Name: "wrenn_oauth_user_id", Value: userID},
-		{Name: "wrenn_oauth_team_id", Value: teamID},
-		{Name: "wrenn_oauth_email", Value: email},
-		{Name: "wrenn_oauth_name", Value: name},
-	} {
-		c.Path = "/auth/"
-		c.MaxAge = 60
-		c.HttpOnly = false // frontend JS must read these
-		c.SameSite = http.SameSiteLaxMode
-		c.Secure = isSecure(r)
-		http.SetCookie(w, &c)
+// issueSessionAndRedirect creates a session, sets the session and CSRF
+// cookies, and redirects to the frontend dashboard. The redirectBase param
+// is the OAuth callback URL; we ignore it after success and send the user to
+// /dashboard directly (callback page will probe /v1/me to hydrate state).
+func (h *oauthHandler) issueSessionAndRedirect(
+	w http.ResponseWriter,
+	r *http.Request,
+	userID, teamID pgtype.UUID,
+	email, name, role string,
+	isAdmin bool,
+	redirectBase string,
+) error {
+	sess, err := h.sessions.Create(r.Context(), userID, teamID, email, name, role, isAdmin, r.UserAgent(), clientIP(r))
+	if err != nil {
+		return err
 	}
-	http.Redirect(w, r, base, http.StatusFound)
+	setSessionCookies(w, sess.RawSID, sess.CSRFToken, isSecure(r))
+	// Send the user to the callback page so the SPA can probe /v1/me and
+	// trigger any post-OAuth UX (e.g. the new-signup name confirmation).
+	http.Redirect(w, r, redirectBase, http.StatusFound)
+	return nil
 }
 
 func redirectWithError(w http.ResponseWriter, r *http.Request, base, code string) {
@@ -476,8 +488,4 @@ func computeHMAC(key []byte, data string) string {
 	h := hmac.New(sha256.New, key)
 	h.Write([]byte(data))
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func isSecure(r *http.Request) bool {
-	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }

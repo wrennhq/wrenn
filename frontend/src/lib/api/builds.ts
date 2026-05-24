@@ -41,8 +41,33 @@ export type CreateBuildParams = {
 	vcpus?: number;
 	memory_mb?: number;
 	skip_pre_post?: boolean;
+	run_as_root?: boolean;
 	archive?: File;
 };
+
+// BuildStreamEvent is one message from the live build console WebSocket
+// (GET /v1/admin/builds/{id}/stream). It mirrors the backend event shape.
+export type BuildStreamEvent = {
+	type: 'step-start' | 'output' | 'step-end' | 'build-status' | 'ping';
+	step?: number;
+	phase?: string;
+	cmd?: string;
+	data?: string; // base64-encoded PTY output bytes
+	exit?: number;
+	ok?: boolean;
+	elapsed_ms?: number;
+	status?: string;
+	current_step?: number;
+	total_steps?: number;
+	error?: string;
+	t?: number;
+};
+
+// buildStreamUrl returns the WebSocket URL for a build's live console.
+export function buildStreamUrl(id: string): string {
+	const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+	return `${proto}//${window.location.host}/api/v1/admin/builds/${id}/stream`;
+}
 
 export async function createBuild(params: CreateBuildParams): Promise<ApiResult<Build>> {
 	if (params.archive) {
@@ -72,6 +97,8 @@ export type AdminTemplate = {
 	size_bytes: number;
 	team_id: string;
 	created_at: string;
+	/** True for built-in system base templates, which cannot be deleted. */
+	protected: boolean;
 };
 
 export async function listAdminTemplates(): Promise<ApiResult<AdminTemplate[]>> {

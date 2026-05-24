@@ -1,6 +1,6 @@
 # envd (Rust)
 
-Wrenn guest agent daemon — runs as PID 1 inside Firecracker microVMs. Provides process management, filesystem operations, file transfer, port forwarding, and VM lifecycle control over Connect RPC and HTTP.
+Wrenn guest agent daemon — runs as PID 1 inside Cloud Hypervisor microVMs. Provides process management, filesystem operations, file transfer, port forwarding, and VM lifecycle control over Connect RPC and HTTP.
 
 Rust rewrite of `envd/` (Go). Drop-in replacement — same wire protocol, same endpoints, same CLI flags.
 
@@ -50,7 +50,7 @@ cargo build
 Run locally (outside a VM):
 
 ```bash
-./target/debug/envd --isnotfc --port 49983
+./target/debug/envd --port 49983
 ```
 
 ### Via Makefile (from repo root)
@@ -64,7 +64,6 @@ make build-envd-go     # Go version (for comparison)
 
 ```
 --port <PORT>          Listen port [default: 49983]
---isnotfc              Not running inside Firecracker (disables MMDS, cgroups)
 --version              Print version and exit
 --commit               Print git commit and exit
 --cmd <CMD>            Spawn a process at startup (e.g. --cmd "/bin/bash")
@@ -81,7 +80,7 @@ make build-envd-go     # Go version (for comparison)
 | GET    | `/metrics`          | System metrics (CPU, memory, disk)   |
 | GET    | `/envs`             | Current environment variables        |
 | POST   | `/init`             | Host agent init (token, env, mounts) |
-| POST   | `/snapshot/prepare` | Quiesce before Firecracker snapshot  |
+| POST   | `/snapshot/prepare` | Quiesce before Cloud Hypervisor snapshot |
 | GET    | `/files`            | Download file (gzip, range support)  |
 | POST   | `/files`            | Upload file(s) via multipart         |
 
@@ -108,7 +107,7 @@ src/
 ├── util.rs              # AtomicMax
 ├── auth/                # Token, signing, middleware
 ├── crypto/              # SHA-256, SHA-512, HMAC
-├── host/                # MMDS polling, system metrics
+├── host/                # System metrics
 ├── http/                # Axum handlers (health, init, snapshot, files, encoding)
 ├── permissions/         # Path resolution, user lookup, chown
 ├── rpc/                 # Connect RPC services
@@ -129,13 +128,15 @@ src/
 After building the static binary, copy it into the rootfs:
 
 ```bash
-bash scripts/update-debug-rootfs.sh [rootfs_path]
+bash scripts/update-minimal-rootfs.sh [rootfs_path]
 ```
 
-Or manually:
+With no argument it updates all four system base images; pass a path to target one.
+
+Or manually (example path: the minimal-ubuntu image, platform team + template id 0):
 
 ```bash
-sudo mount -o loop /var/lib/wrenn/images/minimal.ext4 /mnt
-sudo cp target/x86_64-unknown-linux-musl/release/envd /mnt/usr/bin/envd
+sudo mount -o loop /var/lib/wrenn/images/teams/0000000000000000000000000/0000000000000000000000000/rootfs.ext4 /mnt
+sudo cp target/x86_64-unknown-linux-musl/release/envd /mnt/usr/local/bin/envd
 sudo umount /mnt
 ```

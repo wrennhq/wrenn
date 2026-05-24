@@ -16,7 +16,7 @@ LDFLAGS        := -s -w
 build: build-cp build-agent build-envd
 
 build-frontend:
-	cd frontend && pnpm install --frozen-lockfile && pnpm build
+	cd frontend && bun install --frozen-lockfile && bun run build
 
 build-cp:
 	go build -v -ldflags="$(LDFLAGS) -X main.version=$(VERSION_CP) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/wrenn-cp ./cmd/control-plane
@@ -59,10 +59,10 @@ dev-agent:
 	sudo go run ./cmd/host-agent
 
 dev-frontend:
-	cd frontend && pnpm dev --port 5173 --host 0.0.0.0
+	cd frontend && bun run dev --port 5173 --host 0.0.0.0
 
 dev-envd:
-	cd envd-rs && cargo run -- --isnotfc --port 49983
+	cd envd-rs && cargo run -- --port 49983
 
 # ═══════════════════════════════════════════════════
 #  Database (goose)
@@ -131,32 +131,24 @@ check: fmt vet lint test
 # ═══════════════════════════════════════════════════
 #  Rootfs Images
 # ═══════════════════════════════════════════════════
-.PHONY: images image-minimal image-python image-node
+.PHONY: images rootfs-ubuntu rootfs-alpine rootfs-arch rootfs-fedora
 
-images: build-envd image-minimal image-python image-node
+# Build all four system base rootfs images (ubuntu/alpine/arch/fedora). Each
+# spawns a distro container, installs the required packages + wrenn-user, then
+# exports to images/teams/<platform>/<id>/rootfs.ext4. Requires docker + sudo.
+images: rootfs-ubuntu rootfs-alpine rootfs-arch rootfs-fedora
 
-image-minimal:
-	sudo bash images/templates/minimal/build.sh
+rootfs-ubuntu:
+	bash images/build-ubuntu.sh
 
-image-python:
-	sudo bash images/templates/python312/build.sh
+rootfs-alpine:
+	bash images/build-alpine.sh
 
-image-node:
-	sudo bash images/templates/node20/build.sh
+rootfs-arch:
+	bash images/build-arch.sh
 
-# ═══════════════════════════════════════════════════
-#  Deployment
-# ═══════════════════════════════════════════════════
-.PHONY: setup-host install
-
-setup-host:
-	sudo bash scripts/setup-host.sh
-
-install: build
-	sudo cp $(BIN_DIR)/wrenn-cp /usr/local/bin/
-	sudo cp $(BIN_DIR)/wrenn-agent /usr/local/bin/
-	sudo cp deploy/systemd/*.service /etc/systemd/system/
-	sudo systemctl daemon-reload
+rootfs-fedora:
+	bash images/build-fedora.sh
 
 # ═══════════════════════════════════════════════════
 #  Clean
@@ -181,7 +173,7 @@ help:
 	@echo "  make dev-cp         Control plane (hot reload if air installed)"
 	@echo "  make dev-frontend   Vite dev server with HMR (port 5173)"
 	@echo "  make dev-agent      Host agent (sudo required)"
-	@echo "  make dev-envd       envd in debug mode (--isnotfc, port 49983)"
+	@echo "  make dev-envd       envd in debug mode (port 49983)"
 	@echo ""
 	@echo "  make build          Build all binaries → builds/"
 	@echo "  make build-frontend Build SvelteKit dashboard → frontend/build/"
