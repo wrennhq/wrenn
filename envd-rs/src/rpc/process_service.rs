@@ -6,7 +6,7 @@ use connectrpc::{ConnectError, Context, ErrorCode};
 use dashmap::DashMap;
 use futures::Stream;
 
-use crate::permissions::path::expand_and_resolve;
+use crate::permissions::path::{expand_and_resolve, expand_tilde};
 use crate::permissions::user::lookup_user;
 use crate::rpc::pb::process::*;
 use crate::rpc::process_handler::{self, DataEvent, ProcessHandle};
@@ -75,8 +75,8 @@ impl ProcessServiceImpl {
         let user =
             lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
-        let cmd: &str = proc_config.cmd;
-        let args: Vec<String> = proc_config.args.iter().map(|s| s.to_string()).collect();
+        let cmd_raw: &str = proc_config.cmd;
+        let args_raw: Vec<String> = proc_config.args.iter().map(|s| s.to_string()).collect();
         let envs: HashMap<String, String> = proc_config
             .envs
             .iter()
@@ -84,6 +84,13 @@ impl ProcessServiceImpl {
             .collect();
 
         let home_dir = user.dir.to_string_lossy().to_string();
+
+        let cmd = expand_tilde(cmd_raw, &home_dir)
+            .map_err(|e| ConnectError::new(ErrorCode::InvalidArgument, e))?;
+        let args: Vec<String> = args_raw.into_iter()
+            .map(|a| expand_tilde(&a, &home_dir).unwrap_or(a))
+            .collect();
+
         let cwd_str: &str = proc_config.cwd.unwrap_or("");
         let default_workdir = self.state.defaults.workdir();
         let cwd = expand_and_resolve(cwd_str, &home_dir, default_workdir.as_deref())
@@ -118,7 +125,7 @@ impl ProcessServiceImpl {
         );
 
         let spawned = process_handler::spawn_process(
-            cmd,
+            &cmd,
             &args,
             &envs,
             effective_cwd,
@@ -523,5 +530,107 @@ fn make_end_start_response(end: process_handler::EndEvent) -> StartResponse {
     StartResponse {
         event: buffa::MessageField::some(make_end_event(end)),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cmd_expands_tilde_slash() {
+        let home_dir = "/home/testuser";
+        let result = expand_tilde("~/bin/mytool", home_dir).unwrap();
+        assert_eq!(result, "/home/testuser/bin/mytool");
+    }
+
+    #[test]
+    fn cmd_expands_bare_tilde() {
+        let home_dir = "/home/testuser";
+        let result = expand_tilde("~", home_dir).unwrap();
+        assert_eq!(result, "/home/testuser");
+    }
+
+    #[test]
+    fn cmd_passthrough_absolute() {
+        let home_dir = "/home/testuser";
+        let result = expand_tilde("/usr/bin/env", home_dir).unwrap();
+        assert_eq!(result, "/usr/bin/env");
+    }
+
+    #[test]
+    fn cmd_passthrough_relative_no_tilde() {
+        let home_dir = "/home/testuser";
+        let result = expand_tilde("bin/tool", home_dir).unwrap();
+        assert_eq!(result, "bin/tool");
+    }
+
+    #[test]
+    fn cmd_errors_on_other_user() {
+        let home_dir = "/home/testuser";
+        assert!(expand_tilde("~other/bin/tool", home_dir).is_err());
+    }
+
+    #[test]
+    fn args_expands_tilde_slash() {
+        let home_dir = "/home/testuser";
+        let result = expand_tilde("~/hi", home_dir).unwrap();
+        assert_eq!(result, "/home/testuser/hi");
+    }
+
+    #[test]
+    fn args_expands_bare_tilde() {
+        let home_dir = "/home/testuser";
+        let result = expand_tilde("~", home_dir).unwrap();
+        assert_eq!(result, "/home/testuser");
+    }
+
+    #[test]
+    fn args_other_user_left_literal() {
+        let home_dir = "/home/testuser";
+        let args_raw = vec!["~other".to_string(), "~other/path".to_string()];
+        let args: Vec<String> = args_raw.into_iter()
+            .map(|a| expand_tilde(&a, home_dir).unwrap_or(a))
+            .collect();
+        assert_eq!(args, vec!["~other", "~other/path"]);
+    }
+
+    #[test]
+    fn args_passthrough_absolute() {
+        let home_dir = "/home/testuser";
+        let result = expand_tilde("/tmp/file", home_dir).unwrap();
+        assert_eq!(result, "/tmp/file");
+    }
+
+    #[test]
+    fn args_passthrough_relative_no_tilde() {
+        let home_dir = "/home/testuser";
+        let result = expand_tilde("relative/path", home_dir).unwrap();
+        assert_eq!(result, "relative/path");
+    }
+
+    #[test]
+    fn args_mixed_expands_tilde_keeps_rest() {
+        let home_dir = "/home/testuser";
+        let args_raw = vec![
+            "-p".to_string(),
+            "~/data".to_string(),
+            "/tmp/out".to_string(),
+            "~other".to_string(),
+        ];
+        let args: Vec<String> = args_raw.into_iter()
+            .map(|a| expand_tilde(&a, home_dir).unwrap_or(a))
+            .collect();
+        assert_eq!(args, vec!["-p", "/home/testuser/data", "/tmp/out", "~other"]);
+    }
+
+    #[test]
+    fn args_empty_passthrough() {
+        let home_dir = "/home/testuser";
+        let args_raw: Vec<String> = vec![];
+        let args: Vec<String> = args_raw.into_iter()
+            .map(|a| expand_tilde(&a, home_dir).unwrap_or(a))
+            .collect();
+        assert!(args.is_empty());
     }
 }

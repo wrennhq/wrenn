@@ -177,13 +177,22 @@ pub fn spawn_process(
     // commands run as a non-root user. Writing 100 to the process's own
     // oom_score_adj is always permitted (raising the score).
     let nice_delta = 0 - current_nice();
+    let profile_source = r#"test -f /etc/profile && . /etc/profile
+test -f "${HOME}/.bashrc" && . "${HOME}/.bashrc""#;
     let oom_script = if nice_delta > 0 {
         format!(
-            r#"echo 100 > /proc/$$/oom_score_adj && exec /usr/bin/nice -n {} "${{@}}""#,
-            nice_delta
+            r#"echo 100 > /proc/$$/oom_score_adj
+{}
+exec /usr/bin/nice -n {} "${{@}}""#,
+            profile_source, nice_delta,
         )
     } else {
-        r#"echo 100 > /proc/$$/oom_score_adj && exec "$@""#.to_string()
+        format!(
+            r#"echo 100 > /proc/$$/oom_score_adj
+{}
+exec "$@""#,
+            profile_source
+        )
     };
     let mut wrapper_args = vec![
         "-c".to_string(),
@@ -222,7 +231,7 @@ pub fn spawn_process(
         let master_fd = pty_result.master;
         let slave_fd = pty_result.slave;
 
-        let mut command = std::process::Command::new("/bin/sh");
+        let mut command = std::process::Command::new("/bin/bash");
         command
             .args(&wrapper_args)
             .env_clear()
@@ -322,7 +331,7 @@ pub fn spawn_process(
         tracing::info!(pid, cmd = cmd_str, "process started (pty)");
         Ok(SpawnedProcess { handle, data_rx, end_rx })
     } else {
-        let mut command = std::process::Command::new("/bin/sh");
+        let mut command = std::process::Command::new("/bin/bash");
         command
             .args(&wrapper_args)
             .env_clear()

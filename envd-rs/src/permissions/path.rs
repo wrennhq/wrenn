@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use nix::unistd::{Gid, Uid};
 
-fn expand_tilde(path: &str, home_dir: &str) -> Result<String, String> {
+pub(crate) fn expand_tilde(path: &str, home_dir: &str) -> Result<String, String> {
     if path.is_empty() || !path.starts_with('~') {
         return Ok(path.to_string());
     }
@@ -110,6 +110,34 @@ mod tests {
     #[test]
     fn tilde_relative_no_tilde() {
         assert_eq!(expand_tilde("relative/path", "/home/u").unwrap(), "relative/path");
+    }
+
+    #[test]
+    fn tilde_cmd_like() {
+        assert_eq!(expand_tilde("~/bin/myapp", "/home/user").unwrap(), "/home/user/bin/myapp");
+    }
+
+    #[test]
+    fn tilde_bare_path_arg() {
+        assert_eq!(expand_tilde("~", "/home/user").unwrap(), "/home/user");
+    }
+
+    #[test]
+    fn tilde_slash_only() {
+        assert_eq!(expand_tilde("~/", "/home/u").unwrap(), "/home/u/");
+    }
+
+    #[test]
+    fn tilde_embedded_not_expanded() {
+        assert_eq!(expand_tilde("/a/~/b", "/home/u").unwrap(), "/a/~/b");
+    }
+
+    #[test]
+    fn tilde_long_home_dir() {
+        assert_eq!(
+            expand_tilde("~/code/project", "/very/long/home/directory/path").unwrap(),
+            "/very/long/home/directory/path/code/project"
+        );
     }
 
     // expand_and_resolve
