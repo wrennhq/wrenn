@@ -37,44 +37,44 @@ func (m *Manager) createFromSnapshotTemplate(
 	vcpus, memoryMB, timeoutSec, diskSizeMB int,
 	defaultUser string,
 	defaultEnv map[string]string,
-) (*models.Sandbox, error) {
+) (*models.Sandbox, int64, error) {
 	templateDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
 	baseRootfs := layout.TemplateRootfs(m.cfg.WrennDir, teamID, templateID)
 
 	meta, err := readSnapshotMeta(templateDir)
 	if err != nil {
-		return nil, fmt.Errorf("read snapshot meta: %w", err)
+		return nil, 0, fmt.Errorf("read snapshot meta: %w", err)
 	}
 	if meta.SandboxDir == "" {
 		// CH's saved config.json hardcodes a tmpfs disk path; meta.SandboxDir
 		// is that exact path. A snapshot template without it cannot be launched.
-		return nil, fmt.Errorf("snapshot template %s missing sandbox_dir in meta", templateDir)
+		return nil, 0, fmt.Errorf("snapshot template %s missing sandbox_dir in meta", templateDir)
 	}
 
 	// Acquire shared read-only loop on the flattened rootfs. Many sandboxes
 	// can share this loop concurrently — refcounted in LoopRegistry.
 	originLoop, err := m.loops.Acquire(baseRootfs)
 	if err != nil {
-		return nil, fmt.Errorf("acquire loop: %w", err)
+		return nil, 0, fmt.Errorf("acquire loop: %w", err)
 	}
 	originSize, err := devicemapper.OriginSizeBytes(originLoop)
 	if err != nil {
 		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("origin size: %w", err)
+		return nil, 0, fmt.Errorf("origin size: %w", err)
 	}
 
 	// Per-sandbox CoW on top of the shared origin.
 	dmName := "wrenn-" + sandboxID
 	if err := os.MkdirAll(layout.SandboxDir(m.cfg.WrennDir, sandboxID), 0o755); err != nil {
 		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("create sandbox dir: %w", err)
+		return nil, 0, fmt.Errorf("create sandbox dir: %w", err)
 	}
 	cowPath := layout.SandboxCowPath(m.cfg.WrennDir, sandboxID)
 	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
 	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
 		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("create dm-snapshot: %w", err)
+		return nil, 0, fmt.Errorf("create dm-snapshot: %w", err)
 	}
 
 	res := &createResources{
@@ -89,14 +89,14 @@ func (m *Manager) createFromSnapshotTemplate(
 	slotIdx, err := m.slots.Allocate()
 	if err != nil {
 		res.rollback()
-		return nil, fmt.Errorf("allocate network slot: %w", err)
+		return nil, 0, fmt.Errorf("allocate network slot: %w", err)
 	}
 	res.slotIdx = slotIdx
 	slot := network.NewSlot(slotIdx)
 
 	if err := network.CreateNetwork(slot); err != nil {
 		res.rollback()
-		return nil, fmt.Errorf("create network: %w", err)
+		return nil, 0, fmt.Errorf("create network: %w", err)
 	}
 	res.slot = slot
 
@@ -119,7 +119,7 @@ func (m *Manager) createFromSnapshotTemplate(
 	client, err := m.launchRestoredVM(ctx, vmCfg, slot.HostIP.String())
 	if err != nil {
 		res.rollback()
-		return nil, err
+		return nil, 0, err
 	}
 	res.vm = m.vm
 
@@ -172,7 +172,7 @@ func (m *Manager) createFromSnapshotTemplate(
 		"dm_device", dmDev.DevicePath,
 	)
 
-	return &sb.Sandbox, nil
+	return &sb.Sandbox, cowSize, nil
 }
 
 // templateExists returns true if a snapshot template already lives at

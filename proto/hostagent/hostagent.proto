@@ -128,8 +128,7 @@ message CreateSandboxRequest {
   // inactivity. 0 means no auto-pause.
   int32 timeout_sec = 4;
 
-  // Disk size in MB for the rootfs. Base images are expanded to this size
-  // at host agent startup. Default: 5120 (5 GB).
+  // Deprecated: disk size is now determined by the host agent.
   int32 disk_size_mb = 6;
 
   // Team UUID that owns the template (hex string). All-zeros = platform.
@@ -153,6 +152,10 @@ message CreateSandboxResponse {
   // Runtime metadata collected during sandbox creation (e.g. envd_version,
   // kernel_version, vmm_version, agent_version).
   map<string, string> metadata = 4;
+
+  // Actual disk size in MB allocated for the sandbox rootfs.
+  // Determined by the host agent (max of requested size and origin rootfs size).
+  int32 disk_size_mb = 5;
 }
 
 message DestroySandboxRequest {

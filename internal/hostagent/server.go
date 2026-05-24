@@ -77,7 +77,7 @@ func (s *Server) CreateSandbox(
 		return nil, err
 	}
 
-	sb, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID,
+	sb, diskSizeBytes, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID,
 		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb),
 		msg.DefaultUser, msg.DefaultEnv)
 	if err != nil {
@@ -88,10 +88,11 @@ func (s *Server) CreateSandbox(
 	}
 
 	return connect.NewResponse(&pb.CreateSandboxResponse{
-		SandboxId: sb.ID,
-		Status:    string(sb.Status),
-		HostIp:    sb.HostIP.String(),
-		Metadata:  sb.Metadata,
+		SandboxId:  sb.ID,
+		Status:     string(sb.Status),
+		HostIp:     sb.HostIP.String(),
+		Metadata:   sb.Metadata,
+		DiskSizeMb: int32(diskSizeBytes / (1024 * 1024)),
 	}), nil
 }
 

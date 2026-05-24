@@ -49,7 +49,6 @@ type SandboxCreateParams struct {
 	VCPUs      int32
 	MemoryMB   int32
 	TimeoutSec int32
-	DiskSizeMB int32
 }
 
 // MinTimeoutSec mirrors internal/sandbox.MinTimeoutSec. Sub-minute TTLs race
@@ -132,9 +131,6 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	if p.MemoryMB <= 0 {
 		p.MemoryMB = 512
 	}
-	if p.DiskSizeMB <= 0 {
-		p.DiskSizeMB = 5120 // 5 GB default
-	}
 	p.TimeoutSec = clampTimeout(p.TimeoutSec)
 
 	// Resolve template name → (teamID, templateID). System base templates are
@@ -165,7 +161,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		return db.Sandbox{}, fmt.Errorf("team not found: %w", err)
 	}
 
-	host, err := s.Scheduler.SelectHost(ctx, p.TeamID, team.IsByoc, p.MemoryMB, p.DiskSizeMB)
+	host, err := s.Scheduler.SelectHost(ctx, p.TeamID, team.IsByoc, p.MemoryMB, 0)
 	if err != nil {
 		return db.Sandbox{}, fmt.Errorf("select host: %w", err)
 	}
@@ -188,7 +184,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		Vcpus:          p.VCPUs,
 		MemoryMb:       p.MemoryMB,
 		TimeoutSec:     p.TimeoutSec,
-		DiskSizeMb:     p.DiskSizeMB,
+		DiskSizeMb:     0,
 		TemplateID:     templateID,
 		TemplateTeamID: templateTeamID,
 		Metadata:       []byte("{}"),
@@ -220,7 +216,7 @@ func (s *SandboxService) createInBackground(
 		Vcpus:       p.VCPUs,
 		MemoryMb:    p.MemoryMB,
 		TimeoutSec:  p.TimeoutSec,
-		DiskSizeMb:  p.DiskSizeMB,
+		DiskSizeMb:  0,
 		DefaultUser: defaultUser,
 		DefaultEnv:  defaultEnv,
 	}))
@@ -238,6 +234,15 @@ func (s *SandboxService) createInBackground(
 			Error: err.Error(), Timestamp: time.Now().Unix(),
 		})
 		return
+	}
+
+	if resp.Msg.DiskSizeMb > 0 {
+		if err := s.DB.UpdateSandboxDiskSize(bgCtx, db.UpdateSandboxDiskSizeParams{
+			ID:         sandboxID,
+			DiskSizeMb: resp.Msg.DiskSizeMb,
+		}); err != nil {
+			slog.Warn("failed to update sandbox disk size", "id", sandboxIDStr, "error", err)
+		}
 	}
 
 	now := time.Now()

@@ -113,3 +113,9 @@ UPDATE sandboxes
 SET status       = $2,
     last_updated = NOW()
 WHERE id = ANY($1::uuid[]) AND status = 'missing';
+
+-- name: UpdateSandboxDiskSize :exec
+UPDATE sandboxes
+SET disk_size_mb = $2,
+    last_updated = NOW()
+WHERE id = $1;

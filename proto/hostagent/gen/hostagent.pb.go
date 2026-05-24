@@ -34,8 +34,7 @@ type CreateSandboxRequest struct {
 	// TTL in seconds. Sandbox is auto-paused after this duration of
 	// inactivity. 0 means no auto-pause.
 	TimeoutSec int32 `protobuf:"varint,4,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
-	// Disk size in MB for the rootfs. Base images are expanded to this size
-	// at host agent startup. Default: 5120 (5 GB).
+	// Deprecated: disk size is now determined by the host agent.
 	DiskSizeMb int32 `protobuf:"varint,6,opt,name=disk_size_mb,json=diskSizeMb,proto3" json:"disk_size_mb,omitempty"`
 	// Team UUID that owns the template (hex string). All-zeros = platform.
 	TeamId string `protobuf:"bytes,7,opt,name=team_id,json=teamId,proto3" json:"team_id,omitempty"`
@@ -156,7 +155,10 @@ type CreateSandboxResponse struct {
 	HostIp    string                 `protobuf:"bytes,3,opt,name=host_ip,json=hostIp,proto3" json:"host_ip,omitempty"`
 	// Runtime metadata collected during sandbox creation (e.g. envd_version,
 	// kernel_version, vmm_version, agent_version).
-	Metadata      map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Metadata map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Actual disk size in MB allocated for the sandbox rootfs.
+	// Determined by the host agent (max of requested size and origin rootfs size).
+	DiskSizeMb    int32 `protobuf:"varint,5,opt,name=disk_size_mb,json=diskSizeMb,proto3" json:"disk_size_mb,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -217,6 +219,13 @@ func (x *CreateSandboxResponse) GetMetadata() map[string]string {
 		return x.Metadata
 	}
 	return nil
+}
+
+func (x *CreateSandboxResponse) GetDiskSizeMb() int32 {
+	if x != nil {
+		return x.DiskSizeMb
+	}
+	return 0
 }
 
 type DestroySandboxRequest struct {
@@ -4260,13 +4269,15 @@ const file_hostagent_proto_rawDesc = "" +
 	"defaultEnv\x1a=\n" +
 	"\x0fDefaultEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf3\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x95\x02\n" +
 	"\x15CreateSandboxResponse\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x17\n" +
 	"\ahost_ip\x18\x03 \x01(\tR\x06hostIp\x12M\n" +
-	"\bmetadata\x18\x04 \x03(\v21.hostagent.v1.CreateSandboxResponse.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\x04 \x03(\v21.hostagent.v1.CreateSandboxResponse.MetadataEntryR\bmetadata\x12 \n" +
+	"\fdisk_size_mb\x18\x05 \x01(\x05R\n" +
+	"diskSizeMb\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +

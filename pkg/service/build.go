@@ -465,7 +465,7 @@ func (s *BuildService) provisionBuildSandbox(
 		Vcpus:      build.Vcpus,
 		MemoryMb:   build.MemoryMb,
 		TimeoutSec: 0,
-		DiskSizeMb: 5120,
+		DiskSizeMb: 0,
 	}))
 	if err != nil {
 		s.failBuild(ctx, buildID, fmt.Sprintf("create sandbox failed: %v", err))
@@ -488,12 +488,21 @@ func (s *BuildService) provisionBuildSandbox(
 		Vcpus:          build.Vcpus,
 		MemoryMb:       build.MemoryMb,
 		TimeoutSec:     0,
-		DiskSizeMb:     5120,
+		DiskSizeMb:     0,
 		TemplateID:     baseTemplateID,
 		TemplateTeamID: baseTeamID,
 		Metadata:       []byte("{}"),
 	}); err != nil {
 		log.Warn("failed to insert builder sandbox record", "error", err)
+	}
+
+	if resp.Msg.DiskSizeMb > 0 {
+		if err := s.DB.UpdateSandboxDiskSize(ctx, db.UpdateSandboxDiskSizeParams{
+			ID:         sandboxID,
+			DiskSizeMb: resp.Msg.DiskSizeMb,
+		}); err != nil {
+			log.Warn("failed to update builder sandbox disk size", "error", err)
+		}
 	}
 
 	archive := s.takeArchive(buildIDStr)

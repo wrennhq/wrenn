@@ -258,9 +258,9 @@ func (m *Manager) Create(
 	vcpus, memoryMB, timeoutSec, diskSizeMB int,
 	defaultUser string,
 	defaultEnv map[string]string,
-) (*models.Sandbox, error) {
+) (*models.Sandbox, int64, error) {
 	if m.draining.Load() {
-		return nil, ErrDraining
+		return nil, 0, ErrDraining
 	}
 	if sandboxID == "" {
 		sandboxID = id.FormatSandboxID(id.NewSandboxID())
@@ -288,12 +288,12 @@ func (m *Manager) Create(
 	if _, exists := m.boxes[sandboxID]; exists {
 		m.mu.Unlock()
 		cancelCreate()
-		return nil, fmt.Errorf("sandbox %s already exists", sandboxID)
+		return nil, 0, fmt.Errorf("sandbox %s already exists", sandboxID)
 	}
 	if _, inflight := m.creates[sandboxID]; inflight {
 		m.mu.Unlock()
 		cancelCreate()
-		return nil, fmt.Errorf("sandbox %s create already in progress", sandboxID)
+		return nil, 0, fmt.Errorf("sandbox %s create already in progress", sandboxID)
 	}
 	m.creates[sandboxID] = handle
 	m.mu.Unlock()
@@ -324,19 +324,19 @@ func (m *Manager) Create(
 	// Resolve base rootfs image.
 	baseRootfs := layout.TemplateRootfs(m.cfg.WrennDir, teamID, templateID)
 	if _, err := os.Stat(baseRootfs); err != nil {
-		return nil, fmt.Errorf("base rootfs not found at %s: %w", baseRootfs, err)
+		return nil, 0, fmt.Errorf("base rootfs not found at %s: %w", baseRootfs, err)
 	}
 
 	// Acquire shared read-only loop device for the base image.
 	originLoop, err := m.loops.Acquire(baseRootfs)
 	if err != nil {
-		return nil, fmt.Errorf("acquire loop device: %w", err)
+		return nil, 0, fmt.Errorf("acquire loop device: %w", err)
 	}
 
 	originSize, err := devicemapper.OriginSizeBytes(originLoop)
 	if err != nil {
 		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("get origin size: %w", err)
+		return nil, 0, fmt.Errorf("get origin size: %w", err)
 	}
 
 	// Create dm-snapshot with per-sandbox CoW file.
@@ -346,14 +346,14 @@ func (m *Manager) Create(
 	dmName := "wrenn-" + sandboxID
 	if err := os.MkdirAll(layout.SandboxDir(m.cfg.WrennDir, sandboxID), 0o755); err != nil {
 		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("create sandbox dir: %w", err)
+		return nil, 0, fmt.Errorf("create sandbox dir: %w", err)
 	}
 	cowPath := layout.SandboxCowPath(m.cfg.WrennDir, sandboxID)
 	cowSize := max(int64(diskSizeMB)*1024*1024, originSize)
 	dmDev, err := devicemapper.CreateSnapshot(dmName, originLoop, cowPath, originSize, cowSize)
 	if err != nil {
 		m.loops.Release(baseRootfs)
-		return nil, fmt.Errorf("create dm-snapshot: %w", err)
+		return nil, 0, fmt.Errorf("create dm-snapshot: %w", err)
 	}
 
 	res := &createResources{
@@ -369,7 +369,7 @@ func (m *Manager) Create(
 	slotIdx, err := m.slots.Allocate()
 	if err != nil {
 		res.rollback()
-		return nil, fmt.Errorf("allocate network slot: %w", err)
+		return nil, 0, fmt.Errorf("allocate network slot: %w", err)
 	}
 	res.slotIdx = slotIdx
 	slot := network.NewSlot(slotIdx)
@@ -377,7 +377,7 @@ func (m *Manager) Create(
 	// Set up network.
 	if err := network.CreateNetwork(slot); err != nil {
 		res.rollback()
-		return nil, fmt.Errorf("create network: %w", err)
+		return nil, 0, fmt.Errorf("create network: %w", err)
 	}
 	res.slot = slot
 
@@ -401,7 +401,7 @@ func (m *Manager) Create(
 
 	if _, err := m.vm.Create(ctx, vmCfg); err != nil {
 		res.rollback()
-		return nil, fmt.Errorf("create VM: %w", err)
+		return nil, 0, fmt.Errorf("create VM: %w", err)
 	}
 	res.vm = m.vm
 
@@ -413,7 +413,7 @@ func (m *Manager) Create(
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
 		res.rollback()
-		return nil, fmt.Errorf("wait for envd: %w", err)
+		return nil, 0, fmt.Errorf("wait for envd: %w", err)
 	}
 
 	// Fetch envd version (best-effort).
@@ -467,7 +467,7 @@ func (m *Manager) Create(
 		"dm_device", dmDev.DevicePath,
 	)
 
-	return &sb.Sandbox, nil
+	return &sb.Sandbox, cowSize, nil
 }
 
 // Destroy stops and cleans up a sandbox. If the sandbox is running, its VM,
