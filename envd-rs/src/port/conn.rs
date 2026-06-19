@@ -92,7 +92,10 @@ fn parse_hex_addr(s: &str, family: u32) -> Option<(String, u32)> {
         if ip_bytes.len() != 4 {
             return None;
         }
-        format!("{}.{}.{}.{}", ip_bytes[3], ip_bytes[2], ip_bytes[1], ip_bytes[0])
+        format!(
+            "{}.{}.{}.{}",
+            ip_bytes[3], ip_bytes[2], ip_bytes[1], ip_bytes[0]
+        )
     } else {
         if ip_bytes.len() != 16 {
             return None;

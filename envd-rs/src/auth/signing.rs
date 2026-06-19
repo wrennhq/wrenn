@@ -140,13 +140,32 @@ mod tests {
     #[test]
     fn validate_correct_header_token() {
         let token = test_token(b"secret");
-        assert!(validate_signing(&token, Some("secret"), None, None, "root", "/f", READ_OPERATION).is_ok());
+        assert!(
+            validate_signing(
+                &token,
+                Some("secret"),
+                None,
+                None,
+                "root",
+                "/f",
+                READ_OPERATION
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn validate_wrong_header_token() {
         let token = test_token(b"secret");
-        let result = validate_signing(&token, Some("wrong"), None, None, "root", "/f", READ_OPERATION);
+        let result = validate_signing(
+            &token,
+            Some("wrong"),
+            None,
+            None,
+            "root",
+            "/f",
+            READ_OPERATION,
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not match"));
     }
@@ -156,13 +175,32 @@ mod tests {
         let token = test_token(b"secret");
         let exp = far_future();
         let sig = generate_signature(&token, "/file", "root", READ_OPERATION, Some(exp)).unwrap();
-        assert!(validate_signing(&token, None, Some(&sig), Some(exp), "root", "/file", READ_OPERATION).is_ok());
+        assert!(
+            validate_signing(
+                &token,
+                None,
+                Some(&sig),
+                Some(exp),
+                "root",
+                "/file",
+                READ_OPERATION
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn validate_invalid_signature() {
         let token = test_token(b"secret");
-        let result = validate_signing(&token, None, Some("v1_bad"), Some(far_future()), "root", "/f", READ_OPERATION);
+        let result = validate_signing(
+            &token,
+            None,
+            Some("v1_bad"),
+            Some(far_future()),
+            "root",
+            "/f",
+            READ_OPERATION,
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("invalid signature"));
     }
@@ -172,7 +210,15 @@ mod tests {
         let token = test_token(b"secret");
         let expired: i64 = 1_000_000;
         let sig = generate_signature(&token, "/f", "root", READ_OPERATION, Some(expired)).unwrap();
-        let result = validate_signing(&token, None, Some(&sig), Some(expired), "root", "/f", READ_OPERATION);
+        let result = validate_signing(
+            &token,
+            None,
+            Some(&sig),
+            Some(expired),
+            "root",
+            "/f",
+            READ_OPERATION,
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("expired"));
     }
@@ -197,7 +243,18 @@ mod tests {
     fn validate_valid_signature_no_expiration() {
         let token = test_token(b"secret");
         let sig = generate_signature(&token, "/file", "root", READ_OPERATION, None).unwrap();
-        assert!(validate_signing(&token, None, Some(&sig), None, "root", "/file", READ_OPERATION).is_ok());
+        assert!(
+            validate_signing(
+                &token,
+                None,
+                Some(&sig),
+                None,
+                "root",
+                "/file",
+                READ_OPERATION
+            )
+            .is_ok()
+        );
     }
 
     #[test]

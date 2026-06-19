@@ -94,7 +94,10 @@ mod tests {
 
     #[test]
     fn tilde_slash_path() {
-        assert_eq!(expand_tilde("~/docs", "/home/user").unwrap(), "/home/user/docs");
+        assert_eq!(
+            expand_tilde("~/docs", "/home/user").unwrap(),
+            "/home/user/docs"
+        );
     }
 
     #[test]
@@ -109,12 +112,18 @@ mod tests {
 
     #[test]
     fn tilde_relative_no_tilde() {
-        assert_eq!(expand_tilde("relative/path", "/home/u").unwrap(), "relative/path");
+        assert_eq!(
+            expand_tilde("relative/path", "/home/u").unwrap(),
+            "relative/path"
+        );
     }
 
     #[test]
     fn tilde_cmd_like() {
-        assert_eq!(expand_tilde("~/bin/myapp", "/home/user").unwrap(), "/home/user/bin/myapp");
+        assert_eq!(
+            expand_tilde("~/bin/myapp", "/home/user").unwrap(),
+            "/home/user/bin/myapp"
+        );
     }
 
     #[test]
@@ -144,12 +153,18 @@ mod tests {
 
     #[test]
     fn resolve_absolute_passthrough() {
-        assert_eq!(expand_and_resolve("/abs/path", "/home", None).unwrap(), "/abs/path");
+        assert_eq!(
+            expand_and_resolve("/abs/path", "/home", None).unwrap(),
+            "/abs/path"
+        );
     }
 
     #[test]
     fn resolve_empty_uses_default() {
-        assert_eq!(expand_and_resolve("", "/home", Some("/default")).unwrap(), "/default");
+        assert_eq!(
+            expand_and_resolve("", "/home", Some("/default")).unwrap(),
+            "/default"
+        );
     }
 
     #[test]
@@ -161,7 +176,10 @@ mod tests {
 
     #[test]
     fn resolve_tilde_expands() {
-        assert_eq!(expand_and_resolve("~/dir", "/home/u", None).unwrap(), "/home/u/dir");
+        assert_eq!(
+            expand_and_resolve("~/dir", "/home/u", None).unwrap(),
+            "/home/u/dir"
+        );
     }
 
     #[test]

@@ -183,14 +183,20 @@ pub async fn post_init(
         // SAFETY: envd is single-threaded at init time; no concurrent env reads.
         unsafe { std::env::set_var("WRENN_SANDBOX_ID", id) };
         write_run_file(".WRENN_SANDBOX_ID", id);
-        state.defaults.env_vars.insert("WRENN_SANDBOX_ID".into(), id.clone());
+        state
+            .defaults
+            .env_vars
+            .insert("WRENN_SANDBOX_ID".into(), id.clone());
     }
     if let Some(ref id) = init_req.template_id {
         tracing::debug!(template_id = %id, "setting template ID from init request");
         // SAFETY: envd is single-threaded at init time; no concurrent env reads.
         unsafe { std::env::set_var("WRENN_TEMPLATE_ID", id) };
         write_run_file(".WRENN_TEMPLATE_ID", id);
-        state.defaults.env_vars.insert("WRENN_TEMPLATE_ID".into(), id.clone());
+        state
+            .defaults
+            .env_vars
+            .insert("WRENN_TEMPLATE_ID".into(), id.clone());
     }
 
     (
@@ -202,7 +208,10 @@ pub async fn post_init(
 
 async fn validate_init_access_token(state: &AppState, request_token: &str) -> Result<(), String> {
     // Fast path: matches existing token
-    if state.access_token.is_set() && !request_token.is_empty() && state.access_token.equals(request_token) {
+    if state.access_token.is_set()
+        && !request_token.is_empty()
+        && state.access_token.equals(request_token)
+    {
         return Ok(());
     }
 
@@ -241,10 +250,7 @@ async fn setup_hyperloop(address: &str, env_vars: &dashmap::DashMap<String, Stri
         }
     }
 
-    env_vars.insert(
-        "WRENN_EVENTS_ADDRESS".into(),
-        format!("http://{address}"),
-    );
+    env_vars.insert("WRENN_EVENTS_ADDRESS".into(), format!("http://{address}"));
 }
 
 async fn setup_nfs(nfs_target: &str, path: &str) {
@@ -309,4 +315,3 @@ fn parse_timestamp_to_nanos(ts: &str) -> Result<i64, ()> {
     }
     Err(())
 }
-

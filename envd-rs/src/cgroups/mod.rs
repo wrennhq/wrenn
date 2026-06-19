@@ -19,20 +19,25 @@ pub struct Cgroup2Manager {
 }
 
 impl Cgroup2Manager {
-    pub fn new(root: &str, configs: &[(ProcessType, &str, &[(&str, &str)])]) -> Result<Self, String> {
+    pub fn new(
+        root: &str,
+        configs: &[(ProcessType, &str, &[(&str, &str)])],
+    ) -> Result<Self, String> {
         let mut fds = HashMap::new();
 
         for (proc_type, sub_path, properties) in configs {
             let full_path = PathBuf::from(root).join(sub_path);
 
-            fs::create_dir_all(&full_path).map_err(|e| {
-                format!("failed to create cgroup {}: {e}", full_path.display())
-            })?;
+            fs::create_dir_all(&full_path)
+                .map_err(|e| format!("failed to create cgroup {}: {e}", full_path.display()))?;
 
             for (name, value) in *properties {
                 let prop_path = full_path.join(name);
                 fs::write(&prop_path, value).map_err(|e| {
-                    format!("failed to write cgroup property {}: {e}", prop_path.display())
+                    format!(
+                        "failed to write cgroup property {}: {e}",
+                        prop_path.display()
+                    )
                 })?;
             }
 

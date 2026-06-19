@@ -23,12 +23,10 @@ impl AtomicMax {
             if new <= current {
                 return false;
             }
-            match self.val.compare_exchange_weak(
-                current,
-                new,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
+            match self
+                .val
+                .compare_exchange_weak(current, new, Ordering::Release, Ordering::Relaxed)
+            {
                 Ok(_) => return true,
                 Err(_) => continue,
             }

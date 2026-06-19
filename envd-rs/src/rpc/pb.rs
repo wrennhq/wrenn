@@ -1,4 +1,9 @@
-#![allow(dead_code, non_camel_case_types, unused_imports, clippy::derivable_impls)]
+#![allow(
+    dead_code,
+    non_camel_case_types,
+    unused_imports,
+    clippy::derivable_impls
+)]
 
 use ::buffa;
 use ::buffa_types;

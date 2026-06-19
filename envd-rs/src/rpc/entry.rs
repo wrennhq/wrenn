@@ -53,9 +53,7 @@ pub fn build_entry_info(path: &str) -> Result<EntryInfo, ConnectError> {
             Err(_) => FileType::FILE_TYPE_UNSPECIFIED,
         };
 
-        let target_mode = std::fs::metadata(p)
-            .map(|m| m.mode() & 0o7777)
-            .unwrap_or(0);
+        let target_mode = std::fs::metadata(p).map(|m| m.mode() & 0o7777).unwrap_or(0);
 
         (target_type, target_mode, Some(target))
     } else {

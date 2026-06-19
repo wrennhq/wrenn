@@ -85,36 +85,35 @@ async fn main() {
     }
 
     // Cgroup manager
-    let cgroup_manager: Arc<dyn cgroups::CgroupManager> =
-        match cgroups::Cgroup2Manager::new(
-            &cli.cgroup_root,
-            &[
-                (
-                    cgroups::ProcessType::Pty,
-                    "wrenn/pty",
-                    &[] as &[(&str, &str)],
-                ),
-                (
-                    cgroups::ProcessType::User,
-                    "wrenn/user",
-                    &[] as &[(&str, &str)],
-                ),
-                (
-                    cgroups::ProcessType::Socat,
-                    "wrenn/socat",
-                    &[] as &[(&str, &str)],
-                ),
-            ],
-        ) {
-            Ok(m) => {
-                tracing::info!("cgroup2 manager initialized");
-                Arc::new(m)
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "cgroup2 init failed, using noop");
-                Arc::new(cgroups::NoopCgroupManager)
-            }
-        };
+    let cgroup_manager: Arc<dyn cgroups::CgroupManager> = match cgroups::Cgroup2Manager::new(
+        &cli.cgroup_root,
+        &[
+            (
+                cgroups::ProcessType::Pty,
+                "wrenn/pty",
+                &[] as &[(&str, &str)],
+            ),
+            (
+                cgroups::ProcessType::User,
+                "wrenn/user",
+                &[] as &[(&str, &str)],
+            ),
+            (
+                cgroups::ProcessType::Socat,
+                "wrenn/socat",
+                &[] as &[(&str, &str)],
+            ),
+        ],
+    ) {
+        Ok(m) => {
+            tracing::info!("cgroup2 manager initialized");
+            Arc::new(m)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "cgroup2 init failed, using noop");
+            Arc::new(cgroups::NoopCgroupManager)
+        }
+    };
 
     // Port subsystem
     let port_subsystem = Arc::new(PortSubsystem::new(Arc::clone(&cgroup_manager)));
@@ -138,8 +137,7 @@ async fn main() {
     // RPC services (Connect protocol — serves Connect + gRPC + gRPC-Web on same port)
     let connect_router = rpc::rpc_router(Arc::clone(&state));
 
-    let app = http::router(Arc::clone(&state))
-        .fallback_service(connect_router.into_axum_service());
+    let app = http::router(Arc::clone(&state)).fallback_service(connect_router.into_axum_service());
 
     // --cmd: spawn initial process if specified
     if !cli.start_cmd.is_empty() {
@@ -151,7 +149,12 @@ async fn main() {
     }
 
     let addr = SocketAddr::from(([0, 0, 0, 0], cli.port));
-    tracing::info!(port = cli.port, version = VERSION, commit = COMMIT, "envd starting");
+    tracing::info!(
+        port = cli.port,
+        version = VERSION,
+        commit = COMMIT,
+        "envd starting"
+    );
 
     let listener = TcpListener::bind(addr).await.expect("failed to bind");
 
@@ -186,9 +189,7 @@ fn spawn_initial_command(cmd: &str, state: &AppState) {
 
     let home = user.dir.to_string_lossy().to_string();
     let default_workdir = state.defaults.workdir();
-    let cwd = default_workdir
-        .as_deref()
-        .unwrap_or(&home);
+    let cwd = default_workdir.as_deref().unwrap_or(&home);
 
     match process_handler::spawn_process(
         cmd,
@@ -235,8 +236,7 @@ fn memory_reclaimer(_state: Arc<AppState>) {
             } else {
                 let mut sys2 = sysinfo::System::new();
                 sys2.refresh_memory();
-                let freed_mb =
-                    sys2.available_memory().saturating_sub(available) / (1024 * 1024);
+                let freed_mb = sys2.available_memory().saturating_sub(available) / (1024 * 1024);
                 tracing::info!(used_pct, freed_mb, "page cache dropped");
             }
         }

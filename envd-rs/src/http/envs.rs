@@ -18,8 +18,5 @@ pub async fn get_envs(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         .map(|entry| (entry.key().clone(), entry.value().clone()))
         .collect();
 
-    (
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(envs),
-    )
+    ([(header::CACHE_CONTROL, "no-store")], Json(envs))
 }

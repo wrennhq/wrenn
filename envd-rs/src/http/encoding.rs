@@ -20,7 +20,10 @@ fn parse_encoding_with_quality(value: &str) -> EncodingWithQuality {
         let enc = value[..idx].trim();
         for param in params.split(';') {
             let param = param.trim();
-            if let Some(stripped) = param.strip_prefix("q=").or_else(|| param.strip_prefix("Q=")) {
+            if let Some(stripped) = param
+                .strip_prefix("q=")
+                .or_else(|| param.strip_prefix("Q="))
+            {
                 if let Ok(q) = stripped.parse::<f64>() {
                     quality = q;
                 }
@@ -43,8 +46,10 @@ fn parse_accept_encoding_header(header: &str) -> (Vec<EncodingWithQuality>, bool
         return (Vec::new(), false);
     }
 
-    let encodings: Vec<EncodingWithQuality> =
-        header.split(',').map(|v| parse_encoding_with_quality(v)).collect();
+    let encodings: Vec<EncodingWithQuality> = header
+        .split(',')
+        .map(|v| parse_encoding_with_quality(v))
+        .collect();
 
     let mut identity_rejected = false;
     let mut identity_explicitly_accepted = false;
@@ -97,7 +102,11 @@ pub fn parse_accept_encoding<B>(r: &Request<B>) -> Result<&'static str, String> 
     }
 
     let (mut encodings, identity_rejected) = parse_accept_encoding_header(header);
-    encodings.sort_by(|a, b| b.quality.partial_cmp(&a.quality).unwrap_or(std::cmp::Ordering::Equal));
+    encodings.sort_by(|a, b| {
+        b.quality
+            .partial_cmp(&a.quality)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     for eq in &encodings {
         if eq.quality == 0.0 {
@@ -121,7 +130,9 @@ pub fn parse_accept_encoding<B>(r: &Request<B>) -> Result<&'static str, String> 
         return Ok(ENCODING_IDENTITY);
     }
 
-    Err(format!("no acceptable encoding found, supported: {SUPPORTED_ENCODINGS:?}"))
+    Err(format!(
+        "no acceptable encoding found, supported: {SUPPORTED_ENCODINGS:?}"
+    ))
 }
 
 pub fn parse_content_encoding<B>(r: &Request<B>) -> Result<&'static str, String> {
@@ -143,7 +154,9 @@ pub fn parse_content_encoding<B>(r: &Request<B>) -> Result<&'static str, String>
         return Ok(ENCODING_GZIP);
     }
 
-    Err(format!("unsupported Content-Encoding: {header}, supported: {SUPPORTED_ENCODINGS:?}"))
+    Err(format!(
+        "unsupported Content-Encoding: {header}, supported: {SUPPORTED_ENCODINGS:?}"
+    ))
 }
 
 #[cfg(test)]
@@ -236,17 +249,26 @@ mod tests {
 
     #[test]
     fn accept_encoding_no_header_returns_identity() {
-        assert_eq!(parse_accept_encoding(&req_no_headers()).unwrap(), "identity");
+        assert_eq!(
+            parse_accept_encoding(&req_no_headers()).unwrap(),
+            "identity"
+        );
     }
 
     #[test]
     fn accept_encoding_gzip() {
-        assert_eq!(parse_accept_encoding(&req_with_accept("gzip")).unwrap(), "gzip");
+        assert_eq!(
+            parse_accept_encoding(&req_with_accept("gzip")).unwrap(),
+            "gzip"
+        );
     }
 
     #[test]
     fn accept_encoding_identity_explicit() {
-        assert_eq!(parse_accept_encoding(&req_with_accept("identity")).unwrap(), "identity");
+        assert_eq!(
+            parse_accept_encoding(&req_with_accept("identity")).unwrap(),
+            "identity"
+        );
     }
 
     #[test]
@@ -259,7 +281,10 @@ mod tests {
 
     #[test]
     fn accept_encoding_wildcard_returns_identity() {
-        assert_eq!(parse_accept_encoding(&req_with_accept("*")).unwrap(), "identity");
+        assert_eq!(
+            parse_accept_encoding(&req_with_accept("*")).unwrap(),
+            "identity"
+        );
     }
 
     #[test]
@@ -277,7 +302,10 @@ mod tests {
 
     #[test]
     fn accept_encoding_unsupported_only_falls_to_identity() {
-        assert_eq!(parse_accept_encoding(&req_with_accept("br")).unwrap(), "identity");
+        assert_eq!(
+            parse_accept_encoding(&req_with_accept("br")).unwrap(),
+            "identity"
+        );
     }
 
     // is_identity_acceptable
@@ -311,17 +339,26 @@ mod tests {
 
     #[test]
     fn content_encoding_empty_returns_identity() {
-        assert_eq!(parse_content_encoding(&req_no_headers()).unwrap(), "identity");
+        assert_eq!(
+            parse_content_encoding(&req_no_headers()).unwrap(),
+            "identity"
+        );
     }
 
     #[test]
     fn content_encoding_gzip() {
-        assert_eq!(parse_content_encoding(&req_with_content("gzip")).unwrap(), "gzip");
+        assert_eq!(
+            parse_content_encoding(&req_with_content("gzip")).unwrap(),
+            "gzip"
+        );
     }
 
     #[test]
     fn content_encoding_identity_explicit() {
-        assert_eq!(parse_content_encoding(&req_with_content("identity")).unwrap(), "identity");
+        assert_eq!(
+            parse_content_encoding(&req_with_content("identity")).unwrap(),
+            "identity"
+        );
     }
 
     #[test]
@@ -331,6 +368,9 @@ mod tests {
 
     #[test]
     fn content_encoding_case_insensitive() {
-        assert_eq!(parse_content_encoding(&req_with_content("GZIP")).unwrap(), "gzip");
+        assert_eq!(
+            parse_content_encoding(&req_with_content("GZIP")).unwrap(),
+            "gzip"
+        );
     }
 }

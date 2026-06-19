@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::routing::{get, post};
-use http::header::{CACHE_CONTROL, HeaderName};
 use http::Method;
+use http::header::{CACHE_CONTROL, HeaderName};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 use crate::config::CORS_MAX_AGE;

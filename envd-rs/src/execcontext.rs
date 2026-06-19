@@ -62,7 +62,10 @@ mod tests {
 
     #[test]
     fn workdir_explicit_overrides_default() {
-        assert_eq!(resolve_default_workdir("/explicit", Some("/default")), "/explicit");
+        assert_eq!(
+            resolve_default_workdir("/explicit", Some("/default")),
+            "/explicit"
+        );
     }
 
     #[test]
@@ -82,7 +85,10 @@ mod tests {
 
     #[test]
     fn username_explicit_returns_explicit() {
-        assert_eq!(resolve_default_username(Some("root"), "wrenn").unwrap(), "root");
+        assert_eq!(
+            resolve_default_username(Some("root"), "wrenn").unwrap(),
+            "root"
+        );
     }
 
     #[test]

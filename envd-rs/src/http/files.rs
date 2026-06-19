@@ -72,13 +72,11 @@ pub async fn get_files(
     let header_token = extract_header_token(&req);
 
     let default_user = state.defaults.user();
-    let username = match execcontext::resolve_default_username(
-        params.username.as_deref(),
-        &default_user,
-    ) {
-        Ok(u) => u.to_string(),
-        Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
-    };
+    let username =
+        match execcontext::resolve_default_username(params.username.as_deref(), &default_user) {
+            Ok(u) => u.to_string(),
+            Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
+        };
 
     if let Err(e) = validate_file_signing(
         &state,
@@ -98,8 +96,7 @@ pub async fn get_files(
 
     let home_dir = user.dir.to_string_lossy().to_string();
     let default_workdir = state.defaults.workdir();
-    let resolved = match expand_and_resolve(path_str, &home_dir, default_workdir.as_deref())
-    {
+    let resolved = match expand_and_resolve(path_str, &home_dir, default_workdir.as_deref()) {
         Ok(p) => p,
         Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
     };
@@ -177,8 +174,7 @@ pub async fn get_files(
         .unwrap_or("application/octet-stream");
 
     if use_encoding == "gzip" {
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         if let Err(e) = encoder.write_all(&file_data) {
             return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -225,13 +221,11 @@ pub async fn post_files(
     let header_token = extract_header_token(&req);
 
     let default_user = state.defaults.user();
-    let username = match execcontext::resolve_default_username(
-        params.username.as_deref(),
-        &default_user,
-    ) {
-        Ok(u) => u.to_string(),
-        Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
-    };
+    let username =
+        match execcontext::resolve_default_username(params.username.as_deref(), &default_user) {
+            Ok(u) => u.to_string(),
+            Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
+        };
 
     if let Err(e) = validate_file_signing(
         &state,
@@ -283,10 +277,7 @@ pub async fn post_files(
                 Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
             }
         } else {
-            let fname = field
-                .file_name()
-                .unwrap_or("upload")
-                .to_string();
+            let fname = field.file_name().unwrap_or("upload").to_string();
             match expand_and_resolve(&fname, &home_dir, default_workdir.as_deref()) {
                 Ok(p) => p,
                 Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
@@ -382,7 +373,7 @@ fn process_file(
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("error getting file info: {e}"),
-            ))
+            ));
         }
     };
 
@@ -395,7 +386,7 @@ fn process_file(
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("error changing ownership: {e}"),
-                ))
+                ));
             }
         }
     }
