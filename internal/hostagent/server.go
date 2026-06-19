@@ -253,7 +253,7 @@ func (s *Server) Exec(
 
 	result, err := s.mgr.Exec(execCtx, msg.SandboxId, msg.Cmd, msg.Args, opts)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("exec: %w", err))
+		return nil, envdErr("exec", err)
 	}
 
 	return connect.NewResponse(&pb.ExecResponse{
@@ -395,31 +395,15 @@ func (s *Server) ExecStream(
 	}
 
 	for ev := range events {
+		start, data, end := execEventParts(ev)
 		var resp pb.ExecStreamResponse
-		switch ev.Type {
-		case "start":
-			resp.Event = &pb.ExecStreamResponse_Start{
-				Start: &pb.ExecStreamStart{Pid: ev.PID},
-			}
-		case "stdout":
-			resp.Event = &pb.ExecStreamResponse_Data{
-				Data: &pb.ExecStreamData{
-					Output: &pb.ExecStreamData_Stdout{Stdout: ev.Data},
-				},
-			}
-		case "stderr":
-			resp.Event = &pb.ExecStreamResponse_Data{
-				Data: &pb.ExecStreamData{
-					Output: &pb.ExecStreamData_Stderr{Stderr: ev.Data},
-				},
-			}
-		case "end":
-			resp.Event = &pb.ExecStreamResponse_End{
-				End: &pb.ExecStreamEnd{
-					ExitCode: ev.ExitCode,
-					Error:    ev.Error,
-				},
-			}
+		switch {
+		case start != nil:
+			resp.Event = &pb.ExecStreamResponse_Start{Start: start}
+		case data != nil:
+			resp.Event = &pb.ExecStreamResponse_Data{Data: data}
+		case end != nil:
+			resp.Event = &pb.ExecStreamResponse_End{End: end}
 		default:
 			continue
 		}
@@ -429,6 +413,24 @@ func (s *Server) ExecStream(
 	}
 
 	return nil
+}
+
+// execEventParts maps a streaming exec event to its proto inner message.
+// Exactly one return value is non-nil; all-nil means the event carries nothing
+// to forward. Shared by ExecStream and ConnectProcess, which differ only in the
+// response envelope wrapping these inner messages.
+func execEventParts(ev envdclient.ExecStreamEvent) (*pb.ExecStreamStart, *pb.ExecStreamData, *pb.ExecStreamEnd) {
+	switch ev.Type {
+	case "start":
+		return &pb.ExecStreamStart{Pid: ev.PID}, nil, nil
+	case "stdout":
+		return nil, &pb.ExecStreamData{Output: &pb.ExecStreamData_Stdout{Stdout: ev.Data}}, nil
+	case "stderr":
+		return nil, &pb.ExecStreamData{Output: &pb.ExecStreamData_Stderr{Stderr: ev.Data}}, nil
+	case "end":
+		return nil, nil, &pb.ExecStreamEnd{ExitCode: ev.ExitCode, Error: ev.Error}
+	}
+	return nil, nil, nil
 }
 
 func (s *Server) WriteFileStream(
@@ -912,31 +914,15 @@ func (s *Server) ConnectProcess(
 	}
 
 	for ev := range events {
+		start, data, end := execEventParts(ev)
 		var resp pb.ConnectProcessResponse
-		switch ev.Type {
-		case "start":
-			resp.Event = &pb.ConnectProcessResponse_Start{
-				Start: &pb.ExecStreamStart{Pid: ev.PID},
-			}
-		case "stdout":
-			resp.Event = &pb.ConnectProcessResponse_Data{
-				Data: &pb.ExecStreamData{
-					Output: &pb.ExecStreamData_Stdout{Stdout: ev.Data},
-				},
-			}
-		case "stderr":
-			resp.Event = &pb.ConnectProcessResponse_Data{
-				Data: &pb.ExecStreamData{
-					Output: &pb.ExecStreamData_Stderr{Stderr: ev.Data},
-				},
-			}
-		case "end":
-			resp.Event = &pb.ConnectProcessResponse_End{
-				End: &pb.ExecStreamEnd{
-					ExitCode: ev.ExitCode,
-					Error:    ev.Error,
-				},
-			}
+		switch {
+		case start != nil:
+			resp.Event = &pb.ConnectProcessResponse_Start{Start: start}
+		case data != nil:
+			resp.Event = &pb.ConnectProcessResponse_Data{Data: data}
+		case end != nil:
+			resp.Event = &pb.ConnectProcessResponse_End{End: end}
 		default:
 			continue
 		}

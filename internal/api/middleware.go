@@ -60,6 +60,10 @@ func agentErrToHTTP(err error) (int, string, string) {
 		return http.StatusServiceUnavailable, "no_hosts_available", "no servers available — try again later"
 	case connect.CodeUnimplemented:
 		return http.StatusNotImplemented, "agent_error", err.Error()
+	case connect.CodeDeadlineExceeded:
+		return http.StatusGatewayTimeout, "timeout", "command timed out"
+	case connect.CodeInternal:
+		return http.StatusInternalServerError, "agent_error", err.Error()
 	default:
 		return http.StatusBadGateway, "agent_error", err.Error()
 	}

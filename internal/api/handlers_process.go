@@ -192,22 +192,8 @@ func (h *processHandler) runConnectProcess(ctx context.Context, conn *websocket.
 
 	// Forward stream events to WebSocket.
 	for stream.Receive() {
-		resp := stream.Msg()
-		switch ev := resp.Event.(type) {
-		case *pb.ConnectProcessResponse_Start:
-			writeWSJSON(conn, wsOutMsg{Type: "start", PID: ev.Start.Pid})
-
-		case *pb.ConnectProcessResponse_Data:
-			switch o := ev.Data.Output.(type) {
-			case *pb.ExecStreamData_Stdout:
-				writeWSJSON(conn, wsOutMsg{Type: "stdout", Data: string(o.Stdout)})
-			case *pb.ExecStreamData_Stderr:
-				writeWSJSON(conn, wsOutMsg{Type: "stderr", Data: string(o.Stderr)})
-			}
-
-		case *pb.ConnectProcessResponse_End:
-			exitCode := ev.End.ExitCode
-			writeWSJSON(conn, wsOutMsg{Type: "exit", ExitCode: &exitCode})
+		if m, ok := procRespToWSMsg(stream.Msg()); ok {
+			writeWSJSON(conn, m)
 		}
 	}
 

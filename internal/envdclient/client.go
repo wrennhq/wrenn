@@ -117,36 +117,17 @@ func (c *Client) Exec(ctx context.Context, cmd string, args []string, opts *Exec
 	result := &ExecResult{}
 
 	for stream.Receive() {
-		msg := stream.Msg()
-		if msg.Event == nil {
+		ev, ok := procEventToStreamEvent(stream.Msg().GetEvent())
+		if !ok {
 			continue
 		}
-
-		event := msg.Event.GetEvent()
-		switch e := event.(type) {
-		case *envdpb.ProcessEvent_Start:
-			slog.Debug("process started", "pid", e.Start.GetPid())
-
-		case *envdpb.ProcessEvent_Data:
-			output := e.Data.GetOutput()
-			switch o := output.(type) {
-			case *envdpb.ProcessEvent_DataEvent_Stdout:
-				result.Stdout = append(result.Stdout, o.Stdout...)
-			case *envdpb.ProcessEvent_DataEvent_Stderr:
-				result.Stderr = append(result.Stderr, o.Stderr...)
-			}
-
-		case *envdpb.ProcessEvent_End:
-			result.ExitCode = e.End.GetExitCode()
-			if e.End.Error != nil {
-				slog.Debug("process ended with error",
-					"exit_code", e.End.GetExitCode(),
-					"error", e.End.GetError(),
-				)
-			}
-
-		case *envdpb.ProcessEvent_Keepalive:
-			// Ignore keepalives.
+		switch ev.Type {
+		case "stdout":
+			result.Stdout = append(result.Stdout, ev.Data...)
+		case "stderr":
+			result.Stderr = append(result.Stderr, ev.Data...)
+		case "end":
+			result.ExitCode = ev.ExitCode
 		}
 	}
 
@@ -164,6 +145,76 @@ type ExecStreamEvent struct {
 	Data     []byte
 	ExitCode int32
 	Error    string
+}
+
+// procEventToStreamEvent converts a raw envd ProcessEvent into an
+// ExecStreamEvent. The second return is false for events with no payload to
+// forward (nil event, keepalive, unknown data variant) so callers can skip
+// them. This is the single decoder shared by Exec, ExecStream and
+// ConnectProcess.
+func procEventToStreamEvent(pe *envdpb.ProcessEvent) (ExecStreamEvent, bool) {
+	if pe == nil {
+		return ExecStreamEvent{}, false
+	}
+	switch e := pe.GetEvent().(type) {
+	case *envdpb.ProcessEvent_Start:
+		return ExecStreamEvent{Type: "start", PID: e.Start.GetPid()}, true
+	case *envdpb.ProcessEvent_Data:
+		switch o := e.Data.GetOutput().(type) {
+		case *envdpb.ProcessEvent_DataEvent_Stdout:
+			return ExecStreamEvent{Type: "stdout", Data: o.Stdout}, true
+		case *envdpb.ProcessEvent_DataEvent_Stderr:
+			return ExecStreamEvent{Type: "stderr", Data: o.Stderr}, true
+		}
+		return ExecStreamEvent{}, false
+	case *envdpb.ProcessEvent_End:
+		ev := ExecStreamEvent{Type: "end", ExitCode: e.End.GetExitCode()}
+		if e.End.Error != nil {
+			ev.Error = e.End.GetError()
+		}
+		return ev, true
+	}
+	return ExecStreamEvent{}, false
+}
+
+// procEventStream is the subset of a Connect server-stream that pumpProcessEvents
+// needs. Both *connect.ServerStreamForClient[StartResponse] and
+// [ConnectResponse] satisfy it.
+type procEventStream[T any] interface {
+	Receive() bool
+	Msg() *T
+	Err() error
+	Close() error
+}
+
+// pumpProcessEvents drains a process server-stream into ch until the stream ends
+// or ctx is cancelled, closing ch on exit. getEvent extracts the ProcessEvent
+// from each message so the same loop works for both the Start and Connect RPCs.
+func pumpProcessEvents[T any](
+	ctx context.Context,
+	stream procEventStream[T],
+	getEvent func(*T) *envdpb.ProcessEvent,
+	ch chan<- ExecStreamEvent,
+	logLabel string,
+) {
+	defer close(ch)
+	defer stream.Close()
+
+	for stream.Receive() {
+		ev, ok := procEventToStreamEvent(getEvent(stream.Msg()))
+		if !ok {
+			continue
+		}
+		select {
+		case ch <- ev:
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	if err := stream.Err(); err != nil && err != io.EOF {
+		slog.Debug(logLabel, "error", err)
+	}
 }
 
 // ExecStream runs a command inside the sandbox and returns a channel of output events.
@@ -184,52 +235,7 @@ func (c *Client) ExecStream(ctx context.Context, cmd string, args ...string) (<-
 	}
 
 	ch := make(chan ExecStreamEvent, 256)
-	go func() {
-		defer close(ch)
-		defer stream.Close()
-
-		for stream.Receive() {
-			msg := stream.Msg()
-			if msg.Event == nil {
-				continue
-			}
-
-			var ev ExecStreamEvent
-			event := msg.Event.GetEvent()
-			switch e := event.(type) {
-			case *envdpb.ProcessEvent_Start:
-				ev = ExecStreamEvent{Type: "start", PID: e.Start.GetPid()}
-
-			case *envdpb.ProcessEvent_Data:
-				output := e.Data.GetOutput()
-				switch o := output.(type) {
-				case *envdpb.ProcessEvent_DataEvent_Stdout:
-					ev = ExecStreamEvent{Type: "stdout", Data: o.Stdout}
-				case *envdpb.ProcessEvent_DataEvent_Stderr:
-					ev = ExecStreamEvent{Type: "stderr", Data: o.Stderr}
-				}
-
-			case *envdpb.ProcessEvent_End:
-				ev = ExecStreamEvent{Type: "end", ExitCode: e.End.GetExitCode()}
-				if e.End.Error != nil {
-					ev.Error = e.End.GetError()
-				}
-
-			case *envdpb.ProcessEvent_Keepalive:
-				continue
-			}
-
-			select {
-			case ch <- ev:
-			case <-ctx.Done():
-				return
-			}
-		}
-
-		if err := stream.Err(); err != nil && err != io.EOF {
-			slog.Debug("exec stream error", "error", err)
-		}
-	}()
+	go pumpProcessEvents(ctx, stream, (*envdpb.StartResponse).GetEvent, ch, "exec stream error")
 
 	return ch, nil
 }
