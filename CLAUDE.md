@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Wrenn Sandbox is a microVM-based code execution platform. Users create isolated sandboxes (Cloud Hypervisor microVMs), run code inside them, and get output back via SDKs. Think E2B but with persistent sandboxes, pool-based pricing, and a single-binary deployment story.
+Wrenn is an open-source, self-hosted dev environment platform. Users spin up isolated sandboxes (Cloud Hypervisor microVMs), run code inside them, and get output back via SDKs. Fast boot, persistent state, and a single agent binary on each host you own.
 
 ## Build & Development Commands
 
@@ -28,7 +28,7 @@ make dev-envd           # envd in debug mode (port 49983)
 make check              # fmt + vet + lint + test (CI order)
 make test               # Unit tests: go test -race -v ./internal/...
 make test-integration   # Integration tests (require host agent + Cloud Hypervisor)
-make fmt                # gofmt
+make fmt                # gofmt and rust fmt
 make vet                # go vet
 make lint               # golangci-lint
 

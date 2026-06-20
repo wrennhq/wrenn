@@ -106,6 +106,7 @@ sqlc:
 
 fmt:
 	gofmt -w .
+	cargo fmt --manifest-path envd-rs/Cargo.toml
 
 lint:
 	golangci-lint run ./...
