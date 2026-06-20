@@ -99,7 +99,35 @@ type Config struct {
 	VMMBin        string // path to the cloud-hypervisor binary
 	VMMVersion    string // semver from cloud-hypervisor --version
 	AgentVersion  string // host agent version (injected via ldflags)
+
+	// Activity sampler thresholds. The sampler polls each running sandbox's
+	// guest liveness and refreshes its TTL when it is doing real work, so a
+	// long-running but non-interactive job is not mistaken for inactive. A
+	// sandbox counts as busy when guest CPU ≥ CPUBusyPct, or net/disk
+	// throughput ≥ the respective floor (bytes/sec). Zero values fall back to
+	// the package defaults at sampler start.
+	ActivitySampleInterval time.Duration
+	CPUBusyPct             float32
+	NetFloorBps            uint64
+	DiskFloorBps           uint64
 }
+
+// Activity sampler defaults. Thresholds sit clear of idle-VM background noise
+// (envd's own sampler thread, guest timers) so a parked sandbox still times
+// out; the debounce below guards against a lone noisy sample masquerading as
+// work. All are env-overridable on the host agent.
+const (
+	defaultActivitySampleInterval = 5 * time.Second
+	defaultCPUBusyPct             = 5.0       // percent of total vCPU capacity
+	defaultNetFloorBps            = 16 * 1024 // 16 KB/s
+	defaultDiskFloorBps           = 32 * 1024 // 32 KB/s
+	activityPollTimeout           = 3 * time.Second
+	activitySampleConcurrency     = 16
+	// busyDebounceSamples is how many consecutive busy samples are required
+	// before the sandbox's TTL is refreshed. With a 5s interval, real work
+	// registers within ~10s while isolated noise spikes are ignored.
+	busyDebounceSamples = 2
+)
 
 // LifecycleEvent describes an autonomous state change initiated by the agent.
 type LifecycleEvent struct {
@@ -194,6 +222,12 @@ type sandboxState struct {
 	ring          *metricsRing       // tiered ring buffers for CPU/mem/disk metrics
 	samplerCancel context.CancelFunc // cancels the per-sandbox sampling goroutine
 	samplerDone   chan struct{}      // closed when the sampling goroutine exits
+
+	// activityBusyStreak counts consecutive busy activity samples. A single
+	// noisy sample (idle background CPU, a stray packet) must not refresh the
+	// TTL, so LastActiveAt is only bumped once the streak reaches
+	// busyDebounceSamples. Reset to 0 by any non-busy sample. Guarded by m.mu.
+	activityBusyStreak int
 }
 
 // buildMetadata constructs the metadata map with version information.
@@ -767,6 +801,11 @@ func (m *Manager) AcquireProxyConn(sandboxID string) (net.IP, *ConnTracker, bool
 	if !sb.connTracker.Acquire() {
 		return nil, nil, false
 	}
+	// Inbound proxy traffic counts as activity: an idle web server reachable
+	// through the proxy should not be auto-paused while it is serving requests.
+	m.mu.Lock()
+	sb.LastActiveAt = time.Now()
+	m.mu.Unlock()
 	return sb.HostIP, sb.connTracker, true
 }
 
@@ -875,6 +914,146 @@ func (m *Manager) reapExpired(_ context.Context) {
 			})
 		}
 	}
+}
+
+// StartActivitySampler starts a background goroutine that polls each running
+// sandbox's guest liveness (CPU + net/disk IO) and refreshes LastActiveAt when
+// the sandbox is doing real work. This is what keeps a long-running but
+// non-interactive job (a build, a download) from being auto-paused by the TTL
+// reaper, while an idle workload (sleep, a parked shell) still times out.
+func (m *Manager) StartActivitySampler(ctx context.Context) {
+	interval := m.cfg.ActivitySampleInterval
+	if interval <= 0 {
+		interval = defaultActivitySampleInterval
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-m.stopCh:
+				return
+			case <-ticker.C:
+				m.sampleActivity(ctx)
+			}
+		}
+	}()
+}
+
+// activityTarget pairs a sandbox ID with the envd client to poll.
+type activityTarget struct {
+	id     string
+	client *envdclient.Client
+}
+
+func (m *Manager) sampleActivity(ctx context.Context) {
+	// Snapshot the running sandboxes and their clients under the lock, then
+	// poll over the network without holding it.
+	m.mu.RLock()
+	targets := make([]activityTarget, 0, len(m.boxes))
+	for id, sb := range m.boxes {
+		if sb.Status != models.StatusRunning {
+			continue
+		}
+		// Skip sandboxes still loading memory after a resume — they are not
+		// settled and their IO/CPU is preload noise, not user work.
+		if sb.memLoadDone != nil {
+			select {
+			case <-sb.memLoadDone:
+			default:
+				continue
+			}
+		}
+		c := sb.client.Load()
+		if c == nil {
+			continue
+		}
+		targets = append(targets, activityTarget{id: id, client: c})
+	}
+	m.mu.RUnlock()
+
+	if len(targets) == 0 {
+		return
+	}
+
+	sem := make(chan struct{}, activitySampleConcurrency)
+	var wg sync.WaitGroup
+	for _, t := range targets {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(t activityTarget) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			m.pollAndBump(ctx, t)
+		}(t)
+	}
+	wg.Wait()
+}
+
+// pollAndBump fetches one sandbox's activity and refreshes its TTL once it has
+// been busy for busyDebounceSamples consecutive samples. Poll failures are
+// treated as a non-busy sample: an unreachable envd is handled by the reaper /
+// heartbeat paths, and resetting the streak is the safe default.
+func (m *Manager) pollAndBump(ctx context.Context, t activityTarget) {
+	pollCtx, cancel := context.WithTimeout(ctx, activityPollTimeout)
+	defer cancel()
+
+	act, err := t.client.FetchActivity(pollCtx)
+	busy := err == nil && m.isBusy(act)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sb, ok := m.boxes[t.id]
+	if !ok || sb.Status != models.StatusRunning {
+		return
+	}
+
+	streak, bump := applyBusySample(sb.activityBusyStreak, busy)
+	sb.activityBusyStreak = streak
+	if bump {
+		sb.LastActiveAt = time.Now()
+	}
+}
+
+// applyBusySample advances a debounce streak with the latest sample and
+// reports whether the TTL should be refreshed this tick. A non-busy sample
+// resets the streak; the bump fires once the streak reaches the debounce
+// threshold and on every busy tick thereafter (the streak is held at the
+// threshold rather than growing unbounded).
+func applyBusySample(streak int, busy bool) (newStreak int, bump bool) {
+	if !busy {
+		return 0, false
+	}
+	streak++
+	if streak >= busyDebounceSamples {
+		return busyDebounceSamples, true
+	}
+	return streak, false
+}
+
+// isBusy reports whether a guest liveness snapshot represents real work.
+func (m *Manager) isBusy(act *envdclient.Activity) bool {
+	cpuThreshold := m.cfg.CPUBusyPct
+	if cpuThreshold <= 0 {
+		cpuThreshold = defaultCPUBusyPct
+	}
+	netFloor := m.cfg.NetFloorBps
+	if netFloor == 0 {
+		netFloor = defaultNetFloorBps
+	}
+	diskFloor := m.cfg.DiskFloorBps
+	if diskFloor == 0 {
+		diskFloor = defaultDiskFloorBps
+	}
+
+	return act.CPUUsedPct >= cpuThreshold ||
+		act.NetBps >= netFloor ||
+		act.DiskBps >= diskFloor
 }
 
 // Shutdown gracefully drains the manager. Running sandboxes are paused so

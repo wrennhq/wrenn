@@ -149,6 +149,12 @@ func main() {
 		VMMVersion:          chVersion,
 		AgentVersion:        version,
 		ProxyDomain:         envOrDefault("WRENN_PROXY_DOMAIN", "wrenn.dev"),
+
+		// Activity sampler tuning (all optional; zero → sandbox package default).
+		ActivitySampleInterval: envDuration("WRENN_ACTIVITY_SAMPLE_INTERVAL"),
+		CPUBusyPct:             envFloat32("WRENN_CPU_BUSY_THRESHOLD"),
+		NetFloorBps:            envUint64("WRENN_NET_FLOOR_BPS"),
+		DiskFloorBps:           envUint64("WRENN_DISK_FLOOR_BPS"),
 	}
 
 	// Remove any *.staging-* / *.trash-* directories left behind by a
@@ -172,6 +178,7 @@ func main() {
 	mgr.RestorePausedSandboxes()
 
 	mgr.StartTTLReaper(ctx)
+	mgr.StartActivitySampler(ctx)
 
 	// httpServer is declared here so the shutdown func can reference it.
 	// ReadTimeout/WriteTimeout are intentionally omitted — they would kill
@@ -310,6 +317,49 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envDuration parses an optional duration env var (e.g. "5s"). Empty or
+// invalid → zero, letting the sandbox package apply its default.
+func envDuration(key string) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		slog.Warn("invalid duration env var, using default", "key", key, "value", v)
+		return 0
+	}
+	return d
+}
+
+// envFloat32 parses an optional float env var. Empty or invalid → 0.
+func envFloat32(key string) float32 {
+	v := os.Getenv(key)
+	if v == "" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(v, 32)
+	if err != nil {
+		slog.Warn("invalid float env var, using default", "key", key, "value", v)
+		return 0
+	}
+	return float32(f)
+}
+
+// envUint64 parses an optional unsigned-int env var. Empty or invalid → 0.
+func envUint64(key string) uint64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		slog.Warn("invalid uint env var, using default", "key", key, "value", v)
+		return 0
+	}
+	return n
 }
 
 // checkPrivileges verifies the process has the required Linux capabilities.

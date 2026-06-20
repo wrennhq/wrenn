@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod encoding;
 pub mod envs;
 pub mod error;
@@ -47,6 +48,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/health", get(health::get_health))
+        .route("/activity", get(activity::get_activity))
         .route("/metrics", get(metrics::get_metrics))
         .route("/envs", get(envs::get_envs))
         .route("/init", post(init::post_init))

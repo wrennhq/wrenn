@@ -25,6 +25,7 @@ type Client struct {
 	hostIP          string
 	base            string
 	healthURL       string
+	activityURL     string
 	httpClient      *http.Client
 	streamingClient *http.Client
 
@@ -42,6 +43,7 @@ func New(hostIP string) *Client {
 		hostIP:          hostIP,
 		base:            base,
 		healthURL:       base + "/health",
+		activityURL:     base + "/activity",
 		httpClient:      httpClient,
 		streamingClient: streamingClient,
 		process:         genconnect.NewProcessClient(streamingClient, base),

@@ -14,6 +14,7 @@ const ACCESS_TOKEN_HEADER: &str = "x-access-token";
 /// Format: "METHOD/path"
 const AUTH_EXCLUDED: &[&str] = &[
     "GET/health",
+    "GET/activity",
     "GET/files",
     "POST/files",
     "POST/init",
