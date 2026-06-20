@@ -88,6 +88,11 @@ type Config struct {
 	EnvdTimeout         time.Duration
 	DefaultRootfsSizeMB int // target size for template rootfs images; 0 → DefaultDiskSizeMB
 
+	// ProxyDomain is the public domain sandboxes are served under (e.g.
+	// "wrenn.dev"). Injected into envd at /init so `envd ports` can build
+	// {port}-{sandbox_id}.{domain} URLs.
+	ProxyDomain string
+
 	// Resolved at startup by the host agent.
 	KernelPath    string // path to the latest vmlinux-x.y.z
 	KernelVersion string // semver extracted from filename
@@ -419,14 +424,14 @@ func (m *Manager) Create(
 	// Fetch envd version (best-effort).
 	envdVersion, _ := client.FetchVersion(ctx)
 
-	// Apply template defaults via envd /init (no-op when both empty).
-	if defaultUser != "" || len(defaultEnv) > 0 {
-		initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
-		if err := client.PostInitWithDefaults(initCtx, defaultUser, defaultEnv, sandboxID, id.UUIDString(templateID)); err != nil {
-			slog.Warn("post-create PostInit failed", "id", sandboxID, "error", err)
-		}
-		initCancel()
+	// Apply template defaults + sandbox identity via envd /init. Always called
+	// on create so envd records its sandbox ID and proxy domain (used by
+	// `envd ports`), even when the template specifies no user/env defaults.
+	initCtx, initCancel := context.WithTimeout(ctx, m.cfg.EnvdTimeout)
+	if err := client.PostInitWithDefaults(initCtx, defaultUser, defaultEnv, sandboxID, id.UUIDString(templateID), m.cfg.ProxyDomain); err != nil {
+		slog.Warn("post-create PostInit failed", "id", sandboxID, "error", err)
 	}
+	initCancel()
 
 	now := time.Now()
 	sb := &sandboxState{
@@ -667,7 +672,7 @@ func (m *Manager) SetDefaults(ctx context.Context, sandboxID, defaultUser string
 	if err != nil {
 		return err
 	}
-	return c.PostInitWithDefaults(ctx, defaultUser, defaultEnv, "", "")
+	return c.PostInitWithDefaults(ctx, defaultUser, defaultEnv, "", "", "")
 }
 
 // PtyAttach starts a new PTY process or reconnects to an existing one.

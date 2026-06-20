@@ -37,6 +37,36 @@ pub fn read_tcp_connections() -> Vec<ConnStat> {
     conns
 }
 
+/// Returns the TCP ports in LISTEN state that are reachable from outside the
+/// guest through the host proxy. A port qualifies when it is bound to a
+/// wildcard address (`0.0.0.0`/`::`, directly reachable on the TAP interface)
+/// or to loopback (`127.0.0.1`/`::1`, bridged to the TAP IP by the socat
+/// forwarder). Ports bound to any other specific address are not routable from
+/// the host and are excluded, as is `exclude_port` (envd's own control port).
+/// The result is deduplicated and sorted ascending.
+pub fn reachable_listening_ports(exclude_port: u32) -> Vec<u32> {
+    filter_reachable_ports(&read_tcp_connections(), exclude_port)
+}
+
+fn filter_reachable_ports(conns: &[ConnStat], exclude_port: u32) -> Vec<u32> {
+    let mut ports: Vec<u32> = conns
+        .iter()
+        .filter(|c| c.status == "LISTEN")
+        .filter(|c| is_reachable_bind(&c.local_ip))
+        .map(|c| c.local_port)
+        .filter(|p| *p != exclude_port)
+        .collect();
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
+/// A bind address is reachable from the host when it is a wildcard (directly
+/// routed via the TAP interface) or loopback (socat-forwarded to the TAP IP).
+fn is_reachable_bind(ip: &str) -> bool {
+    matches!(ip, "0.0.0.0" | "::" | "127.0.0.1" | "::1")
+}
+
 fn parse_proc_net_tcp(path: &str, family: u32) -> io::Result<Vec<ConnStat>> {
     let file = std::fs::File::open(path)?;
     let reader = io::BufReader::new(file);
@@ -259,5 +289,77 @@ mod tests {
     #[test]
     fn parse_nonexistent_file_errors() {
         assert!(parse_proc_net_tcp("/nonexistent/path", libc::AF_INET as u32).is_err());
+    }
+
+    // reachable port filtering
+
+    fn conn(ip: &str, port: u32, status: &str) -> ConnStat {
+        ConnStat {
+            local_ip: ip.to_string(),
+            local_port: port,
+            status: status.to_string(),
+            family: libc::AF_INET as u32,
+            inode: 0,
+        }
+    }
+
+    #[test]
+    fn reachable_bind_accepts_wildcard_and_loopback() {
+        assert!(is_reachable_bind("0.0.0.0"));
+        assert!(is_reachable_bind("::"));
+        assert!(is_reachable_bind("127.0.0.1"));
+        assert!(is_reachable_bind("::1"));
+    }
+
+    #[test]
+    fn reachable_bind_rejects_specific_address() {
+        assert!(!is_reachable_bind("192.168.1.5"));
+        assert!(!is_reachable_bind("169.254.0.21"));
+        assert!(!is_reachable_bind("10.0.0.1"));
+    }
+
+    #[test]
+    fn filter_keeps_only_listen_state() {
+        let conns = vec![
+            conn("0.0.0.0", 8000, "LISTEN"),
+            conn("0.0.0.0", 9000, "ESTABLISHED"),
+        ];
+        assert_eq!(filter_reachable_ports(&conns, 49983), vec![8000]);
+    }
+
+    #[test]
+    fn filter_excludes_unreachable_binds() {
+        let conns = vec![
+            conn("127.0.0.1", 8000, "LISTEN"),
+            conn("169.254.0.21", 8001, "LISTEN"), // socat's own listener
+            conn("192.168.1.5", 8002, "LISTEN"),
+        ];
+        assert_eq!(filter_reachable_ports(&conns, 49983), vec![8000]);
+    }
+
+    #[test]
+    fn filter_excludes_envd_control_port() {
+        let conns = vec![
+            conn("0.0.0.0", 49983, "LISTEN"),
+            conn("0.0.0.0", 8000, "LISTEN"),
+        ];
+        assert_eq!(filter_reachable_ports(&conns, 49983), vec![8000]);
+    }
+
+    #[test]
+    fn filter_dedups_and_sorts() {
+        // Same port on IPv4 wildcard and IPv6 loopback collapses to one entry.
+        let conns = vec![
+            conn("::1", 8000, "LISTEN"),
+            conn("0.0.0.0", 8000, "LISTEN"),
+            conn("0.0.0.0", 3000, "LISTEN"),
+        ];
+        assert_eq!(filter_reachable_ports(&conns, 49983), vec![3000, 8000]);
+    }
+
+    #[test]
+    fn filter_empty_when_no_listeners() {
+        let conns = vec![conn("0.0.0.0", 8000, "ESTABLISHED")];
+        assert!(filter_reachable_ports(&conns, 49983).is_empty());
     }
 }

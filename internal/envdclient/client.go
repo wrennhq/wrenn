@@ -440,7 +440,7 @@ func (c *Client) CancelMemoryPreload(ctx context.Context) error {
 // post-restore initialization. sandbox_id and template_id are passed
 // so envd can set WRENN_SANDBOX_ID and WRENN_TEMPLATE_ID env vars.
 func (c *Client) PostInit(ctx context.Context) error {
-	return c.PostInitWithDefaults(ctx, "", nil, "", "")
+	return c.PostInitWithDefaults(ctx, "", nil, "", "", "")
 }
 
 // PostInitWithDefaults calls envd's POST /init endpoint with optional default
@@ -450,7 +450,7 @@ func (c *Client) PostInit(ctx context.Context) error {
 // timestamp and lifecycle_id are always populated: envd uses them to snap
 // the guest clock to the host's wall time and to detect post-resume calls
 // (which trigger port-forwarder restart + NFS remount).
-func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, envVars map[string]string, sandboxID, templateID string) error {
+func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, envVars map[string]string, sandboxID, templateID, proxyDomain string) error {
 	payload := map[string]any{
 		"timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
 		"lifecycle_id": uuid.NewString(),
@@ -466,6 +466,9 @@ func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, e
 	}
 	if templateID != "" {
 		payload["template_id"] = templateID
+	}
+	if proxyDomain != "" {
+		payload["proxy_domain"] = proxyDomain
 	}
 
 	var body io.Reader

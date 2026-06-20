@@ -26,6 +26,9 @@ pub struct InitRequest {
     pub volume_mounts: Option<Vec<VolumeMount>>,
     pub sandbox_id: Option<String>,
     pub template_id: Option<String>,
+    /// Public proxy domain (e.g. "wrenn.dev"). Used by `envd ports` to build
+    /// the {port}-{sandbox_id}.{domain} URLs.
+    pub proxy_domain: Option<String>,
     /// New lifecycle identifier for this resume. When it changes between
     /// /init calls, envd treats the call as a post-resume hook: port
     /// forwarder is restarted and NFS mounts are refreshed.
@@ -198,6 +201,18 @@ pub async fn post_init(
             .env_vars
             .insert("WRENN_TEMPLATE_ID".into(), id.clone());
     }
+    if let Some(ref domain) = init_req.proxy_domain {
+        if !domain.is_empty() {
+            tracing::debug!(proxy_domain = %domain, "setting proxy domain from init request");
+            // SAFETY: envd is single-threaded at init time; no concurrent env reads.
+            unsafe { std::env::set_var("WRENN_PROXY_DOMAIN", domain) };
+            write_run_file(".WRENN_PROXY_DOMAIN", domain);
+            state
+                .defaults
+                .env_vars
+                .insert("WRENN_PROXY_DOMAIN".into(), domain.clone());
+        }
+    }
 
     (
         StatusCode::NO_CONTENT,
@@ -293,7 +308,7 @@ async fn setup_nfs(nfs_target: &str, path: &str) {
 }
 
 fn write_run_file(name: &str, value: &str) {
-    let dir = std::path::Path::new("/run/wrenn");
+    let dir = std::path::Path::new(crate::config::WRENN_RUN_DIR);
     if let Err(e) = std::fs::create_dir_all(dir) {
         tracing::warn!(error = %e, "failed to create /run/wrenn");
         return;

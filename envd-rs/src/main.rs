@@ -2,6 +2,7 @@
 
 mod auth;
 mod cgroups;
+mod cmd;
 mod config;
 mod conntracker;
 mod crypto;
@@ -39,6 +40,10 @@ const COMMIT: &str = {
 #[derive(Parser)]
 #[command(name = "envd", about = "Wrenn guest agent daemon")]
 struct Cli {
+    /// Client subcommand. When omitted, envd runs as the guest daemon.
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     #[arg(long, default_value_t = DEFAULT_PORT)]
     port: u16,
 
@@ -55,6 +60,12 @@ struct Cli {
     cgroup_root: String,
 }
 
+#[derive(clap::Subcommand)]
+enum Commands {
+    /// List externally-reachable open ports and the URL each is served at.
+    Ports(cmd::ports::PortsArgs),
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -66,6 +77,11 @@ async fn main() {
     if cli.commit {
         println!("{COMMIT}");
         return;
+    }
+
+    // Client subcommands are short-lived: run and exit before any daemon setup.
+    if let Some(Commands::Ports(args)) = &cli.command {
+        std::process::exit(cmd::ports::run(args));
     }
 
     logging::init(true);

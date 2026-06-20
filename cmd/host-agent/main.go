@@ -148,6 +148,7 @@ func main() {
 		VMMBin:              chBin,
 		VMMVersion:          chVersion,
 		AgentVersion:        version,
+		ProxyDomain:         envOrDefault("WRENN_PROXY_DOMAIN", "wrenn.dev"),
 	}
 
 	// Remove any *.staging-* / *.trash-* directories left behind by a

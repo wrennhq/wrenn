@@ -110,7 +110,7 @@ func (m *Manager) initAndStartMemoryLoader(ctx context.Context, sb *sandboxState
 		slog.Warn("post-restore PostInit skipped: envd client cleared", "id", sb.ID)
 		return
 	}
-	if err := c.PostInitWithDefaults(initCtx, defaultUser, envVars, sb.ID, templateIDStr); err != nil {
+	if err := c.PostInitWithDefaults(initCtx, defaultUser, envVars, sb.ID, templateIDStr, m.cfg.ProxyDomain); err != nil {
 		slog.Warn("post-restore PostInit failed", "id", sb.ID, "error", err)
 	}
 
