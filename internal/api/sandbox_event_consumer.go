@@ -144,7 +144,7 @@ func (c *SandboxEventConsumer) handleMessage(ctx context.Context, msg redis.XMes
 		}
 	case events.CapsulePause:
 		if event.Outcome == events.OutcomeSuccess {
-			c.handleAutoPaused(ctx, sandboxID)
+			c.handleAutoPaused(ctx, sandboxID, event)
 		}
 	case events.CapsuleDestroy:
 		if event.Outcome == events.OutcomeSuccess {
@@ -226,12 +226,35 @@ func (c *SandboxEventConsumer) handleStarted(ctx context.Context, sandboxID pgty
 	}
 }
 
-func (c *SandboxEventConsumer) handleAutoPaused(ctx context.Context, sandboxID pgtype.UUID) {
+// handleAutoPaused reflects an autonomous (TTL reaper / shutdown) pause in the
+// DB and writes the audit row for it. The audit write happens only when the
+// status flip actually applied, so a stream redelivery does not double-count,
+// and so the HostMonitor host_state_sync fallback (which audits the
+// callback-lost case) stays mutually exclusive with this path.
+//
+// Uses audit.Log (row only) — NOT LogSandboxAutoPause, which republishes a
+// CapsulePause/system event that would loop straight back into this consumer.
+func (c *SandboxEventConsumer) handleAutoPaused(ctx context.Context, sandboxID pgtype.UUID, event events.Event) {
 	for _, fromStatus := range []string{"running", "pausing"} {
 		if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 			ID: sandboxID, Status: fromStatus, Status_2: "paused",
 		}); err == nil {
-			slog.Debug("sandbox event consumer: auto-paused fallback applied", "sandbox_id", id.FormatSandboxID(sandboxID), "from", fromStatus)
+			slog.Debug("sandbox event consumer: auto-paused applied", "sandbox_id", id.FormatSandboxID(sandboxID), "from", fromStatus)
+			reason := event.Metadata["reason"]
+			if reason == "" {
+				reason = "ttl_expired"
+			}
+			teamID, _ := id.ParseTeamID(event.TeamID)
+			c.audit.Log(ctx, audit.Entry{
+				TeamID:       teamID,
+				ActorType:    "system",
+				ResourceType: "sandbox",
+				ResourceID:   id.FormatSandboxID(sandboxID),
+				Action:       "pause",
+				Scope:        "team",
+				Status:       "info",
+				Metadata:     map[string]any{"reason": reason},
+			})
 			return
 		}
 	}
