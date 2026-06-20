@@ -104,6 +104,14 @@ func (r *SSERelay) handleMessage(ctx context.Context, msg *redis.Message) {
 		if err != nil {
 			slog.Debug("sse relay: sandbox hydration failed (may be deleted)", "sandbox_id", event.Resource.ID, "error", err)
 		} else {
+			// Override the hydrated status with the status implied by the event
+			// verb. Autonomous transitions (e.g. TTL auto-pause) flip the DB row
+			// in a separate stream consumer that races this Pub/Sub read, so the
+			// hydrated row may still carry the pre-transition status. The event
+			// itself is authoritative for the resulting state.
+			if status, ok := impliedSandboxStatus(event); ok {
+				sb.Status = status
+			}
 			payload.Sandbox = sb
 		}
 	}
@@ -136,6 +144,25 @@ func (r *SSERelay) hydrateSandbox(ctx context.Context, sandboxIDStr string) (*sa
 
 	resp := sandboxToResponse(sb)
 	return &resp, nil
+}
+
+// impliedSandboxStatus maps a successful capsule lifecycle event to the
+// sandbox status it results in. Used to override a hydrated DB row that may
+// still carry the pre-transition status because the reconciliation consumer
+// that flips it races this Pub/Sub read. Returns false for events with no
+// single deterministic resulting status (failures, destroy, state_changed).
+func impliedSandboxStatus(event events.Event) (string, bool) {
+	if event.Outcome != events.OutcomeSuccess {
+		return "", false
+	}
+	switch event.Event {
+	case events.CapsulePause:
+		return "paused", true
+	case events.CapsuleResume, events.CapsuleCreate:
+		return "running", true
+	default:
+		return "", false
+	}
 }
 
 func isCapsuleEvent(eventType string) bool {

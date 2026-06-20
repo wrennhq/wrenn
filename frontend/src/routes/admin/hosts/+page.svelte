@@ -53,14 +53,15 @@
 	let byocPageCount = $derived(Math.max(1, Math.ceil(flatByocHosts.length / PAGE_SIZE)));
 	let byocPageHosts = $derived(flatByocHosts.slice(byocPage * PAGE_SIZE, (byocPage + 1) * PAGE_SIZE));
 
-	// Stats across all hosts
-	let onlineCount = $derived(allHosts.filter((h) => h.status === 'online').length);
-	let pendingCount = $derived(allHosts.filter((h) => h.status === 'pending').length);
-	let totalCount = $derived(allHosts.length);
-	let totalCpuCores = $derived(allHosts.reduce((sum, h) => sum + (h.cpu_cores ?? 0), 0));
-	let totalMemoryMb = $derived(allHosts.reduce((sum, h) => sum + (h.memory_mb ?? 0), 0));
-	let totalRunningVcpus = $derived(allHosts.reduce((sum, h) => sum + h.running_vcpus, 0));
-	let totalRunningMemoryMb = $derived(allHosts.reduce((sum, h) => sum + h.running_memory_mb, 0));
+	// Aggregated stats — platform hosts only (admin needs a heads-up on
+	// platform capacity; BYOC capacity belongs to individual teams).
+	let onlineCount = $derived(platformHosts.filter((h) => h.status === 'online').length);
+	let pendingCount = $derived(platformHosts.filter((h) => h.status === 'pending').length);
+	let totalCount = $derived(platformHosts.length);
+	let totalCpuCores = $derived(platformHosts.reduce((sum, h) => sum + (h.cpu_cores ?? 0), 0));
+	let totalMemoryMb = $derived(platformHosts.reduce((sum, h) => sum + (h.memory_mb ?? 0), 0));
+	let totalRunningVcpus = $derived(platformHosts.reduce((sum, h) => sum + h.running_vcpus, 0));
+	let totalRunningMemoryMb = $derived(platformHosts.reduce((sum, h) => sum + h.running_memory_mb, 0));
 
 	function formatMem(mb: number): string {
 		return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;

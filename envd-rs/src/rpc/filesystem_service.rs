@@ -98,8 +98,7 @@ impl Filesystem for FilesystemServiceImpl {
         }
 
         let username = extract_username(&ctx).unwrap_or_else(|| self.state.defaults.user());
-        let user =
-            lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
+        let user = lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
         ensure_dirs(&path, user.uid, user.gid)
             .map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
@@ -123,8 +122,7 @@ impl Filesystem for FilesystemServiceImpl {
         let destination = self.resolve_path(request.destination, &ctx)?;
 
         let username = extract_username(&ctx).unwrap_or_else(|| self.state.defaults.user());
-        let user =
-            lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
+        let user = lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
         if let Some(parent) = Path::new(&destination).parent() {
             ensure_dirs(&parent.to_string_lossy(), user.uid, user.gid)
@@ -206,7 +204,12 @@ impl Filesystem for FilesystemServiceImpl {
             }
         }
 
-        Ok((RemoveResponse { ..Default::default() }, ctx))
+        Ok((
+            RemoveResponse {
+                ..Default::default()
+            },
+            ctx,
+        ))
     }
 
     async fn watch_dir(
@@ -247,8 +250,8 @@ impl Filesystem for FilesystemServiceImpl {
         let events: Arc<Mutex<Vec<FilesystemEvent>>> = Arc::new(Mutex::new(Vec::new()));
         let events_cb = Arc::clone(&events);
 
-        let mut watcher = notify::recommended_watcher(
-            move |res: Result<notify::Event, notify::Error>| {
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
                     let event_type = match event.kind {
                         notify::EventKind::Create(_) => EventType::EVENT_TYPE_CREATE,
@@ -275,11 +278,13 @@ impl Filesystem for FilesystemServiceImpl {
                         }
                     }
                 }
-            },
-        )
-        .map_err(|e| {
-            ConnectError::new(ErrorCode::Internal, format!("failed to create watcher: {e}"))
-        })?;
+            })
+            .map_err(|e| {
+                ConnectError::new(
+                    ErrorCode::Internal,
+                    format!("failed to create watcher: {e}"),
+                )
+            })?;
 
         let mode = if recursive {
             RecursiveMode::Recursive
@@ -342,7 +347,12 @@ impl Filesystem for FilesystemServiceImpl {
     ) -> Result<(RemoveWatcherResponse, Context), ConnectError> {
         let watcher_id: &str = request.watcher_id;
         self.watchers.remove(watcher_id);
-        Ok((RemoveWatcherResponse { ..Default::default() }, ctx))
+        Ok((
+            RemoveWatcherResponse {
+                ..Default::default()
+            },
+            ctx,
+        ))
     }
 }
 

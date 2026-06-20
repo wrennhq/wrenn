@@ -130,22 +130,8 @@ func (h *execStreamHandler) runExecStream(ctx context.Context, conn *websocket.C
 
 	// Forward stream events to WebSocket.
 	for stream.Receive() {
-		resp := stream.Msg()
-		switch ev := resp.Event.(type) {
-		case *pb.ExecStreamResponse_Start:
-			writeWSJSON(conn, wsOutMsg{Type: "start", PID: ev.Start.Pid})
-
-		case *pb.ExecStreamResponse_Data:
-			switch o := ev.Data.Output.(type) {
-			case *pb.ExecStreamData_Stdout:
-				writeWSJSON(conn, wsOutMsg{Type: "stdout", Data: string(o.Stdout)})
-			case *pb.ExecStreamData_Stderr:
-				writeWSJSON(conn, wsOutMsg{Type: "stderr", Data: string(o.Stderr)})
-			}
-
-		case *pb.ExecStreamResponse_End:
-			exitCode := ev.End.ExitCode
-			writeWSJSON(conn, wsOutMsg{Type: "exit", ExitCode: &exitCode})
+		if m, ok := procRespToWSMsg(stream.Msg()); ok {
+			writeWSJSON(conn, m)
 		}
 	}
 
@@ -157,6 +143,38 @@ func (h *execStreamHandler) runExecStream(ctx context.Context, conn *websocket.C
 	}
 
 	updateLastActive(h.db, sandboxID, sandboxIDStr)
+}
+
+// procStreamResp is satisfied by both *pb.ExecStreamResponse and
+// *pb.ConnectProcessResponse: their oneof events carry the same inner messages,
+// so the wire-to-WS mapping below is shared between the exec-stream and
+// connect-process handlers.
+type procStreamResp interface {
+	GetStart() *pb.ExecStreamStart
+	GetData() *pb.ExecStreamData
+	GetEnd() *pb.ExecStreamEnd
+}
+
+// procRespToWSMsg maps one process stream response to the WS message to send.
+// The bool is false when the response carries nothing to forward.
+func procRespToWSMsg(resp procStreamResp) (wsOutMsg, bool) {
+	if s := resp.GetStart(); s != nil {
+		return wsOutMsg{Type: "start", PID: s.Pid}, true
+	}
+	if d := resp.GetData(); d != nil {
+		switch o := d.Output.(type) {
+		case *pb.ExecStreamData_Stdout:
+			return wsOutMsg{Type: "stdout", Data: string(o.Stdout)}, true
+		case *pb.ExecStreamData_Stderr:
+			return wsOutMsg{Type: "stderr", Data: string(o.Stderr)}, true
+		}
+		return wsOutMsg{}, false
+	}
+	if e := resp.GetEnd(); e != nil {
+		exitCode := e.ExitCode
+		return wsOutMsg{Type: "exit", ExitCode: &exitCode}, true
+	}
+	return wsOutMsg{}, false
 }
 
 func sendWSError(conn *websocket.Conn, msg string) {

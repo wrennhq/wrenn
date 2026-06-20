@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::auth::token::SecureToken;
@@ -17,6 +17,11 @@ pub struct AppState {
     pub port_subsystem: Option<Arc<PortSubsystem>>,
     pub cpu_used_pct: AtomicU32,
     pub cpu_count: AtomicU32,
+    /// Whole-VM IO throughput, bytes/sec, sampled over the last 1s tick. Used
+    /// by the host activity sampler to keep IO-bound-but-CPU-idle workloads
+    /// (e.g. a long download) from being mistaken for inactive.
+    pub net_bps: AtomicU64,
+    pub disk_bps: AtomicU64,
 
     /// Memory preload coordination. The host agent POSTs /memory/preload after
     /// a snapshot restore to materialise every physical page (so the next
@@ -56,6 +61,8 @@ impl AppState {
             port_subsystem,
             cpu_used_pct: AtomicU32::new(0),
             cpu_count: AtomicU32::new(0),
+            net_bps: AtomicU64::new(0),
+            disk_bps: AtomicU64::new(0),
             mem_preload_started: AtomicBool::new(false),
             mem_preload_done: AtomicBool::new(false),
             mem_preload_cancel: AtomicBool::new(false),
@@ -70,7 +77,7 @@ impl AppState {
 
         let state_clone = Arc::clone(&state);
         std::thread::spawn(move || {
-            cpu_sampler(state_clone);
+            activity_sampler(state_clone);
         });
 
         state
@@ -82,6 +89,14 @@ impl AppState {
 
     pub fn cpu_count(&self) -> u32 {
         self.cpu_count.load(Ordering::Relaxed)
+    }
+
+    pub fn net_bps(&self) -> u64 {
+        self.net_bps.load(Ordering::Relaxed)
+    }
+
+    pub fn disk_bps(&self) -> u64 {
+        self.disk_bps.load(Ordering::Relaxed)
     }
 
     /// Records a new lifecycle ID, returning true if it changed (i.e. this
@@ -99,11 +114,15 @@ impl AppState {
     }
 }
 
-fn cpu_sampler(state: Arc<AppState>) {
+fn activity_sampler(state: Arc<AppState>) {
     use sysinfo::System;
 
     let mut sys = System::new();
     sys.refresh_cpu_all();
+
+    // Cumulative IO counters from the previous tick. None until the first read.
+    let mut prev_net: Option<u64> = read_net_bytes();
+    let mut prev_disk: Option<u64> = read_disk_bytes();
 
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
@@ -123,5 +142,73 @@ fn cpu_sampler(state: Arc<AppState>) {
         state
             .cpu_count
             .store(sys.cpus().len() as u32, Ordering::Relaxed);
+
+        // Throughput = cumulative-counter delta over the ~1s tick. Counters can
+        // reset across a snapshot restore; a wrapped/negative delta reads as 0.
+        let cur_net = read_net_bytes();
+        let net_bps = match (prev_net, cur_net) {
+            (Some(p), Some(c)) => c.saturating_sub(p),
+            _ => 0,
+        };
+        prev_net = cur_net;
+
+        let cur_disk = read_disk_bytes();
+        let disk_bps = match (prev_disk, cur_disk) {
+            (Some(p), Some(c)) => c.saturating_sub(p),
+            _ => 0,
+        };
+        prev_disk = cur_disk;
+
+        state.net_bps.store(net_bps, Ordering::Relaxed);
+        state.disk_bps.store(disk_bps, Ordering::Relaxed);
     }
+}
+
+/// Sum of rx+tx bytes across all non-loopback interfaces, from /proc/net/dev.
+/// Returns None if the file can't be read/parsed.
+fn read_net_bytes() -> Option<u64> {
+    let content = std::fs::read_to_string("/proc/net/dev").ok()?;
+    let mut total: u64 = 0;
+    // First two lines are headers.
+    for line in content.lines().skip(2) {
+        let Some((iface, rest)) = line.split_once(':') else {
+            continue;
+        };
+        if iface.trim() == "lo" {
+            continue;
+        }
+        let fields: Vec<&str> = rest.split_whitespace().collect();
+        // Column 0 = rx bytes, column 8 = tx bytes.
+        if let Some(rx) = fields.first().and_then(|v| v.parse::<u64>().ok()) {
+            total = total.saturating_add(rx);
+        }
+        if let Some(tx) = fields.get(8).and_then(|v| v.parse::<u64>().ok()) {
+            total = total.saturating_add(tx);
+        }
+    }
+    Some(total)
+}
+
+/// Sum of sectors read+written across all block devices, ×512, from
+/// /proc/diskstats. Skips partitions and loop/ram devices to avoid double
+/// counting. Returns None if the file can't be read/parsed.
+fn read_disk_bytes() -> Option<u64> {
+    let content = std::fs::read_to_string("/proc/diskstats").ok()?;
+    let mut sectors: u64 = 0;
+    for line in content.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        // 0=major 1=minor 2=name ... 5=sectors read ... 9=sectors written.
+        if fields.len() < 10 {
+            continue;
+        }
+        let name = fields[2];
+        if name.starts_with("loop") || name.starts_with("ram") {
+            continue;
+        }
+        let read = fields[5].parse::<u64>().unwrap_or(0);
+        let written = fields[9].parse::<u64>().unwrap_or(0);
+        sectors = sectors.saturating_add(read).saturating_add(written);
+    }
+    // Linux reports diskstats sectors in fixed 512-byte units.
+    Some(sectors.saturating_mul(512))
 }

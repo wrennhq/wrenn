@@ -256,6 +256,10 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Wrenn — Capsules</title>
+</svelte:head>
+
 <style>
 	@keyframes capsule-born {
 		0%, 25% { background-color: rgba(94, 140, 88, 0.1); }

@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use connectrpc::{ConnectError, Context, ErrorCode};
 use dashmap::DashMap;
-use futures::Stream;
+use futures::{Stream, StreamExt};
+use tokio::sync::broadcast;
 
 use crate::permissions::path::{expand_and_resolve, expand_tilde};
 use crate::permissions::user::lookup_user;
@@ -72,8 +73,7 @@ impl ProcessServiceImpl {
         })?;
 
         let username = self.state.defaults.user();
-        let user =
-            lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
+        let user = lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
         let cmd_raw: &str = proc_config.cmd;
         let args_raw: Vec<String> = proc_config.args.iter().map(|s| s.to_string()).collect();
@@ -87,7 +87,8 @@ impl ProcessServiceImpl {
 
         let cmd = expand_tilde(cmd_raw, &home_dir)
             .map_err(|e| ConnectError::new(ErrorCode::InvalidArgument, e))?;
-        let args: Vec<String> = args_raw.into_iter()
+        let args: Vec<String> = args_raw
+            .into_iter()
             .map(|a| expand_tilde(&a, &home_dir).unwrap_or(a))
             .collect();
 
@@ -136,7 +137,8 @@ impl ProcessServiceImpl {
             &self.state.defaults.env_vars,
         )?;
 
-        self.processes.insert(spawned.handle.pid, Arc::clone(&spawned.handle));
+        self.processes
+            .insert(spawned.handle.pid, Arc::clone(&spawned.handle));
 
         let processes = Arc::clone(&self.processes);
         let pid = spawned.handle.pid;
@@ -203,50 +205,10 @@ impl Process for ProcessServiceImpl {
         let spawned = self.spawn_from_request(&request)?;
         let pid = spawned.handle.pid;
 
-        let mut data_rx = spawned.data_rx;
-        let mut end_rx = spawned.end_rx;
-
-        let stream = async_stream::stream! {
-            yield Ok(make_start_response(pid));
-
-            loop {
-                tokio::select! {
-                    biased;
-                    data = data_rx.recv() => {
-                        match data {
-                            Ok(ev) => yield Ok(make_data_start_response(ev)),
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                // Data channel closed: the process ended and its
-                                // handle was dropped. The end event is published
-                                // before the handle drop, so it is still buffered
-                                // — emit it rather than losing the exit code.
-                                if let Ok(end) = end_rx.try_recv() {
-                                    yield Ok(make_end_start_response(end));
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    end = end_rx.recv() => {
-                        // Process ended. The waiter joins the output readers
-                        // before sending this event, so every byte is already
-                        // in the data channel — drain it fully before the end.
-                        loop {
-                            match data_rx.try_recv() {
-                                Ok(ev) => yield Ok(make_data_start_response(ev)),
-                                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
-                                Err(_) => break,
-                            }
-                        }
-                        if let Ok(end) = end {
-                            yield Ok(make_end_start_response(end));
-                        }
-                        break;
-                    }
-                }
-            }
-        };
+        // Start subscribes before any output is produced, so there is nothing to
+        // replay and the process cannot have ended yet.
+        let stream = process_event_stream(pid, Vec::new(), spawned.data_rx, spawned.end_rx, None)
+            .map(|r| r.map(wrap_start_response));
 
         Ok((Box::pin(stream), ctx))
     }
@@ -268,81 +230,17 @@ impl Process for ProcessServiceImpl {
         let handle = self.get_process_by_selector(selector)?;
         let pid = handle.pid;
 
-        let mut data_rx = handle.subscribe_data();
-        let mut end_rx = handle.subscribe_end();
+        // Snapshot buffered output + subscribe live atomically, then read the
+        // exit state. Ordering matters: end_rx must be subscribed before
+        // cached_end is read so a process that exits in the window is still
+        // observed (via the channel if subscribed in time, via cached_end
+        // otherwise).
+        let (replay, data_rx) = handle.subscribe_data_replay();
+        let end_rx = handle.subscribe_end();
         let cached_end = handle.cached_end();
 
-        let stream = async_stream::stream! {
-            yield Ok(ConnectResponse {
-                event: buffa::MessageField::some(ProcessEvent {
-                    event: Some(process_event::Event::Start(Box::new(
-                        process_event::StartEvent { pid, ..Default::default() },
-                    ))),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            });
-
-            if let Some(end) = cached_end {
-                yield Ok(ConnectResponse {
-                    event: buffa::MessageField::some(make_end_event(end)),
-                    ..Default::default()
-                });
-            } else {
-                loop {
-                    tokio::select! {
-                        biased;
-                        data = data_rx.recv() => {
-                            match data {
-                                Ok(ev) => {
-                                    yield Ok(ConnectResponse {
-                                        event: buffa::MessageField::some(make_data_event(ev)),
-                                        ..Default::default()
-                                    });
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                    // Data channel closed: the process ended and
-                                    // its handle was dropped. The end event is
-                                    // published before the handle drop, so it is
-                                    // still buffered — emit it rather than losing
-                                    // the exit code.
-                                    if let Ok(end) = end_rx.try_recv() {
-                                        yield Ok(ConnectResponse {
-                                            event: buffa::MessageField::some(make_end_event(end)),
-                                            ..Default::default()
-                                        });
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                        end = end_rx.recv() => {
-                            // Process ended. The waiter joins the output readers
-                            // before sending this event, so every byte is already
-                            // in the data channel — drain it fully before the end.
-                            loop {
-                                match data_rx.try_recv() {
-                                    Ok(ev) => yield Ok(ConnectResponse {
-                                        event: buffa::MessageField::some(make_data_event(ev)),
-                                        ..Default::default()
-                                    }),
-                                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
-                                    Err(_) => break,
-                                }
-                            }
-                            if let Ok(end) = end {
-                                yield Ok(ConnectResponse {
-                                    event: buffa::MessageField::some(make_end_event(end)),
-                                    ..Default::default()
-                                });
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        };
+        let stream = process_event_stream(pid, replay, data_rx, end_rx, cached_end)
+            .map(|r| r.map(wrap_connect_response));
 
         Ok((Box::pin(stream), ctx))
     }
@@ -363,7 +261,12 @@ impl Process for ProcessServiceImpl {
             }
         }
 
-        Ok((UpdateResponse { ..Default::default() }, ctx))
+        Ok((
+            UpdateResponse {
+                ..Default::default()
+            },
+            ctx,
+        ))
     }
 
     async fn stream_input(
@@ -372,11 +275,11 @@ impl Process for ProcessServiceImpl {
         mut requests: Pin<
             Box<
                 dyn Stream<
-                    Item = Result<
-                        buffa::view::OwnedView<StreamInputRequestView<'static>>,
-                        ConnectError,
-                    >,
-                > + Send,
+                        Item = Result<
+                            buffa::view::OwnedView<StreamInputRequestView<'static>>,
+                            ConnectError,
+                        >,
+                    > + Send,
             >,
         >,
     ) -> Result<(StreamInputResponse, Context), ConnectError> {
@@ -405,7 +308,12 @@ impl Process for ProcessServiceImpl {
             }
         }
 
-        Ok((StreamInputResponse { ..Default::default() }, ctx))
+        Ok((
+            StreamInputResponse {
+                ..Default::default()
+            },
+            ctx,
+        ))
     }
 
     async fn send_input(
@@ -422,7 +330,12 @@ impl Process for ProcessServiceImpl {
             write_input(&handle, input)?;
         }
 
-        Ok((SendInputResponse { ..Default::default() }, ctx))
+        Ok((
+            SendInputResponse {
+                ..Default::default()
+            },
+            ctx,
+        ))
     }
 
     async fn send_signal(
@@ -442,12 +355,17 @@ impl Process for ProcessServiceImpl {
                 return Err(ConnectError::new(
                     ErrorCode::InvalidArgument,
                     "invalid or unspecified signal",
-                ))
+                ));
             }
         };
 
         handle.send_signal(sig)?;
-        Ok((SendSignalResponse { ..Default::default() }, ctx))
+        Ok((
+            SendSignalResponse {
+                ..Default::default()
+            },
+            ctx,
+        ))
     }
 
     async fn close_stdin(
@@ -460,7 +378,12 @@ impl Process for ProcessServiceImpl {
         })?;
         let handle = self.get_process_by_selector(selector)?;
         handle.close_stdin()?;
-        Ok((CloseStdinResponse { ..Default::default() }, ctx))
+        Ok((
+            CloseStdinResponse {
+                ..Default::default()
+            },
+            ctx,
+        ))
     }
 }
 
@@ -472,17 +395,106 @@ fn write_input(handle: &ProcessHandle, input: &ProcessInputView) -> Result<(), C
     }
 }
 
-fn make_start_response(pid: u32) -> StartResponse {
+/// Shared event pump for `Start` and `Connect`. Yields a leading start event,
+/// replays any buffered output (empty for `Start`), then forwards live output
+/// and the final exit event. The caller wraps each `ProcessEvent` into its own
+/// response envelope, so the streaming logic lives in exactly one place.
+fn process_event_stream(
+    pid: u32,
+    replay: Vec<DataEvent>,
+    mut data_rx: broadcast::Receiver<DataEvent>,
+    mut end_rx: broadcast::Receiver<process_handler::EndEvent>,
+    cached_end: Option<process_handler::EndEvent>,
+) -> impl Stream<Item = Result<ProcessEvent, ConnectError>> {
+    use broadcast::error::{RecvError, TryRecvError};
+
+    async_stream::stream! {
+        yield Ok(make_start_event(pid));
+
+        for ev in replay {
+            yield Ok(make_data_event(ev));
+        }
+
+        // Process already exited before we attached. The snapshot above covers
+        // output up to the attach point; drain anything the live receiver
+        // buffered after the snapshot, then emit the cached exit. end_rx may
+        // never deliver here — a broadcast receiver only sees events sent after
+        // it subscribed, and the exit can predate that — so cached_end is the
+        // source of truth.
+        if let Some(end) = cached_end {
+            loop {
+                match data_rx.try_recv() {
+                    Ok(ev) => yield Ok(make_data_event(ev)),
+                    Err(TryRecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+            yield Ok(make_end_event(end));
+            return;
+        }
+
+        loop {
+            tokio::select! {
+                biased;
+                data = data_rx.recv() => {
+                    match data {
+                        Ok(ev) => yield Ok(make_data_event(ev)),
+                        Err(RecvError::Lagged(_)) => continue,
+                        Err(RecvError::Closed) => {
+                            // Data channel closed: the process ended and its
+                            // handle was dropped. The end event is published
+                            // before the handle drop, so it is still buffered —
+                            // emit it rather than losing the exit code.
+                            if let Ok(end) = end_rx.try_recv() {
+                                yield Ok(make_end_event(end));
+                            }
+                            break;
+                        }
+                    }
+                }
+                end = end_rx.recv() => {
+                    // Process ended. The waiter joins the output readers before
+                    // sending this event, so every byte is already in the data
+                    // channel — drain it fully before the end.
+                    loop {
+                        match data_rx.try_recv() {
+                            Ok(ev) => yield Ok(make_data_event(ev)),
+                            Err(TryRecvError::Lagged(_)) => continue,
+                            Err(_) => break,
+                        }
+                    }
+                    if let Ok(end) = end {
+                        yield Ok(make_end_event(end));
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn wrap_start_response(event: ProcessEvent) -> StartResponse {
     StartResponse {
-        event: buffa::MessageField::some(ProcessEvent {
-            event: Some(process_event::Event::Start(Box::new(
-                process_event::StartEvent {
-                    pid,
-                    ..Default::default()
-                },
-            ))),
-            ..Default::default()
-        }),
+        event: buffa::MessageField::some(event),
+        ..Default::default()
+    }
+}
+
+fn wrap_connect_response(event: ProcessEvent) -> ConnectResponse {
+    ConnectResponse {
+        event: buffa::MessageField::some(event),
+        ..Default::default()
+    }
+}
+
+fn make_start_event(pid: u32) -> ProcessEvent {
+    ProcessEvent {
+        event: Some(process_event::Event::Start(Box::new(
+            process_event::StartEvent {
+                pid,
+                ..Default::default()
+            },
+        ))),
         ..Default::default()
     }
 }
@@ -504,13 +516,6 @@ fn make_data_event(ev: DataEvent) -> ProcessEvent {
     }
 }
 
-fn make_data_start_response(ev: DataEvent) -> StartResponse {
-    StartResponse {
-        event: buffa::MessageField::some(make_data_event(ev)),
-        ..Default::default()
-    }
-}
-
 fn make_end_event(end: process_handler::EndEvent) -> ProcessEvent {
     ProcessEvent {
         event: Some(process_event::Event::End(Box::new(
@@ -522,13 +527,6 @@ fn make_end_event(end: process_handler::EndEvent) -> ProcessEvent {
                 ..Default::default()
             },
         ))),
-        ..Default::default()
-    }
-}
-
-fn make_end_start_response(end: process_handler::EndEvent) -> StartResponse {
-    StartResponse {
-        event: buffa::MessageField::some(make_end_event(end)),
         ..Default::default()
     }
 }
@@ -589,7 +587,8 @@ mod tests {
     fn args_other_user_left_literal() {
         let home_dir = "/home/testuser";
         let args_raw = vec!["~other".to_string(), "~other/path".to_string()];
-        let args: Vec<String> = args_raw.into_iter()
+        let args: Vec<String> = args_raw
+            .into_iter()
             .map(|a| expand_tilde(&a, home_dir).unwrap_or(a))
             .collect();
         assert_eq!(args, vec!["~other", "~other/path"]);
@@ -618,17 +617,22 @@ mod tests {
             "/tmp/out".to_string(),
             "~other".to_string(),
         ];
-        let args: Vec<String> = args_raw.into_iter()
+        let args: Vec<String> = args_raw
+            .into_iter()
             .map(|a| expand_tilde(&a, home_dir).unwrap_or(a))
             .collect();
-        assert_eq!(args, vec!["-p", "/home/testuser/data", "/tmp/out", "~other"]);
+        assert_eq!(
+            args,
+            vec!["-p", "/home/testuser/data", "/tmp/out", "~other"]
+        );
     }
 
     #[test]
     fn args_empty_passthrough() {
         let home_dir = "/home/testuser";
         let args_raw: Vec<String> = vec![];
-        let args: Vec<String> = args_raw.into_iter()
+        let args: Vec<String> = args_raw
+            .into_iter()
             .map(|a| expand_tilde(&a, home_dir).unwrap_or(a))
             .collect();
         assert!(args.is_empty());

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 
 	"connectrpc.com/connect"
 
@@ -87,52 +86,7 @@ func (c *Client) ConnectProcess(ctx context.Context, pid uint32, tag string) (<-
 	}
 
 	ch := make(chan ExecStreamEvent, 16)
-	go func() {
-		defer close(ch)
-		defer stream.Close()
-
-		for stream.Receive() {
-			msg := stream.Msg()
-			if msg.Event == nil {
-				continue
-			}
-
-			var ev ExecStreamEvent
-			switch e := msg.Event.GetEvent().(type) {
-			case *envdpb.ProcessEvent_Start:
-				ev = ExecStreamEvent{Type: "start", PID: e.Start.GetPid()}
-
-			case *envdpb.ProcessEvent_Data:
-				switch o := e.Data.GetOutput().(type) {
-				case *envdpb.ProcessEvent_DataEvent_Stdout:
-					ev = ExecStreamEvent{Type: "stdout", Data: o.Stdout}
-				case *envdpb.ProcessEvent_DataEvent_Stderr:
-					ev = ExecStreamEvent{Type: "stderr", Data: o.Stderr}
-				default:
-					continue
-				}
-
-			case *envdpb.ProcessEvent_End:
-				ev = ExecStreamEvent{Type: "end", ExitCode: e.End.GetExitCode()}
-				if e.End.Error != nil {
-					ev.Error = e.End.GetError()
-				}
-
-			case *envdpb.ProcessEvent_Keepalive:
-				continue
-			}
-
-			select {
-			case ch <- ev:
-			case <-ctx.Done():
-				return
-			}
-		}
-
-		if err := stream.Err(); err != nil && err != io.EOF {
-			slog.Debug("connect process stream error", "error", err)
-		}
-	}()
+	go pumpProcessEvents(ctx, stream, (*envdpb.ConnectResponse).GetEvent, ch, "connect process stream error")
 
 	return ch, nil
 }

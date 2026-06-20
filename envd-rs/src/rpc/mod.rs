@@ -1,17 +1,17 @@
-pub mod pb;
 pub mod entry;
+pub mod filesystem_service;
+pub mod pb;
 pub mod process_handler;
 pub mod process_service;
-pub mod filesystem_service;
 
 use std::sync::Arc;
 
-use crate::rpc::process_service::ProcessServiceImpl;
 use crate::rpc::filesystem_service::FilesystemServiceImpl;
+use crate::rpc::process_service::ProcessServiceImpl;
 use crate::state::AppState;
 
-use pb::process::ProcessExt;
 use pb::filesystem::FilesystemExt;
+use pb::process::ProcessExt;
 
 /// Build the connect-rust Router with both RPC services registered.
 pub fn rpc_router(state: Arc<AppState>) -> connectrpc::Router {

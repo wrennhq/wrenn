@@ -1,3 +1,3 @@
-pub mod token;
-pub mod signing;
 pub mod middleware;
+pub mod signing;
+pub mod token;

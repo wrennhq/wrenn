@@ -1,10 +1,11 @@
+use std::collections::VecDeque;
 use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
 use connectrpc::{ConnectError, ErrorCode};
-use nix::pty::{openpty, Winsize};
+use nix::pty::{Winsize, openpty};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use tokio::sync::broadcast;
@@ -14,6 +15,11 @@ use crate::rpc::pb::process::*;
 const STD_CHUNK_SIZE: usize = 32768;
 const PTY_CHUNK_SIZE: usize = 16384;
 const BROADCAST_CAPACITY: usize = 4096;
+
+// Upper bound on the per-process output kept for replay. A late Connect gets
+// the most recent OUTPUT_LOG_CAPACITY bytes (older output is evicted) so the
+// buffer can never grow without bound for a chatty long-running process.
+const OUTPUT_LOG_CAPACITY: usize = 256 * 1024;
 
 #[derive(Clone)]
 pub enum DataEvent {
@@ -30,6 +36,37 @@ pub struct EndEvent {
     pub error: Option<String>,
 }
 
+/// Bounded ring of recent output, kept so a late Connect can replay what it
+/// missed. Evicts oldest events once the retained bytes exceed the cap.
+#[derive(Default)]
+struct OutputLog {
+    events: VecDeque<DataEvent>,
+    bytes: usize,
+}
+
+impl OutputLog {
+    fn push(&mut self, ev: &DataEvent) {
+        self.bytes += ev_len(ev);
+        self.events.push_back(ev.clone());
+        while self.bytes > OUTPUT_LOG_CAPACITY {
+            match self.events.pop_front() {
+                Some(old) => self.bytes -= ev_len(&old),
+                None => break,
+            }
+        }
+    }
+
+    fn snapshot(&self) -> Vec<DataEvent> {
+        self.events.iter().cloned().collect()
+    }
+}
+
+fn ev_len(ev: &DataEvent) -> usize {
+    match ev {
+        DataEvent::Stdout(d) | DataEvent::Stderr(d) | DataEvent::Pty(d) => d.len(),
+    }
+}
+
 pub struct ProcessHandle {
     pub config: ProcessConfig,
     pub tag: Option<String>,
@@ -38,6 +75,7 @@ pub struct ProcessHandle {
     data_tx: broadcast::Sender<DataEvent>,
     end_tx: broadcast::Sender<EndEvent>,
     ended: Mutex<Option<EndEvent>>,
+    output_log: Mutex<OutputLog>,
 
     stdin: Mutex<Option<std::process::ChildStdin>>,
     pty_master: Mutex<Option<std::fs::File>>,
@@ -46,6 +84,26 @@ pub struct ProcessHandle {
 impl ProcessHandle {
     pub fn subscribe_data(&self) -> broadcast::Receiver<DataEvent> {
         self.data_tx.subscribe()
+    }
+
+    /// Append a chunk to the replay buffer and broadcast it live, under one
+    /// lock. The shared lock is what makes [`subscribe_data_replay`] race-free:
+    /// a concurrent attach sees this chunk either in its snapshot or on its live
+    /// receiver — never both, never neither.
+    pub fn publish_data(&self, ev: DataEvent) {
+        let mut log = self.output_log.lock().unwrap();
+        log.push(&ev);
+        let _ = self.data_tx.send(ev);
+    }
+
+    /// Snapshot the buffered output and subscribe to live output atomically, so
+    /// a late Connect replays what it missed and then continues live with no gap
+    /// or duplicate across the handoff.
+    pub fn subscribe_data_replay(&self) -> (Vec<DataEvent>, broadcast::Receiver<DataEvent>) {
+        let log = self.output_log.lock().unwrap();
+        let snapshot = log.snapshot();
+        let rx = self.data_tx.subscribe();
+        (snapshot, rx)
     }
 
     pub fn subscribe_end(&self) -> broadcast::Receiver<EndEvent> {
@@ -160,6 +218,9 @@ pub fn spawn_process(
     env.push(("HOME".into(), home));
     env.push(("USER".into(), user.name.clone()));
     env.push(("LOGNAME".into(), user.name.clone()));
+    if !user.shell.as_os_str().is_empty() {
+        env.push(("SHELL".into(), user.shell.to_string_lossy().to_string()));
+    }
 
     default_env_vars.iter().for_each(|entry| {
         env.push((entry.key().clone(), entry.value().clone()));
@@ -179,21 +240,40 @@ pub fn spawn_process(
     let nice_delta = 0 - current_nice();
     let profile_source = r#"test -f /etc/profile && . /etc/profile
 test -f "${HOME}/.bashrc" && . "${HOME}/.bashrc""#;
-    let oom_script = if nice_delta > 0 {
-        format!(
-            r#"echo 100 > /proc/$$/oom_score_adj
-{}
-exec /usr/bin/nice -n {} "${{@}}""#,
-            profile_source, nice_delta,
-        )
-    } else {
-        format!(
-            r#"echo 100 > /proc/$$/oom_score_adj
-{}
-exec "$@""#,
-            profile_source
-        )
+
+    // Resolve the user's login shell, falling back to /bin/sh. Commands without
+    // explicit args are interpreted by this shell so pipes, quoting, escape
+    // sequences, backslash line-continuations, and other shell syntax work
+    // without the caller having to wrap them in `sh -c` themselves.
+    let shell = {
+        let s = user.shell.to_string_lossy();
+        if s.is_empty() {
+            "/bin/sh".to_string()
+        } else {
+            s.to_string()
+        }
     };
+
+    // What the wrapper finally exec's, after the optional `nice` prefix.
+    //   - no args: run cmd_str as a shell command line via the login shell
+    //     ($1 is cmd_str; $0 of the inner shell is the shell path).
+    //   - with args: exec the program + args directly, no shell interpretation
+    //     (backward-compatible program/argv form).
+    let target = if args.is_empty() {
+        format!(r#""{shell}" -c "$1" "{shell}""#)
+    } else {
+        r#""$@""#.to_string()
+    };
+    let nice_prefix = if nice_delta > 0 {
+        format!("/usr/bin/nice -n {nice_delta} ")
+    } else {
+        String::new()
+    };
+    let oom_script = format!(
+        r#"echo 100 > /proc/$$/oom_score_adj
+{profile_source}
+exec {nice_prefix}{target}"#
+    );
     let mut wrapper_args = vec![
         "-c".to_string(),
         oom_script,
@@ -264,7 +344,10 @@ exec "$@""#,
         command.stderr(Stdio::null());
 
         let child = command.spawn().map_err(|e| {
-            ConnectError::new(ErrorCode::Internal, format!("error starting pty process: {e}"))
+            ConnectError::new(
+                ErrorCode::Internal,
+                format!("error starting pty process: {e}"),
+            )
         })?;
 
         drop(slave_fd);
@@ -280,6 +363,7 @@ exec "$@""#,
             data_tx: data_tx.clone(),
             end_tx: end_tx.clone(),
             ended: Mutex::new(None),
+            output_log: Mutex::new(OutputLog::default()),
             stdin: Mutex::new(None),
             pty_master: Mutex::new(Some(master_file)),
         });
@@ -287,7 +371,7 @@ exec "$@""#,
         let data_rx = handle.subscribe_data();
         let end_rx = handle.subscribe_end();
 
-        let data_tx_clone = data_tx.clone();
+        let handle_for_reader = Arc::clone(&handle);
         let pty_reader = std::thread::spawn(move || {
             let mut master = master_clone;
             let mut buf = vec![0u8; PTY_CHUNK_SIZE];
@@ -295,7 +379,7 @@ exec "$@""#,
                 match master.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let _ = data_tx_clone.send(DataEvent::Pty(buf[..n].to_vec()));
+                        handle_for_reader.publish_data(DataEvent::Pty(buf[..n].to_vec()));
                     }
                     Err(_) => break,
                 }
@@ -329,7 +413,11 @@ exec "$@""#,
         });
 
         tracing::info!(pid, cmd = cmd_str, "process started (pty)");
-        Ok(SpawnedProcess { handle, data_rx, end_rx })
+        Ok(SpawnedProcess {
+            handle,
+            data_rx,
+            end_rx,
+        })
     } else {
         let mut command = std::process::Command::new("/bin/bash");
         command
@@ -375,6 +463,7 @@ exec "$@""#,
             data_tx: data_tx.clone(),
             end_tx: end_tx.clone(),
             ended: Mutex::new(None),
+            output_log: Mutex::new(OutputLog::default()),
             stdin: Mutex::new(stdin),
             pty_master: Mutex::new(None),
         });
@@ -385,14 +474,14 @@ exec "$@""#,
         let mut output_readers: Vec<std::thread::JoinHandle<()>> = Vec::new();
 
         if let Some(mut out) = stdout {
-            let tx = data_tx.clone();
+            let handle_for_reader = Arc::clone(&handle);
             output_readers.push(std::thread::spawn(move || {
                 let mut buf = vec![0u8; STD_CHUNK_SIZE];
                 loop {
                     match out.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            let _ = tx.send(DataEvent::Stdout(buf[..n].to_vec()));
+                            handle_for_reader.publish_data(DataEvent::Stdout(buf[..n].to_vec()));
                         }
                         Err(_) => break,
                     }
@@ -401,14 +490,14 @@ exec "$@""#,
         }
 
         if let Some(mut err_pipe) = stderr {
-            let tx = data_tx.clone();
+            let handle_for_reader = Arc::clone(&handle);
             output_readers.push(std::thread::spawn(move || {
                 let mut buf = vec![0u8; STD_CHUNK_SIZE];
                 loop {
                     match err_pipe.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            let _ = tx.send(DataEvent::Stderr(buf[..n].to_vec()));
+                            handle_for_reader.publish_data(DataEvent::Stderr(buf[..n].to_vec()));
                         }
                         Err(_) => break,
                     }
@@ -444,7 +533,11 @@ exec "$@""#,
         });
 
         tracing::info!(pid, cmd = cmd_str, "process started (pipe)");
-        Ok(SpawnedProcess { handle, data_rx, end_rx })
+        Ok(SpawnedProcess {
+            handle,
+            data_rx,
+            end_rx,
+        })
     }
 }
 

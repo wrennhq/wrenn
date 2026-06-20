@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod encoding;
 pub mod envs;
 pub mod error;
@@ -13,8 +14,8 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::routing::{get, post};
-use http::header::{CACHE_CONTROL, HeaderName};
 use http::Method;
+use http::header::{CACHE_CONTROL, HeaderName};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 use crate::config::CORS_MAX_AGE;
@@ -47,6 +48,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/health", get(health::get_health))
+        .route("/activity", get(activity::get_activity))
         .route("/metrics", get(metrics::get_metrics))
         .route("/envs", get(envs::get_envs))
         .route("/init", post(init::post_init))

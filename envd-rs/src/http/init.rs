@@ -26,6 +26,9 @@ pub struct InitRequest {
     pub volume_mounts: Option<Vec<VolumeMount>>,
     pub sandbox_id: Option<String>,
     pub template_id: Option<String>,
+    /// Public proxy domain (e.g. "wrenn.dev"). Used by `envd ports` to build
+    /// the {port}-{sandbox_id}.{domain} URLs.
+    pub proxy_domain: Option<String>,
     /// New lifecycle identifier for this resume. When it changes between
     /// /init calls, envd treats the call as a post-resume hook: port
     /// forwarder is restarted and NFS mounts are refreshed.
@@ -183,14 +186,32 @@ pub async fn post_init(
         // SAFETY: envd is single-threaded at init time; no concurrent env reads.
         unsafe { std::env::set_var("WRENN_SANDBOX_ID", id) };
         write_run_file(".WRENN_SANDBOX_ID", id);
-        state.defaults.env_vars.insert("WRENN_SANDBOX_ID".into(), id.clone());
+        state
+            .defaults
+            .env_vars
+            .insert("WRENN_SANDBOX_ID".into(), id.clone());
     }
     if let Some(ref id) = init_req.template_id {
         tracing::debug!(template_id = %id, "setting template ID from init request");
         // SAFETY: envd is single-threaded at init time; no concurrent env reads.
         unsafe { std::env::set_var("WRENN_TEMPLATE_ID", id) };
         write_run_file(".WRENN_TEMPLATE_ID", id);
-        state.defaults.env_vars.insert("WRENN_TEMPLATE_ID".into(), id.clone());
+        state
+            .defaults
+            .env_vars
+            .insert("WRENN_TEMPLATE_ID".into(), id.clone());
+    }
+    if let Some(ref domain) = init_req.proxy_domain {
+        if !domain.is_empty() {
+            tracing::debug!(proxy_domain = %domain, "setting proxy domain from init request");
+            // SAFETY: envd is single-threaded at init time; no concurrent env reads.
+            unsafe { std::env::set_var("WRENN_PROXY_DOMAIN", domain) };
+            write_run_file(".WRENN_PROXY_DOMAIN", domain);
+            state
+                .defaults
+                .env_vars
+                .insert("WRENN_PROXY_DOMAIN".into(), domain.clone());
+        }
     }
 
     (
@@ -202,7 +223,10 @@ pub async fn post_init(
 
 async fn validate_init_access_token(state: &AppState, request_token: &str) -> Result<(), String> {
     // Fast path: matches existing token
-    if state.access_token.is_set() && !request_token.is_empty() && state.access_token.equals(request_token) {
+    if state.access_token.is_set()
+        && !request_token.is_empty()
+        && state.access_token.equals(request_token)
+    {
         return Ok(());
     }
 
@@ -241,10 +265,7 @@ async fn setup_hyperloop(address: &str, env_vars: &dashmap::DashMap<String, Stri
         }
     }
 
-    env_vars.insert(
-        "WRENN_EVENTS_ADDRESS".into(),
-        format!("http://{address}"),
-    );
+    env_vars.insert("WRENN_EVENTS_ADDRESS".into(), format!("http://{address}"));
 }
 
 async fn setup_nfs(nfs_target: &str, path: &str) {
@@ -287,7 +308,7 @@ async fn setup_nfs(nfs_target: &str, path: &str) {
 }
 
 fn write_run_file(name: &str, value: &str) {
-    let dir = std::path::Path::new("/run/wrenn");
+    let dir = std::path::Path::new(crate::config::WRENN_RUN_DIR);
     if let Err(e) = std::fs::create_dir_all(dir) {
         tracing::warn!(error = %e, "failed to create /run/wrenn");
         return;
@@ -309,4 +330,3 @@ fn parse_timestamp_to_nanos(ts: &str) -> Result<i64, ()> {
     }
     Err(())
 }
-

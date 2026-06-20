@@ -2,6 +2,8 @@
 
 Secure infrastructure for AI
 
+Wrenn is an open-source self-hosted dev environment platform. Each capsule is a fully isolated virtual machine — booted in seconds, persistent across sessions. Run the control plane anywhere, deploy a single agent binary on each compute host.
+
 ## Prerequisites
 
 - Linux host with `/dev/kvm` access (bare metal or nested virt)

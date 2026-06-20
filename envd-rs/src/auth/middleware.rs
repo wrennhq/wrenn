@@ -14,6 +14,7 @@ const ACCESS_TOKEN_HEADER: &str = "x-access-token";
 /// Format: "METHOD/path"
 const AUTH_EXCLUDED: &[&str] = &[
     "GET/health",
+    "GET/activity",
     "GET/files",
     "POST/files",
     "POST/init",
@@ -21,11 +22,7 @@ const AUTH_EXCLUDED: &[&str] = &[
 ];
 
 /// Axum middleware that checks X-Access-Token header.
-pub async fn auth_layer(
-    request: Request,
-    next: Next,
-    access_token: Arc<SecureToken>,
-) -> Response {
+pub async fn auth_layer(request: Request, next: Next, access_token: Arc<SecureToken>) -> Response {
     if access_token.is_set() {
         let method = request.method().as_str();
         let path = request.uri().path();

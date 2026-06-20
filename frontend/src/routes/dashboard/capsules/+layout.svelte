@@ -6,10 +6,6 @@
 	let { children } = $props();
 </script>
 
-<svelte:head>
-	<title>Wrenn — Capsules</title>
-</svelte:head>
-
 <main class="flex flex-1 flex-col overflow-y-auto bg-[var(--color-bg-0)]">
 	<!-- Header area -->
 	{#if $page.params.id}

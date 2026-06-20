@@ -81,6 +81,42 @@ func (c *Client) WaitUntilRPCReady(ctx context.Context) error {
 	}
 }
 
+// Activity is envd's liveness snapshot: VM-wide CPU utilisation and IO
+// throughput sampled inside the guest. The host activity sampler uses it to
+// decide whether a sandbox is doing real work and should keep its TTL fresh.
+type Activity struct {
+	CPUCount   uint32  `json:"cpu_count"`
+	CPUUsedPct float32 `json:"cpu_used_pct"`
+	NetBps     uint64  `json:"net_bps"`
+	DiskBps    uint64  `json:"disk_bps"`
+}
+
+// FetchActivity polls envd's /activity endpoint. The endpoint serves straight
+// from in-guest atomics (no syscalls), so it is cheap to call frequently.
+func (c *Client) FetchActivity(ctx context.Context) (*Activity, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.activityURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build activity request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch envd activity: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("activity check returned %d", resp.StatusCode)
+	}
+
+	var data Activity
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode activity response: %w", err)
+	}
+
+	return &data, nil
+}
+
 // healthCheck sends a single GET /health request to envd.
 func (c *Client) healthCheck(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.healthURL, nil)

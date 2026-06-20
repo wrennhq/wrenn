@@ -20,14 +20,22 @@ mod tests {
     const VECTORS: &[(&[u8], &str)] = &[
         (b"", "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"),
         (b"abc", "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"),
-        (b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", "JI1qYdIGOLjlwCaTDD5gOaM85Flk/yFn9uzt1BnbBsE"),
+        (
+            b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+            "JI1qYdIGOLjlwCaTDD5gOaM85Flk/yFn9uzt1BnbBsE",
+        ),
     ];
 
     #[test]
     fn known_answer_with_prefix() {
         for (input, expected_b64) in VECTORS {
             let result = hash(input);
-            assert_eq!(result, format!("$sha256${expected_b64}"), "input: {:?}", String::from_utf8_lossy(input));
+            assert_eq!(
+                result,
+                format!("$sha256${expected_b64}"),
+                "input: {:?}",
+                String::from_utf8_lossy(input)
+            );
         }
     }
 
@@ -35,7 +43,12 @@ mod tests {
     fn known_answer_without_prefix() {
         for (input, expected_b64) in VECTORS {
             let result = hash_without_prefix(input);
-            assert_eq!(result, *expected_b64, "input: {:?}", String::from_utf8_lossy(input));
+            assert_eq!(
+                result,
+                *expected_b64,
+                "input: {:?}",
+                String::from_utf8_lossy(input)
+            );
         }
     }
 

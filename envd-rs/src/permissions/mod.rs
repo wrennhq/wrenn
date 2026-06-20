@@ -1,2 +1,2 @@
-pub mod user;
 pub mod path;
+pub mod user;
