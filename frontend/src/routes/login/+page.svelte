@@ -205,7 +205,7 @@
 			class="relative z-10 mt-10 font-mono text-ui uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]"
 			style="animation: fadeUp 0.35s ease 0.2s both"
 		>
-			Isolated VMs. Milliseconds to live.
+			Runtime where AI engineers live.
 		</p>
 	</div>
 

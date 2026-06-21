@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Wrenn is an open-source, self-hosted dev environment platform. Users spin up isolated sandboxes (Cloud Hypervisor microVMs), run code inside them, and get output back via SDKs. Fast boot, persistent state, and a single agent binary on each host you own.
+Wrenn is the runtime where AI engineers live — an open-source platform for running AI coding agents. Each project gets a persistent, isolated workspace (Cloud Hypervisor microVM) where agents edit code, run tests, debug, and ship continuously, with humans supervising via SDKs and chat surfaces. Fast boot, persistent state, available hosted or fully self-hosted with a single agent binary on each host you own. (The underlying primitive is still an isolated microVM — "sandbox" in the API/backend, "capsule" in the dashboard.)
 
 ## Build & Development Commands
 
