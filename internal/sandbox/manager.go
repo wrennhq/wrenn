@@ -217,6 +217,14 @@ type sandboxState struct {
 	memLoadDone   chan struct{}      // closed when background memory loader exits
 	memLoadCancel context.CancelFunc // cancels the background loader goroutine
 
+	// Background zero-page punch state (set by Pause for paused sandboxes).
+	// punchZeroPagesInDir runs off the pause critical path: the VM is already
+	// destroyed and the snapshot dir swapped in, so the read-back-and-punch
+	// pass need not block the user-perceived pause. Resume/Destroy cancel and
+	// wait via waitForPunch before relaunching CH or removing the snapshot dir.
+	punchDone   chan struct{}      // closed when the background punch exits
+	punchCancel context.CancelFunc // cancels the background punch goroutine
+
 	// Metrics sampling state.
 	vmmPID        int                // VMM process PID (child of unshare wrapper)
 	ring          *metricsRing       // tiered ring buffers for CPU/mem/disk metrics
@@ -579,6 +587,9 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 
 // cleanup tears down all resources for a sandbox.
 func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
+	// Stop any background zero-page punch before removing the snapshot dir,
+	// so a lingering goroutine can't keep writing to files we're deleting.
+	m.waitForPunch(sb)
 	if sb.memLoadCancel != nil {
 		sb.memLoadCancel()
 		if sb.memLoadDone != nil {

@@ -56,8 +56,11 @@ const (
 	snapshotMetaFile = "wrenn-snapshot.json"
 
 	// drainTimeout is how long pause waits for in-flight proxy connections
-	// to release before forcibly cancelling them.
-	drainTimeout = 5 * time.Second
+	// to release before forcibly cancelling them. Kept tight: an idle capsule
+	// has no in-flight connections so Drain returns immediately, and a busy
+	// one is force-closed straight after — a long cap only adds dead latency
+	// to the user-perceived pause.
+	drainTimeout = 2 * time.Second
 
 	// prepareSnapshotTimeout bounds the in-guest /snapshot/prepare call.
 	// Short on purpose: envd PrepareSnapshot is best-effort, and a wedged
@@ -165,6 +168,16 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		return fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
 	}
 
+	// Per-phase timing so the slow step in a pause is visible in logs without
+	// a profiler. phase(name) logs the elapsed time since the previous phase.
+	phaseStart := time.Now()
+	lastPhase := phaseStart
+	phase := func(name string) {
+		now := time.Now()
+		slog.Debug("pause phase", "id", sandboxID, "phase", name, "ms", now.Sub(lastPhase).Milliseconds())
+		lastPhase = now
+	}
+
 	// Wait for the post-resume memory loader to finish before snapshotting.
 	// Without this, ch.snapshot's SEEK_DATA/SEEK_HOLE writer would emit holes
 	// for any page not yet faulted in, which read back as zero on the next
@@ -172,6 +185,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	if err := m.waitForMemoryLoader(ctx, sb); err != nil {
 		return fmt.Errorf("pause %s: %w", sandboxID, err)
 	}
+	phase("memory_loader_wait")
 
 	m.mu.Lock()
 	sb.Status = models.StatusPausing
@@ -203,6 +217,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	if err := m.quiesceAndPauseCH(ctx, sb); err != nil {
 		return rollbackToRunning(err, "quiesce")
 	}
+	phase("quiesce_and_pause")
 
 	// Memory materialisation is handled out-of-band by the background loader
 	// kicked off by Resume after /init. We blocked on it above (waitForMemoryLoader)
@@ -215,11 +230,12 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	if err := m.vm.Snapshot(ctx, sandboxID, stageDir); err != nil {
 		return rollbackToRunning(err, "snapshot")
 	}
+	phase("ch_snapshot")
 
-	// Punch zero pages CH wrote verbatim (guest had them dirty-then-free
-	// without notifying the balloon driver). Best-effort; failures only
-	// cost disk space.
-	punchZeroPagesInDir(stageDir)
+	// Zero-page punching is deferred to a background goroutine after the swap
+	// (see startAsyncPunch below). It reads the whole memory-ranges file back
+	// to reclaim zeros CH wrote verbatim — a full IO pass we keep off the
+	// user-perceived pause critical path.
 
 	meta := &snapshotMeta{
 		TeamID:       id.UUIDString(pgtype.UUID{Bytes: sb.TemplateTeamID, Valid: true}),
@@ -269,9 +285,64 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	m.mu.Lock()
 	sb.Status = models.StatusPaused
 	m.mu.Unlock()
+	phase("release_and_swap")
 
-	slog.Info("sandbox paused", "id", sandboxID, "snapshot_dir", finalDir)
+	// Reclaim zero pages CH wrote verbatim (guest dirtied-then-freed them
+	// without notifying the balloon driver). Deferred off the critical path:
+	// the VM is destroyed and finalDir is in place, so nothing holds the file
+	// open. Resume/Destroy cancel-and-wait via waitForPunch before reusing or
+	// removing the dir; a punched all-zero block reads back as zero, so the
+	// pass is safe to interrupt at any point.
+	m.startAsyncPunch(sb, finalDir)
+
+	slog.Info("sandbox paused",
+		"id", sandboxID,
+		"snapshot_dir", finalDir,
+		"total_ms", time.Since(phaseStart).Milliseconds())
 	return nil
+}
+
+// startAsyncPunch launches the background zero-page punch for a just-paused
+// sandbox. Cancellable + joinable via sb.punchCancel / sb.punchDone, which
+// waitForPunch consumes. Best-effort: a failed or cancelled punch only leaves
+// the snapshot larger on disk, never incorrect.
+func (m *Manager) startAsyncPunch(sb *sandboxState, dir string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	m.mu.Lock()
+	sb.punchCancel = cancel
+	sb.punchDone = done
+	m.mu.Unlock()
+
+	go func() {
+		defer close(done)
+		started := time.Now()
+		punchZeroPagesInDir(ctx, dir)
+		if ctx.Err() == nil {
+			slog.Info("async zero-page punch complete",
+				"id", sb.ID, "elapsed_ms", time.Since(started).Milliseconds())
+		}
+	}()
+}
+
+// waitForPunch cancels and joins any in-flight background punch for sb, then
+// clears the handles. Idempotent and safe when no punch is running. Must be
+// called before Resume relaunches CH on the snapshot or Destroy removes it.
+func (m *Manager) waitForPunch(sb *sandboxState) {
+	m.mu.Lock()
+	cancel := sb.punchCancel
+	done := sb.punchDone
+	sb.punchCancel = nil
+	sb.punchDone = nil
+	m.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
 }
 
 // swapDir atomically replaces final with stage. Any existing final dir is
@@ -476,6 +547,11 @@ func (m *Manager) Resume(ctx context.Context, sandboxID string, timeoutSec int, 
 	if sb.Status != models.StatusPaused {
 		return nil, fmt.Errorf("%w: %s (status: %s)", ErrNotPaused, sandboxID, sb.Status)
 	}
+
+	// Stop any background zero-page punch still scanning the snapshot before
+	// CH reopens memory-ranges for --restore. Punching is safe to interrupt;
+	// whatever it reclaimed stays valid, and the rest just stays on disk.
+	m.waitForPunch(sb)
 
 	snapDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sandboxID)
 	meta, err := readSnapshotMeta(snapDir)
@@ -765,7 +841,10 @@ func (m *Manager) snapshotRunningToTemplate(ctx context.Context, sb *sandboxStat
 		sb.connTracker.Reset()
 		return 0, fmt.Errorf("vm.snapshot: %w", err)
 	}
-	punchZeroPagesInDir(stageDir)
+	// Template snapshots punch synchronously: this path resumes the VM right
+	// after and produces a reusable artefact, so size matters more than the
+	// few seconds saved, and there is no paused-sandbox handle to defer onto.
+	punchZeroPagesInDir(ctx, stageDir)
 
 	// Flatten dm-snapshot → rootfs.ext4. Reads through the dm device which is
 	// stable while CH is paused.
@@ -841,6 +920,12 @@ func (m *Manager) snapshotRunningToTemplate(ctx context.Context, sb *sandboxStat
 // loader before snapshotting), so we copy those memory files verbatim and
 // flatten the persistent CoW into rootfs.ext4. The sandbox stays Paused.
 func (m *Manager) snapshotPausedToTemplate(ctx context.Context, sb *sandboxState, teamID, templateID pgtype.UUID, name string) (int64, error) {
+	// Join the pause's background zero-page punch before copying memory-ranges.
+	// Without this the template would link the un-punched file and report its
+	// full (~2GB) size instead of the reclaimed (~650MB) one — the punch
+	// shrinks the very file we hardlink here.
+	m.waitForPunch(sb)
+
 	snapDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sb.ID)
 	meta, err := readSnapshotMeta(snapDir)
 	if err != nil {
