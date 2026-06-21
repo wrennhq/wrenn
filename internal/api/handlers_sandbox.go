@@ -24,10 +24,11 @@ func newSandboxHandler(svc *service.SandboxService, al *audit.AuditLogger) *sand
 }
 
 type createSandboxRequest struct {
-	Template   string `json:"template"`
-	VCPUs      int32  `json:"vcpus"`
-	MemoryMB   int32  `json:"memory_mb"`
-	TimeoutSec int32  `json:"timeout_sec"`
+	Template   string            `json:"template"`
+	VCPUs      int32             `json:"vcpus"`
+	MemoryMB   int32             `json:"memory_mb"`
+	TimeoutSec int32             `json:"timeout_sec"`
+	Metadata   map[string]string `json:"metadata"`
 }
 
 type sandboxResponse struct {
@@ -99,6 +100,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		VCPUs:      req.VCPUs,
 		MemoryMB:   req.MemoryMB,
 		TimeoutSec: req.TimeoutSec,
+		Metadata:   req.Metadata,
 	})
 	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, req.Template, err)
 	if err != nil {

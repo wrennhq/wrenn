@@ -3857,6 +3857,16 @@ components:
             after this duration of inactivity (no exec or ping). 0 means
             no auto-pause. Positive values below 60 are silently clamped
             to 60 (the agent's startup envelope).
+        metadata:
+          type: object
+          additionalProperties: {type: string}
+          nullable: true
+          description: >
+            Optional user-supplied key/value labels attached to the capsule.
+            Max 20 keys; keys match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}; values
+            are at most 64 characters. Reserved system keys (kernel_version,
+            vmm_version, agent_version, envd_version) are rejected. Metadata is
+            set at create-time only.
 
     UsageResponse:
       type: object
@@ -3962,9 +3972,10 @@ components:
           additionalProperties: {type: string}
           nullable: true
           description: |
-            Free-form key/value labels attached at create-time. Also carries
-            agent-side version info (kernel_version, vmm_version,
-            agent_version, envd_version) when running.
+            User-supplied key/value labels attached at create-time. Once the
+            capsule is running this also carries agent-side system version info
+            (kernel_version, vmm_version, agent_version, envd_version); those
+            reserved keys are owned by the system and cannot be set by users.
         disk_size_mb:
           type: integer
           description: Maximum disk capacity in MiB.

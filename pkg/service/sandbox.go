@@ -49,6 +49,9 @@ type SandboxCreateParams struct {
 	VCPUs      int32
 	MemoryMB   int32
 	TimeoutSec int32
+	// Metadata holds user-supplied key/value labels attached at create-time.
+	// Reserved system keys (kernel_version, etc.) are rejected by validation.
+	Metadata map[string]string
 }
 
 // MinTimeoutSec mirrors internal/sandbox.MinTimeoutSec. Sub-minute TTLs race
@@ -125,6 +128,9 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	if err := validate.SafeName(p.Template); err != nil {
 		return db.Sandbox{}, fmt.Errorf("invalid template name: %w", err)
 	}
+	if err := validate.Metadata(p.Metadata); err != nil {
+		return db.Sandbox{}, fmt.Errorf("invalid metadata: %w", err)
+	}
 	if p.VCPUs <= 0 {
 		p.VCPUs = 1
 	}
@@ -175,6 +181,13 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 	hostIDStr := id.FormatHostID(host.ID)
 
+	metaJSON := []byte("{}")
+	if len(p.Metadata) > 0 {
+		if metaJSON, err = json.Marshal(p.Metadata); err != nil {
+			return db.Sandbox{}, fmt.Errorf("marshal metadata: %w", err)
+		}
+	}
+
 	sb, err := s.DB.InsertSandbox(ctx, db.InsertSandboxParams{
 		ID:             sandboxID,
 		TeamID:         p.TeamID,
@@ -187,7 +200,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		DiskSizeMb:     0,
 		TemplateID:     templateID,
 		TemplateTeamID: templateTeamID,
-		Metadata:       []byte("{}"),
+		Metadata:       metaJSON,
 	})
 	if err != nil {
 		return db.Sandbox{}, fmt.Errorf("insert sandbox: %w", err)
@@ -258,20 +271,40 @@ func (s *SandboxService) createInBackground(
 		slog.Warn("failed to update sandbox running after create", "id", sandboxIDStr, "error", dbErr)
 	}
 
-	if meta := resp.Msg.Metadata; len(meta) > 0 {
-		metaJSON, _ := json.Marshal(meta)
-		if err := s.DB.UpdateSandboxMetadata(bgCtx, db.UpdateSandboxMetadataParams{
-			ID: sandboxID, Metadata: metaJSON,
-		}); err != nil {
-			slog.Warn("failed to store sandbox metadata", "id", sandboxIDStr, "error", err)
-		}
-	}
+	s.persistSystemMetadata(bgCtx, sandboxID, sandboxIDStr, p.Metadata, resp.Msg.Metadata)
 
 	s.publishEvent(bgCtx, SandboxStateEvent{
 		Event: "sandbox.started", SandboxID: sandboxIDStr, TeamID: teamIDStr, HostID: hostIDStr,
 		HostIP: resp.Msg.HostIp, Metadata: resp.Msg.Metadata,
 		Timestamp: now.Unix(),
 	})
+}
+
+// persistSystemMetadata merges agent-provided system metadata over the given
+// user labels and writes the result to the sandbox row. System keys
+// (kernel_version, etc.) are applied last so they always win — users can never
+// override protected fields even if create-time validation were bypassed.
+// userMeta may be nil. No-op when the agent returned no system metadata.
+func (s *SandboxService) persistSystemMetadata(
+	ctx context.Context, sandboxID pgtype.UUID, sandboxIDStr string,
+	userMeta, systemMeta map[string]string,
+) {
+	if len(systemMeta) == 0 {
+		return
+	}
+	merged := make(map[string]string, len(userMeta)+len(systemMeta))
+	for k, v := range userMeta {
+		merged[k] = v
+	}
+	for k, v := range systemMeta {
+		merged[k] = v
+	}
+	metaJSON, _ := json.Marshal(merged)
+	if err := s.DB.UpdateSandboxMetadata(ctx, db.UpdateSandboxMetadataParams{
+		ID: sandboxID, Metadata: metaJSON,
+	}); err != nil {
+		slog.Warn("failed to store sandbox metadata", "id", sandboxIDStr, "error", err)
+	}
 }
 
 // List returns active sandboxes (excludes stopped/error) belonging to the given team.
@@ -447,13 +480,14 @@ func (s *SandboxService) resumeInBackground(
 		slog.Warn("failed to update sandbox to running after resume", "id", sandboxIDStr, "error", err)
 	}
 
-	if meta := resp.Msg.Metadata; len(meta) > 0 {
-		metaJSON, _ := json.Marshal(meta)
-		if err := s.DB.UpdateSandboxMetadata(bgCtx, db.UpdateSandboxMetadataParams{
-			ID: sandboxID, Metadata: metaJSON,
-		}); err != nil {
-			slog.Warn("failed to store sandbox metadata after resume", "id", sandboxIDStr, "error", err)
+	// Refresh system metadata but preserve the user's labels — read the current
+	// row and merge agent keys over it rather than overwriting wholesale.
+	if len(resp.Msg.Metadata) > 0 {
+		var existing map[string]string
+		if cur, err := s.DB.GetSandbox(bgCtx, sandboxID); err == nil && len(cur.Metadata) > 0 {
+			_ = json.Unmarshal(cur.Metadata, &existing)
 		}
+		s.persistSystemMetadata(bgCtx, sandboxID, sandboxIDStr, existing, resp.Msg.Metadata)
 	}
 
 	s.publishEvent(bgCtx, SandboxStateEvent{
