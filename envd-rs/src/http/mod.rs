@@ -1,5 +1,4 @@
 pub mod activity;
-pub mod encoding;
 pub mod envs;
 pub mod error;
 pub mod files;
@@ -61,7 +60,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/memory/preload/cancel",
             post(memory::post_memory_preload_cancel),
         )
-        .route("/files", get(files::get_files).post(files::post_files))
+        .route("/files", get(files::get_files).put(files::put_files))
         .layer(cors)
         .with_state(state)
 }

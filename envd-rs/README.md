@@ -81,8 +81,8 @@ make build-envd-go     # Go version (for comparison)
 | GET    | `/envs`             | Current environment variables        |
 | POST   | `/init`             | Host agent init (token, env, mounts) |
 | POST   | `/snapshot/prepare` | Quiesce before Cloud Hypervisor snapshot |
-| GET    | `/files`            | Download file (gzip, range support)  |
-| POST   | `/files`            | Upload file(s) via multipart         |
+| GET    | `/files`            | Download file (streamed from disk)   |
+| PUT    | `/files`            | Upload file (raw body, streamed, atomic) |
 
 ### Connect RPC (same port)
 

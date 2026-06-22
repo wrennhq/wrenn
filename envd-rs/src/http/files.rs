@@ -1,21 +1,29 @@
-use std::io::Write as _;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Body;
-use axum::extract::{FromRequest, Query, Request, State};
+use axum::extract::{Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
+use tokio_util::io::ReaderStream;
 
 use crate::auth::signing;
 use crate::execcontext;
-use crate::http::encoding;
 use crate::permissions::path::{ensure_dirs, expand_and_resolve};
 use crate::permissions::user::lookup_user;
 use crate::state::AppState;
 
 const ACCESS_TOKEN_HEADER: &str = "x-access-token";
+
+/// Monotonic counter for unique temp-file names within this process. Combined
+/// with the pid it guarantees concurrent uploads never collide on the staging
+/// path before the atomic rename.
+static UPLOAD_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Deserialize)]
 pub struct FileParams {
@@ -62,7 +70,10 @@ fn validate_file_signing(
     )
 }
 
-/// GET /files — download a file
+/// GET /files — download a file, streamed from disk.
+///
+/// The body is streamed straight off the filesystem so large files never get
+/// buffered into memory. Identity encoding only — no gzip, no range support.
 pub async fn get_files(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileParams>,
@@ -101,7 +112,7 @@ pub async fn get_files(
         Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
     };
 
-    let meta = match std::fs::metadata(&resolved) {
+    let meta = match tokio::fs::metadata(&resolved).await {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return json_error(
@@ -131,34 +142,12 @@ pub async fn get_files(
         );
     }
 
-    let accept_enc = match encoding::parse_accept_encoding(&req) {
-        Ok(e) => e,
-        Err(e) => return json_error(StatusCode::NOT_ACCEPTABLE, &e),
-    };
-
-    let has_range_or_conditional = req.headers().get("range").is_some()
-        || req.headers().get("if-modified-since").is_some()
-        || req.headers().get("if-none-match").is_some()
-        || req.headers().get("if-range").is_some();
-
-    let use_encoding = if has_range_or_conditional {
-        if !encoding::is_identity_acceptable(&req) {
-            return json_error(
-                StatusCode::NOT_ACCEPTABLE,
-                "identity encoding not acceptable for Range or conditional request",
-            );
-        }
-        "identity"
-    } else {
-        accept_enc
-    };
-
-    let file_data = match std::fs::read(&resolved) {
-        Ok(d) => d,
+    let file = match tokio::fs::File::open(&resolved).await {
+        Ok(f) => f,
         Err(e) => {
             return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("error reading file: {e}"),
+                &format!("error opening file: {e}"),
             );
         }
     };
@@ -167,57 +156,34 @@ pub async fn get_files(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-
     let content_disposition = format!("inline; filename=\"{}\"", filename);
-    let content_type = mime_guess::from_path(&resolved)
-        .first_raw()
-        .unwrap_or("application/octet-stream");
 
-    if use_encoding == "gzip" {
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        if let Err(e) = encoder.write_all(&file_data) {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("gzip encoding error: {e}"),
-            );
-        }
-        let compressed = match encoder.finish() {
-            Ok(d) => d,
-            Err(e) => {
-                return json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("gzip finish error: {e}"),
-                );
-            }
-        };
-
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, content_type)
-            .header(header::CONTENT_ENCODING, "gzip")
-            .header(header::CONTENT_DISPOSITION, content_disposition)
-            .header(header::VARY, "Accept-Encoding")
-            .body(Body::from(compressed))
-            .unwrap();
-    }
+    let body = Body::from_stream(ReaderStream::new(file));
 
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(header::CONTENT_DISPOSITION, content_disposition)
-        .header(header::VARY, "Accept-Encoding")
-        .header(header::CONTENT_LENGTH, file_data.len())
-        .body(Body::from(file_data))
+        .header(header::CONTENT_LENGTH, meta.len())
+        .body(body)
         .unwrap()
 }
 
-/// POST /files — upload file(s) via multipart
-pub async fn post_files(
+/// PUT /files — upload a single file, streamed to disk.
+///
+/// The request body is the raw file content (no multipart, no encoding). It is
+/// streamed to a temporary staging file in the destination directory, then
+/// atomically renamed into place — concurrent writers to the same path never
+/// observe a torn file, and the last rename wins.
+pub async fn put_files(
     State(state): State<Arc<AppState>>,
     Query(params): Query<FileParams>,
     req: Request,
 ) -> Response {
     let path_str = params.path.as_deref().unwrap_or("");
+    if path_str.is_empty() {
+        return json_error(StatusCode::BAD_REQUEST, "missing required 'path' parameter");
+    }
     let header_token = extract_header_token(&req);
 
     let default_user = state.defaults.user();
@@ -246,105 +212,42 @@ pub async fn post_files(
     let home_dir = user.dir.to_string_lossy().to_string();
     let uid = user.uid;
     let gid = user.gid;
+    let default_workdir = state.defaults.workdir();
 
-    let content_enc = match encoding::parse_content_encoding(&req) {
-        Ok(e) => e,
+    let file_path = match expand_and_resolve(path_str, &home_dir, default_workdir.as_deref()) {
+        Ok(p) => p,
         Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
     };
 
-    let mut multipart = match axum::extract::Multipart::from_request(req, &()).await {
-        Ok(m) => m,
-        Err(e) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("error parsing multipart: {e}"),
-            );
-        }
-    };
-
-    let mut uploaded: Vec<EntryInfo> = Vec::new();
-    let default_workdir = state.defaults.workdir();
-
-    while let Ok(Some(field)) = multipart.next_field().await {
-        let field_name = field.name().unwrap_or("").to_string();
-        if field_name != "file" {
-            continue;
-        }
-
-        let file_path = if !path_str.is_empty() {
-            match expand_and_resolve(path_str, &home_dir, default_workdir.as_deref()) {
-                Ok(p) => p,
-                Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
-            }
-        } else {
-            let fname = field.file_name().unwrap_or("upload").to_string();
-            match expand_and_resolve(&fname, &home_dir, default_workdir.as_deref()) {
-                Ok(p) => p,
-                Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
-            }
-        };
-
-        if uploaded.iter().any(|e| e.path == file_path) {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                &format!("cannot upload multiple files to same path '{}'", file_path),
-            );
-        }
-
-        let raw_bytes = match field.bytes().await {
-            Ok(b) => b,
-            Err(e) => {
-                return json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("error reading field: {e}"),
-                );
-            }
-        };
-
-        let data = if content_enc == "gzip" {
-            use std::io::Read;
-            let mut decoder = flate2::read::GzDecoder::new(&raw_bytes[..]);
-            let mut buf = Vec::new();
-            match decoder.read_to_end(&mut buf) {
-                Ok(_) => buf,
-                Err(e) => {
-                    return json_error(
-                        StatusCode::BAD_REQUEST,
-                        &format!("gzip decompression failed: {e}"),
-                    );
-                }
-            }
-        } else {
-            raw_bytes.to_vec()
-        };
-
-        if let Err(e) = process_file(&file_path, &data, uid, gid) {
-            let (status, msg) = e;
-            return json_error(status, &msg);
-        }
-
-        let name = Path::new(&file_path)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        uploaded.push(EntryInfo {
-            path: file_path,
-            name,
-            r#type: "file",
-        });
+    if let Err((status, msg)) = stream_to_file(req.into_body(), &file_path, uid, gid).await {
+        return json_error(status, &msg);
     }
 
-    axum::Json(uploaded).into_response()
+    let name = Path::new(&file_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    axum::Json(EntryInfo {
+        path: file_path,
+        name,
+        r#type: "file",
+    })
+    .into_response()
 }
 
-fn process_file(
+/// Stream a request body to `path` via a temp file + atomic rename. The staging
+/// file is created with mode 0o666 and chowned to (uid, gid) before the rename,
+/// so the destination appears atomically with the correct owner.
+async fn stream_to_file(
+    body: Body,
     path: &str,
-    data: &[u8],
     uid: nix::unistd::Uid,
     gid: nix::unistd::Gid,
 ) -> Result<(), (StatusCode, String)> {
-    let dir = Path::new(path)
+    let target = Path::new(path);
+
+    let dir = target
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
@@ -358,68 +261,34 @@ fn process_file(
         })?;
     }
 
-    let can_pre_chown = match std::fs::metadata(path) {
-        Ok(meta) => {
-            if meta.is_dir() {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    format!("path is a directory: {path}"),
-                ));
-            }
-            true
+    // Reject writing over an existing directory before staging anything.
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("path is a directory: {path}"),
+            ));
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("error getting file info: {e}"),
             ));
         }
+    }
+
+    // Stage in the destination directory so the rename stays on one filesystem.
+    let seq = UPLOAD_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp_name = format!(".envd-upload.{}.{}", std::process::id(), seq);
+    let tmp_path = if dir.is_empty() {
+        tmp_name
+    } else {
+        format!("{dir}/{tmp_name}")
     };
 
-    let mut chowned = false;
-    if can_pre_chown {
-        match std::os::unix::fs::chown(path, Some(uid.as_raw()), Some(gid.as_raw())) {
-            Ok(()) => chowned = true,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("error changing ownership: {e}"),
-                ));
-            }
-        }
-    }
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o666)
-        .open(path)
-        .map_err(|e| {
-            if e.raw_os_error() == Some(libc::ENOSPC) {
-                return (
-                    StatusCode::INSUFFICIENT_STORAGE,
-                    "not enough disk space available".to_string(),
-                );
-            }
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("error opening file: {e}"),
-            )
-        })?;
-
-    if !chowned {
-        std::os::unix::fs::chown(path, Some(uid.as_raw()), Some(gid.as_raw())).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("error changing ownership: {e}"),
-            )
-        })?;
-    }
-
-    file.write_all(data).map_err(|e| {
+    let map_open_err = |e: std::io::Error| {
         if e.raw_os_error() == Some(libc::ENOSPC) {
             return (
                 StatusCode::INSUFFICIENT_STORAGE,
@@ -428,11 +297,81 @@ fn process_file(
         }
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("error writing file: {e}"),
+            format!("error opening file: {e}"),
+        )
+    };
+
+    let std_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o666)
+        .open(&tmp_path)
+        .map_err(map_open_err)?;
+
+    // From here on, any failure must clean up the staging file.
+    let result = write_body_to_tmp(body, std_file, &tmp_path, uid, gid).await;
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+        return result.map(|_| ());
+    }
+
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("error finalizing file: {e}"),
         )
     })?;
 
     Ok(())
 }
 
-use std::os::unix::fs::OpenOptionsExt;
+async fn write_body_to_tmp(
+    body: Body,
+    std_file: std::fs::File,
+    tmp_path: &str,
+    uid: nix::unistd::Uid,
+    gid: nix::unistd::Gid,
+) -> Result<(), (StatusCode, String)> {
+    let mut file = tokio::fs::File::from_std(std_file);
+
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("error reading request body: {e}"),
+            )
+        })?;
+        file.write_all(&bytes).await.map_err(|e| {
+            if e.raw_os_error() == Some(libc::ENOSPC) {
+                return (
+                    StatusCode::INSUFFICIENT_STORAGE,
+                    "not enough disk space available".to_string(),
+                );
+            }
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("error writing file: {e}"),
+            )
+        })?;
+    }
+
+    file.flush().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("error flushing file: {e}"),
+        )
+    })?;
+
+    // chown the staging file so it lands at the destination already owned by
+    // the target user.
+    std::os::unix::fs::chown(tmp_path, Some(uid.as_raw()), Some(gid.as_raw())).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("error changing ownership: {e}"),
+        )
+    })?;
+
+    Ok(())
+}
