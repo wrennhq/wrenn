@@ -1937,24 +1937,31 @@ paths:
         {"type": "connect", "tag": "pty-abc123de"}
         ```
 
-        **Client sends** (after session is established):
+        **Client sends** (control messages, after session is established — JSON text frames):
         ```json
-        {"type": "input", "data": "<base64-encoded bytes>"}
         {"type": "resize", "cols": 120, "rows": 40}
         {"type": "kill"}
         ```
 
-        **Server sends**:
+        Keystroke input is sent as **raw binary WebSocket frames** containing the
+        terminal bytes verbatim — not JSON, not base64. Every binary frame from
+        the client is treated as PTY input.
+
+        **Server sends** (control messages — JSON text frames):
         ```json
         {"type": "started", "tag": "pty-abc123de", "pid": 42}
-        {"type": "output", "data": "<base64-encoded PTY bytes>"}
         {"type": "exit", "exit_code": 0}
         {"type": "error", "data": "description", "fatal": true}
         {"type": "ping"}
         ```
 
-        PTY data (input and output) is base64-encoded because it contains raw
-        terminal bytes (escape sequences, control codes) that are not valid UTF-8.
+        PTY output is sent as **raw binary WebSocket frames** containing the
+        terminal bytes verbatim — not JSON, not base64. Sending input and output
+        as binary avoids the ~33% inflation of base64 over the JSON path.
+
+        The connection negotiates permessage-deflate (RFC 7692) compression
+        automatically; rapid output (e.g. full-screen TUI repaints) is coalesced
+        into fewer, larger frames before compression.
 
         Sessions persist across WebSocket disconnections — the process keeps
         running in the capsule. Use the `tag` from the "started" response to
@@ -3638,9 +3645,10 @@ paths:
       security:
         - sessionAuth: []
       description: |
-        Admin variant of /v1/capsules/{id}/pty. Same protocol — base64-encoded
-        PTY bytes, start/connect/input/resize/kill control messages, persistent
-        sessions reconnectable via tag.
+        Admin variant of /v1/capsules/{id}/pty. Same protocol — raw binary
+        WebSocket frames for PTY input/output, JSON text frames for
+        start/connect/resize/kill control messages, permessage-deflate
+        compression, persistent sessions reconnectable via tag.
       responses:
         "101":
           description: WebSocket upgrade
