@@ -78,25 +78,22 @@
 		brightWhite: '#eae7e2',
 	};
 
-	// Binary-safe base64 encode (handles multi-byte UTF-8 from xterm onData)
-	function toBase64(str: string): string {
-		return btoa(
-			Array.from(new TextEncoder().encode(str), (b) => String.fromCharCode(b)).join('')
-		);
-	}
-
-	// Binary-safe base64 decode (handles raw PTY bytes)
-	function fromBase64(b64: string): string {
-		const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-		return new TextDecoder().decode(bytes);
-	}
-
 	function getWsUrl(): string {
 		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 		return `${proto}//${window.location.host}${apiBasePath}/${capsuleId}/pty`;
 	}
 
 	function wsSend(ws: WebSocket | null, data: string) {
+		try {
+			if (ws?.readyState === WebSocket.OPEN) ws.send(data);
+		} catch {
+			// Connection closing — ignore
+		}
+	}
+
+	// Raw keystrokes go as binary frames (no base64/JSON wrapper); control
+	// messages stay JSON text. Mirrors the binary output path.
+	function wsSendBinary(ws: WebSocket | null, data: Uint8Array) {
 		try {
 			if (ws?.readyState === WebSocket.OPEN) ws.send(data);
 		} catch {
@@ -230,7 +227,7 @@
 			if (!int) return;
 			int.inputFlushTimer = null;
 			if (!int.inputBuffer) return;
-			wsSend(int.ws, JSON.stringify({ type: 'input', data: toBase64(int.inputBuffer) }));
+			wsSendBinary(int.ws, new TextEncoder().encode(int.inputBuffer));
 			int.inputBuffer = '';
 		}
 
@@ -265,6 +262,9 @@
 
 		// Browser sends wrenn_sid cookie on the WS upgrade automatically (same-origin).
 		const ws = new WebSocket(getWsUrl());
+		// PTY output arrives as raw binary frames (permessage-deflate compressed
+		// by the server); control messages stay JSON text.
+		ws.binaryType = 'arraybuffer';
 		int.ws = ws;
 		updateSession(id, { state: 'connecting', errorMessage: null });
 
@@ -285,6 +285,11 @@
 		};
 
 		ws.onmessage = (event) => {
+			// Binary frames are raw PTY output — write straight to the terminal.
+			if (typeof event.data !== 'string') {
+				int.term.write(new Uint8Array(event.data));
+				return;
+			}
 			try {
 				const msg = JSON.parse(event.data);
 				switch (msg.type) {
@@ -295,9 +300,6 @@
 							ptyPid: msg.pid ?? null,
 						});
 						if (activeSessionId === id) int.term.focus();
-						break;
-					case 'output':
-						if (msg.data) int.term.write(fromBase64(msg.data));
 						break;
 					case 'exit':
 						closeSession(id);
