@@ -23,7 +23,6 @@ import (
 
 const (
 	ptyKeepaliveInterval = 30 * time.Second
-	ptyDefaultCmd        = "/bin/bash"
 	ptyDefaultCols       = 80
 	ptyDefaultRows       = 24
 )
@@ -171,10 +170,9 @@ func (h *ptyHandler) handleStart(
 	sandboxIDStr string,
 	msg wsPtyIn,
 ) {
+	// An empty cmd is intentional: envd launches the user's default login shell
+	// (resolved from /etc/passwd) when no command is given.
 	cmd := msg.Cmd
-	if cmd == "" {
-		cmd = ptyDefaultCmd
-	}
 	cols := msg.Cols
 	if cols == 0 {
 		cols = ptyDefaultCols
@@ -237,6 +235,7 @@ func (h *ptyHandler) handleConnect(
 	stream, err := agent.PtyAttach(ctx, connect.NewRequest(&pb.PtyAttachRequest{
 		SandboxId: sandboxIDStr,
 		Tag:       msg.Tag,
+		Reconnect: true,
 	}))
 	if err != nil {
 		ws.writeJSON(wsPtyOut{Type: "error", Data: "failed to connect to pty: " + err.Error(), Fatal: true})

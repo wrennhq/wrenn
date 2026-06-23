@@ -336,7 +336,12 @@ test -f "${HOME}/.bashrc" && . "${HOME}/.bashrc""#;
     //     ($1 is cmd_str; $0 of the inner shell is the shell path).
     //   - with args: exec the program + args directly, no shell interpretation
     //     (backward-compatible program/argv form).
-    let target = if args.is_empty() {
+    let target = if cmd_str.is_empty() && args.is_empty() {
+        // No command at all (e.g. an interactive PTY session with no explicit
+        // command): launch the user's login shell directly. Under a pty its
+        // stdin is a tty, so it starts interactively.
+        format!(r#""{shell}""#)
+    } else if args.is_empty() {
         format!(r#""{shell}" -c "$1" "{shell}""#)
     } else {
         r#""$@""#.to_string()
@@ -388,7 +393,7 @@ exec {nice_prefix}{target}"#
         let master_fd = pty_result.master;
         let slave_fd = pty_result.slave;
 
-        let mut command = std::process::Command::new("/bin/bash");
+        let mut command = std::process::Command::new(&shell);
         command
             .args(&wrapper_args)
             .env_clear()
@@ -488,7 +493,7 @@ exec {nice_prefix}{target}"#
             end_rx,
         })
     } else {
-        let mut command = std::process::Command::new("/bin/bash");
+        let mut command = std::process::Command::new(&shell);
         command
             .args(&wrapper_args)
             .env_clear()

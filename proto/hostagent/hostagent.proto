@@ -471,8 +471,8 @@ message PtyAttachRequest {
   // Tag is the stable identifier for this PTY session (e.g. "pty-abc123de").
   // Chosen by the caller and used to reconnect later.
   string tag = 2;
-  // If cmd is non-empty, a new process is started. If empty, reconnects to
-  // the existing process identified by tag.
+  // Command to run for a new session. May be empty to launch the user's
+  // default login shell. Ignored when reconnect is true.
   string cmd = 3;
   repeated string args = 4;
   uint32 cols = 5;
@@ -483,6 +483,10 @@ message PtyAttachRequest {
   string cwd = 8;
   // User to run as. Empty means default (root).
   string user = 9;
+  // If true, reconnect to the existing process identified by tag instead of
+  // starting a new one. Distinguishes reconnect from a start whose cmd is
+  // empty (login-shell default).
+  bool reconnect = 10;
 }
 
 message PtyAttachResponse {

@@ -721,16 +721,18 @@ func (m *Manager) SetDefaults(ctx context.Context, sandboxID, defaultUser string
 }
 
 // PtyAttach starts a new PTY process or reconnects to an existing one.
-// If cmd is non-empty, starts a new process. If empty, reconnects using tag.
-func (m *Manager) PtyAttach(ctx context.Context, sandboxID, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd string) (<-chan envdclient.PtyEvent, error) {
+// When reconnect is true it reattaches to the process identified by tag;
+// otherwise it starts a new process (cmd may be empty to launch the user's
+// default login shell). user empty means the sandbox default user.
+func (m *Manager) PtyAttach(ctx context.Context, sandboxID, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd, user string, reconnect bool) (<-chan envdclient.PtyEvent, error) {
 	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-	if cmd != "" {
-		return c.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd)
+	if reconnect {
+		return c.PtyConnect(ctx, tag)
 	}
-	return c.PtyConnect(ctx, tag)
+	return c.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd, user)
 }
 
 // PtySendInput sends raw bytes to a PTY process in a sandbox.

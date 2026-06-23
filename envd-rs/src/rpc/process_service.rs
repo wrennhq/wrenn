@@ -72,7 +72,12 @@ impl ProcessServiceImpl {
             ConnectError::new(ErrorCode::InvalidArgument, "process config required")
         })?;
 
-        let username = self.state.defaults.user();
+        // Per-request user overrides the sandbox default when provided.
+        let username = if proc_config.user.is_empty() {
+            self.state.defaults.user()
+        } else {
+            proc_config.user.to_string()
+        };
         let user = lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
         let cmd_raw: &str = proc_config.cmd;

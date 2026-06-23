@@ -183,8 +183,7 @@ func execRun(
 	start := time.Now()
 	resp, err := execFn(execCtx, connect.NewRequest(&pb.ExecRequest{
 		SandboxId:  sandboxID,
-		Cmd:        "/bin/sh",
-		Args:       []string{"-c", bctx.WrappedCommand(st.Shell)},
+		Cmd:        bctx.WrappedCommand(st.Shell),
 		TimeoutSec: int32(timeout.Seconds()),
 	}))
 
@@ -360,8 +359,7 @@ func execRawShell(
 	start := time.Now()
 	resp, err := execFn(execCtx, connect.NewRequest(&pb.ExecRequest{
 		SandboxId:  sandboxID,
-		Cmd:        "/bin/sh",
-		Args:       []string{"-c", shellCmd},
+		Cmd:        shellCmd,
 		TimeoutSec: int32(timeout.Seconds()),
 	}))
 
@@ -398,8 +396,7 @@ func execStart(
 	start := time.Now()
 	resp, err := execFn(execCtx, connect.NewRequest(&pb.ExecRequest{
 		SandboxId:  sandboxID,
-		Cmd:        "/bin/sh",
-		Args:       []string{"-c", bctx.StartCommand(st.Shell)},
+		Cmd:        bctx.StartCommand(st.Shell),
 		TimeoutSec: 10,
 	}))
 

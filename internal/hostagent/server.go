@@ -682,7 +682,7 @@ func (s *Server) PtyAttach(
 ) error {
 	msg := req.Msg
 
-	events, err := s.mgr.PtyAttach(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Cols, msg.Rows, msg.Envs, msg.Cwd)
+	events, err := s.mgr.PtyAttach(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Cols, msg.Rows, msg.Envs, msg.Cwd, msg.User, msg.Reconnect)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("pty attach: %w", err))
 	}

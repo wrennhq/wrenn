@@ -278,7 +278,7 @@
 			if (tag) {
 				msg.tag = tag;
 			} else {
-				msg.cmd = '/bin/bash';
+				// No cmd: the server launches the user's default login shell.
 				msg.envs = { TERM: 'xterm-256color' };
 			}
 			wsSend(ws, JSON.stringify(msg));
