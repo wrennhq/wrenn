@@ -207,6 +207,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	}
 
 	teamIDStr := id.FormatTeamID(p.TeamID)
+	s.publishStateChanged(ctx, sandboxIDStr, teamIDStr, hostIDStr, "", "starting")
 	go s.createInBackground(sandboxID, sandboxIDStr, hostIDStr, teamIDStr, agent, p, templateTeamID, templateID, templateDefaultUser, templateDefaultEnv)
 
 	return sb, nil
