@@ -2,7 +2,7 @@ openapi: "3.1.0"
 info:
   title: Wrenn API
   description: API for Wrenn — the runtime where AI coding agents live, work, and ship.
-  version: "0.2.2"
+  version: "0.3.0"
 
 servers:
   - url: http://localhost:8080
@@ -2868,13 +2868,13 @@ paths:
       parameters:
         - name: before
           in: query
-          schema: {type: string, format: date-time}
+          schema: { type: string, format: date-time }
         - name: before_id
           in: query
-          schema: {type: string}
+          schema: { type: string }
         - name: limit
           in: query
-          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
       responses:
         "200":
           description: Audit log page (all teams)
@@ -2947,7 +2947,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -2980,7 +2980,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "204":
           description: Deleted
@@ -3031,7 +3031,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items: {type: object}
+                items: { type: object }
 
   /v1/admin/users/{id}/active:
     put:
@@ -3044,7 +3044,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -3053,7 +3053,7 @@ paths:
               type: object
               required: [active]
               properties:
-                active: {type: boolean}
+                active: { type: boolean }
       responses:
         "204":
           description: Updated
@@ -3086,7 +3086,7 @@ paths:
         - name: name
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "204":
           description: Deleted
@@ -3102,13 +3102,13 @@ paths:
         required: true
         content:
           application/json:
-            schema: {type: object}
+            schema: { type: object }
       responses:
         "201":
           description: Build created
           content:
             application/json:
-              schema: {type: object}
+              schema: { type: object }
     get:
       summary: List builds (admin)
       operationId: adminListBuilds
@@ -3122,7 +3122,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items: {type: object}
+                items: { type: object }
 
   /v1/admin/builds/{id}:
     get:
@@ -3135,13 +3135,13 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "200":
           description: Build detail
           content:
             application/json:
-              schema: {type: object}
+              schema: { type: object }
 
   /v1/admin/builds/{id}/cancel:
     post:
@@ -3154,7 +3154,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "204":
           description: Cancelled
@@ -3174,7 +3174,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "101":
           description: WebSocket upgrade — streams build console events
@@ -3220,7 +3220,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: Get capsule detail (admin)
       operationId: adminGetCapsule
@@ -3271,7 +3271,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       requestBody:
         required: false
         content:
@@ -3301,7 +3301,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Execute a command on any capsule (admin)
       operationId: adminExecCommand
@@ -3341,7 +3341,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: Get per-capsule resource metrics (admin)
       operationId: adminGetCapsuleMetrics
@@ -3375,7 +3375,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: List running processes on any capsule (admin)
       operationId: adminListProcesses
@@ -3403,11 +3403,11 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
       - name: selector
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
         description: Process PID (numeric) or tag (string)
     delete:
       summary: Kill a process on any capsule (admin)
@@ -3440,7 +3440,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Upload a file to any capsule (admin)
       operationId: adminUploadFile
@@ -3455,8 +3455,8 @@ paths:
               type: object
               required: [path, file]
               properties:
-                path: {type: string}
-                file: {type: string, format: binary}
+                path: { type: string }
+                file: { type: string, format: binary }
       responses:
         "204":
           description: File uploaded
@@ -3480,7 +3480,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Download a file from any capsule (admin)
       operationId: adminDownloadFile
@@ -3515,7 +3515,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: List directory contents on any capsule (admin)
       operationId: adminListDir
@@ -3549,7 +3549,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Create a directory on any capsule (admin)
       operationId: adminMakeDir
@@ -3583,7 +3583,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Remove a file or directory on any capsule (admin)
       operationId: adminRemovePath
@@ -3613,7 +3613,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: Stream command execution on any capsule via WebSocket (admin)
       operationId: adminExecStream
@@ -3637,7 +3637,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: Interactive PTY session on any capsule via WebSocket (admin)
       operationId: adminPtySession
@@ -3662,11 +3662,11 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
       - name: selector
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
         description: Process PID (numeric) or tag (string)
     get:
       summary: Stream process output on any capsule via WebSocket (admin)
@@ -3867,7 +3867,7 @@ components:
             to 60 (the agent's startup envelope).
         metadata:
           type: object
-          additionalProperties: {type: string}
+          additionalProperties: { type: string }
           nullable: true
           description: >
             Optional user-supplied key/value labels attached to the capsule.
@@ -3952,7 +3952,21 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, starting, running, pausing, paused, snapshotting, resuming, stopping, hibernated, stopped, missing, error]
+          enum:
+            [
+              pending,
+              starting,
+              running,
+              pausing,
+              paused,
+              snapshotting,
+              resuming,
+              stopping,
+              hibernated,
+              stopped,
+              missing,
+              error,
+            ]
         template:
           type: string
         vcpus:
@@ -3977,7 +3991,7 @@ components:
           format: date-time
         metadata:
           type: object
-          additionalProperties: {type: string}
+          additionalProperties: { type: string }
           nullable: true
           description: |
             User-supplied key/value labels attached at create-time. Once the
@@ -4037,7 +4051,7 @@ components:
             cannot be deleted.
         metadata:
           type: object
-          additionalProperties: {type: string}
+          additionalProperties: { type: string }
           nullable: true
 
     AdminTemplate:
@@ -4722,15 +4736,15 @@ components:
     AuditLogEntry:
       type: object
       properties:
-        id: {type: string}
-        actor_type: {type: string, enum: [user, api_key, host, system]}
-        actor_id: {type: string}
-        actor_name: {type: string}
-        resource_type: {type: string}
-        resource_id: {type: string}
-        action: {type: string}
-        scope: {type: string}
-        status: {type: string, enum: [success, failure]}
+        id: { type: string }
+        actor_type: { type: string, enum: [user, api_key, host, system] }
+        actor_id: { type: string }
+        actor_name: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: string }
+        action: { type: string }
+        scope: { type: string }
+        status: { type: string, enum: [success, failure] }
         metadata:
           type: object
           additionalProperties: true
@@ -4767,17 +4781,17 @@ components:
         resource:
           type: object
           properties:
-            id: {type: string}
-            type: {type: string}
+            id: { type: string }
+            type: { type: string }
         actor:
           type: object
           properties:
-            type: {type: string, enum: [user, api_key, system]}
-            id: {type: string}
-            name: {type: string}
+            type: { type: string, enum: [user, api_key, system] }
+            id: { type: string }
+            name: { type: string }
         metadata:
           type: object
-          additionalProperties: {type: string}
+          additionalProperties: { type: string }
           description: |
             Event-specific context. Examples: `reason` (ttl_expired,
             host_failure, cleanup_after_create_error, orphaned),

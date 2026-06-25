@@ -346,7 +346,10 @@ fn step_realtime_clock(nanos: i64) {
         tracing::warn!(error = %std::io::Error::last_os_error(),
             "clock_settime(CLOCK_REALTIME) failed");
     } else {
-        tracing::info!(nanos, "stepped CLOCK_REALTIME from host timestamp on resume");
+        tracing::info!(
+            nanos,
+            "stepped CLOCK_REALTIME from host timestamp on resume"
+        );
     }
 }
 
