@@ -27,6 +27,8 @@
 				return 'var(--color-text-bright)';
 			case 'WORKDIR':
 				return 'var(--color-text-tertiary)';
+			case 'HEALTHCHECK':
+				return 'var(--color-accent-bright)';
 			default:
 				return 'var(--color-text-muted)';
 		}
@@ -111,9 +113,8 @@
 				{/if}
 			</div>
 			<code class="mt-1.5 block truncate font-mono text-meta">
-				<span style="color: {keywordColor(kw)}">{kw}</span>{#if rest}
-					<span class="text-[var(--color-text-secondary)]">{rest}</span>
-				{/if}
+				<span style="color: {keywordColor(kw)}">{kw}</span>{#if rest}{' '}<span
+						class="text-[var(--color-text-secondary)]">{rest}</span>{/if}
 			</code>
 		</div>
 	{/each}
