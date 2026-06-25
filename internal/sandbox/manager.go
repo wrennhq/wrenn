@@ -217,6 +217,14 @@ type sandboxState struct {
 	memLoadDone   chan struct{}      // closed when background memory loader exits
 	memLoadCancel context.CancelFunc // cancels the background loader goroutine
 
+	// Background zero-page punch state (set by Pause for paused sandboxes).
+	// punchZeroPagesInDir runs off the pause critical path: the VM is already
+	// destroyed and the snapshot dir swapped in, so the read-back-and-punch
+	// pass need not block the user-perceived pause. Resume/Destroy cancel and
+	// wait via waitForPunch before relaunching CH or removing the snapshot dir.
+	punchDone   chan struct{}      // closed when the background punch exits
+	punchCancel context.CancelFunc // cancels the background punch goroutine
+
 	// Metrics sampling state.
 	vmmPID        int                // VMM process PID (child of unshare wrapper)
 	ring          *metricsRing       // tiered ring buffers for CPU/mem/disk metrics
@@ -579,6 +587,9 @@ func (m *Manager) Destroy(ctx context.Context, sandboxID string) error {
 
 // cleanup tears down all resources for a sandbox.
 func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
+	// Stop any background zero-page punch before removing the snapshot dir,
+	// so a lingering goroutine can't keep writing to files we're deleting.
+	m.waitForPunch(sb)
 	if sb.memLoadCancel != nil {
 		sb.memLoadCancel()
 		if sb.memLoadDone != nil {
@@ -710,16 +721,18 @@ func (m *Manager) SetDefaults(ctx context.Context, sandboxID, defaultUser string
 }
 
 // PtyAttach starts a new PTY process or reconnects to an existing one.
-// If cmd is non-empty, starts a new process. If empty, reconnects using tag.
-func (m *Manager) PtyAttach(ctx context.Context, sandboxID, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd string) (<-chan envdclient.PtyEvent, error) {
+// When reconnect is true it reattaches to the process identified by tag;
+// otherwise it starts a new process (cmd may be empty to launch the user's
+// default login shell). user empty means the sandbox default user.
+func (m *Manager) PtyAttach(ctx context.Context, sandboxID, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd, user string, reconnect bool) (<-chan envdclient.PtyEvent, error) {
 	c, err := m.activeClient(sandboxID)
 	if err != nil {
 		return nil, err
 	}
-	if cmd != "" {
-		return c.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd)
+	if reconnect {
+		return c.PtyConnect(ctx, tag)
 	}
-	return c.PtyConnect(ctx, tag)
+	return c.PtyStart(ctx, tag, cmd, args, cols, rows, envs, cwd, user)
 }
 
 // PtySendInput sends raw bytes to a PTY process in a sandbox.

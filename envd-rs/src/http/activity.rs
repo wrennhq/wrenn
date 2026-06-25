@@ -30,8 +30,5 @@ pub async fn get_activity(State(state): State<Arc<AppState>>) -> impl IntoRespon
         disk_bps: state.disk_bps(),
     };
 
-    (
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(body),
-    )
+    ([(header::CACHE_CONTROL, "no-store")], Json(body))
 }

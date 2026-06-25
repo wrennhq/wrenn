@@ -9,6 +9,7 @@
 package sandbox
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -38,7 +39,12 @@ const (
 // CH writes its memory dump as one or more files prefixed "memory" inside
 // the snapshot directory; everything else (config.json, state.json) is
 // metadata and untouched.
-func punchZeroPagesInDir(dir string) {
+//
+// ctx cancellation aborts the scan between IO chunks so a Resume/Destroy that
+// supersedes a background punch returns promptly. A cancelled scan leaves the
+// file valid — already-punched holes read back identically to the zeros they
+// replaced.
+func punchZeroPagesInDir(ctx context.Context, dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		slog.Warn("punch: read snapshot dir", "dir", dir, "error", err)
@@ -48,8 +54,14 @@ func punchZeroPagesInDir(dir string) {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "memory") {
 			continue
 		}
+		if ctx.Err() != nil {
+			return
+		}
 		path := filepath.Join(dir, e.Name())
-		before, after, err := punchZeroPages(path)
+		before, after, err := punchZeroPages(ctx, path)
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		if err != nil {
 			slog.Warn("punch: zero-page scan failed", "path", path, "error", err)
 			continue
@@ -67,7 +79,7 @@ func punchZeroPagesInDir(dir string) {
 // skipped via SEEK_DATA so a partially-sparse input stays cheap to scan.
 //
 // Returns the file's disk allocation (st_blocks * 512) before and after.
-func punchZeroPages(path string) (int64, int64, error) {
+func punchZeroPages(ctx context.Context, path string) (int64, int64, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return 0, 0, err
@@ -111,6 +123,17 @@ func punchZeroPages(path string) (int64, int64, error) {
 		zeroStart := int64(-1)
 		cur := off
 		for cur < endData {
+			if ctx.Err() != nil {
+				// Flush any pending zero run before bailing so the partial
+				// scan still reclaims what it found.
+				if zeroStart >= 0 {
+					if err := punch(f, zeroStart, cur-zeroStart); err != nil {
+						return 0, 0, err
+					}
+				}
+				stAfter, _ := statBlocks(f)
+				return stBefore, stAfter, ctx.Err()
+			}
 			toRead := min(int64(len(buf)), endData-cur)
 			n, err := readAt(f, buf[:toRead], cur)
 			if err != nil {

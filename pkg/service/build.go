@@ -410,7 +410,15 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 	templateDefaultUser := bctx.User
 	templateDefaultEnv := filterBuildEnv(bctx.EnvVars)
 
-	// Phase 3: Post-build (as root) — cleanup.
+	// Phase 3: Healthcheck — runs before cleanup so a failing healthcheck aborts
+	// immediately and skips post-build (the sandbox is destroyed regardless). It
+	// runs as the template's default user, against the app the recipe started.
+	if !s.runHealthcheck(buildCtx, buildID, build, agent, sandboxIDStr, &logs, streamFn, templateDefaultUser, log) {
+		return
+	}
+
+	// Phase 4: Post-build (as root) — cleanup. Only reached once the healthcheck
+	// has passed, so we never clean up an image that fails verification.
 	bctx.User = "root"
 	if !build.SkipPrePost {
 		if !runPhase("post-build", postBuildSteps, 0) {
@@ -418,7 +426,7 @@ func (s *BuildService) executeBuild(ctx context.Context, buildIDStr string) {
 		}
 	}
 
-	// Finalize: healthcheck/snapshot/flatten → persist template → mark success.
+	// Finalize: snapshot/flatten → persist template → mark success.
 	s.finalizeBuild(buildCtx, buildID, build, agent, sandboxIDStr, templateDefaultUser, templateDefaultEnv, sandboxMetadata, log)
 }
 
@@ -517,8 +525,9 @@ func (s *BuildService) provisionBuildSandbox(
 	return agent, sandboxIDStr, sandboxMetadata, nil
 }
 
-// finalizeBuild handles the healthcheck/snapshot/flatten step and persists the
-// template record. Called after all recipe phases complete successfully.
+// finalizeBuild snapshots (or flattens) the verified rootfs and persists the
+// template record. Called after the recipe, healthcheck, and post-build phases
+// all complete successfully.
 func (s *BuildService) finalizeBuild(
 	ctx context.Context,
 	buildID pgtype.UUID,
@@ -532,23 +541,7 @@ func (s *BuildService) finalizeBuild(
 ) {
 	var sizeBytes int64
 	if build.Healthcheck != "" {
-		hc, err := recipe.ParseHealthcheck(build.Healthcheck)
-		if err != nil {
-			s.destroySandbox(ctx, agent, sandboxIDStr)
-			s.failBuild(ctx, buildID, fmt.Sprintf("invalid healthcheck: %v", err))
-			return
-		}
-		log.Info("running healthcheck", "cmd", hc.Cmd, "interval", hc.Interval, "timeout", hc.Timeout, "start_period", hc.StartPeriod, "retries", hc.Retries)
-		if err := s.waitForHealthcheck(ctx, agent, sandboxIDStr, hc, defaultUser); err != nil {
-			s.destroySandbox(ctx, agent, sandboxIDStr)
-			if ctx.Err() != nil {
-				return
-			}
-			s.failBuild(ctx, buildID, fmt.Sprintf("healthcheck failed: %v", err))
-			return
-		}
-
-		log.Info("healthcheck passed, creating snapshot")
+		log.Info("creating snapshot")
 		snapResp, err := agent.CreateSnapshot(ctx, connect.NewRequest(&pb.CreateSnapshotRequest{
 			SandboxId:  sandboxIDStr,
 			Name:       build.Name,
@@ -630,19 +623,115 @@ func (s *BuildService) finalizeBuild(
 	log.Info("template build completed successfully", "name", build.Name)
 }
 
-// waitForHealthcheck repeatedly executes the healthcheck command inside the
+// healthcheckResult captures what a healthcheck run produced, for recording as
+// a build pseudo-step. Output is the merged per-attempt console log (capped to
+// hcMaxOutputBytes); Exit is the final attempt's exit code.
+type healthcheckResult struct {
+	Output   string
+	Exit     int32
+	Attempts int
+	Elapsed  int64 // total wall time in milliseconds
+}
+
+// hcMaxOutputBytes bounds how much healthcheck output is retained for the cold
+// log/replay, so a long-polling check can't grow the persisted log unbounded.
+// The live stream is never truncated — this only caps what we store.
+const hcMaxOutputBytes = 32 * 1024
+
+// runHealthcheck executes the configured healthcheck (if any) as a streamed
+// pseudo-step, before the post-build cleanup phase. It emits step-start /
+// output / step-end events live, appends the resulting log entry to *logs, and
+// persists it. The healthcheck is numbered after every recipe/post-build step
+// (total_steps+1) and deliberately does not advance current_step.
+//
+// Returns true when the build should continue (healthcheck passed or none was
+// configured), false when it must stop (invalid/failed healthcheck, or the
+// build was cancelled) — in which case the sandbox has been destroyed and the
+// build marked failed.
+func (s *BuildService) runHealthcheck(
+	ctx context.Context,
+	buildID pgtype.UUID,
+	build db.TemplateBuild,
+	agent buildAgentClient,
+	sandboxIDStr string,
+	logs *[]recipe.BuildLogEntry,
+	streamFn recipe.StreamExecFunc,
+	user string,
+	log *slog.Logger,
+) bool {
+	if build.Healthcheck == "" {
+		return true
+	}
+	hc, err := recipe.ParseHealthcheck(build.Healthcheck)
+	if err != nil {
+		s.destroySandbox(ctx, agent, sandboxIDStr)
+		s.failBuild(ctx, buildID, fmt.Sprintf("invalid healthcheck: %v", err))
+		return false
+	}
+	log.Info("running healthcheck", "cmd", hc.Cmd, "interval", hc.Interval, "timeout", hc.Timeout, "start_period", hc.StartPeriod, "retries", hc.Retries)
+
+	hcStep := int(build.TotalSteps) + 1
+	buildIDStr := id.FormatBuildID(buildID)
+	hcCmd := "HEALTHCHECK " + hc.Cmd
+	publishBuildEvent(ctx, s.Redis, buildIDStr, BuildStreamEvent{
+		Type: "step-start", Step: hcStep, Phase: "healthcheck", Cmd: hcCmd,
+	})
+
+	// Forward each output chunk to the live console as it arrives.
+	onChunk := func(data []byte) {
+		publishBuildEvent(ctx, s.Redis, buildIDStr, BuildStreamEvent{
+			Type: "output", Step: hcStep, Data: base64.StdEncoding.EncodeToString(data),
+		})
+	}
+
+	res, hcErr := s.streamHealthcheck(ctx, sandboxIDStr, hc, user, streamFn, onChunk)
+	entry := recipe.BuildLogEntry{
+		Step: hcStep, Phase: "healthcheck", Cmd: hcCmd,
+		Stdout: res.Output, Exit: res.Exit, Elapsed: res.Elapsed, Ok: hcErr == nil,
+	}
+	*logs = append(*logs, entry)
+	// Persist while pinning current_step to total_steps so the progress counter
+	// doesn't overshoot — the healthcheck is shown but not counted.
+	s.updateLogs(ctx, buildID, int(build.TotalSteps), *logs)
+	publishBuildEvent(ctx, s.Redis, buildIDStr, BuildStreamEvent{
+		Type: "step-end", Step: hcStep, Phase: "healthcheck", Cmd: hcCmd,
+		Exit: entry.Exit, Ok: entry.Ok, ElapsedMs: entry.Elapsed,
+	})
+
+	if hcErr != nil {
+		s.destroySandbox(ctx, agent, sandboxIDStr)
+		if ctx.Err() != nil {
+			return false
+		}
+		s.failBuild(ctx, buildID, fmt.Sprintf("healthcheck failed: %v", hcErr))
+		return false
+	}
+	log.Info("healthcheck passed")
+	return true
+}
+
+// streamHealthcheck repeatedly runs the healthcheck command in a PTY inside the
 // sandbox according to the config's interval, timeout, start-period, and
-// retries.
-// During the start period, failures are not counted toward the retry budget.
-// Returns nil on the first successful check, or an error if retries are
-// exhausted, the deadline passes, or the context is cancelled.
-func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentClient, sandboxIDStr string, hc recipe.HealthcheckConfig, user string) error {
+// retries, forwarding output live via onChunk. During the start period,
+// failures are not counted toward the retry budget. Returns a nil error on the
+// first successful check, or an error if retries are exhausted, the deadline
+// passes, or the context is cancelled. The returned healthcheckResult always
+// carries the captured per-attempt output regardless of outcome.
+func (s *BuildService) streamHealthcheck(
+	ctx context.Context,
+	sandboxIDStr string,
+	hc recipe.HealthcheckConfig,
+	user string,
+	streamFn recipe.StreamExecFunc,
+	onChunk func(data []byte),
+) (result healthcheckResult, err error) {
 	// Wrap the healthcheck command with su when a non-root user is set, so that
 	// ~ expands to the correct home directory and the process runs with the
 	// right UID (matching the template's default user).
 	cmd := hc.Cmd
 	if user != "" && user != "root" {
-		cmd = "su " + recipe.Shellescape(user) + " -s /bin/sh -c " + recipe.Shellescape(hc.Cmd)
+		// Drop `-s` so su runs the check under the user's login shell.
+		cmd = "su " + recipe.Shellescape(user) + " -c " + recipe.Shellescape(hc.Cmd)
 	}
 	ticker := time.NewTicker(hc.Interval)
 	defer ticker.Stop()
@@ -658,41 +747,82 @@ func (s *BuildService) waitForHealthcheck(ctx context.Context, agent buildAgentC
 
 	startedAt := time.Now()
 	failCount := 0
+	attempt := 0
+	var output strings.Builder
+	// emit sends a line to the live console and accumulates it (capped) for the
+	// cold log used on reconnect/replay.
+	emit := func(line string) {
+		onChunk([]byte(line))
+		if output.Len() < hcMaxOutputBytes {
+			output.WriteString(line)
+		}
+	}
+	// Populate the result on every return path.
+	defer func() {
+		result.Attempts = attempt
+		result.Elapsed = time.Since(startedAt).Milliseconds()
+		result.Output = strings.TrimRight(output.String(), "\r\n")
+	}()
+
+	// runAttempt streams one healthcheck invocation, forwarding output, and
+	// returns its exit code (or an error if the exec never completed).
+	runAttempt := func() (int32, error) {
+		attemptCtx, cancel := context.WithTimeout(ctx, hc.Timeout)
+		defer cancel()
+		ch, err := streamFn(attemptCtx, sandboxIDStr, cmd)
+		if err != nil {
+			return -1, err
+		}
+		var exit int32
+		gotDone := false
+		for chunk := range ch {
+			if chunk.Err != nil {
+				return -1, chunk.Err
+			}
+			if chunk.Done {
+				exit, gotDone = chunk.Exit, true
+				continue
+			}
+			emit(string(chunk.Data))
+		}
+		if !gotDone {
+			return -1, fmt.Errorf("healthcheck stream ended without completion")
+		}
+		return exit, nil
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return result, ctx.Err()
 		case <-deadlineCh:
-			return fmt.Errorf("healthcheck timed out: exceeded %d attempts over %s", failCount, time.Since(startedAt))
+			return result, fmt.Errorf("healthcheck timed out: exceeded %d attempts over %s", failCount, time.Since(startedAt))
 		case <-ticker.C:
-			execCtx, cancel := context.WithTimeout(ctx, hc.Timeout)
-			resp, err := agent.Exec(execCtx, connect.NewRequest(&pb.ExecRequest{
-				SandboxId:  sandboxIDStr,
-				Cmd:        "/bin/sh",
-				Args:       []string{"-c", cmd},
-				TimeoutSec: int32(hc.Timeout.Seconds()),
-			}))
-			cancel()
+			attempt++
+			emit(fmt.Sprintf("\x1b[2m── attempt %d ──\x1b[0m\r\n", attempt))
+			exit, attemptErr := runAttempt()
+			result.Exit = exit
 
-			if err != nil {
-				slog.Debug("healthcheck exec error (retrying)", "error", err)
+			if attemptErr != nil {
+				emit(fmt.Sprintf("exec error: %v\r\n", attemptErr))
+				slog.Debug("healthcheck exec error (retrying)", "error", attemptErr)
 				if time.Since(startedAt) >= hc.StartPeriod {
 					failCount++
 					if hc.Retries > 0 && failCount >= hc.Retries {
-						return fmt.Errorf("healthcheck failed after %d retries: exec error: %w", failCount, err)
+						return result, fmt.Errorf("healthcheck failed after %d retries: exec error: %w", failCount, attemptErr)
 					}
 				}
 				continue
 			}
-			if resp.Msg.ExitCode == 0 {
-				return nil
+			emit(fmt.Sprintf("\x1b[2m→ exit %d\x1b[0m\r\n", exit))
+			if exit == 0 {
+				return result, nil
 			}
-			slog.Debug("healthcheck failed (retrying)", "exit_code", resp.Msg.ExitCode)
+			slog.Debug("healthcheck failed (retrying)", "exit_code", exit)
 			if time.Since(startedAt) >= hc.StartPeriod {
 				failCount++
 				if hc.Retries > 0 && failCount >= hc.Retries {
-					return fmt.Errorf("healthcheck failed after %d retries: exit code %d", failCount, resp.Msg.ExitCode)
+					return result, fmt.Errorf("healthcheck failed after %d retries: exit code %d", failCount, exit)
 				}
 			}
 		}
@@ -755,10 +885,12 @@ func (s *BuildService) ptyStreamExec(agent buildAgentClient) recipe.StreamExecFu
 		stream, err := agent.PtyAttach(ctx, connect.NewRequest(&pb.PtyAttachRequest{
 			SandboxId: sandboxID,
 			Tag:       tag,
-			Cmd:       "/bin/sh",
-			Args:      []string{"-c", shellCmd},
-			Cols:      buildPtyCols,
-			Rows:      buildPtyRows,
+			// Bare command: envd wraps it in the user's login shell (resolved
+			// from /etc/passwd), so build steps run under the image's default
+			// shell instead of a forced /bin/sh.
+			Cmd:  shellCmd,
+			Cols: buildPtyCols,
+			Rows: buildPtyRows,
 		}))
 		if err != nil {
 			return nil, err
@@ -836,8 +968,7 @@ func (s *BuildService) fetchSandboxEnv(ctx context.Context,
 	agent buildAgentClient, sandboxIDStr string) (map[string]string, error) {
 	resp, err := agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
 		SandboxId:  sandboxIDStr,
-		Cmd:        "/bin/sh",
-		Args:       []string{"-c", "env"},
+		Cmd:        "env",
 		TimeoutSec: 10,
 	}))
 	if err != nil {
@@ -922,8 +1053,7 @@ func (s *BuildService) uploadAndExtractArchive(
 
 	resp, err := agent.Exec(ctx, connect.NewRequest(&pb.ExecRequest{
 		SandboxId:  sandboxID,
-		Cmd:        "/bin/sh",
-		Args:       []string{"-c", fullCmd},
+		Cmd:        fullCmd,
 		TimeoutSec: 120,
 	}))
 	if err != nil {

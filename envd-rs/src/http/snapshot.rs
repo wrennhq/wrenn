@@ -46,11 +46,12 @@ pub async fn post_snapshot_prepare(State(state): State<Arc<AppState>>) -> impl I
         tracing::warn!(error = %e, "drop_caches (second pass) failed (continuing)");
     }
 
-    // Free-page reporting drains asynchronously: the balloon driver hands
-    // freed pages to the host in batches and CH punches holes in the backing
-    // memfile. Without a brief settle window most of the pages freed by the
-    // drop_caches passes above would still be present in the snapshot.
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    // No balloon settle window here: free-page reporting drains asynchronously,
+    // so any pages not yet hole-punched by the host at snapshot time are written
+    // verbatim — but with init_on_free=1 the guest zeroes them on free, and the
+    // host-side background zero-page punch reclaims them off the pause critical
+    // path. Trading a fixed ~1s of pause latency for a slightly larger artifact
+    // that the async punch later shrinks anyway.
 
     tracing::info!("snapshot/prepare: quiesced");
     (

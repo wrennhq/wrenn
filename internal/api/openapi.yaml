@@ -1,8 +1,8 @@
 openapi: "3.1.0"
 info:
   title: Wrenn API
-  description: AI agent execution platform API.
-  version: "0.2.0"
+  description: API for Wrenn — the runtime where AI coding agents live, work, and ship.
+  version: "0.3.0"
 
 servers:
   - url: http://localhost:8080
@@ -169,6 +169,8 @@ paths:
       responses:
         "204":
           description: Session revoked
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -202,6 +204,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           description: Not a member of this team
           content:
@@ -235,6 +239,12 @@ paths:
                 $ref: "#/components/schemas/SessionResponse"
         "401":
           description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Account not activated or disabled
           content:
             application/json:
               schema:
@@ -426,7 +436,7 @@ paths:
       operationId: requestPasswordReset
       tags: [account]
       description: |
-        Sends a password reset link to the given email. Always returns 200
+        Sends a password reset link to the given email. Always returns 204
         regardless of whether the email exists, to prevent account enumeration.
         The reset token expires in 15 minutes.
       requestBody:
@@ -610,6 +620,8 @@ paths:
       responses:
         "204":
           description: API key deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /v1/users/search:
     get:
@@ -714,6 +726,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TeamDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           description: JWT team does not match requested team
           content:
@@ -772,6 +786,8 @@ paths:
       responses:
         "204":
           description: Team deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           description: Caller is not the owner
           content:
@@ -802,6 +818,14 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/TeamMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: JWT team does not match requested team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
     post:
       summary: Add a member by email
@@ -884,6 +908,12 @@ paths:
       responses:
         "204":
           description: Role updated
+        "400":
+          description: Invalid team/user ID or invalid role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
           description: Insufficient role or attempt to modify owner
           content:
@@ -907,6 +937,8 @@ paths:
       responses:
         "204":
           description: Member removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           description: Insufficient role or attempt to remove owner
           content:
@@ -938,6 +970,8 @@ paths:
       responses:
         "204":
           description: Left the team
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           description: Owner cannot leave
           content:
@@ -966,12 +1000,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Capsule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
         "502":
           description: Host agent error
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
     get:
       summary: List capsules for your team
@@ -1072,6 +1114,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Capsule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1089,6 +1133,14 @@ paths:
       responses:
         "202":
           description: Capsule destruction initiated
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/exec:
     parameters:
@@ -1124,6 +1176,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BackgroundExecResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1136,6 +1190,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/processes:
     parameters:
@@ -1162,6 +1218,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1174,6 +1232,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/processes/{selector}:
     parameters:
@@ -1208,6 +1268,8 @@ paths:
       responses:
         "204":
           description: Process killed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule or process not found
           content:
@@ -1220,6 +1282,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/processes/{selector}/stream:
     parameters:
@@ -1278,6 +1342,8 @@ paths:
       responses:
         "204":
           description: Ping acknowledged, inactivity timer reset
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1344,6 +1410,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/pause:
     parameters:
@@ -1371,12 +1439,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Capsule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           description: Capsule not running
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/resume:
     parameters:
@@ -1405,12 +1479,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Capsule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           description: Capsule not paused
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/snapshots:
     post:
@@ -1450,6 +1530,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Capsule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           description: Name already exists, or capsule is not running or paused
           content:
@@ -1501,8 +1585,22 @@ paths:
       responses:
         "204":
           description: Snapshot deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Cannot delete a platform-owned / system base template
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Delete failed (e.g. owning host offline)
           content:
             application/json:
               schema:
@@ -1541,6 +1639,10 @@ paths:
       responses:
         "204":
           description: File uploaded
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           description: Capsule not running
           content:
@@ -1553,6 +1655,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/files/read:
     parameters:
@@ -1583,12 +1687,22 @@ paths:
               schema:
                 type: string
                 format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule or file not found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "409":
+          description: Capsule not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/files/list:
     parameters:
@@ -1618,6 +1732,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListDirResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1630,6 +1746,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/files/mkdir:
     parameters:
@@ -1659,6 +1777,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MakeDirResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1673,6 +1793,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/files/remove:
     parameters:
@@ -1698,6 +1820,8 @@ paths:
       responses:
         "204":
           description: File or directory removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1710,6 +1834,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/exec/stream:
     parameters:
@@ -1749,9 +1875,15 @@ paths:
         ```
 
         The connection closes automatically after the process exits.
+
+        Note: capsule-not-found and not-running conditions encountered after the
+        WebSocket upgrade are delivered as in-band `{"type": "error"}` frames
+        rather than HTTP status codes.
       responses:
         "101":
           description: WebSocket upgrade
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1805,24 +1937,31 @@ paths:
         {"type": "connect", "tag": "pty-abc123de"}
         ```
 
-        **Client sends** (after session is established):
+        **Client sends** (control messages, after session is established — JSON text frames):
         ```json
-        {"type": "input", "data": "<base64-encoded bytes>"}
         {"type": "resize", "cols": 120, "rows": 40}
         {"type": "kill"}
         ```
 
-        **Server sends**:
+        Keystroke input is sent as **raw binary WebSocket frames** containing the
+        terminal bytes verbatim — not JSON, not base64. Every binary frame from
+        the client is treated as PTY input.
+
+        **Server sends** (control messages — JSON text frames):
         ```json
         {"type": "started", "tag": "pty-abc123de", "pid": 42}
-        {"type": "output", "data": "<base64-encoded PTY bytes>"}
         {"type": "exit", "exit_code": 0}
         {"type": "error", "data": "description", "fatal": true}
         {"type": "ping"}
         ```
 
-        PTY data (input and output) is base64-encoded because it contains raw
-        terminal bytes (escape sequences, control codes) that are not valid UTF-8.
+        PTY output is sent as **raw binary WebSocket frames** containing the
+        terminal bytes verbatim — not JSON, not base64. Sending input and output
+        as binary avoids the ~33% inflation of base64 over the JSON path.
+
+        The connection negotiates permessage-deflate (RFC 7692) compression
+        automatically; rapid output (e.g. full-screen TUI repaints) is coalesced
+        into fewer, larger frames before compression.
 
         Sessions persist across WebSocket disconnections — the process keeps
         running in the capsule. Use the `tag` from the "started" response to
@@ -1830,6 +1969,8 @@ paths:
       responses:
         "101":
           description: WebSocket upgrade
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1880,6 +2021,8 @@ paths:
       responses:
         "204":
           description: File uploaded
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule not found
           content:
@@ -1892,6 +2035,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "502":
+          description: Host agent error while streaming the upload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/capsules/{id}/files/stream/read:
     parameters:
@@ -1925,6 +2076,8 @@ paths:
               schema:
                 type: string
                 format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Capsule or file not found
           content:
@@ -1937,6 +2090,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/hosts:
     post:
@@ -2014,6 +2169,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Host"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Host not found
           content:
@@ -2041,6 +2198,8 @@ paths:
       responses:
         "204":
           description: Host deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           description: Insufficient permissions
           content:
@@ -2079,6 +2238,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateHostResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           description: Insufficient permissions
           content:
@@ -2148,6 +2309,8 @@ paths:
       responses:
         "204":
           description: Heartbeat recorded
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Invalid or missing host token
           content:
@@ -2265,6 +2428,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HostDeletePreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "403":
           description: Insufficient permissions
           content:
@@ -2301,6 +2466,8 @@ paths:
                 type: array
                 items:
                   type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
     post:
       summary: Add a tag to a host
@@ -2317,6 +2484,8 @@ paths:
       responses:
         "204":
           description: Tag added
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Host not found
           content:
@@ -2346,6 +2515,8 @@ paths:
       responses:
         "204":
           description: Tag removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Host not found
           content:
@@ -2441,6 +2612,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChannelResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           description: Channel not found
           content:
@@ -2483,6 +2656,14 @@ paths:
       responses:
         "204":
           description: Channel deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Channel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/channels/{id}/config:
     parameters:
@@ -2643,19 +2824,17 @@ paths:
               schema:
                 type: object
                 properties:
-                  entries:
+                  items:
                     type: array
                     items:
                       $ref: "#/components/schemas/AuditLogEntry"
-                  next_cursor:
-                    type: object
-                    nullable: true
-                    properties:
-                      before:
-                        type: string
-                        format: date-time
-                      before_id:
-                        type: string
+                  next_before:
+                    type: string
+                    format: date-time
+                    description: Cursor for the next page (pass as `before`). Present only when the page is non-empty.
+                  next_before_id:
+                    type: string
+                    description: Tiebreaker cursor for the next page (pass as `before_id`). Present only when the page is non-empty.
 
   /v1/admin/events/stream:
     get:
@@ -2689,13 +2868,13 @@ paths:
       parameters:
         - name: before
           in: query
-          schema: {type: string, format: date-time}
+          schema: { type: string, format: date-time }
         - name: before_id
           in: query
-          schema: {type: string}
+          schema: { type: string }
         - name: limit
           in: query
-          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
       responses:
         "200":
           description: Audit log page (all teams)
@@ -2704,10 +2883,17 @@ paths:
               schema:
                 type: object
                 properties:
-                  entries:
+                  items:
                     type: array
                     items:
                       $ref: "#/components/schemas/AuditLogEntry"
+                  next_before:
+                    type: string
+                    format: date-time
+                    description: Cursor for the next page (pass as `before`). Present only when the page is non-empty.
+                  next_before_id:
+                    type: string
+                    description: Tiebreaker cursor for the next page (pass as `before_id`). Present only when the page is non-empty.
 
   /v1/admin/teams:
     get:
@@ -2761,7 +2947,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -2794,7 +2980,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "204":
           description: Deleted
@@ -2845,7 +3031,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items: {type: object}
+                items: { type: object }
 
   /v1/admin/users/{id}/active:
     put:
@@ -2858,7 +3044,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -2867,7 +3053,7 @@ paths:
               type: object
               required: [active]
               properties:
-                active: {type: boolean}
+                active: { type: boolean }
       responses:
         "204":
           description: Updated
@@ -2900,7 +3086,7 @@ paths:
         - name: name
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "204":
           description: Deleted
@@ -2916,13 +3102,13 @@ paths:
         required: true
         content:
           application/json:
-            schema: {type: object}
+            schema: { type: object }
       responses:
-        "202":
-          description: Build queued
+        "201":
+          description: Build created
           content:
             application/json:
-              schema: {type: object}
+              schema: { type: object }
     get:
       summary: List builds (admin)
       operationId: adminListBuilds
@@ -2936,7 +3122,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items: {type: object}
+                items: { type: object }
 
   /v1/admin/builds/{id}:
     get:
@@ -2949,13 +3135,13 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "200":
           description: Build detail
           content:
             application/json:
-              schema: {type: object}
+              schema: { type: object }
 
   /v1/admin/builds/{id}/cancel:
     post:
@@ -2968,7 +3154,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "204":
           description: Cancelled
@@ -2988,7 +3174,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       responses:
         "101":
           description: WebSocket upgrade — streams build console events
@@ -3007,8 +3193,8 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateCapsuleRequest"
       responses:
-        "201":
-          description: Capsule created
+        "202":
+          description: Capsule creation accepted; provisioning asynchronously
           content:
             application/json:
               schema:
@@ -3034,7 +3220,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: Get capsule detail (admin)
       operationId: adminGetCapsule
@@ -3048,6 +3234,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Capsule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       summary: Destroy capsule (admin)
       operationId: adminDestroyCapsule
@@ -3055,8 +3245,16 @@ paths:
       security:
         - sessionAuth: []
       responses:
-        "204":
-          description: Destroyed
+        "202":
+          description: Destroy accepted; teardown asynchronously
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/snapshot:
     post:
@@ -3073,7 +3271,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema: {type: string}
+          schema: { type: string }
       requestBody:
         required: false
         content:
@@ -3091,13 +3289,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Capsule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
 
   /v1/admin/capsules/{id}/exec:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Execute a command on any capsule (admin)
       operationId: adminExecCommand
@@ -3123,17 +3327,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BackgroundExecResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/FailedPrecondition"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/metrics:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: Get per-capsule resource metrics (admin)
       operationId: adminGetCapsuleMetrics
@@ -3155,15 +3363,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CapsuleMetrics"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/processes:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: List running processes on any capsule (admin)
       operationId: adminListProcesses
@@ -3177,21 +3389,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/FailedPrecondition"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/processes/{selector}:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
       - name: selector
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
         description: Process PID (numeric) or tag (string)
     delete:
       summary: Kill a process on any capsule (admin)
@@ -3210,17 +3426,21 @@ paths:
       responses:
         "204":
           description: Process killed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/FailedPrecondition"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/files/write:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Upload a file to any capsule (admin)
       operationId: adminUploadFile
@@ -3235,20 +3455,32 @@ paths:
               type: object
               required: [path, file]
               properties:
-                path: {type: string}
-                file: {type: string, format: binary}
+                path: { type: string }
+                file: { type: string, format: binary }
       responses:
         "204":
           description: File uploaded
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/FailedPrecondition"
+        "413":
+          description: File too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/files/read:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Download a file from any capsule (admin)
       operationId: adminDownloadFile
@@ -3269,15 +3501,21 @@ paths:
               schema:
                 type: string
                 format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/FailedPrecondition"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/files/list:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: List directory contents on any capsule (admin)
       operationId: adminListDir
@@ -3297,17 +3535,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListDirResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/FailedPrecondition"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/files/mkdir:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Create a directory on any capsule (admin)
       operationId: adminMakeDir
@@ -3327,17 +3569,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MakeDirResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/FailedPrecondition"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/files/remove:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     post:
       summary: Remove a file or directory on any capsule (admin)
       operationId: adminRemovePath
@@ -3353,17 +3599,21 @@ paths:
       responses:
         "204":
           description: File or directory removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/FailedPrecondition"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /v1/admin/capsules/{id}/exec/stream:
     parameters:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: Stream command execution on any capsule via WebSocket (admin)
       operationId: adminExecStream
@@ -3387,7 +3637,7 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
     get:
       summary: Interactive PTY session on any capsule via WebSocket (admin)
       operationId: adminPtySession
@@ -3395,9 +3645,10 @@ paths:
       security:
         - sessionAuth: []
       description: |
-        Admin variant of /v1/capsules/{id}/pty. Same protocol — base64-encoded
-        PTY bytes, start/connect/input/resize/kill control messages, persistent
-        sessions reconnectable via tag.
+        Admin variant of /v1/capsules/{id}/pty. Same protocol — raw binary
+        WebSocket frames for PTY input/output, JSON text frames for
+        start/connect/resize/kill control messages, permessage-deflate
+        compression, persistent sessions reconnectable via tag.
       responses:
         "101":
           description: WebSocket upgrade
@@ -3411,11 +3662,11 @@ paths:
       - name: id
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
       - name: selector
         in: path
         required: true
-        schema: {type: string}
+        schema: { type: string }
         description: Process PID (numeric) or tag (string)
     get:
       summary: Stream process output on any capsule via WebSocket (admin)
@@ -3461,6 +3712,13 @@ components:
 
     FailedPrecondition:
       description: Resource state does not allow this operation (e.g. exec on a paused capsule)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    ServiceUnavailable:
+      description: The host serving this capsule is unreachable (host_unavailable)
       content:
         application/json:
           schema:
@@ -3568,6 +3826,12 @@ components:
         key_prefix:
           type: string
           description: Display prefix (e.g. "wrn_ab12cd34...")
+        created_by:
+          type: string
+          description: ID of the user who created the key
+        creator_email:
+          type: string
+          description: Email of the creating user. Omitted if unavailable.
         created_at:
           type: string
           format: date-time
@@ -3601,6 +3865,16 @@ components:
             after this duration of inactivity (no exec or ping). 0 means
             no auto-pause. Positive values below 60 are silently clamped
             to 60 (the agent's startup envelope).
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+          nullable: true
+          description: >
+            Optional user-supplied key/value labels attached to the capsule.
+            Max 20 keys; keys match [a-zA-Z0-9][a-zA-Z0-9._-]{0,63}; values
+            are at most 64 characters. Reserved system keys (kernel_version,
+            vmm_version, agent_version, envd_version) are rejected. Metadata is
+            set at create-time only.
 
     UsageResponse:
       type: object
@@ -3678,7 +3952,21 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, starting, running, pausing, paused, snapshotting, resuming, stopping, hibernated, stopped, missing, error]
+          enum:
+            [
+              pending,
+              starting,
+              running,
+              pausing,
+              paused,
+              snapshotting,
+              resuming,
+              stopping,
+              hibernated,
+              stopped,
+              missing,
+              error,
+            ]
         template:
           type: string
         vcpus:
@@ -3703,12 +3991,13 @@ components:
           format: date-time
         metadata:
           type: object
-          additionalProperties: {type: string}
+          additionalProperties: { type: string }
           nullable: true
           description: |
-            Free-form key/value labels attached at create-time. Also carries
-            agent-side version info (kernel_version, vmm_version,
-            agent_version, envd_version) when running.
+            User-supplied key/value labels attached at create-time. Once the
+            capsule is running this also carries agent-side system version info
+            (kernel_version, vmm_version, agent_version, envd_version); those
+            reserved keys are owned by the system and cannot be set by users.
         disk_size_mb:
           type: integer
           description: Maximum disk capacity in MiB.
@@ -3762,7 +4051,7 @@ components:
             cannot be deleted.
         metadata:
           type: object
-          additionalProperties: {type: string}
+          additionalProperties: { type: string }
           nullable: true
 
     AdminTemplate:
@@ -3822,10 +4111,10 @@ components:
           type: object
           additionalProperties:
             type: string
-          description: Environment variables for the process (background exec only)
+          description: Environment variables for the process (applies to both foreground and background exec)
         cwd:
           type: string
-          description: Working directory for the process (background exec only)
+          description: Working directory for the process (applies to both foreground and background exec)
 
     BackgroundExecResponse:
       type: object
@@ -4019,6 +4308,15 @@ components:
         refresh_token:
           type: string
           description: Refresh token for obtaining new JWTs. Valid for 60 days; rotated on each use.
+        cert_pem:
+          type: string
+          description: mTLS client certificate (PEM). Only returned when the host enrolls into mTLS.
+        key_pem:
+          type: string
+          description: mTLS client private key (PEM). Only returned when the host enrolls into mTLS.
+        ca_cert_pem:
+          type: string
+          description: CA certificate (PEM) to verify the control plane. Only returned when the host enrolls into mTLS.
 
     Host:
       type: object
@@ -4106,6 +4404,15 @@ components:
         refresh_token:
           type: string
           description: New refresh token. Valid for 60 days; old token is revoked.
+        cert_pem:
+          type: string
+          description: mTLS client certificate (PEM). Only returned when the host enrolls into mTLS.
+        key_pem:
+          type: string
+          description: mTLS client private key (PEM). Only returned when the host enrolls into mTLS.
+        ca_cert_pem:
+          type: string
+          description: CA certificate (PEM) to verify the control plane. Only returned when the host enrolls into mTLS.
 
     HostDeletePreview:
       type: object
@@ -4126,7 +4433,7 @@ components:
           properties:
             code:
               type: string
-              example: host_has_sandboxes
+              example: has_active_sandboxes
             message:
               type: string
             sandbox_ids:
@@ -4160,6 +4467,9 @@ components:
         slug:
           type: string
           description: Immutable 12-char hex slug (e.g. a1b2c3-d1e2f3)
+        is_byoc:
+          type: boolean
+          description: Whether the team runs on its own bring-your-own-cloud hosts
         created_at:
           type: string
           format: date-time
@@ -4177,6 +4487,8 @@ components:
       type: object
       properties:
         user_id:
+          type: string
+        name:
           type: string
         email:
           type: string
@@ -4371,11 +4683,22 @@ components:
     MeResponse:
       type: object
       properties:
+        user_id:
+          type: string
+        team_id:
+          type: string
+          description: The user's currently active team
         name:
           type: string
         email:
           type: string
           format: email
+        role:
+          type: string
+          description: The user's role within the active team
+        is_admin:
+          type: boolean
+          description: Whether the user is a platform administrator
         has_password:
           type: boolean
           description: Whether the user has a password set (false for OAuth-only accounts)
@@ -4413,15 +4736,15 @@ components:
     AuditLogEntry:
       type: object
       properties:
-        id: {type: string}
-        actor_type: {type: string, enum: [user, api_key, host, system]}
-        actor_id: {type: string}
-        actor_name: {type: string}
-        resource_type: {type: string}
-        resource_id: {type: string}
-        action: {type: string}
-        scope: {type: string}
-        status: {type: string, enum: [success, failure]}
+        id: { type: string }
+        actor_type: { type: string, enum: [user, api_key, host, system] }
+        actor_id: { type: string }
+        actor_name: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: string }
+        action: { type: string }
+        scope: { type: string }
+        status: { type: string, enum: [success, failure] }
         metadata:
           type: object
           additionalProperties: true
@@ -4458,17 +4781,17 @@ components:
         resource:
           type: object
           properties:
-            id: {type: string}
-            type: {type: string}
+            id: { type: string }
+            type: { type: string }
         actor:
           type: object
           properties:
-            type: {type: string, enum: [user, api_key, system]}
-            id: {type: string}
-            name: {type: string}
+            type: { type: string, enum: [user, api_key, system] }
+            id: { type: string }
+            name: { type: string }
         metadata:
           type: object
-          additionalProperties: {type: string}
+          additionalProperties: { type: string }
           description: |
             Event-specific context. Examples: `reason` (ttl_expired,
             host_failure, cleanup_after_create_error, orphaned),

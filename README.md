@@ -1,8 +1,8 @@
 # Wrenn
 
-Secure infrastructure for AI
+Runtime where AI engineers live
 
-Wrenn is an open-source self-hosted dev environment platform. Each capsule is a fully isolated virtual machine — booted in seconds, persistent across sessions. Run the control plane anywhere, deploy a single agent binary on each compute host.
+Wrenn is an open-source platform for running AI coding agents. Each project gets a persistent, isolated microVM workspace — booted in seconds, stateful across sessions — where agents edit code, run tests, debug, and ship continuously while humans supervise via SDKs and chat surfaces. Available hosted or fully self-hosted: run the control plane anywhere, deploy a single agent binary on each compute host you own.
 
 ## Prerequisites
 

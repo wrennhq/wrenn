@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"time"
@@ -243,30 +242,18 @@ func (c *Client) ExecStream(ctx context.Context, cmd string, args ...string) (<-
 }
 
 // WriteFile writes content to a file inside the sandbox via envd's REST endpoint.
-// envd expects POST /files?path=...&username=root with multipart/form-data (field name "file").
+// envd expects PUT /files?path=...&username=root with the raw file content as the body.
 func (c *Client) WriteFile(ctx context.Context, path string, content []byte) error {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	part, err := writer.CreateFormFile("file", "upload")
-	if err != nil {
-		return fmt.Errorf("create multipart: %w", err)
-	}
-	if _, err := part.Write(content); err != nil {
-		return fmt.Errorf("write multipart: %w", err)
-	}
-	writer.Close()
-
 	u := fmt.Sprintf("%s/files?%s", c.base, url.Values{
 		"path":     {path},
 		"username": {"root"},
 	}.Encode())
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(content))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", "application/octet-stream")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

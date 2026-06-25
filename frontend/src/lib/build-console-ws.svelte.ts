@@ -103,7 +103,11 @@ export function createBuildConsole(buildId: string) {
 					exit: ev.exit ?? 0,
 					elapsedMs: ev.elapsed_ms ?? 0
 				});
-				if (typeof ev.step === 'number' && ev.step > currentStep) currentStep = ev.step;
+				// The healthcheck is shown as a trailing pseudo-step but is not
+				// counted in total_steps, so it must not advance the counter.
+				if (ev.phase !== 'healthcheck' && typeof ev.step === 'number' && ev.step > currentStep) {
+					currentStep = ev.step;
+				}
 				break;
 			}
 			case 'build-status':

@@ -86,10 +86,20 @@ pub async fn post_init(
             tracing::info!("lifecycle changed, restarting port subsystem");
             port_sub.restart();
         }
-        // Force chrony to step the clock immediately. chronyd is launched by
-        // wrenn-init.sh and disciplines against PHC (/dev/ptp0), so the host
-        // wall time is already available — `makestep` just bypasses chrony's
-        // normal slewing and snaps the clock in one go. Best effort.
+        // Instant wall-clock step on resume. The host wall time arrives in
+        // init_req.timestamp; chrony's PHC refclock needs several poll cycles
+        // (poll 2 = 4s) before it has a valid offset to step to, so makestep
+        // alone leaves the clock stale for seconds after a resume. Set
+        // CLOCK_REALTIME directly here for an immediate jump, then let chronyd
+        // keep disciplining drift against /dev/ptp0.
+        if let Some(ref ts_str) = init_req.timestamp {
+            if let Ok(nanos) = parse_timestamp_to_nanos(ts_str) {
+                step_realtime_clock(nanos);
+            }
+        }
+        // Also nudge chrony to re-sync its internal offset against the
+        // now-correct clock + PHC immediately, bypassing its slew period.
+        // Best effort — the direct step above already corrected wall time.
         tokio::spawn(async {
             match tokio::process::Command::new("chronyc")
                 .args(["makestep"])
@@ -112,7 +122,8 @@ pub async fn post_init(
 
     // Idempotent timestamp check. Run after lifecycle handling so a
     // stale-timestamp /init still gets to refresh ports + step clock.
-    // No userspace clock_settime here — chrony owns time discipline.
+    // The actual clock step happens in the lifecycle block above; this
+    // only gates the rest of the apply path on monotonic timestamps.
     if let Some(ref ts_str) = init_req.timestamp {
         if let Ok(ts) = parse_timestamp_to_nanos(ts_str) {
             if !state.last_set_time.set_to_greater(ts) {
@@ -315,6 +326,30 @@ fn write_run_file(name: &str, value: &str) {
     }
     if let Err(e) = std::fs::write(dir.join(name), value) {
         tracing::warn!(error = %e, name, "failed to write run file");
+    }
+}
+
+/// Hard-steps CLOCK_REALTIME to `nanos` since the Unix epoch. Requires
+/// CAP_SYS_TIME, which envd has as PID 1 in the guest. Best effort — on
+/// failure the clock is left for chrony to discipline against the PHC.
+// libc::time_t is deprecated pending musl 1.2's 64-bit switch, but the
+// timespec.tv_sec field is still typed as time_t on this target.
+#[allow(deprecated)]
+fn step_realtime_clock(nanos: i64) {
+    let ts = libc::timespec {
+        tv_sec: (nanos / 1_000_000_000) as libc::time_t,
+        tv_nsec: (nanos % 1_000_000_000) as libc::c_long,
+    };
+    // SAFETY: ts is a valid timespec; CLOCK_REALTIME is settable as root.
+    let rc = unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) };
+    if rc != 0 {
+        tracing::warn!(error = %std::io::Error::last_os_error(),
+            "clock_settime(CLOCK_REALTIME) failed");
+    } else {
+        tracing::info!(
+            nanos,
+            "stepped CLOCK_REALTIME from host timestamp on resume"
+        );
     }
 }
 

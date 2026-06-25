@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -456,52 +455,46 @@ func (s *Server) WriteFileStream(
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
 
-	// Use io.Pipe to stream chunks into a multipart body for envd's REST endpoint.
+	// Use io.Pipe to stream raw chunks into envd's REST endpoint body.
 	pr, pw := io.Pipe()
-	mpWriter := multipart.NewWriter(pw)
 
-	// Write multipart data in a goroutine.
+	// Pump chunks from the Connect stream into the request body in a goroutine.
 	errCh := make(chan error, 1)
 	go func() {
-		defer pw.Close()
-		part, err := mpWriter.CreateFormFile("file", "upload")
-		if err != nil {
-			errCh <- fmt.Errorf("create multipart: %w", err)
-			return
-		}
-
 		for stream.Receive() {
 			chunk := stream.Msg().GetChunk()
 			if len(chunk) == 0 {
 				continue
 			}
-			if _, err := part.Write(chunk); err != nil {
+			if _, err := pw.Write(chunk); err != nil {
+				pw.CloseWithError(err)
 				errCh <- fmt.Errorf("write chunk: %w", err)
 				return
 			}
 		}
 		if err := stream.Err(); err != nil {
+			pw.CloseWithError(err)
 			errCh <- err
 			return
 		}
-		mpWriter.Close()
+		pw.Close()
 		errCh <- nil
 	}()
 
-	// Send the streaming multipart body to envd.
+	// Send the raw streaming body to envd.
 	base := client.BaseURL()
 	u := fmt.Sprintf("%s/files?%s", base, url.Values{
 		"path":     {meta.Path},
 		"username": {"root"},
 	}.Encode())
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, pr)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, u, pr)
 	if err != nil {
 		pw.CloseWithError(err)
 		<-errCh
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create request: %w", err))
 	}
-	httpReq.Header.Set("Content-Type", mpWriter.FormDataContentType())
+	httpReq.Header.Set("Content-Type", "application/octet-stream")
 
 	resp, err := client.StreamingHTTPClient().Do(httpReq)
 	if err != nil {
@@ -689,7 +682,7 @@ func (s *Server) PtyAttach(
 ) error {
 	msg := req.Msg
 
-	events, err := s.mgr.PtyAttach(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Cols, msg.Rows, msg.Envs, msg.Cwd)
+	events, err := s.mgr.PtyAttach(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Cols, msg.Rows, msg.Envs, msg.Cwd, msg.User, msg.Reconnect)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("pty attach: %w", err))
 	}

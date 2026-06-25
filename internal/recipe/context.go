@@ -21,30 +21,33 @@ type ExecContext struct {
 var envRegex = regexp.MustCompile(`\$\$|\$\{([a-zA-Z0-9_]*)\}|\$([a-zA-Z0-9_]+)`)
 
 // WrappedCommand returns the full shell command for a RUN step with context
-// applied. The result is passed as the argument to /bin/sh -c.
+// applied. The result is handed to the exec layer as a bare command (no
+// "-c" wrapper), so the user's default login shell — resolved by envd from
+// /etc/passwd inside the VM — interprets it.
 //
 // If WORKDIR and/or ENV are set, they are prepended as a shell preamble:
 //
-//	cd '/the/dir' && KEY='val' /bin/sh -c 'original command'
+//	cd '/the/dir' && export KEY='val' && original command
 //
-// If USER is set to a non-root user, the entire command is wrapped with su:
+// If USER is set to a non-root user, the entire command is wrapped with su.
+// Dropping `-s` lets su run it under that user's login shell rather than
+// forcing /bin/sh:
 //
-//	su <user> -s /bin/sh -c '<preamble + command>'
+//	su <user> -c '<preamble + command>'
 func (c *ExecContext) WrappedCommand(cmd string) string {
 	inner := c.innerCommand(cmd)
 	if c.User != "" && c.User != "root" {
-		return "su " + shellescape(c.User) + " -s /bin/sh -c " + shellescape(inner)
+		return "su " + shellescape(c.User) + " -c " + shellescape(inner)
 	}
 	return inner
 }
 
-// innerCommand builds the command with workdir/env preamble but without user wrapping.
+// innerCommand applies the workdir/env preamble to cmd without user wrapping.
+// The preamble cds into WORKDIR and exports ENV vars, then the command runs in
+// the same (login) shell — no nested shell is named, so the user's default
+// shell interprets the command and any pipes/operators within it.
 func (c *ExecContext) innerCommand(cmd string) string {
-	prefix := c.shellPrefix()
-	if prefix == "" {
-		return cmd
-	}
-	return prefix + "/bin/sh -c " + shellescape(cmd)
+	return c.shellPrefix() + cmd
 }
 
 // StartCommand returns the shell command for a START step. The process is
@@ -55,16 +58,22 @@ func (c *ExecContext) innerCommand(cmd string) string {
 // Multiple START steps can be issued to run several background processes
 // simultaneously before a healthcheck is evaluated.
 func (c *ExecContext) StartCommand(cmd string) string {
+	// Launch the background process under the user's login shell. $SHELL is set
+	// to that shell by su (non-root) or by envd (root), with /bin/sh as a safe
+	// fallback if it is somehow unset.
 	prefix := c.shellPrefix()
-	inner := prefix + "nohup /bin/sh -c " + shellescape(cmd) + " >/dev/null 2>&1 &"
+	inner := prefix + `nohup "${SHELL:-/bin/sh}" -c ` + shellescape(cmd) + " >/dev/null 2>&1 &"
 	if c.User != "" && c.User != "root" {
-		return "su " + shellescape(c.User) + " -s /bin/sh -c " + shellescape(inner)
+		return "su " + shellescape(c.User) + " -c " + shellescape(inner)
 	}
 	return inner
 }
 
-// shellPrefix builds the "cd ... && KEY=val " preamble for a shell command.
-// Returns an empty string when no context is set.
+// shellPrefix builds the "cd '/dir' && export KEY='val' && " preamble for a
+// shell command. ENV vars are exported (not just assignment-prefixed) so they
+// apply to the whole command — including any pipes or && chains — and to child
+// processes, matching Dockerfile ENV semantics. Returns an empty string when no
+// context is set.
 func (c *ExecContext) shellPrefix() string {
 	if c.WorkDir == "" && len(c.EnvVars) == 0 {
 		return ""
@@ -75,16 +84,20 @@ func (c *ExecContext) shellPrefix() string {
 		sb.WriteString(shellescape(c.WorkDir))
 		sb.WriteString(" && ")
 	}
-	keys := make([]string, 0, len(c.EnvVars))
-	for k := range c.EnvVars {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, k := range keys {
-		sb.WriteString(k)
-		sb.WriteByte('=')
-		sb.WriteString(shellescape(c.EnvVars[k]))
-		sb.WriteByte(' ')
+	if len(c.EnvVars) > 0 {
+		keys := make([]string, 0, len(c.EnvVars))
+		for k := range c.EnvVars {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		sb.WriteString("export")
+		for _, k := range keys {
+			sb.WriteByte(' ')
+			sb.WriteString(k)
+			sb.WriteByte('=')
+			sb.WriteString(shellescape(c.EnvVars[k]))
+		}
+		sb.WriteString(" && ")
 	}
 	return sb.String()
 }

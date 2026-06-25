@@ -225,7 +225,7 @@
 					}
 				}
 				capsules = capsules;
-			} else if (event.event === 'capsule.create') {
+			} else if (event.event === 'capsule.create' || event.event === 'capsule.state.changed') {
 				capsules = [event.sandbox, ...capsules];
 				newCapsuleId = sandboxId;
 				setTimeout(() => { newCapsuleId = null; }, 1600);

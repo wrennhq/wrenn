@@ -23,14 +23,14 @@ type PtyEvent struct {
 // PtyStart starts a new PTY process in the guest and returns a channel of events.
 // The tag is the stable identifier used to reconnect via PtyConnect.
 // The channel is closed when the process ends or ctx is cancelled.
-// NOTE: The user parameter from PtyAttachRequest is not yet supported by envd's
-// ProcessConfig proto. When envd adds user support, thread it through here.
-func (c *Client) PtyStart(ctx context.Context, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd string) (<-chan PtyEvent, error) {
+// An empty user runs as the sandbox default user.
+func (c *Client) PtyStart(ctx context.Context, tag, cmd string, args []string, cols, rows uint32, envs map[string]string, cwd, user string) (<-chan PtyEvent, error) {
 	stdin := true
 	cfg := &envdpb.ProcessConfig{
 		Cmd:  cmd,
 		Args: args,
 		Envs: envs,
+		User: user,
 	}
 	if cwd != "" {
 		cfg.Cwd = &cwd

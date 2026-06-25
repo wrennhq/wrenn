@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 use std::io::Read;
+use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use connectrpc::{ConnectError, ErrorCode};
 use nix::pty::{Winsize, openpty};
@@ -15,6 +17,15 @@ use crate::rpc::pb::process::*;
 const STD_CHUNK_SIZE: usize = 32768;
 const PTY_CHUNK_SIZE: usize = 16384;
 const BROADCAST_CAPACITY: usize = 4096;
+
+// Coalescing window for output reads. After the first read of a burst we keep
+// draining whatever is already available on the fd for up to COALESCE_FLUSH_MS
+// (or until COALESCE_CAP bytes accumulate), then publish one merged chunk. This
+// collapses a full-screen TUI redraw — which the app emits as many small writes
+// — into a single stream message, cutting per-message framing/encoding overhead
+// across the whole path. Total added latency per flush is bounded by the window.
+const COALESCE_FLUSH_MS: u64 = 4;
+const COALESCE_CAP: usize = 64 * 1024;
 
 // Upper bound on the per-process output kept for replay. A late Connect gets
 // the most recent OUTPUT_LOG_CAPACITY bytes (older output is evicted) so the
@@ -64,6 +75,72 @@ impl OutputLog {
 fn ev_len(ev: &DataEvent) -> usize {
     match ev {
         DataEvent::Stdout(d) | DataEvent::Stderr(d) | DataEvent::Pty(d) => d.len(),
+    }
+}
+
+/// Blocking read loop that coalesces bursts: once a read returns, keep draining
+/// whatever is already available on the fd (bounded by [`COALESCE_FLUSH_MS`] and
+/// [`COALESCE_CAP`]) before handing the accumulated bytes to `publish`. A full
+/// TUI redraw — emitted by the app as many small writes — collapses into one
+/// output message instead of dozens. Latency added per flush is bounded by the
+/// window, so interactive feel is preserved even for a slow trickle of output.
+fn coalesce_read_loop<R, F>(mut reader: R, chunk_size: usize, mut publish: F)
+where
+    R: Read + AsRawFd,
+    F: FnMut(Vec<u8>),
+{
+    let fd = reader.as_raw_fd();
+    let mut rbuf = vec![0u8; chunk_size];
+    let mut acc: Vec<u8> = Vec::new();
+    loop {
+        match reader.read(&mut rbuf) {
+            Ok(0) => break,
+            Ok(n) => {
+                acc.extend_from_slice(&rbuf[..n]);
+                let deadline = Instant::now() + Duration::from_millis(COALESCE_FLUSH_MS);
+                while acc.len() < COALESCE_CAP {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    let mut pfd = libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    let timeout_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
+                    let r = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+                    if r < 0 {
+                        // Interrupted by a signal (envd runs as PID 1, so SIGCHLD
+                        // et al. land here): retry within the remaining window
+                        // instead of cutting the coalesce burst short.
+                        let errno = std::io::Error::last_os_error().raw_os_error();
+                        if errno == Some(libc::EINTR) {
+                            continue;
+                        }
+                        break;
+                    }
+                    if r == 0 || (pfd.revents & libc::POLLIN) == 0 {
+                        break;
+                    }
+                    match reader.read(&mut rbuf) {
+                        Ok(0) => {
+                            if !acc.is_empty() {
+                                publish(std::mem::take(&mut acc));
+                            }
+                            return;
+                        }
+                        Ok(m) => acc.extend_from_slice(&rbuf[..m]),
+                        Err(_) => break,
+                    }
+                }
+                publish(std::mem::take(&mut acc));
+            }
+            Err(_) => break,
+        }
+    }
+    if !acc.is_empty() {
+        publish(acc);
     }
 }
 
@@ -259,7 +336,12 @@ test -f "${HOME}/.bashrc" && . "${HOME}/.bashrc""#;
     //     ($1 is cmd_str; $0 of the inner shell is the shell path).
     //   - with args: exec the program + args directly, no shell interpretation
     //     (backward-compatible program/argv form).
-    let target = if args.is_empty() {
+    let target = if cmd_str.is_empty() && args.is_empty() {
+        // No command at all (e.g. an interactive PTY session with no explicit
+        // command): launch the user's login shell directly. Under a pty its
+        // stdin is a tty, so it starts interactively.
+        format!(r#""{shell}""#)
+    } else if args.is_empty() {
         format!(r#""{shell}" -c "$1" "{shell}""#)
     } else {
         r#""$@""#.to_string()
@@ -311,7 +393,7 @@ exec {nice_prefix}{target}"#
         let master_fd = pty_result.master;
         let slave_fd = pty_result.slave;
 
-        let mut command = std::process::Command::new("/bin/bash");
+        let mut command = std::process::Command::new(&shell);
         command
             .args(&wrapper_args)
             .env_clear()
@@ -373,17 +455,9 @@ exec {nice_prefix}{target}"#
 
         let handle_for_reader = Arc::clone(&handle);
         let pty_reader = std::thread::spawn(move || {
-            let mut master = master_clone;
-            let mut buf = vec![0u8; PTY_CHUNK_SIZE];
-            loop {
-                match master.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        handle_for_reader.publish_data(DataEvent::Pty(buf[..n].to_vec()));
-                    }
-                    Err(_) => break,
-                }
-            }
+            coalesce_read_loop(master_clone, PTY_CHUNK_SIZE, |chunk| {
+                handle_for_reader.publish_data(DataEvent::Pty(chunk));
+            });
         });
 
         let end_tx_clone = end_tx.clone();
@@ -419,7 +493,7 @@ exec {nice_prefix}{target}"#
             end_rx,
         })
     } else {
-        let mut command = std::process::Command::new("/bin/bash");
+        let mut command = std::process::Command::new(&shell);
         command
             .args(&wrapper_args)
             .env_clear()
@@ -473,35 +547,21 @@ exec {nice_prefix}{target}"#
 
         let mut output_readers: Vec<std::thread::JoinHandle<()>> = Vec::new();
 
-        if let Some(mut out) = stdout {
+        if let Some(out) = stdout {
             let handle_for_reader = Arc::clone(&handle);
             output_readers.push(std::thread::spawn(move || {
-                let mut buf = vec![0u8; STD_CHUNK_SIZE];
-                loop {
-                    match out.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            handle_for_reader.publish_data(DataEvent::Stdout(buf[..n].to_vec()));
-                        }
-                        Err(_) => break,
-                    }
-                }
+                coalesce_read_loop(out, STD_CHUNK_SIZE, |chunk| {
+                    handle_for_reader.publish_data(DataEvent::Stdout(chunk));
+                });
             }));
         }
 
-        if let Some(mut err_pipe) = stderr {
+        if let Some(err_pipe) = stderr {
             let handle_for_reader = Arc::clone(&handle);
             output_readers.push(std::thread::spawn(move || {
-                let mut buf = vec![0u8; STD_CHUNK_SIZE];
-                loop {
-                    match err_pipe.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            handle_for_reader.publish_data(DataEvent::Stderr(buf[..n].to_vec()));
-                        }
-                        Err(_) => break,
-                    }
-                }
+                coalesce_read_loop(err_pipe, STD_CHUNK_SIZE, |chunk| {
+                    handle_for_reader.publish_data(DataEvent::Stderr(chunk));
+                });
             }));
         }
 

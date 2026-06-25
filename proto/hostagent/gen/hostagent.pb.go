@@ -2985,8 +2985,8 @@ type PtyAttachRequest struct {
 	// Tag is the stable identifier for this PTY session (e.g. "pty-abc123de").
 	// Chosen by the caller and used to reconnect later.
 	Tag string `protobuf:"bytes,2,opt,name=tag,proto3" json:"tag,omitempty"`
-	// If cmd is non-empty, a new process is started. If empty, reconnects to
-	// the existing process identified by tag.
+	// Command to run for a new session. May be empty to launch the user's
+	// default login shell. Ignored when reconnect is true.
 	Cmd  string   `protobuf:"bytes,3,opt,name=cmd,proto3" json:"cmd,omitempty"`
 	Args []string `protobuf:"bytes,4,rep,name=args,proto3" json:"args,omitempty"`
 	Cols uint32   `protobuf:"varint,5,opt,name=cols,proto3" json:"cols,omitempty"`
@@ -2996,7 +2996,11 @@ type PtyAttachRequest struct {
 	// Working directory. Empty means default.
 	Cwd string `protobuf:"bytes,8,opt,name=cwd,proto3" json:"cwd,omitempty"`
 	// User to run as. Empty means default (root).
-	User          string `protobuf:"bytes,9,opt,name=user,proto3" json:"user,omitempty"`
+	User string `protobuf:"bytes,9,opt,name=user,proto3" json:"user,omitempty"`
+	// If true, reconnect to the existing process identified by tag instead of
+	// starting a new one. Distinguishes reconnect from a start whose cmd is
+	// empty (login-shell default).
+	Reconnect     bool `protobuf:"varint,10,opt,name=reconnect,proto3" json:"reconnect,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3092,6 +3096,13 @@ func (x *PtyAttachRequest) GetUser() string {
 		return x.User
 	}
 	return ""
+}
+
+func (x *PtyAttachRequest) GetReconnect() bool {
+	if x != nil {
+		return x.Reconnect
+	}
+	return false
 }
 
 type PtyAttachResponse struct {
@@ -4490,7 +4501,7 @@ const file_hostagent_proto_rawDesc = "" +
 	"templateId\"8\n" +
 	"\x17GetTemplateSizeResponse\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x01 \x01(\x03R\tsizeBytes\"\xae\x02\n" +
+	"size_bytes\x18\x01 \x01(\x03R\tsizeBytes\"\xcc\x02\n" +
 	"\x10PtyAttachRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x10\n" +
@@ -4501,7 +4512,9 @@ const file_hostagent_proto_rawDesc = "" +
 	"\x04rows\x18\x06 \x01(\rR\x04rows\x12<\n" +
 	"\x04envs\x18\a \x03(\v2(.hostagent.v1.PtyAttachRequest.EnvsEntryR\x04envs\x12\x10\n" +
 	"\x03cwd\x18\b \x01(\tR\x03cwd\x12\x12\n" +
-	"\x04user\x18\t \x01(\tR\x04user\x1a7\n" +
+	"\x04user\x18\t \x01(\tR\x04user\x12\x1c\n" +
+	"\treconnect\x18\n" +
+	" \x01(\bR\treconnect\x1a7\n" +
 	"\tEnvsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb8\x01\n" +

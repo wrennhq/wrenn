@@ -37,6 +37,9 @@ message ProcessConfig {
 
     map<string, string> envs = 3;
     optional string cwd = 4;
+
+    // User to run the process as. Empty means the sandbox default user.
+    string user = 5;
 }
 
 message ListRequest {}

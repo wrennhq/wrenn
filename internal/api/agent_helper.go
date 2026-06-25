@@ -62,12 +62,19 @@ func requireRunningSandbox(w http.ResponseWriter, r *http.Request, queries *db.Q
 // SDK clients via X-API-Key. Requests without an auth context are rejected
 // with a 401 before the upgrade.
 func upgradeAndAuthenticate(w http.ResponseWriter, r *http.Request) (*websocket.Conn, auth.AuthContext, error) {
+	return upgradeAndAuthenticateWith(w, r, &upgrader)
+}
+
+// upgradeAndAuthenticateWith is upgradeAndAuthenticate with a caller-supplied
+// upgrader, used by the PTY handler to negotiate per-message compression on that
+// endpoint alone without affecting the other WebSocket routes.
+func upgradeAndAuthenticateWith(w http.ResponseWriter, r *http.Request, up *websocket.Upgrader) (*websocket.Conn, auth.AuthContext, error) {
 	ac, hasAuth := auth.FromContext(r.Context())
 	if !hasAuth {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "session cookie or X-API-Key required")
 		return nil, auth.AuthContext{}, fmt.Errorf("unauthenticated")
 	}
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := up.Upgrade(w, r, nil)
 	if err != nil {
 		return nil, auth.AuthContext{}, fmt.Errorf("websocket upgrade: %w", err)
 	}

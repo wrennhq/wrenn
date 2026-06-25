@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -24,10 +23,18 @@ import (
 
 const (
 	ptyKeepaliveInterval = 30 * time.Second
-	ptyDefaultCmd        = "/bin/bash"
 	ptyDefaultCols       = 80
 	ptyDefaultRows       = 24
 )
+
+// ptyUpgrader enables permessage-deflate (RFC 7692) for the PTY WebSocket only.
+// TUI output is highly compressible (repeated escape sequences, runs of spaces,
+// repeated SGR color codes); the browser negotiates compression automatically.
+// The other WebSocket endpoints keep the default uncompressed upgrader.
+var ptyUpgrader = websocket.Upgrader{
+	CheckOrigin:       func(r *http.Request) bool { return true },
+	EnableCompression: true,
+}
 
 type ptyHandler struct {
 	db   *db.Queries
@@ -40,9 +47,12 @@ func newPtyHandler(db *db.Queries, pool *lifecycle.HostClientPool) *ptyHandler {
 
 // --- WebSocket message types ---
 
-// wsPtyIn is the inbound message from the client.
+// wsPtyIn is an inbound message from the client. Control messages (start,
+// connect, resize, kill) arrive as JSON text frames. Keystroke input arrives as
+// raw binary frames and is represented here with Type "input" and the bytes in
+// inputBytes (never JSON-encoded).
 type wsPtyIn struct {
-	Type string            `json:"type"`           // "start", "connect", "input", "resize", "kill"
+	Type string            `json:"type"`           // "start", "connect", "resize", "kill"
 	Cmd  string            `json:"cmd,omitempty"`  // for "start"
 	Args []string          `json:"args,omitempty"` // for "start"
 	Cols uint32            `json:"cols,omitempty"` // for "start", "resize"
@@ -51,15 +61,17 @@ type wsPtyIn struct {
 	Cwd  string            `json:"cwd,omitempty"`  // for "start"
 	User string            `json:"user,omitempty"` // for "start"
 	Tag  string            `json:"tag,omitempty"`  // for "connect"
-	Data string            `json:"data,omitempty"` // for "input" (base64)
+
+	inputBytes []byte // raw keystrokes from a binary frame (Type == "input")
 }
 
-// wsPtyOut is the outbound message to the client.
+// wsPtyOut is an outbound control message to the client (JSON text frame). PTY
+// output is sent separately as raw binary frames, not through this struct.
 type wsPtyOut struct {
-	Type     string `json:"type"`                // "started", "output", "exit", "error"
+	Type     string `json:"type"`                // "started", "exit", "error", "ping"
 	Tag      string `json:"tag,omitempty"`       // for "started"
 	PID      uint32 `json:"pid,omitempty"`       // for "started"
-	Data     string `json:"data,omitempty"`      // for "output" (base64), "error"
+	Data     string `json:"data,omitempty"`      // for "error"
 	ExitCode *int32 `json:"exit_code,omitempty"` // for "exit"
 	Fatal    bool   `json:"fatal,omitempty"`     // for "error"
 }
@@ -78,6 +90,17 @@ func (w *wsWriter) writeJSON(v any) {
 	}
 }
 
+// writeBinary sends raw PTY output as a binary WebSocket frame. Binary avoids
+// the ~33% base64 inflation of the JSON path; the negotiated permessage-deflate
+// compression then runs on the raw bytes for maximum reduction.
+func (w *wsWriter) writeBinary(data []byte) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
+		slog.Debug("pty websocket binary write error", "error", err)
+	}
+}
+
 // PtySession handles WS /v1/capsules/{id}/pty.
 func (h *ptyHandler) PtySession(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
@@ -89,7 +112,7 @@ func (h *ptyHandler) PtySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, ac, err := upgradeAndAuthenticate(w, r)
+	conn, ac, err := upgradeAndAuthenticateWith(w, r, &ptyUpgrader)
 	if err != nil {
 		slog.Error("pty websocket upgrade/auth failed", "error", err)
 		return
@@ -147,10 +170,9 @@ func (h *ptyHandler) handleStart(
 	sandboxIDStr string,
 	msg wsPtyIn,
 ) {
+	// An empty cmd is intentional: envd launches the user's default login shell
+	// (resolved from /etc/passwd) when no command is given.
 	cmd := msg.Cmd
-	if cmd == "" {
-		cmd = ptyDefaultCmd
-	}
 	cols := msg.Cols
 	if cols == 0 {
 		cols = ptyDefaultCols
@@ -213,6 +235,7 @@ func (h *ptyHandler) handleConnect(
 	stream, err := agent.PtyAttach(ctx, connect.NewRequest(&pb.PtyAttachRequest{
 		SandboxId: sandboxIDStr,
 		Tag:       msg.Tag,
+		Reconnect: true,
 	}))
 	if err != nil {
 		ws.writeJSON(wsPtyOut{Type: "error", Data: "failed to connect to pty: " + err.Error(), Fatal: true})
@@ -251,10 +274,7 @@ func runPtyLoop(
 				ws.writeJSON(wsPtyOut{Type: "started", Tag: ev.Started.Tag, PID: ev.Started.Pid})
 
 			case *pb.PtyAttachResponse_Output:
-				ws.writeJSON(wsPtyOut{
-					Type: "output",
-					Data: base64.StdEncoding.EncodeToString(ev.Output.Data),
-				})
+				ws.writeBinary(ev.Output.Data)
 
 			case *pb.PtyAttachResponse_Exited:
 				exitCode := ev.Exited.ExitCode
@@ -282,13 +302,16 @@ func runPtyLoop(
 		defer cancel()
 
 		for {
-			_, raw, err := ws.conn.ReadMessage()
+			mt, raw, err := ws.conn.ReadMessage()
 			if err != nil {
 				return
 			}
 
 			var msg wsPtyIn
-			if json.Unmarshal(raw, &msg) != nil {
+			if mt == websocket.BinaryMessage {
+				// Raw keystrokes — forward bytes verbatim.
+				msg = wsPtyIn{Type: "input", inputBytes: raw}
+			} else if json.Unmarshal(raw, &msg) != nil {
 				continue
 			}
 
@@ -328,14 +351,13 @@ func runPtyLoop(
 
 			switch msg.Type {
 			case "input":
-				data, err := base64.StdEncoding.DecodeString(msg.Data)
-				if err != nil {
+				// Coalesce: drain any queued input messages into a single RPC.
+				var data []byte
+				data, pending = coalescePtyInput(inputCh, msg.inputBytes)
+				if len(data) == 0 {
 					rpcCancel()
 					continue
 				}
-
-				// Coalesce: drain any queued input messages into a single RPC.
-				data, pending = coalescePtyInput(inputCh, data)
 
 				if _, err := agent.PtySendInput(rpcCtx, connect.NewRequest(&pb.PtySendInputRequest{
 					SandboxId: sandboxID,
@@ -413,11 +435,7 @@ func coalescePtyInput(ch <-chan wsPtyIn, buf []byte) ([]byte, *wsPtyIn) {
 			if msg.Type != "input" {
 				return buf, &msg
 			}
-			data, err := base64.StdEncoding.DecodeString(msg.Data)
-			if err != nil {
-				continue
-			}
-			buf = append(buf, data...)
+			buf = append(buf, msg.inputBytes...)
 		default:
 			return buf, nil
 		}
