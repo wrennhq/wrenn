@@ -169,6 +169,13 @@ func compareSemver(a, b string) int {
 	return 0
 }
 
+// SlotsDir returns the directory holding network slot claim files. Each
+// allocated slot index is an empty file named after the index, created with
+// O_EXCL so concurrent processes can never claim the same slot.
+func SlotsDir(wrennDir string) string {
+	return filepath.Join(wrennDir, "slots")
+}
+
 // ImagesRoot returns the root images directory.
 func ImagesRoot(wrennDir string) string {
 	return filepath.Join(wrennDir, "images")

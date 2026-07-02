@@ -41,13 +41,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
-	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/models"
-	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
-	"git.omukk.dev/wrenn/wrenn/internal/vm"
+	"git.omukk.dev/wrenn/wrenn/pkg/devicemapper"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/models"
+	"git.omukk.dev/wrenn/wrenn/pkg/network"
+	"git.omukk.dev/wrenn/wrenn/pkg/vm"
 )
 
 const (
@@ -676,6 +676,7 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 
 	m.startSampler(sb)
 	m.startCrashWatcher(sb)
+	m.writeRunningState(sb)
 
 	// Background memory loader is started by the outer Resume AFTER /init
 	// completes — see comment there for the race rationale.

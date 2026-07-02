@@ -19,8 +19,8 @@ import (
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 
-	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
-	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/pkg/envdclient"
+	"git.omukk.dev/wrenn/wrenn/pkg/sandbox"
 )
 
 // Server implements the HostAgentService Connect RPC handler.

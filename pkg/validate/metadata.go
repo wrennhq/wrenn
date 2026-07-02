@@ -22,8 +22,9 @@ const (
 // not be set by users — they carry the immutable system facts about the VM.
 // Keep in sync with (*sandbox.Manager).buildMetadata: if a key is added there
 // but not here, a user could set it at create-time and watch it silently get
-// overwritten by the agent on boot. (validate cannot import internal/sandbox,
-// hence the duplication — same pattern as service.MinTimeoutSec.)
+// overwritten by the agent on boot. (validate deliberately does not import
+// pkg/sandbox — it would drag the whole host runtime into the control plane's
+// validation layer — hence the duplication; same pattern as service.MinTimeoutSec.)
 var reservedMetadataKeys = map[string]struct{}{
 	"kernel_version": {},
 	"vmm_version":    {},

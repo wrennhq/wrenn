@@ -205,6 +205,27 @@ func RemoveSnapshot(ctx context.Context, dev *SnapshotDevice) error {
 	return nil
 }
 
+// ReattachSnapshot reconstructs the SnapshotDevice handle for a dm-snapshot
+// that was created by an earlier process and is still live in the kernel. No
+// device-mapper state is modified — the existing dm device is verified and
+// the CoW loop device is rediscovered from its backing file, so a later
+// RemoveSnapshot can detach it as usual.
+func ReattachSnapshot(name, cowPath string) (*SnapshotDevice, error) {
+	if !dmDeviceExists(name) {
+		return nil, fmt.Errorf("dm device %s does not exist", name)
+	}
+	cowLoopDev, err := losetupFindByFile(cowPath)
+	if err != nil {
+		return nil, fmt.Errorf("find cow loop for %s: %w", cowPath, err)
+	}
+	return &SnapshotDevice{
+		Name:       name,
+		DevicePath: "/dev/mapper/" + name,
+		CowPath:    cowPath,
+		CowLoopDev: cowLoopDev,
+	}, nil
+}
+
 // FlattenSnapshot reads the full contents of a dm-snapshot device and writes
 // it to a new file. This merges the base image + CoW changes into a standalone
 // rootfs image suitable for use as a new template.
@@ -302,6 +323,23 @@ func losetupCreateRW(path string) (string, error) {
 		return "", fmt.Errorf("losetup: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// losetupFindByFile returns the loop device backed by the given file.
+// Errors if none or more than one is attached.
+func losetupFindByFile(path string) (string, error) {
+	out, err := exec.Command("losetup", "-j", path, "--output", "NAME", "--noheadings").Output()
+	if err != nil {
+		return "", fmt.Errorf("losetup -j: %w", err)
+	}
+	devs := strings.Fields(strings.TrimSpace(string(out)))
+	if len(devs) == 0 {
+		return "", fmt.Errorf("no loop device attached to %s", path)
+	}
+	if len(devs) > 1 {
+		return "", fmt.Errorf("multiple loop devices attached to %s: %v", path, devs)
+	}
+	return devs[0], nil
 }
 
 // losetupDetach detaches a loop device.

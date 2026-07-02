@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/models"
+	"git.omukk.dev/wrenn/wrenn/pkg/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/models"
 )
 
 // RestorePausedSandboxes scans WRENN_DIR/sandboxes/ for paused-sandbox
@@ -65,6 +65,16 @@ func (m *Manager) RestorePausedSandboxes() {
 		// Skip CleanupOrphanPauseDirs's territory. If it ran before us
 		// these are already gone; if not, leave them alone.
 		if strings.Contains(name, ".staging-") || strings.Contains(name, ".trash-") {
+			continue
+		}
+
+		// Skip sandboxes already registered — a resumed-then-still-running
+		// sandbox re-attached by RestoreRunningSandboxes keeps its previous
+		// pause generation on disk, but the live VM wins.
+		m.mu.RLock()
+		_, known := m.boxes[name]
+		m.mu.RUnlock()
+		if known {
 			continue
 		}
 

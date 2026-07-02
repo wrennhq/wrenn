@@ -12,11 +12,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/layout"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/layout"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
 	"git.omukk.dev/wrenn/wrenn/pkg/validate"

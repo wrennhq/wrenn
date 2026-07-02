@@ -17,9 +17,9 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
-	"git.omukk.dev/wrenn/wrenn/internal/network"
-	"git.omukk.dev/wrenn/wrenn/internal/vm"
+	"git.omukk.dev/wrenn/wrenn/pkg/envdclient"
+	"git.omukk.dev/wrenn/wrenn/pkg/network"
+	"git.omukk.dev/wrenn/wrenn/pkg/vm"
 )
 
 // restoreInputs is the common set of fields needed to build a restore VMConfig.

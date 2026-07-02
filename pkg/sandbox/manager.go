@@ -15,13 +15,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
-	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
-	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/models"
-	"git.omukk.dev/wrenn/wrenn/internal/network"
-	"git.omukk.dev/wrenn/wrenn/internal/vm"
+	"git.omukk.dev/wrenn/wrenn/pkg/devicemapper"
+	"git.omukk.dev/wrenn/wrenn/pkg/envdclient"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/models"
+	"git.omukk.dev/wrenn/wrenn/pkg/network"
+	"git.omukk.dev/wrenn/wrenn/pkg/vm"
 	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 )
 
@@ -264,10 +264,16 @@ func New(cfg Config) *Manager {
 	if cfg.EnvdTimeout == 0 {
 		cfg.EnvdTimeout = 30 * time.Second
 	}
+	slots := network.NewSlotAllocator(layout.SlotsDir(cfg.WrennDir))
+	// Honor slots claimed by other live processes (e.g. a concurrent CLI
+	// invocation mid-Create) before handing any out ourselves.
+	if err := slots.SeedFromDir(); err != nil {
+		slog.Warn("failed to seed slot allocator from disk", "error", err)
+	}
 	return &Manager{
 		cfg:     cfg,
 		vm:      vm.NewManager(),
-		slots:   network.NewSlotAllocator(),
+		slots:   slots,
 		loops:   devicemapper.NewLoopRegistry(),
 		boxes:   make(map[string]*sandboxState),
 		creates: make(map[string]*createHandle),
@@ -505,6 +511,7 @@ func (m *Manager) Create(
 
 	m.startSampler(sb)
 	m.startCrashWatcher(sb)
+	m.writeRunningState(sb)
 
 	slog.Info("sandbox created",
 		"id", sandboxID,

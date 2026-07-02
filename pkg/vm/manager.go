@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -250,12 +251,62 @@ func (m *Manager) CreateFromSnapshot(ctx context.Context, cfg VMConfig) (*VM, er
 
 // PID returns the process ID of the unshare wrapper process.
 func (v *VM) PID() int {
-	return v.process.cmd.Process.Pid
+	return v.process.pid()
 }
 
 // Exited returns a channel that is closed when the VM process exits.
 func (v *VM) Exited() <-chan struct{} {
 	return v.process.exited()
+}
+
+// reattachPollInterval is how often a re-attached (non-child) CH process is
+// probed for liveness. A non-child cannot be Wait()ed, so exit detection is
+// kill(pid, 0) polling.
+const reattachPollInterval = 2 * time.Second
+
+// Reattach registers a Cloud Hypervisor process that was started by an
+// earlier process (e.g. a previous CLI invocation) so this Manager can
+// operate on it — Destroy, Pause, Snapshot, Info all work as usual through
+// the still-live API socket. The caller must have verified the PID belongs
+// to the expected CH process; Reattach only confirms the API socket answers.
+func (m *Manager) Reattach(ctx context.Context, cfg VMConfig, pid int) (*VM, error) {
+	cfg.applyDefaults()
+
+	proc := &process{
+		attachedPID: pid,
+		exitCh:      make(chan struct{}),
+	}
+	client := newCHClient(cfg.SocketPath)
+
+	// Probe the CH API before registering — a dead socket means the state
+	// file is stale and the caller should clean up instead.
+	if _, err := client.vmInfo(ctx); err != nil {
+		return nil, fmt.Errorf("vm.info probe: %w", err)
+	}
+
+	go func() {
+		ticker := time.NewTicker(reattachPollInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := syscall.Kill(pid, 0); err != nil {
+				close(proc.exitCh)
+				return
+			}
+		}
+	}()
+
+	vm := &VM{
+		Config:  cfg,
+		process: proc,
+		client:  client,
+	}
+
+	m.mu.Lock()
+	m.vms[cfg.SandboxID] = vm
+	m.mu.Unlock()
+
+	slog.Info("re-attached to running VM", "sandbox", cfg.SandboxID, "pid", pid)
+	return vm, nil
 }
 
 // Get returns a running VM by sandbox ID.

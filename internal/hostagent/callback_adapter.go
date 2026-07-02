@@ -3,7 +3,7 @@ package hostagent
 import (
 	"context"
 
-	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/pkg/sandbox"
 )
 
 // callbackAdapter adapts CallbackSender to satisfy sandbox.EventSender.

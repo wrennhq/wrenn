@@ -1,32 +1,25 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"flag"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
 
-	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
 	"git.omukk.dev/wrenn/wrenn/internal/hostagent"
-	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/network"
-	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
-	"git.omukk.dev/wrenn/wrenn/internal/vm"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/logging"
+	"git.omukk.dev/wrenn/wrenn/pkg/sandbox"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 )
 
@@ -48,29 +41,18 @@ func main() {
 	cleanupLog := logging.Setup(filepath.Join(rootDir, "logs"), "host-agent")
 	defer cleanupLog()
 
-	if err := checkPrivileges(); err != nil {
+	if err := sandbox.CheckPrivileges(); err != nil {
 		slog.Error("insufficient privileges", "error", err)
 		os.Exit(1)
 	}
 
 	// Enable IP forwarding (required for NAT). The write may fail if running
 	// as non-root without DAC_OVERRIDE on this path — that's OK if the systemd
-	// unit's ExecStartPre already set it. We verify the value regardless.
-	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
-		slog.Warn("failed to enable ip_forward (may have been set by systemd unit)", "error", err)
-	}
-	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward"); err != nil || strings.TrimSpace(string(b)) != "1" {
+	// unit's ExecStartPre already set it.
+	if err := sandbox.EnsureIPForward(); err != nil {
 		slog.Error("ip_forward is not enabled — sandbox networking will be broken", "error", err)
 		os.Exit(1)
 	}
-
-	// Clean up stale resources from a previous crash. Order matters:
-	// kill stale CH processes first — they hold dm-snapshot devices open and
-	// would otherwise cause "Device or resource busy" on dmsetup remove.
-	vm.CleanupStaleProcesses()
-	devicemapper.CleanupStaleDevices()
-	devicemapper.LogLoopState()
-	network.CleanupStaleNamespaces()
 
 	listenAddr := envOrDefault("WRENN_HOST_LISTEN_ADDR", ":50051")
 	cpURL := os.Getenv("WRENN_CP_URL")
@@ -116,37 +98,27 @@ func main() {
 		slog.Info("using custom rootfs size", "size_mb", defaultRootfsSizeMB)
 	}
 
-	// Expand base images to the configured disk size (sparse, no extra physical
-	// disk). This ensures dm-snapshot sandboxes see the full size from boot.
-	if err := sandbox.EnsureImageSizes(rootDir, defaultRootfsSizeMB); err != nil {
-		slog.Error("failed to expand base images", "error", err)
-		os.Exit(1)
-	}
-
-	// Resolve latest kernel version.
-	kernelPath, kernelVersion, err := layout.LatestKernel(rootDir)
+	// Run the startup ritual: stale-resource cleanup, base image expansion,
+	// kernel resolution, cloud-hypervisor detection, orphan pause-dir GC.
+	env, err := sandbox.Setup(sandbox.SetupOptions{
+		WrennDir:            rootDir,
+		CHBin:               envOrDefault("WRENN_CH_BIN", sandbox.DefaultCHBin),
+		DefaultRootfsSizeMB: defaultRootfsSizeMB,
+	})
 	if err != nil {
-		slog.Error("failed to find kernel", "error", err)
+		slog.Error("host setup failed", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("resolved kernel", "version", kernelVersion, "path", kernelPath)
-
-	// Detect cloud-hypervisor version.
-	chBin := envOrDefault("WRENN_CH_BIN", "/usr/local/bin/cloud-hypervisor")
-	chVersion, err := sandbox.DetectCHVersion(chBin)
-	if err != nil {
-		slog.Error("failed to detect cloud-hypervisor version", "error", err)
-		os.Exit(1)
-	}
-	slog.Info("resolved cloud-hypervisor", "version", chVersion, "path", chBin)
+	slog.Info("resolved kernel", "version", env.KernelVersion, "path", env.KernelPath)
+	slog.Info("resolved cloud-hypervisor", "version", env.CHVersion, "path", env.CHBin)
 
 	cfg := sandbox.Config{
 		WrennDir:            rootDir,
 		DefaultRootfsSizeMB: defaultRootfsSizeMB,
-		KernelPath:          kernelPath,
-		KernelVersion:       kernelVersion,
-		VMMBin:              chBin,
-		VMMVersion:          chVersion,
+		KernelPath:          env.KernelPath,
+		KernelVersion:       env.KernelVersion,
+		VMMBin:              env.CHBin,
+		VMMVersion:          env.CHVersion,
 		AgentVersion:        version,
 		ProxyDomain:         envOrDefault("WRENN_PROXY_DOMAIN", "wrenn.dev"),
 
@@ -157,11 +129,6 @@ func main() {
 		DiskFloorBps:           envUint64("WRENN_DISK_FLOOR_BPS"),
 	}
 
-	// Remove any *.staging-* / *.trash-* directories left behind by a
-	// previous Pause that crashed before completing the atomic swap. Must
-	// run before any Resume so we don't race with a sandbox restoration.
-	sandbox.CleanupOrphanPauseDirs(rootDir)
-
 	mgr := sandbox.New(cfg)
 
 	// Set up lifecycle event callback sender so autonomous events
@@ -169,12 +136,15 @@ func main() {
 	cb := hostagent.NewCallbackSender(cpURL, credsFile, creds.HostID)
 	mgr.SetEventSender(hostagent.NewEventSender(cb))
 
-	// Restore paused sandboxes from disk so ListSandboxes reports them as
-	// 'paused' immediately. Without this, the CP's HostMonitor would mark
-	// every paused-on-disk sandbox 'stopped' via the missing→stopped
-	// reconcile path on the first ListSandboxes after agent restart.
-	// Must run before HTTP server starts serving (an early Create would
-	// race the slot reservation).
+	// Sweep stale running-state files first (Setup's stale cleanup killed
+	// every CH process, so nothing can actually be re-attached), then restore
+	// paused sandboxes from disk so ListSandboxes reports them as 'paused'
+	// immediately. Without the latter, the CP's HostMonitor would mark every
+	// paused-on-disk sandbox 'stopped' via the missing→stopped reconcile path
+	// on the first ListSandboxes after agent restart. Must run before the
+	// HTTP server starts serving (an early Create would race the slot
+	// reservation).
+	mgr.RestoreRunningSandboxes()
 	mgr.RestorePausedSandboxes()
 
 	mgr.StartTTLReaper(ctx)
@@ -360,64 +330,4 @@ func envUint64(key string) uint64 {
 		return 0
 	}
 	return n
-}
-
-// checkPrivileges verifies the process has the required Linux capabilities.
-// Always reads CapEff — even for root — because a root process inside a
-// restricted container (e.g. docker --cap-drop=all) may not have all caps.
-func checkPrivileges() error {
-	capEff, err := readEffectiveCaps()
-	if err != nil {
-		return fmt.Errorf("read capabilities: %w", err)
-	}
-
-	// All capabilities required by the host agent at runtime.
-	required := []struct {
-		bit  uint
-		name string
-	}{
-		{1, "CAP_DAC_OVERRIDE"}, // /dev/loop*, /dev/mapper/*, /dev/net/tun
-		{5, "CAP_KILL"},         // SIGTERM/SIGKILL to cloud-hypervisor processes
-		{12, "CAP_NET_ADMIN"},   // netlink, iptables, routing, TAP/veth
-		{13, "CAP_NET_RAW"},     // raw sockets (iptables)
-		{19, "CAP_SYS_PTRACE"},  // reading /proc/self/ns/net (netns.Get)
-		{21, "CAP_SYS_ADMIN"},   // netns, mount ns, losetup, dmsetup
-		{27, "CAP_MKNOD"},       // device-mapper node creation
-	}
-
-	var missing []string
-	for _, cap := range required {
-		if capEff&(1<<cap.bit) == 0 {
-			missing = append(missing, cap.name)
-		}
-	}
-
-	if len(missing) > 0 {
-		return fmt.Errorf("missing capabilities: %s — run as root or apply setcap to the binary",
-			strings.Join(missing, ", "))
-	}
-
-	return nil
-}
-
-// readEffectiveCaps parses the CapEff bitmask from /proc/self/status.
-func readEffectiveCaps() (uint64, error) {
-	f, err := os.Open("/proc/self/status")
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if hexStr, ok := strings.CutPrefix(line, "CapEff:"); ok {
-			return strconv.ParseUint(strings.TrimSpace(hexStr), 16, 64)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return 0, fmt.Errorf("read /proc/self/status: %w", err)
-	}
-	return 0, fmt.Errorf("CapEff not found in /proc/self/status")
 }
