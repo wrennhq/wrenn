@@ -307,8 +307,29 @@ func LogLoopState() {
 
 // --- low-level helpers ---
 
-// losetupCreate attaches a file as a read-only loop device.
+// losetupCreate attaches a file as a read-only loop device, reusing an existing
+// attachment for the same backing file when one is already present.
+//
+// `losetup --find` always allocates a NEW device even when the file is already
+// mapped. Within a single long-lived process the LoopRegistry hides this by
+// caching the device per image path, but a daemonless caller runs many
+// short-lived processes, each with its own registry: when a later process
+// re-attaches a sandbox created by an earlier one, a naive --find would attach a
+// second loop to the same origin image while the dm-snapshot still references
+// the first. That later process then balances its refcount by detaching only
+// its own (second) loop, orphaning the original — a loop leak that accumulates
+// one device per template per re-attach/destroy cycle. Reusing the existing
+// attachment keeps the kernel's loop set 1:1 with backing files, so the device a
+// caller releases is the same one the dm origin depends on. Mirrors how
+// ReattachSnapshot already rediscovers the CoW loop via losetupFindByFile.
 func losetupCreate(imagePath string) (string, error) {
+	// Reuse when exactly one loop already backs the image. losetupFindByFile
+	// errors on both "none" and "more than one"; either way fall through to
+	// attach a fresh device (the multi-attachment case only arises from loops
+	// leaked before this reuse logic existed, and is reclaimed separately).
+	if dev, err := losetupFindByFile(imagePath); err == nil {
+		return dev, nil
+	}
 	out, err := exec.Command("losetup", "--read-only", "--find", "--show", imagePath).Output()
 	if err != nil {
 		return "", fmt.Errorf("losetup --read-only: %w", err)
