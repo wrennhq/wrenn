@@ -132,10 +132,10 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		return db.Sandbox{}, fmt.Errorf("invalid metadata: %w", err)
 	}
 	if p.VCPUs <= 0 {
-		p.VCPUs = 1
+		p.VCPUs = 2
 	}
 	if p.MemoryMB <= 0 {
-		p.MemoryMB = 512
+		p.MemoryMB = 2048
 	}
 	p.TimeoutSec = clampTimeout(p.TimeoutSec)
 

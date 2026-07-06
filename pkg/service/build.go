@@ -109,10 +109,10 @@ func (s *BuildService) Create(ctx context.Context, p BuildCreateParams) (db.Temp
 		p.BaseTemplate = "minimal-ubuntu"
 	}
 	if p.VCPUs <= 0 {
-		p.VCPUs = 1
+		p.VCPUs = 2
 	}
 	if p.MemoryMB <= 0 {
-		p.MemoryMB = 512
+		p.MemoryMB = 2048
 	}
 
 	// Assemble the recipe. Unless run_as_root is set, the non-root build user

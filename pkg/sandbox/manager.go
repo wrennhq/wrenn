@@ -320,10 +320,10 @@ func (m *Manager) Create(
 	}
 
 	if vcpus <= 0 {
-		vcpus = 1
+		vcpus = 2
 	}
 	if memoryMB <= 0 {
-		memoryMB = 512
+		memoryMB = 2048
 	}
 	if diskSizeMB <= 0 {
 		diskSizeMB = m.cfg.DefaultRootfsSizeMB
