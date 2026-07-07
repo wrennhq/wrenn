@@ -147,6 +147,7 @@ func (m *Manager) createFromSnapshotTemplate(
 		dmDevice:           dmDev,
 		baseImagePath:      baseRootfs,
 		sandboxDirOverride: meta.SandboxDir,
+		lazyRestore:        true,
 	}
 	sb.client.Store(client)
 

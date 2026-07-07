@@ -305,6 +305,30 @@ func LogLoopState() {
 	}
 }
 
+// DetachLoopsByFile best-effort detaches every loop device backed by path.
+//
+// Safety net for teardown paths that are about to delete a backing file whose
+// loop may still be attached (e.g. RemoveSnapshot failed on a busy dm device,
+// or startup cleanup removed the dm device before the CoW loop was found).
+// Deleting the file first orphans the loop permanently — losetup can no
+// longer find it by file, so no later sweep can reclaim it. Detaching first
+// always works: if device-mapper still references the loop, the kernel defers
+// the release via autoclear until that reference drops.
+func DetachLoopsByFile(path string) {
+	out, err := exec.Command("losetup", "-j", path, "--output", "NAME", "--noheadings").Output()
+	if err != nil {
+		slog.Debug("losetup -j failed", "path", path, "error", err)
+		return
+	}
+	for _, dev := range strings.Fields(strings.TrimSpace(string(out))) {
+		if err := losetupDetachRetry(dev); err != nil {
+			slog.Warn("loop detach by file failed", "device", dev, "path", path, "error", err)
+		} else {
+			slog.Info("detached leftover loop device", "device", dev, "path", path)
+		}
+	}
+}
+
 // --- low-level helpers ---
 
 // losetupCreate attaches a file as a read-only loop device, reusing an existing

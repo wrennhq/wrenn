@@ -31,6 +31,14 @@ pub struct AppState {
     pub mem_preload_started: AtomicBool,
     pub mem_preload_done: AtomicBool,
     pub mem_preload_cancel: AtomicBool,
+    /// Bumped by every /init lifecycle change. A loader thread captures the
+    /// value at spawn and refuses to run — or to publish results — once it no
+    /// longer matches, so a thread that survived a pause/resume (the VM can be
+    /// frozen mid-walk) cannot store a stale `done=true` for the NEXT
+    /// lifecycle's preload. Publication happens under `mem_preload_error`'s
+    /// mutex, which /init also holds while bumping, closing the
+    /// freeze-between-check-and-store window.
+    pub mem_preload_generation: AtomicU64,
     pub mem_preload_regions: AtomicU64,
     pub mem_preload_pages: AtomicU64,
     pub mem_preload_bytes: AtomicU64,
@@ -66,6 +74,7 @@ impl AppState {
             mem_preload_started: AtomicBool::new(false),
             mem_preload_done: AtomicBool::new(false),
             mem_preload_cancel: AtomicBool::new(false),
+            mem_preload_generation: AtomicU64::new(0),
             mem_preload_regions: AtomicU64::new(0),
             mem_preload_pages: AtomicU64::new(0),
             mem_preload_bytes: AtomicU64::new(0),

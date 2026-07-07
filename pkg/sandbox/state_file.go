@@ -60,9 +60,13 @@ type runningState struct {
 	CHSocket string `json:"ch_socket"`
 	// SandboxDirOverride is non-empty when the sandbox was launched from a
 	// snapshot template (see sandboxState.sandboxDirOverride).
-	SandboxDirOverride string            `json:"sandbox_dir_override,omitempty"`
-	CreatedAt          time.Time         `json:"created_at"`
-	Metadata           map[string]string `json:"metadata,omitempty"`
+	SandboxDirOverride string `json:"sandbox_dir_override,omitempty"`
+	// LazyRestore mirrors sandboxState.lazyRestore: the VM was restored with
+	// memory_restore_mode=ondemand, so a re-attaching process must verify the
+	// guest memory preload before any pause/snapshot.
+	LazyRestore bool              `json:"lazy_restore,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 // writeRunningState persists sb's re-attach state next to its CoW file.
@@ -92,6 +96,7 @@ func (m *Manager) writeRunningState(sb *sandboxState) {
 		CHPID:              v.PID(),
 		CHSocket:           vm.SandboxSocketPath(sb.ID),
 		SandboxDirOverride: sb.sandboxDirOverride,
+		LazyRestore:        sb.lazyRestore,
 		CreatedAt:          sb.CreatedAt,
 		Metadata:           sb.Metadata,
 	}

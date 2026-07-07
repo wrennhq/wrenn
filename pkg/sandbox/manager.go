@@ -211,6 +211,15 @@ type sandboxState struct {
 	// find rootfs.ext4 in the new mount namespace.
 	sandboxDirOverride string
 
+	// lazyRestore records that this sandbox's CH process was launched with
+	// --restore ...,memory_restore_mode=ondemand (Resume or snapshot-template
+	// launch): guest pages fault in lazily from the source memory-ranges, so
+	// any vm.snapshot taken before the guest-side preload completes would emit
+	// holes for never-faulted pages — silent corruption on the next restore.
+	// Pause/CreateSnapshot consult this via ensureMemoryMaterialized. Persisted
+	// in the running-state file so re-attached sandboxes keep the guarantee.
+	lazyRestore bool
+
 	// Background memory loading state (set during Resume for UFFD sandboxes).
 	// nil for freshly-created sandboxes. For resumed sandboxes, memLoadDone
 	// is closed when the background loader finishes (success or failure).
@@ -616,12 +625,19 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("dm-snapshot remove error", "id", sb.ID, "error", err)
+			// RemoveSnapshot bails before detaching the CoW loop when the dm
+			// device is busy. The CoW file is deleted just below — detach the
+			// loop first (autoclear if dm still holds it) or it becomes
+			// permanently unreclaimable once its backing file is gone.
+			devicemapper.DetachLoopsByFile(sb.dmDevice.CowPath)
 		}
 		os.Remove(sb.dmDevice.CowPath)
 	}
 	// Paused branch: dm-snapshot and loop were already released by
-	// releaseRuntime; the CoW file inside the sandbox dir is removed by
-	// Destroy's os.RemoveAll(SandboxDir) below.
+	// releaseRuntime, which also cleared dmDevice and baseImagePath — both
+	// guards below are nil/empty for a paused sandbox, so nothing double-
+	// releases. The CoW file inside the sandbox dir is removed by Destroy's
+	// os.RemoveAll(SandboxDir) below.
 	if sb.baseImagePath != "" {
 		m.loops.Release(sb.baseImagePath)
 	}
@@ -1272,6 +1288,9 @@ func (m *Manager) cleanupAfterCrash(sb *sandboxState) {
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("crash cleanup: dm-snapshot error", "id", sb.ID, "error", err)
+			// os.RemoveAll below deletes the CoW backing file; detach its
+			// loop first or it can never be reclaimed (see DetachLoopsByFile).
+			devicemapper.DetachLoopsByFile(sb.dmDevice.CowPath)
 		}
 	}
 	if sb.baseImagePath != "" {

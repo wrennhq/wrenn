@@ -57,14 +57,46 @@ pub async fn post_memory_preload(State(state): State<Arc<AppState>>) -> impl Int
         .is_ok();
 
     if we_start {
+        // Fresh run: clear leftovers from a previous lifecycle's loader so a
+        // stale done=true (or stale counters) can't masquerade as this run's
+        // result. Done under the error mutex, the same critical section /init
+        // and result publication use.
+        {
+            let mut err = state.mem_preload_error.lock().unwrap();
+            *err = None;
+            state.mem_preload_done.store(false, Ordering::SeqCst);
+            state.mem_preload_regions.store(0, Ordering::SeqCst);
+            state.mem_preload_pages.store(0, Ordering::SeqCst);
+            state.mem_preload_bytes.store(0, Ordering::SeqCst);
+            state.mem_preload_elapsed_us.store(0, Ordering::SeqCst);
+            state.mem_preload_source.store(0, Ordering::SeqCst);
+        }
+        let generation = state.mem_preload_generation.load(Ordering::SeqCst);
+
         let state_clone = Arc::clone(&state);
         // Detached blocking thread — no axum task lifetime ties it to the
         // request, so the connection can close immediately without aborting
         // materialisation. Lifecycle bump on the next /init clears the flags
-        // for a fresh run after a restore.
+        // for a fresh run after a restore; this thread stops (and refuses to
+        // publish) once the generation it captured is no longer current — a
+        // pause can freeze it mid-walk and thaw it in the NEXT lifecycle.
         std::thread::spawn(move || {
             let started = Instant::now();
-            match preload_blocking(&state_clone) {
+            let outcome = preload_blocking(&state_clone, generation);
+
+            // Publish under the error mutex so a concurrent /init bump can't
+            // interleave: either this store lands before the bump (and /init
+            // resets it), or the generation no longer matches and the result
+            // is discarded.
+            let mut err = state_clone.mem_preload_error.lock().unwrap();
+            if state_clone.mem_preload_generation.load(Ordering::SeqCst) != generation {
+                tracing::info!(
+                    generation,
+                    "memory preload result discarded: stale lifecycle"
+                );
+                return;
+            }
+            match outcome {
                 Ok((source, regions, pages, bytes)) => {
                     let elapsed = started.elapsed().as_secs_f64();
                     state_clone
@@ -76,7 +108,7 @@ pub async fn post_memory_preload(State(state): State<Arc<AppState>>) -> impl Int
                         .mem_preload_elapsed_us
                         .store((elapsed * 1_000_000.0) as u64, Ordering::SeqCst);
                     set_source(&state_clone, source);
-                    *state_clone.mem_preload_error.lock().unwrap() = None;
+                    *err = None;
                     state_clone.mem_preload_done.store(true, Ordering::SeqCst);
                     tracing::info!(
                         regions,
@@ -92,7 +124,7 @@ pub async fn post_memory_preload(State(state): State<Arc<AppState>>) -> impl Int
                     state_clone
                         .mem_preload_elapsed_us
                         .store((elapsed * 1_000_000.0) as u64, Ordering::SeqCst);
-                    *state_clone.mem_preload_error.lock().unwrap() = Some(e.clone());
+                    *err = Some(e.clone());
                     state_clone.mem_preload_done.store(true, Ordering::SeqCst);
                     tracing::warn!(error = %e, "memory preload failed");
                 }
@@ -159,7 +191,10 @@ fn get_source(state: &AppState) -> &'static str {
     }
 }
 
-fn preload_blocking(state: &AppState) -> Result<(&'static str, u64, u64, u64), String> {
+fn preload_blocking(
+    state: &AppState,
+    generation: u64,
+) -> Result<(&'static str, u64, u64, u64), String> {
     let ranges = parse_system_ram_ranges().map_err(|e| format!("iomem: {e}"))?;
     if ranges.is_empty() {
         return Err("no System RAM ranges found in /proc/iomem".into());
@@ -168,7 +203,7 @@ fn preload_blocking(state: &AppState) -> Result<(&'static str, u64, u64, u64), S
     let mut pages: u64 = 0;
     let mut bytes: u64 = 0;
 
-    match preload_via_devmem(&ranges, state, &mut pages, &mut bytes) {
+    match preload_via_devmem(&ranges, state, generation, &mut pages, &mut bytes) {
         Ok(()) => Ok(("/dev/mem", ranges.len() as u64, pages, bytes)),
         Err(devmem_err) => {
             tracing::warn!(
@@ -177,11 +212,20 @@ fn preload_blocking(state: &AppState) -> Result<(&'static str, u64, u64, u64), S
             );
             pages = 0;
             bytes = 0;
-            preload_via_kcore(state, &mut pages, &mut bytes)
+            preload_via_kcore(state, generation, &mut pages, &mut bytes)
                 .map_err(|e| format!("/dev/mem: {devmem_err}; /proc/kcore: {e}"))?;
             Ok(("/proc/kcore", ranges.len() as u64, pages, bytes))
         }
     }
+}
+
+// should_stop reports whether the walk must abort: an explicit cancel, or the
+// lifecycle moved on (a pause froze this thread and a resume /init bumped the
+// generation — continuing would fault pages nobody waits for and eventually
+// publish a stale result).
+fn should_stop(state: &AppState, generation: u64) -> bool {
+    state.mem_preload_cancel.load(Ordering::SeqCst)
+        || state.mem_preload_generation.load(Ordering::SeqCst) != generation
 }
 
 fn parse_system_ram_ranges() -> std::io::Result<Vec<(u64, u64)>> {
@@ -212,6 +256,7 @@ fn parse_system_ram_ranges() -> std::io::Result<Vec<(u64, u64)>> {
 fn preload_via_devmem(
     ranges: &[(u64, u64)],
     state: &AppState,
+    generation: u64,
     pages: &mut u64,
     bytes: &mut u64,
 ) -> std::io::Result<()> {
@@ -220,7 +265,7 @@ fn preload_via_devmem(
     for (start, end) in ranges {
         let mut off = *start;
         while off < *end {
-            if state.mem_preload_cancel.load(Ordering::SeqCst) {
+            if should_stop(state, generation) {
                 return Ok(());
             }
             f.read_at(&mut buf, off)?;
@@ -238,13 +283,23 @@ fn preload_via_devmem(
     Ok(())
 }
 
-// Read /proc/kcore's direct-map segment to materialise physical RAM. The
-// direct map's PT_LOAD covers the kernel's *maximum* possible direct-map
-// region (64TB on x86_64), not just the present physical RAM — iterating the
-// whole segment would loop for billions of pages. Bound the walk to the sum
-// of System RAM ranges from /proc/iomem; sequential reads through the
-// segment touch consecutive physical pages 1:1, which is what we need.
-fn preload_via_kcore(state: &AppState, pages: &mut u64, bytes: &mut u64) -> std::io::Result<()> {
+// Read physical RAM through /proc/kcore's per-range direct-map segments.
+//
+// The kernel emits one KCORE_RAM PT_LOAD *per contiguous System RAM range*
+// (walk_system_ram_range), each with vaddr = direct_map_base + phys_start and
+// file_size = range size — there is NO single segment covering all of RAM.
+// Segments must therefore be matched range-by-range against /proc/iomem;
+// picking "a big kernel-space segment" instead lands on the vmalloc or
+// vmemmap region, which the kernel zero-fills for unmapped addresses without
+// ever touching a physical page — the reads "succeed" instantly and nothing
+// is materialised. Matching failure is a hard error for the same reason:
+// reading the wrong segment is indistinguishable from success.
+fn preload_via_kcore(
+    state: &AppState,
+    generation: u64,
+    pages: &mut u64,
+    bytes: &mut u64,
+) -> std::io::Result<()> {
     let ram_ranges = parse_system_ram_ranges()?;
     if ram_ranges.is_empty() {
         return Err(std::io::Error::new(
@@ -252,7 +307,6 @@ fn preload_via_kcore(state: &AppState, pages: &mut u64, bytes: &mut u64) -> std:
             "no System RAM ranges to bound kcore walk",
         ));
     }
-    let total_ram_bytes: u64 = ram_ranges.iter().map(|(s, e)| e - s).sum();
 
     let mut f = fs::File::open("/proc/kcore")?;
     let segments = parse_kcore_pt_load(&mut f)?;
@@ -263,53 +317,204 @@ fn preload_via_kcore(state: &AppState, pages: &mut u64, bytes: &mut u64) -> std:
         ));
     }
 
-    // Pick the direct map: highest-vaddr kernel-space segment large enough
-    // to plausibly cover RAM. KASLR randomises the base, so don't hardcode it.
-    // Kernel virtual addresses start at 0xffff800000000000 on x86_64; vmalloc
-    // / modules sit above the direct map and are usually smaller.
-    const KERNEL_SPACE_MIN: u64 = 0xffff_8000_0000_0000;
-    let direct_map = segments
-        .iter()
-        .filter(|s| s.vaddr >= KERNEL_SPACE_MIN && s.file_size >= total_ram_bytes)
-        .min_by_key(|s| s.vaddr)
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "no PT_LOAD segment large enough for {} bytes of RAM in /proc/kcore",
-                    total_ram_bytes
-                ),
-            )
-        })?;
+    let ram_segments = match_ram_segments(&ram_ranges, &segments)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
     let mut buf = [0u8; 1];
-    let read_bytes = total_ram_bytes.min(direct_map.file_size);
-    let start = direct_map.file_offset;
-    let end = start.saturating_add(read_bytes);
-    let mut off = start;
-    while off < end {
-        if state.mem_preload_cancel.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-        // Reads into MMIO holes within the direct map can fail; ignore so the
-        // loop keeps making progress over the present RAM ranges either side.
-        if f.read_at(&mut buf, off).is_ok() {
-            *pages += 1;
-            *bytes += PAGE_SIZE;
-            if *pages % 256 == 0 {
-                state.mem_preload_pages.store(*pages, Ordering::SeqCst);
-                state.mem_preload_bytes.store(*bytes, Ordering::SeqCst);
+    let mut read_errors: u64 = 0;
+    for seg in &ram_segments {
+        let end = seg.file_offset.saturating_add(seg.len);
+        let mut off = seg.file_offset;
+        while off < end {
+            if should_stop(state, generation) {
+                return Ok(());
             }
+            match f.read_at(&mut buf, off) {
+                Ok(_) => {
+                    *pages += 1;
+                    *bytes += PAGE_SIZE;
+                    if *pages % 256 == 0 {
+                        state.mem_preload_pages.store(*pages, Ordering::SeqCst);
+                        state.mem_preload_bytes.store(*bytes, Ordering::SeqCst);
+                    }
+                }
+                Err(_) => read_errors += 1,
+            }
+            off = off.saturating_add(PAGE_SIZE);
         }
-        off = off.saturating_add(PAGE_SIZE);
+    }
+
+    // A few failed reads are tolerable (hwpoison, offline pages); a walk where
+    // nothing was read means the segments were wrong — report it rather than
+    // letting the host trust an empty "done".
+    if *pages == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("kcore walk read no pages ({read_errors} read errors)"),
+        ));
+    }
+    if read_errors > 0 {
+        tracing::warn!(
+            read_errors,
+            pages = *pages,
+            "kcore preload skipped unreadable pages"
+        );
     }
     Ok(())
+}
+
+// A resolved (file_offset, length) window in /proc/kcore corresponding to one
+// System RAM range.
+struct RamSegment {
+    file_offset: u64,
+    len: u64,
+}
+
+// Match every System RAM range from /proc/iomem to its KCORE_RAM PT_LOAD
+// segment. RAM segments share a single direct-map base (vaddr = base +
+// phys_start; base is KASLR-randomised, so it must be derived, not assumed).
+// Candidate bases come from exact-size (segment, range) pairs; a base is
+// accepted only if EVERY RAM range has a segment at base + start with the
+// exact range size. This can never select vmalloc/vmemmap segments: their
+// sizes (tens of TB) match no iomem range.
+fn match_ram_segments(
+    ranges: &[(u64, u64)],
+    segments: &[KcoreSegment],
+) -> Result<Vec<RamSegment>, String> {
+    const KERNEL_SPACE_MIN: u64 = 0xffff_8000_0000_0000;
+
+    let mut candidates: Vec<u64> = Vec::new();
+    for s in segments.iter().filter(|s| s.vaddr >= KERNEL_SPACE_MIN) {
+        for (start, end) in ranges {
+            let len = end - start;
+            if s.file_size == len && s.vaddr.checked_sub(*start).is_some() {
+                candidates.push(s.vaddr - start);
+            }
+        }
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+
+    for base in &candidates {
+        let mut out = Vec::with_capacity(ranges.len());
+        for (start, end) in ranges {
+            let len = end - start;
+            let Some(seg) = segments
+                .iter()
+                .find(|s| s.vaddr == base.wrapping_add(*start) && s.file_size == len)
+            else {
+                out.clear();
+                break;
+            };
+            out.push(RamSegment {
+                file_offset: seg.file_offset,
+                len,
+            });
+        }
+        if out.len() == ranges.len() {
+            return Ok(out);
+        }
+    }
+
+    Err(format!(
+        "no consistent direct-map base for {} RAM ranges across {} PT_LOAD segments \
+         ({} candidate bases tried)",
+        ranges.len(),
+        segments.len(),
+        candidates.len(),
+    ))
 }
 
 struct KcoreSegment {
     file_offset: u64,
     file_size: u64,
     vaddr: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: u64 = 0xffff_8880_0000_0000; // typical direct-map base, no KASLR
+    const GIB: u64 = 1 << 30;
+    const TIB: u64 = 1 << 40;
+
+    fn seg(vaddr: u64, file_size: u64, file_offset: u64) -> KcoreSegment {
+        KcoreSegment {
+            file_offset,
+            file_size,
+            vaddr,
+        }
+    }
+
+    // Typical CH guest: low RAM hole below 1MB, main range, plus the huge
+    // vmalloc/vmemmap segments that the old heuristic used to pick.
+    fn typical_segments() -> Vec<KcoreSegment> {
+        vec![
+            seg(0xffff_c900_0000_0000, 32 * TIB, 0x1000), // vmalloc
+            seg(0xffff_ea00_0000_0000, TIB, 0x2000),      // vmemmap
+            seg(BASE + 0x1000, 0x9e000, 0x10000),         // RAM 0x1000-0x9efff
+            seg(BASE + 0x100000, 2 * GIB - 0x100000, 0x20000), // RAM 1MB-2GB
+        ]
+    }
+
+    fn typical_ranges() -> Vec<(u64, u64)> {
+        vec![(0x1000, 0x9f000), (0x100000, 2 * GIB)]
+    }
+
+    #[test]
+    fn matches_all_ranges_and_skips_vmalloc() {
+        let out = match_ram_segments(&typical_ranges(), &typical_segments()).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].file_offset, 0x10000);
+        assert_eq!(out[0].len, 0x9e000);
+        assert_eq!(out[1].file_offset, 0x20000);
+        assert_eq!(out[1].len, 2 * GIB - 0x100000);
+    }
+
+    #[test]
+    fn kaslr_base_is_derived_not_assumed() {
+        let kaslr = BASE + 37 * GIB; // PUD-granular randomisation
+        let segments = vec![
+            seg(0xffff_c900_0000_0000, 32 * TIB, 0x1000),
+            seg(kaslr + 0x1000, 0x9e000, 0x10000),
+            seg(kaslr + 0x100000, 2 * GIB - 0x100000, 0x20000),
+        ];
+        let out = match_ram_segments(&typical_ranges(), &segments).unwrap();
+        assert_eq!(out[1].file_offset, 0x20000);
+    }
+
+    #[test]
+    fn errors_when_a_range_has_no_segment() {
+        // Second RAM range's segment missing → no base covers all ranges.
+        let segments = vec![
+            seg(0xffff_c900_0000_0000, 32 * TIB, 0x1000),
+            seg(BASE + 0x1000, 0x9e000, 0x10000),
+        ];
+        assert!(match_ram_segments(&typical_ranges(), &segments).is_err());
+    }
+
+    #[test]
+    fn errors_instead_of_falling_back_to_vmalloc() {
+        // Only huge kernel segments present (the exact shape that fooled the
+        // old `file_size >= total_ram` heuristic).
+        let segments = vec![
+            seg(0xffff_c900_0000_0000, 32 * TIB, 0x1000),
+            seg(0xffff_ea00_0000_0000, TIB, 0x2000),
+        ];
+        assert!(match_ram_segments(&typical_ranges(), &segments).is_err());
+    }
+
+    #[test]
+    fn ambiguous_same_size_ranges_still_resolve() {
+        // Two RAM ranges of identical size: candidate bases from cross pairs
+        // must be rejected; only the true base matches both ranges.
+        let ranges = vec![(0x0, GIB), (2 * GIB, 3 * GIB)];
+        let segments = vec![seg(BASE, GIB, 0x10000), seg(BASE + 2 * GIB, GIB, 0x20000)];
+        let out = match_ram_segments(&ranges, &segments).unwrap();
+        assert_eq!(out[0].file_offset, 0x10000);
+        assert_eq!(out[1].file_offset, 0x20000);
+    }
 }
 
 fn parse_kcore_pt_load(f: &mut fs::File) -> std::io::Result<Vec<KcoreSegment>> {

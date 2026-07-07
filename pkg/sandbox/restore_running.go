@@ -138,13 +138,21 @@ func (m *Manager) reattachRunning(st *runningState) error {
 	}
 	slot := network.NewSlot(st.SlotIndex)
 
-	rollback := func() { m.slots.Release(st.SlotIndex) }
+	// NO rollback past this point. chProcessAlive just verified a live CH
+	// process that depends on this slot's netns/IP, the dm device, and the
+	// loop attachments. Releasing any of it on a failed adoption would pull
+	// resources out from under a running VM: freeing the slot lets a new
+	// Create collide with the live netns, and dropping the loop refcount can
+	// detach the origin loop the dm table references (LoopRegistry adopts the
+	// previous process's loop, so refcount 1 here IS that live attachment).
+	// On failure, leave everything held and unmanaged — the next agent
+	// restart retries the adoption, or sweeps properly once CH is dead.
 
 	// Rediscover the live dm-snapshot; no device-mapper state is modified.
 	dmDev, err := devicemapper.ReattachSnapshot(st.DMName, st.CowPath)
 	if err != nil {
-		rollback()
-		return fmt.Errorf("reattach dm-snapshot: %w", err)
+		return fmt.Errorf("reattach dm-snapshot (slot %d left reserved for live CH): %w",
+			st.SlotIndex, err)
 	}
 
 	// Re-acquire the base image in this process's loop registry so the
@@ -153,8 +161,8 @@ func (m *Manager) reattachRunning(st *runningState) error {
 	// device number; this Acquire only matters for bookkeeping and for other
 	// sandboxes sharing the base in this process.)
 	if _, err := m.loops.Acquire(st.BaseImagePath); err != nil {
-		rollback()
-		return fmt.Errorf("acquire base image loop: %w", err)
+		return fmt.Errorf("acquire base image loop (slot %d left reserved for live CH): %w",
+			st.SlotIndex, err)
 	}
 
 	// Register the live CH process; probes the API socket before committing.
@@ -168,9 +176,8 @@ func (m *Manager) reattachRunning(st *runningState) error {
 		MemoryMB:   st.MemoryMB,
 	}, st.CHPID)
 	if err != nil {
-		m.loops.Release(st.BaseImagePath)
-		rollback()
-		return fmt.Errorf("reattach VM: %w", err)
+		return fmt.Errorf("reattach VM (slot %d and loop refcount left held for live CH): %w",
+			st.SlotIndex, err)
 	}
 
 	sb := &sandboxState{
@@ -194,12 +201,22 @@ func (m *Manager) reattachRunning(st *runningState) error {
 		dmDevice:           dmDev,
 		baseImagePath:      st.BaseImagePath,
 		sandboxDirOverride: st.SandboxDirOverride,
+		lazyRestore:        st.LazyRestore,
 	}
 	sb.client.Store(envdclient.New(slot.HostIP.String()))
 
 	m.mu.Lock()
 	m.boxes[st.ID] = sb
 	m.mu.Unlock()
+
+	// A lazily-restored VM may still be materialising guest memory when the
+	// creating process died. Re-arm the loader: envd's POST is CAS-idempotent
+	// (a completed preload answers "done" immediately), and having memLoadDone
+	// set again restores the TTL-reaper/activity-sampler guards. Pause remains
+	// safe either way — ensureMemoryMaterialized verifies against envd itself.
+	if sb.lazyRestore {
+		m.startMemoryLoader(sb)
+	}
 
 	m.startSampler(sb)
 	m.startCrashWatcher(sb)
@@ -225,6 +242,12 @@ func (m *Manager) sweepDeadRunning(st *runningState) {
 			slog.Warn("sweep: dm-snapshot remove failed", "id", st.ID, "error", err)
 		}
 	}
+	// ReattachSnapshot usually fails here: Setup's CleanupStaleDevices already
+	// removed the dead sandbox's dm device (it was not held open by any live
+	// CH), so RemoveSnapshot above never runs and the CoW loop from the
+	// previous agent stays attached. Detach it by backing file before the
+	// os.RemoveAll below deletes that file and orphans the loop for good.
+	devicemapper.DetachLoopsByFile(st.CowPath)
 	if err := network.RemoveNetwork(network.NewSlot(st.SlotIndex)); err != nil {
 		slog.Warn("sweep: network remove failed", "id", st.ID, "error", err)
 	}

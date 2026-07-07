@@ -34,7 +34,22 @@ type Client struct {
 
 // New creates a new envd client that connects to the given host IP.
 func New(hostIP string) *Client {
-	base := baseURL(hostIP)
+	return newWithBase(hostIP, baseURL(hostIP))
+}
+
+// NewWithBaseURL creates an envd client against an explicit base URL instead
+// of the standard http://{hostIP}:{envdPort}. Intended for tests (httptest
+// servers) and nonstandard listeners.
+func NewWithBaseURL(base string) *Client {
+	u, err := url.Parse(base)
+	host := base
+	if err == nil {
+		host = u.Hostname()
+	}
+	return newWithBase(host, base)
+}
+
+func newWithBase(hostIP, base string) *Client {
 	httpClient := newHTTPClient()
 	streamingClient := newStreamingHTTPClient()
 

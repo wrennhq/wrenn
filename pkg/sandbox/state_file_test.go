@@ -43,6 +43,7 @@ func TestRunningStateRoundtrip(t *testing.T) {
 		CHPID:              4242,
 		CHSocket:           "/tmp/ch-sb-cafe0123.sock",
 		SandboxDirOverride: "/tmp/ch-vm-sb-original",
+		LazyRestore:        true,
 		CreatedAt:          time.Now().Truncate(0),
 		Metadata:           map[string]string{"kernel_version": "6.1.102"},
 	}
@@ -55,6 +56,7 @@ func TestRunningStateRoundtrip(t *testing.T) {
 	if got.ID != want.ID || got.SlotIndex != want.SlotIndex ||
 		got.CHPID != want.CHPID || got.DMName != want.DMName ||
 		got.SandboxDirOverride != want.SandboxDirOverride ||
+		got.LazyRestore != want.LazyRestore ||
 		!got.CreatedAt.Equal(want.CreatedAt) ||
 		got.Metadata["kernel_version"] != want.Metadata["kernel_version"] {
 		t.Fatalf("roundtrip mismatch:\ngot  %+v\nwant %+v", got, want)

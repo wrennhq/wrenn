@@ -71,16 +71,28 @@ pub async fn post_init(
         // back in the source memory-ranges file as the host re-restored them
         // lazily. Reset the flags so the next POST /memory/preload kicks off
         // a new loader instead of returning the stale "already-done".
+        //
+        // The generation bump + reset happen under the error mutex — the same
+        // critical section a loader thread publishes its result in. A loader
+        // from the PREVIOUS lifecycle can be frozen mid-walk by the pause and
+        // thaw here; the bump makes it stop and discard its result instead of
+        // storing a stale done=true that the host would trust for the next
+        // snapshot. cancel is deliberately cleared (not set): the stale thread
+        // stops on generation mismatch, and the new run must start uncancelled.
         use std::sync::atomic::Ordering;
-        state.mem_preload_cancel.store(false, Ordering::SeqCst);
-        state.mem_preload_done.store(false, Ordering::SeqCst);
-        state.mem_preload_started.store(false, Ordering::SeqCst);
-        state.mem_preload_regions.store(0, Ordering::SeqCst);
-        state.mem_preload_pages.store(0, Ordering::SeqCst);
-        state.mem_preload_bytes.store(0, Ordering::SeqCst);
-        state.mem_preload_elapsed_us.store(0, Ordering::SeqCst);
-        state.mem_preload_source.store(0, Ordering::SeqCst);
-        *state.mem_preload_error.lock().unwrap() = None;
+        {
+            let mut err = state.mem_preload_error.lock().unwrap();
+            state.mem_preload_generation.fetch_add(1, Ordering::SeqCst);
+            state.mem_preload_cancel.store(false, Ordering::SeqCst);
+            state.mem_preload_done.store(false, Ordering::SeqCst);
+            state.mem_preload_started.store(false, Ordering::SeqCst);
+            state.mem_preload_regions.store(0, Ordering::SeqCst);
+            state.mem_preload_pages.store(0, Ordering::SeqCst);
+            state.mem_preload_bytes.store(0, Ordering::SeqCst);
+            state.mem_preload_elapsed_us.store(0, Ordering::SeqCst);
+            state.mem_preload_source.store(0, Ordering::SeqCst);
+            *err = None;
+        }
 
         if let Some(ref port_sub) = state.port_subsystem {
             tracing::info!("lifecycle changed, restarting port subsystem");
