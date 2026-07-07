@@ -622,14 +622,11 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 	m.slots.Release(sb.SlotIndex)
 
 	// Tear down dm-snapshot and release the base image loop device.
+	// RemoveSnapshot detaches the CoW loop even on failure, so deleting the
+	// CoW file below cannot orphan it.
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("dm-snapshot remove error", "id", sb.ID, "error", err)
-			// RemoveSnapshot bails before detaching the CoW loop when the dm
-			// device is busy. The CoW file is deleted just below — detach the
-			// loop first (autoclear if dm still holds it) or it becomes
-			// permanently unreclaimable once its backing file is gone.
-			devicemapper.DetachLoopsByFile(sb.dmDevice.CowPath)
 		}
 		os.Remove(sb.dmDevice.CowPath)
 	}
@@ -1285,12 +1282,11 @@ func (m *Manager) cleanupAfterCrash(sb *sandboxState) {
 	}
 	m.slots.Release(sb.SlotIndex)
 
+	// RemoveSnapshot detaches the CoW loop even on failure, so the RemoveAll
+	// below (which deletes the CoW backing file) cannot orphan it.
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("crash cleanup: dm-snapshot error", "id", sb.ID, "error", err)
-			// os.RemoveAll below deletes the CoW backing file; detach its
-			// loop first or it can never be reclaimed (see DetachLoopsByFile).
-			devicemapper.DetachLoopsByFile(sb.dmDevice.CowPath)
 		}
 	}
 	if sb.baseImagePath != "" {

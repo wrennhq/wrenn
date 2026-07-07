@@ -216,6 +216,15 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 			m.mu.Lock()
 			sb.SlotIndex = 0
 			m.mu.Unlock()
+			// Remove the sandbox dir wholesale, mirroring cleanupAfterCrash.
+			// This drops the running-state file — its recorded slot is freed
+			// and may be re-claimed, so a later restart's sweep must not tear
+			// down the new owner's network — and any previous pause
+			// generation, which is unusable anyway: the CoW has advanced past
+			// the memory image it was captured with.
+			if err := os.RemoveAll(layout.SandboxDir(m.cfg.WrennDir, sandboxID)); err != nil {
+				slog.Warn("pause rollback: sandbox dir remove failed", "id", sandboxID, "error", err)
+			}
 			return fmt.Errorf("pause %s: %s: %w (and resume failed: %v)",
 				sandboxID, stage, cause, rerr)
 		}
@@ -511,14 +520,11 @@ func (m *Manager) releaseRuntime(sb *sandboxState, cow cowDisposition) {
 		m.slots.Release(sb.SlotIndex)
 	}
 
+	// RemoveSnapshot detaches the CoW loop even on failure, so dropCow's file
+	// deletion cannot orphan it and keepCow's Resume cannot double-attach.
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("dm-snapshot remove on pause", "id", sb.ID, "error", err)
-			// The CoW loop was not detached (RemoveSnapshot stops on a busy
-			// dm device). Detach it by backing file — dropCow deletes the file
-			// below, and even for keepCow a lingering attachment would make
-			// Resume's losetupCreateRW attach a second loop to the same file.
-			devicemapper.DetachLoopsByFile(sb.dmDevice.CowPath)
 		}
 		if cow == dropCow {
 			os.Remove(sb.dmDevice.CowPath)
@@ -815,15 +821,16 @@ func (m *Manager) ensureMemoryMaterialized(ctx context.Context, sb *sandboxState
 		return fmt.Errorf("memory preload verify: envd client unavailable")
 	}
 
-	status, err := client.GetMemoryPreloadStatus(ctx)
+	// One POST covers every state: "done" reports immediately, "running"
+	// reports the in-flight run, "idle" starts one (agent died between
+	// restore and the loader's POST, or an earlier start failed on the wire),
+	// and a previous "failed"/"cancelled" run is re-armed — so a transient
+	// guest-side failure blocks only this attempt, not every future pause.
+	status, err := client.StartMemoryPreload(ctx)
 	if err != nil {
-		return fmt.Errorf("memory preload verify: %w", err)
+		return fmt.Errorf("memory preload start: %w", err)
 	}
-
-	if status.State == "idle" || status.State == "running" {
-		if _, err := client.StartMemoryPreload(ctx); err != nil {
-			return fmt.Errorf("memory preload start: %w", err)
-		}
+	if status.State != "done" {
 		status, err = client.WaitMemoryPreload(ctx)
 		if err != nil {
 			return fmt.Errorf("memory preload wait: %w", err)

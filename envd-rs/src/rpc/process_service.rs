@@ -305,7 +305,7 @@ impl Process for ProcessServiceImpl {
                         ConnectError::new(ErrorCode::FailedPrecondition, "no start event received")
                     })?;
                     if let Some(input) = data.input.as_option() {
-                        write_input(h, input)?;
+                        write_input(h, input).await?;
                     }
                 }
                 Some(stream_input_request::EventView::Keepalive(_)) => {}
@@ -332,7 +332,7 @@ impl Process for ProcessServiceImpl {
         let handle = self.get_process_by_selector(selector)?;
 
         if let Some(input) = request.input.as_option() {
-            write_input(&handle, input)?;
+            write_input(&handle, input).await?;
         }
 
         Ok((
@@ -392,12 +392,29 @@ impl Process for ProcessServiceImpl {
     }
 }
 
-fn write_input(handle: &ProcessHandle, input: &ProcessInputView) -> Result<(), ConnectError> {
-    match &input.input {
-        Some(process_input::InputView::Pty(d)) => handle.write_pty(d),
-        Some(process_input::InputView::Stdin(d)) => handle.write_stdin(d),
-        None => Ok(()),
-    }
+// write_input copies the payload and performs the pipe/pty write on the
+// blocking pool: write_all blocks the calling thread whenever the target
+// process stops draining its input (full 64K pipe buffer, stopped job), and
+// on a runtime worker thread that would stall every other in-flight request.
+async fn write_input(
+    handle: &Arc<ProcessHandle>,
+    input: &ProcessInputView<'_>,
+) -> Result<(), ConnectError> {
+    let (data, is_pty) = match &input.input {
+        Some(process_input::InputView::Pty(d)) => (d.to_vec(), true),
+        Some(process_input::InputView::Stdin(d)) => (d.to_vec(), false),
+        None => return Ok(()),
+    };
+    let h = Arc::clone(handle);
+    tokio::task::spawn_blocking(move || {
+        if is_pty {
+            h.write_pty(&data)
+        } else {
+            h.write_stdin(&data)
+        }
+    })
+    .await
+    .map_err(|e| ConnectError::new(ErrorCode::Internal, format!("input writer task: {e}")))?
 }
 
 /// Shared event pump for `Start` and `Connect`. Yields a leading start event,

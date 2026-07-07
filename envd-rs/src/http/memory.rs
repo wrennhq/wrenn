@@ -10,8 +10,11 @@
 // handler fills the page from the source memory-ranges file.
 //
 // Wire protocol:
-//   POST /memory/preload         — starts the loader (idempotent) and returns
-//                                  the current status JSON immediately
+//   POST /memory/preload         — starts the loader (idempotent while a run
+//                                  is in flight or completed successfully;
+//                                  restarts a run that ended failed/cancelled)
+//                                  and returns the current status JSON
+//                                  immediately
 //   GET  /memory/preload         — returns the current status JSON
 //   POST /memory/preload/cancel  — signals the loader to stop early
 //
@@ -50,29 +53,40 @@ pub struct PreloadStatus {
 
 pub async fn post_memory_preload(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // First caller wins the CAS and spawns the loader; subsequent callers
-    // just report the existing status.
-    let we_start = state
-        .mem_preload_started
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_ok();
-
-    if we_start {
-        // Fresh run: clear leftovers from a previous lifecycle's loader so a
-        // stale done=true (or stale counters) can't masquerade as this run's
-        // result. Done under the error mutex, the same critical section /init
-        // and result publication use.
-        {
-            let mut err = state.mem_preload_error.lock().unwrap();
-            *err = None;
-            state.mem_preload_done.store(false, Ordering::SeqCst);
-            state.mem_preload_regions.store(0, Ordering::SeqCst);
-            state.mem_preload_pages.store(0, Ordering::SeqCst);
-            state.mem_preload_bytes.store(0, Ordering::SeqCst);
-            state.mem_preload_elapsed_us.store(0, Ordering::SeqCst);
-            state.mem_preload_source.store(0, Ordering::SeqCst);
+    // just report the existing status — EXCEPT when the previous run finished
+    // in failed/cancelled state, which may be retried. Without the retry, one
+    // transient failure would block the host's pause/snapshot gate until the
+    // next /init (which never comes while the sandbox stays running).
+    //
+    // Both the fresh-run reset and the retry check run under the error mutex
+    // — the same critical section /init's reset and the loader's result
+    // publication use — so concurrent POSTs cannot both claim a retry and a
+    // frozen /init cannot interleave.
+    // The generation MUST be captured inside the same mutex-held block as the
+    // CAS/reset: loading it after the lock drops lets an interleaving /init
+    // (bump + started=false) tag this loader with the NEW generation, and a
+    // follow-up POST would then spawn a second concurrent full-RAM walk.
+    let start_generation = {
+        let mut err = state.mem_preload_error.lock().unwrap();
+        let fresh = state
+            .mem_preload_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+        let retry = !fresh
+            && state.mem_preload_done.load(Ordering::SeqCst)
+            && (err.is_some() || state.mem_preload_cancel.load(Ordering::SeqCst));
+        if fresh || retry {
+            // Clear leftovers (previous lifecycle's or failed run's result) so
+            // a stale done=true can't masquerade as this run's completion.
+            state.reset_preload_run(&mut err);
+            state.mem_preload_cancel.store(false, Ordering::SeqCst);
+            Some(state.mem_preload_generation.load(Ordering::SeqCst))
+        } else {
+            None
         }
-        let generation = state.mem_preload_generation.load(Ordering::SeqCst);
+    };
 
+    if let Some(generation) = start_generation {
         let state_clone = Arc::clone(&state);
         // Detached blocking thread — no axum task lifetime ties it to the
         // request, so the connection can close immediately without aborting
@@ -373,45 +387,63 @@ struct RamSegment {
 // Match every System RAM range from /proc/iomem to its KCORE_RAM PT_LOAD
 // segment. RAM segments share a single direct-map base (vaddr = base +
 // phys_start; base is KASLR-randomised, so it must be derived, not assumed).
-// Candidate bases come from exact-size (segment, range) pairs; a base is
-// accepted only if EVERY RAM range has a segment at base + start with the
-// exact range size. This can never select vmalloc/vmemmap segments: their
+// Candidate bases come from size-matched (segment, range) pairs; a base is
+// accepted only if EVERY RAM range has a segment at its expected vaddr with
+// the expected size. This can never select vmalloc/vmemmap segments: their
 // sizes (tens of TB) match no iomem range.
+//
+// Sizes are compared after clamping the iomem range to page boundaries:
+// kcore's segments are PFN-granular (walk_system_ram_range uses
+// PFN_UP/PFN_DOWN) while iomem ranges are byte-granular — the classic
+// 0x1000-0x9fbff low-RAM range is 0x9ec00 bytes in iomem but 0x9e000 in
+// kcore. Exact byte matching would reject every kernel that has such a range.
 fn match_ram_segments(
     ranges: &[(u64, u64)],
     segments: &[KcoreSegment],
 ) -> Result<Vec<RamSegment>, String> {
     const KERNEL_SPACE_MIN: u64 = 0xffff_8000_0000_0000;
 
+    // Page-clamp: [PFN_UP(start), PFN_DOWN(end)). Ranges smaller than one
+    // page after clamping have no kcore segment and nothing to preload.
+    let clamped: Vec<(u64, u64)> = ranges
+        .iter()
+        .map(|(start, end)| (start.next_multiple_of(PAGE_SIZE), end & !(PAGE_SIZE - 1)))
+        .filter(|(start, end)| end > start)
+        .collect();
+    if clamped.is_empty() {
+        return Err("no page-sized System RAM ranges after clamping".into());
+    }
+
     let mut candidates: Vec<u64> = Vec::new();
     for s in segments.iter().filter(|s| s.vaddr >= KERNEL_SPACE_MIN) {
-        for (start, end) in ranges {
-            let len = end - start;
-            if s.file_size == len && s.vaddr.checked_sub(*start).is_some() {
-                candidates.push(s.vaddr - start);
+        for (start, end) in &clamped {
+            if s.file_size == end - start {
+                if let Some(base) = s.vaddr.checked_sub(*start) {
+                    candidates.push(base);
+                }
             }
         }
     }
     candidates.sort_unstable();
     candidates.dedup();
 
+    let try_base = |base: u64| -> Option<Vec<RamSegment>> {
+        clamped
+            .iter()
+            .map(|(start, end)| {
+                segments
+                    .iter()
+                    .find(|s| s.vaddr == base + start && s.file_size == end - start)
+                    .map(|s| RamSegment {
+                        file_offset: s.file_offset,
+                        len: end - start,
+                    })
+            })
+            .collect()
+    };
+
     for base in &candidates {
-        let mut out = Vec::with_capacity(ranges.len());
-        for (start, end) in ranges {
-            let len = end - start;
-            let Some(seg) = segments
-                .iter()
-                .find(|s| s.vaddr == base.wrapping_add(*start) && s.file_size == len)
-            else {
-                out.clear();
-                break;
-            };
-            out.push(RamSegment {
-                file_offset: seg.file_offset,
-                len,
-            });
-        }
-        if out.len() == ranges.len() {
+        if let Some(out) = try_base(*base) {
             return Ok(out);
         }
     }
@@ -419,7 +451,7 @@ fn match_ram_segments(
     Err(format!(
         "no consistent direct-map base for {} RAM ranges across {} PT_LOAD segments \
          ({} candidate bases tried)",
-        ranges.len(),
+        clamped.len(),
         segments.len(),
         candidates.len(),
     ))
@@ -458,8 +490,11 @@ mod tests {
         ]
     }
 
+    // Byte-granular, as /proc/iomem reports them: the low range ends at
+    // 0x9fbff (parse adds 1 → 0x9fc00), NOT page-aligned. kcore's segment for
+    // it is PFN-clamped to 0x9e000 bytes — matching must tolerate that.
     fn typical_ranges() -> Vec<(u64, u64)> {
-        vec![(0x1000, 0x9f000), (0x100000, 2 * GIB)]
+        vec![(0x1000, 0x9fc00), (0x100000, 2 * GIB)]
     }
 
     #[test]
@@ -503,6 +538,32 @@ mod tests {
             seg(0xffff_ea00_0000_0000, TIB, 0x2000),
         ];
         assert!(match_ram_segments(&typical_ranges(), &segments).is_err());
+    }
+
+    #[test]
+    fn unaligned_range_is_page_clamped() {
+        // Range with unaligned start AND end: kcore clamps to
+        // [PFN_UP(start), PFN_DOWN(end)).
+        let ranges = vec![(0x2400, 0x9fbff + 1)];
+        let segments = vec![
+            seg(0xffff_c900_0000_0000, 32 * TIB, 0x1000),
+            seg(BASE + 0x3000, 0x9c000, 0x10000), // 0x3000..0x9f000
+        ];
+        let out = match_ram_segments(&ranges, &segments).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].file_offset, 0x10000);
+        assert_eq!(out[0].len, 0x9c000);
+    }
+
+    #[test]
+    fn sub_page_range_is_skipped() {
+        // A range smaller than one page after clamping (e.g. 0x9fc00-0x9ffff)
+        // has no kcore segment; it must be dropped, not fail the match.
+        let ranges = vec![(0x9fc00, 0xa0000), (0x100000, 2 * GIB)];
+        let segments = vec![seg(BASE + 0x100000, 2 * GIB - 0x100000, 0x20000)];
+        let out = match_ram_segments(&ranges, &segments).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].file_offset, 0x20000);
     }
 
     #[test]

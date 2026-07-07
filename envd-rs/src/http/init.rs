@@ -84,14 +84,8 @@ pub async fn post_init(
             let mut err = state.mem_preload_error.lock().unwrap();
             state.mem_preload_generation.fetch_add(1, Ordering::SeqCst);
             state.mem_preload_cancel.store(false, Ordering::SeqCst);
-            state.mem_preload_done.store(false, Ordering::SeqCst);
             state.mem_preload_started.store(false, Ordering::SeqCst);
-            state.mem_preload_regions.store(0, Ordering::SeqCst);
-            state.mem_preload_pages.store(0, Ordering::SeqCst);
-            state.mem_preload_bytes.store(0, Ordering::SeqCst);
-            state.mem_preload_elapsed_us.store(0, Ordering::SeqCst);
-            state.mem_preload_source.store(0, Ordering::SeqCst);
-            *err = None;
+            state.reset_preload_run(&mut err);
         }
 
         if let Some(ref port_sub) = state.port_subsystem {
@@ -203,11 +197,15 @@ pub async fn post_init(
         futures::future::join_all(futs).await;
     }
 
-    // Set sandbox/template metadata from request body.
+    // Set sandbox/template metadata from request body. Deliberately NOT
+    // written into envd's own process environment: std::env::set_var is
+    // undefined behavior with the multi-threaded runtime live (concurrent
+    // getenv from any thread races the environ rewrite), and nothing needs
+    // it there — spawned processes get these via defaults.env_vars, and
+    // out-of-band consumers (e.g. the `envd ports` subcommand's
+    // read_identity) fall back to the run files.
     if let Some(ref id) = init_req.sandbox_id {
         tracing::debug!(sandbox_id = %id, "setting sandbox ID from init request");
-        // SAFETY: envd is single-threaded at init time; no concurrent env reads.
-        unsafe { std::env::set_var("WRENN_SANDBOX_ID", id) };
         write_run_file(".WRENN_SANDBOX_ID", id);
         state
             .defaults
@@ -216,8 +214,6 @@ pub async fn post_init(
     }
     if let Some(ref id) = init_req.template_id {
         tracing::debug!(template_id = %id, "setting template ID from init request");
-        // SAFETY: envd is single-threaded at init time; no concurrent env reads.
-        unsafe { std::env::set_var("WRENN_TEMPLATE_ID", id) };
         write_run_file(".WRENN_TEMPLATE_ID", id);
         state
             .defaults
@@ -227,8 +223,6 @@ pub async fn post_init(
     if let Some(ref domain) = init_req.proxy_domain {
         if !domain.is_empty() {
             tracing::debug!(proxy_domain = %domain, "setting proxy domain from init request");
-            // SAFETY: envd is single-threaded at init time; no concurrent env reads.
-            unsafe { std::env::set_var("WRENN_PROXY_DOMAIN", domain) };
             write_run_file(".WRENN_PROXY_DOMAIN", domain);
             state
                 .defaults

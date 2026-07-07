@@ -20,15 +20,11 @@ pub async fn post_snapshot_prepare(State(state): State<Arc<AppState>>) -> impl I
         port_sub.stop();
     }
 
-    // sync(2) flushes the in-memory FS state. Done before drop_caches so the
-    // pages we drop are clean.
-    sync();
-
-    // Drop the VFS page cache + dentries/inodes. Reduces snapshot size by
-    // ensuring CH only persists memory pages that the guest actually needs.
-    if let Err(e) = std::fs::write("/proc/sys/vm/drop_caches", "3") {
-        tracing::warn!(error = %e, "drop_caches (first pass) failed (continuing)");
-    }
+    // Flush in-memory FS state, then drop the VFS page cache +
+    // dentries/inodes. sync first so the pages we drop are clean; dropping
+    // reduces snapshot size by ensuring CH only persists memory pages the
+    // guest actually needs.
+    flush_and_drop_caches("first pass").await;
 
     // Best-effort fstrim on the rootfs so unused blocks are returned to the
     // dm-snapshot, keeping CoW size minimal.
@@ -37,14 +33,10 @@ pub async fn post_snapshot_prepare(State(state): State<Arc<AppState>>) -> impl I
         .output()
         .await;
 
-    // Second drop_caches pass after fstrim: fstrim re-reads superblock /
-    // group descriptor pages that we just evicted, putting them back in the
-    // page cache. A second pass drops those and any other late readers (e.g.
-    // sync flushers).
-    sync();
-    if let Err(e) = std::fs::write("/proc/sys/vm/drop_caches", "3") {
-        tracing::warn!(error = %e, "drop_caches (second pass) failed (continuing)");
-    }
+    // Second pass after fstrim: fstrim re-reads superblock / group descriptor
+    // pages that we just evicted, putting them back in the page cache. This
+    // drops those and any other late readers (e.g. sync flushers).
+    flush_and_drop_caches("second pass").await;
 
     // No balloon settle window here: free-page reporting drains asynchronously,
     // so any pages not yet hole-punched by the host at snapshot time are written
@@ -58,4 +50,18 @@ pub async fn post_snapshot_prepare(State(state): State<Arc<AppState>>) -> impl I
         StatusCode::NO_CONTENT,
         [(header::CACHE_CONTROL, "no-store")],
     )
+}
+
+// sync(2) can block for seconds flushing dirty pages, and the drop_caches
+// write blocks while the kernel evicts — both run on the blocking pool or
+// they starve every async task sharing the worker thread (health probes,
+// exec streams) for the whole quiesce window.
+async fn flush_and_drop_caches(pass: &'static str) {
+    let _ = tokio::task::spawn_blocking(move || {
+        sync();
+        if let Err(e) = std::fs::write("/proc/sys/vm/drop_caches", "3") {
+            tracing::warn!(error = %e, pass, "drop_caches failed (continuing)");
+        }
+    })
+    .await;
 }

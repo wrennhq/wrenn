@@ -57,10 +57,18 @@ pub fn ensure_dirs(path: &str, uid: Uid, gid: Gid) -> Result<(), String> {
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir(&current)
-                    .map_err(|e| format!("failed to create directory {current_str}: {e}"))?;
-                chown(&current, Some(uid.as_raw()), Some(gid.as_raw()))
-                    .map_err(|e| format!("failed to chown directory {current_str}: {e}"))?;
+                if let Err(ce) = fs::create_dir(&current) {
+                    // Concurrent request may have created it between the stat
+                    // and here — fine as long as it's a directory now. The
+                    // winner did its own chown; don't re-chown their dir.
+                    let now_dir = fs::metadata(&current).map(|m| m.is_dir()).unwrap_or(false);
+                    if !now_dir {
+                        return Err(format!("failed to create directory {current_str}: {ce}"));
+                    }
+                } else {
+                    chown(&current, Some(uid.as_raw()), Some(gid.as_raw()))
+                        .map_err(|e| format!("failed to chown directory {current_str}: {e}"))?;
+                }
             }
             Err(e) => {
                 return Err(format!("failed to stat directory {current_str}: {e}"));

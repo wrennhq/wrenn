@@ -70,7 +70,7 @@ func TestEnsureMemoryMaterialized(t *testing.T) {
 			lazy:      true,
 			states:    []string{"done"},
 			wantErr:   "",
-			wantPosts: 0,
+			wantPosts: 1, // single POST reports done, no polling
 		},
 		{
 			name:      "lazy idle self-heals via start",
@@ -80,25 +80,18 @@ func TestEnsureMemoryMaterialized(t *testing.T) {
 			wantPosts: 1,
 		},
 		{
-			name:      "lazy failed is a hard error",
+			name:      "lazy failed after wait is a hard error",
 			lazy:      true,
-			states:    []string{"failed"},
+			states:    []string{"idle", "failed"},
 			wantErr:   "memory preload failed",
-			wantPosts: 0,
-		},
-		{
-			name:      "lazy start ends in failed",
-			lazy:      true,
-			states:    []string{"idle", "idle", "failed"},
-			wantErr:   "memory preload failed",
-			wantPosts: -1,
+			wantPosts: 1,
 		},
 		{
 			name:      "lazy cancelled is a hard error",
 			lazy:      true,
-			states:    []string{"cancelled"},
+			states:    []string{"running", "cancelled"},
 			wantErr:   "memory preload cancelled",
-			wantPosts: 0,
+			wantPosts: 1,
 		},
 		{
 			name:      "lazy without client fails",

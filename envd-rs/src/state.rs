@@ -31,6 +31,9 @@ pub struct AppState {
     pub mem_preload_started: AtomicBool,
     pub mem_preload_done: AtomicBool,
     pub mem_preload_cancel: AtomicBool,
+    /// See `reset_preload_run` for the per-run reset shared by /init and the
+    /// POST /memory/preload start/retry paths.
+    ///
     /// Bumped by every /init lifecycle change. A loader thread captures the
     /// value at spawn and refuses to run — or to publish results — once it no
     /// longer matches, so a thread that survived a pause/resume (the VM can be
@@ -110,6 +113,22 @@ impl AppState {
 
     /// Records a new lifecycle ID, returning true if it changed (i.e. this
     /// is the first /init since a resume). First-ever call returns false:
+    /// Clears the per-run memory-preload result fields (done flag, counters,
+    /// source, error). Shared by /init's lifecycle reset and POST
+    /// /memory/preload's start/retry paths so the two field lists cannot
+    /// drift. The caller MUST hold the `mem_preload_error` mutex and pass its
+    /// guard's contents in — that mutex is the critical section that also
+    /// serializes the loader thread's result publication.
+    pub fn reset_preload_run(&self, err: &mut Option<String>) {
+        *err = None;
+        self.mem_preload_done.store(false, Ordering::SeqCst);
+        self.mem_preload_regions.store(0, Ordering::SeqCst);
+        self.mem_preload_pages.store(0, Ordering::SeqCst);
+        self.mem_preload_bytes.store(0, Ordering::SeqCst);
+        self.mem_preload_elapsed_us.store(0, Ordering::SeqCst);
+        self.mem_preload_source.store(0, Ordering::SeqCst);
+    }
+
     /// boot-time /init doesn't need port-subsystem restart since the
     /// subsystem hasn't been started yet by anything else.
     pub fn bump_lifecycle(&self, new_id: &str) -> bool {

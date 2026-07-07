@@ -76,8 +76,11 @@ func (s *Server) CreateSandbox(
 		return nil, err
 	}
 
+	// disk_size_mb in the request is deprecated and never set by the control
+	// plane; passing 0 lets the manager pick the size (DefaultRootfsSizeMB,
+	// floored at the origin image size).
 	sb, diskSizeBytes, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID,
-		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb),
+		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), 0,
 		msg.DefaultUser, msg.DefaultEnv)
 	if err != nil {
 		if errors.Is(err, sandbox.ErrDraining) {

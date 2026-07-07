@@ -41,9 +41,10 @@ func New(hostIP string) *Client {
 // of the standard http://{hostIP}:{envdPort}. Intended for tests (httptest
 // servers) and nonstandard listeners.
 func NewWithBaseURL(base string) *Client {
-	u, err := url.Parse(base)
 	host := base
-	if err == nil {
+	// Hostname() is empty for scheme-less inputs ("127.0.0.1:8080" parses
+	// with "127.0.0.1" as the scheme) — keep the raw base then.
+	if u, err := url.Parse(base); err == nil && u.Hostname() != "" {
 		host = u.Hostname()
 	}
 	return newWithBase(host, base)

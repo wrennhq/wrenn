@@ -192,8 +192,19 @@ func RestoreSnapshot(ctx context.Context, name, originLoopDev, cowPath string, o
 
 // RemoveSnapshot tears down a dm-snapshot device and its CoW loop device.
 // The CoW file is NOT deleted — the caller decides whether to keep or remove it.
+//
+// The CoW loop is detached even when the dm removal fails (busy device):
+// callers treat a failed removal as fatal teardown and typically delete the
+// CoW backing file next, which would orphan a still-attached loop forever
+// (losetup can no longer find it by file). Detaching first is always safe —
+// while dm still references the loop the kernel just defers the release via
+// autoclear until that reference drops.
 func RemoveSnapshot(ctx context.Context, dev *SnapshotDevice) error {
 	if err := dmsetupRemove(ctx, dev.Name); err != nil {
+		if derr := losetupDetachRetry(dev.CowLoopDev); derr != nil {
+			slog.Warn("cow loop detach after failed dm remove",
+				"device", dev.CowLoopDev, "name", dev.Name, "error", derr)
+		}
 		return fmt.Errorf("dmsetup remove %s: %w", dev.Name, err)
 	}
 

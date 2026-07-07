@@ -78,6 +78,19 @@ func (m *Manager) RestorePausedSandboxes() {
 			continue
 		}
 
+		// A readable running-state file that survived RestoreRunningSandboxes
+		// means the adoption of a verified-LIVE CH process failed (probe
+		// timeout etc.) and its slot/loop were deliberately left held. The
+		// stale pause generation in the same dir must not be registered — and
+		// above all not trashed: trashing renames the whole sandbox dir,
+		// carrying away the live VM's CoW file and the state file the next
+		// restart needs to retry the adoption.
+		if _, err := readRunningState(m.cfg.WrennDir, name); err == nil {
+			slog.Warn("restore: skipping paused candidate — dir owned by live un-adopted VM",
+				"id", name)
+			continue
+		}
+
 		snapDir := layout.PauseSnapshotDir(m.cfg.WrennDir, name)
 		meta, err := readSnapshotMeta(snapDir)
 		if err != nil {
