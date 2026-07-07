@@ -392,29 +392,20 @@ impl Process for ProcessServiceImpl {
     }
 }
 
-// write_input copies the payload and performs the pipe/pty write on the
-// blocking pool: write_all blocks the calling thread whenever the target
-// process stops draining its input (full 64K pipe buffer, stopped job), and
-// on a runtime worker thread that would stall every other in-flight request.
+// Input writes go straight to the fd, which is O_NONBLOCK (set at spawn):
+// small interactive writes complete inline on the async worker, and a full
+// buffer parks the task awaiting writability with a bounded deadline inside
+// write_stdin / write_pty — no blocking-pool thread is ever pinned by a
+// process that stopped reading its input.
 async fn write_input(
     handle: &Arc<ProcessHandle>,
     input: &ProcessInputView<'_>,
 ) -> Result<(), ConnectError> {
-    let (data, is_pty) = match &input.input {
-        Some(process_input::InputView::Pty(d)) => (d.to_vec(), true),
-        Some(process_input::InputView::Stdin(d)) => (d.to_vec(), false),
-        None => return Ok(()),
-    };
-    let h = Arc::clone(handle);
-    tokio::task::spawn_blocking(move || {
-        if is_pty {
-            h.write_pty(&data)
-        } else {
-            h.write_stdin(&data)
-        }
-    })
-    .await
-    .map_err(|e| ConnectError::new(ErrorCode::Internal, format!("input writer task: {e}")))?
+    match &input.input {
+        Some(process_input::InputView::Pty(d)) => handle.write_pty(d).await,
+        Some(process_input::InputView::Stdin(d)) => handle.write_stdin(d).await,
+        None => Ok(()),
+    }
 }
 
 /// Shared event pump for `Start` and `Connect`. Yields a leading start event,

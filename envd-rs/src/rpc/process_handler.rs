@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::io::Read;
-use std::os::unix::io::AsRawFd;
+use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -10,6 +11,8 @@ use connectrpc::{ConnectError, ErrorCode};
 use nix::pty::{Winsize, openpty};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
+use tokio::io::Interest;
+use tokio::io::unix::AsyncFd;
 use tokio::sync::broadcast;
 
 use crate::rpc::pb::process::*;
@@ -31,6 +34,14 @@ const COALESCE_CAP: usize = 64 * 1024;
 // the most recent OUTPUT_LOG_CAPACITY bytes (older output is evicted) so the
 // buffer can never grow without bound for a chatty long-running process.
 const OUTPUT_LOG_CAPACITY: usize = 256 * 1024;
+
+// Bound on how long one input write may wait for the target process to drain
+// its buffer. The stdin pipe / pty master is O_NONBLOCK, so a full buffer
+// parks the writing task (never an OS thread); within this window a
+// briefly-full buffer recovers transparently, past it the write fails with
+// ResourceExhausted instead of hanging forever on a process that stopped
+// reading its input.
+const INPUT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub enum DataEvent {
@@ -136,6 +147,24 @@ where
                 }
                 publish(std::mem::take(&mut acc));
             }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // The pty master is O_NONBLOCK for the input write path and
+                // shares its file description with this reader. Wait for
+                // readability and retry; on POLLHUP/POLLERR the retried read
+                // returns 0/EIO and ends the loop.
+                let mut pfd = libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                if unsafe { libc::poll(&mut pfd, 1, -1) } < 0 {
+                    let errno = std::io::Error::last_os_error().raw_os_error();
+                    if errno != Some(libc::EINTR) {
+                        break;
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => break,
         }
     }
@@ -156,6 +185,10 @@ pub struct ProcessHandle {
 
     stdin: Mutex<Option<std::process::ChildStdin>>,
     pty_master: Mutex<Option<std::fs::File>>,
+    // Serializes input writes so concurrent chunks land in order. A tokio
+    // mutex: a writer parked on a full buffer holds it across an await, and
+    // the next writer waits as a suspended task — no OS thread is pinned.
+    input_gate: tokio::sync::Mutex<()>,
 }
 
 impl ProcessHandle {
@@ -201,32 +234,41 @@ impl ProcessHandle {
         })
     }
 
-    pub fn write_stdin(&self, data: &[u8]) -> Result<(), ConnectError> {
-        use std::io::Write;
-        let mut guard = self.stdin.lock().unwrap();
-        match guard.as_mut() {
-            Some(stdin) => stdin.write_all(data).map_err(|e| {
-                ConnectError::new(ErrorCode::Internal, format!("error writing to stdin: {e}"))
-            }),
-            None => Err(ConnectError::new(
-                ErrorCode::FailedPrecondition,
-                "stdin not enabled or closed",
-            )),
-        }
+    pub async fn write_stdin(&self, data: &[u8]) -> Result<(), ConnectError> {
+        let _ordered = self.input_gate.lock().await;
+        // Dup the fd under the std mutex, then release it before awaiting:
+        // close_stdin stays responsive while a write is parked, and the fd
+        // stays valid for this write even if stdin is closed concurrently.
+        let fd = {
+            let guard = self.stdin.lock().unwrap();
+            match guard.as_ref() {
+                Some(stdin) => dup_writer_fd(stdin, "stdin")?,
+                None => {
+                    return Err(ConnectError::new(
+                        ErrorCode::FailedPrecondition,
+                        "stdin not enabled or closed",
+                    ));
+                }
+            }
+        };
+        write_nonblocking(fd, data, "stdin").await
     }
 
-    pub fn write_pty(&self, data: &[u8]) -> Result<(), ConnectError> {
-        use std::io::Write;
-        let mut guard = self.pty_master.lock().unwrap();
-        match guard.as_mut() {
-            Some(master) => master.write_all(data).map_err(|e| {
-                ConnectError::new(ErrorCode::Internal, format!("error writing to pty: {e}"))
-            }),
-            None => Err(ConnectError::new(
-                ErrorCode::FailedPrecondition,
-                "pty not assigned to process",
-            )),
-        }
+    pub async fn write_pty(&self, data: &[u8]) -> Result<(), ConnectError> {
+        let _ordered = self.input_gate.lock().await;
+        let fd = {
+            let guard = self.pty_master.lock().unwrap();
+            match guard.as_ref() {
+                Some(master) => dup_writer_fd(master, "pty")?,
+                None => {
+                    return Err(ConnectError::new(
+                        ErrorCode::FailedPrecondition,
+                        "pty not assigned to process",
+                    ));
+                }
+            }
+        };
+        write_nonblocking(fd, data, "pty").await
     }
 
     pub fn close_stdin(&self) -> Result<(), ConnectError> {
@@ -270,6 +312,79 @@ impl ProcessHandle {
             )),
         }
     }
+}
+
+fn dup_writer_fd(f: &impl AsFd, what: &str) -> Result<OwnedFd, ConnectError> {
+    f.as_fd()
+        .try_clone_to_owned()
+        .map_err(|e| ConnectError::new(ErrorCode::Internal, format!("dup {what} fd: {e}")))
+}
+
+/// Write `data` to a non-blocking fd from async context. Small interactive
+/// writes complete inline; a full buffer surfaces as WouldBlock and we await
+/// writability with a deadline, so a process that stopped reading its input
+/// costs a parked task — never a pinned OS thread.
+async fn write_nonblocking(fd: OwnedFd, data: &[u8], what: &str) -> Result<(), ConnectError> {
+    let afd = AsyncFd::with_interest(fd, Interest::WRITABLE)
+        .map_err(|e| ConnectError::new(ErrorCode::Internal, format!("register {what} fd: {e}")))?;
+    let deadline = tokio::time::Instant::now() + INPUT_WRITE_TIMEOUT;
+    let mut written = 0usize;
+    while written < data.len() {
+        let rest = &data[written..];
+        let n = unsafe {
+            libc::write(
+                afd.get_ref().as_raw_fd(),
+                rest.as_ptr() as *const libc::c_void,
+                rest.len(),
+            )
+        };
+        if n >= 0 {
+            written += n as usize;
+            continue;
+        }
+        let err = std::io::Error::last_os_error();
+        match err.kind() {
+            std::io::ErrorKind::WouldBlock => {
+                match tokio::time::timeout_at(deadline, afd.writable()).await {
+                    Ok(Ok(mut ready)) => ready.clear_ready(),
+                    Ok(Err(e)) => {
+                        return Err(ConnectError::new(
+                            ErrorCode::Internal,
+                            format!("error waiting for {what} to become writable: {e}"),
+                        ));
+                    }
+                    Err(_) => {
+                        return Err(ConnectError::new(
+                            ErrorCode::ResourceExhausted,
+                            format!(
+                                "{what} input buffer full ({written} of {} bytes written): process is not reading its input",
+                                data.len()
+                            ),
+                        ));
+                    }
+                }
+            }
+            std::io::ErrorKind::Interrupted => {}
+            _ => {
+                return Err(ConnectError::new(
+                    ErrorCode::Internal,
+                    format!("error writing to {what}: {err}"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn set_nonblocking(fd: RawFd) -> std::io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 pub struct SpawnedProcess {
@@ -436,6 +551,19 @@ exec {nice_prefix}{target}"#
 
         let pid = child.id();
         let master_file: std::fs::File = master_fd.into();
+        // O_NONBLOCK is per file description, so it covers the write path and
+        // the reader clone alike; coalesce_read_loop handles the resulting
+        // WouldBlock by polling. Without it a write would block an OS thread,
+        // so treat failure as a failed spawn.
+        if let Err(e) = set_nonblocking(master_file.as_raw_fd()) {
+            let mut child = child;
+            let _ = signal::kill(Pid::from_raw(-(pid as i32)), Signal::SIGKILL);
+            let _ = child.wait();
+            return Err(ConnectError::new(
+                ErrorCode::Internal,
+                format!("set pty master non-blocking: {e}"),
+            ));
+        }
         let master_clone = master_file.try_clone().unwrap();
 
         let handle = Arc::new(ProcessHandle {
@@ -448,6 +576,7 @@ exec {nice_prefix}{target}"#
             output_log: Mutex::new(OutputLog::default()),
             stdin: Mutex::new(None),
             pty_master: Mutex::new(Some(master_file)),
+            input_gate: tokio::sync::Mutex::new(()),
         });
 
         let data_rx = handle.subscribe_data();
@@ -530,6 +659,21 @@ exec {nice_prefix}{target}"#
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
 
+        // Non-blocking stdin is what lets write_stdin fail fast instead of
+        // pinning an OS thread when the process stops draining its input.
+        // Only the pipe's write end is affected — the child's read end is a
+        // separate file description.
+        if let Some(s) = stdin.as_ref() {
+            if let Err(e) = set_nonblocking(s.as_raw_fd()) {
+                let _ = signal::kill(Pid::from_raw(-(pid as i32)), Signal::SIGKILL);
+                let _ = child.wait();
+                return Err(ConnectError::new(
+                    ErrorCode::Internal,
+                    format!("set stdin non-blocking: {e}"),
+                ));
+            }
+        }
+
         let handle = Arc::new(ProcessHandle {
             config,
             tag,
@@ -540,6 +684,7 @@ exec {nice_prefix}{target}"#
             output_log: Mutex::new(OutputLog::default()),
             stdin: Mutex::new(stdin),
             pty_master: Mutex::new(None),
+            input_gate: tokio::sync::Mutex::new(()),
         });
 
         let data_rx = handle.subscribe_data();
@@ -611,5 +756,114 @@ fn current_nice() -> i32 {
         // getpriority(PRIO_PROCESS, 0) returns the nice value directly,
         // in the range [-20, 19]; the normal default is 0.
         prio
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn spawn(cmd: &str, enable_stdin: bool, pty: Option<(u16, u16)>) -> SpawnedProcess {
+        let user = nix::unistd::User::from_uid(nix::unistd::getuid())
+            .unwrap()
+            .unwrap();
+        spawn_process(
+            cmd,
+            &[],
+            &HashMap::new(),
+            "/tmp",
+            pty,
+            enable_stdin,
+            None,
+            &user,
+            &dashmap::DashMap::new(),
+        )
+        .unwrap()
+    }
+
+    /// Wait until the accumulated bytes from `recv` contain `needle`.
+    async fn recv_until_contains(
+        rx: &mut broadcast::Receiver<DataEvent>,
+        needle: &[u8],
+        what: &str,
+    ) -> Vec<u8> {
+        let mut acc: Vec<u8> = Vec::new();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match rx.recv().await {
+                    Ok(DataEvent::Stdout(d)) | Ok(DataEvent::Pty(d)) => {
+                        acc.extend_from_slice(&d);
+                        if acc.windows(needle.len()).any(|w| w == needle) {
+                            break;
+                        }
+                    }
+                    Ok(DataEvent::Stderr(_)) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(e) => panic!("{what}: data stream closed early: {e}"),
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{what}: output never contained expected bytes"));
+        acc
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn write_to_stuck_stdin_errors_instead_of_hanging() {
+        // sleep never reads stdin: the 64K pipe buffer fills and the write
+        // must fail with ResourceExhausted after the bounded wait — the old
+        // write_all here blocked a pool thread forever.
+        let spawned = spawn("sleep 60", true, None);
+        let handle = Arc::clone(&spawned.handle);
+        let big = vec![b'x'; 1024 * 1024];
+        let writer = tokio::spawn(async move { handle.write_stdin(&big).await });
+
+        // While that write is parked, the agent must stay fully responsive:
+        // a fresh process spawns, runs, and reports its exit.
+        let mut quick = spawn("true", false, None);
+        let end = tokio::time::timeout(Duration::from_secs(10), quick.end_rx.recv())
+            .await
+            .expect("agent unresponsive while stdin write pending")
+            .expect("end event");
+        assert!(end.exited);
+
+        let err = tokio::time::timeout(INPUT_WRITE_TIMEOUT + Duration::from_secs(10), writer)
+            .await
+            .expect("stdin write hung past its deadline")
+            .expect("writer task panicked")
+            .expect_err("write into a full pipe nobody reads must error");
+        assert!(
+            matches!(err.code, ErrorCode::ResourceExhausted),
+            "expected ResourceExhausted, got {:?}",
+            err.code
+        );
+
+        let _ = spawned.handle.send_signal(Signal::SIGKILL);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stdin_write_and_eof_still_work() {
+        let mut spawned = spawn("cat", true, None);
+        spawned.handle.write_stdin(b"hello\n").await.unwrap();
+        recv_until_contains(&mut spawned.data_rx, b"hello\n", "cat stdout").await;
+
+        // close_stdin must still deliver EOF with the non-blocking pipe.
+        spawned.handle.close_stdin().unwrap();
+        let end = tokio::time::timeout(Duration::from_secs(10), spawned.end_rx.recv())
+            .await
+            .expect("cat did not exit after stdin EOF")
+            .expect("end event");
+        assert_eq!(end.exit_code, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pty_write_and_echo_still_work() {
+        // O_NONBLOCK on the pty master is shared with the output reader;
+        // this covers both directions surviving it.
+        let mut spawned = spawn("cat", false, Some((80, 24)));
+        spawned.handle.write_pty(b"hello\r").await.unwrap();
+        recv_until_contains(&mut spawned.data_rx, b"hello", "pty echo").await;
+        let _ = spawned.handle.send_signal(Signal::SIGKILL);
     }
 }
