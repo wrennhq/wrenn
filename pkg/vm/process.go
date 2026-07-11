@@ -20,6 +20,19 @@ type process struct {
 	exitCh  chan struct{}
 	exitErr error
 	logFile *os.File
+
+	// attachedPID is set instead of cmd when the CH process was started by an
+	// earlier process and re-attached via Manager.Reattach. A non-child cannot
+	// be cmd.Wait()ed; exit detection falls back to kill(pid, 0) polling.
+	attachedPID int
+}
+
+// pid returns the process ID regardless of how the process was obtained.
+func (p *process) pid() int {
+	if p.cmd != nil && p.cmd.Process != nil {
+		return p.cmd.Process.Pid
+	}
+	return p.attachedPID
 }
 
 // startProcess launches the Cloud Hypervisor binary inside an isolated mount
@@ -145,13 +158,15 @@ exec %[4]s
 }
 
 // stop sends SIGTERM and waits for the process to exit. If it doesn't exit
-// within 10 seconds, SIGKILL is sent.
+// within 10 seconds, SIGKILL is sent. Signals target the process group
+// (Setsid at launch), which works for both child and re-attached processes.
 func (p *process) stop() error {
-	if p.cmd.Process == nil {
+	pid := p.pid()
+	if pid == 0 {
 		return nil
 	}
 
-	if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM); err != nil {
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
 		slog.Debug("sigterm failed, process may have exited", "error", err)
 	}
 
@@ -160,7 +175,7 @@ func (p *process) stop() error {
 		return nil
 	case <-time.After(10 * time.Second):
 		slog.Warn("cloud-hypervisor did not exit after SIGTERM, sending SIGKILL")
-		if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
 			slog.Debug("sigkill failed", "error", err)
 		}
 		<-p.exitCh

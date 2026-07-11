@@ -35,8 +35,8 @@
 
 	// Launch state
 	let launchTarget = $state<Snapshot | null>(null);
-	let launchVcpus = $state(1);
-	let launchMemoryMb = $state(512);
+	let launchVcpus = $state(2);
+	let launchMemoryMb = $state(2048);
 	let launchTimeoutSec = $state(0);
 	let launching = $state(false);
 	let launchError = $state<string | null>(null);
@@ -81,8 +81,8 @@
 
 	function openLaunch(snapshot: Snapshot) {
 		launchTarget = snapshot;
-		launchVcpus = snapshot.vcpus ?? 1;
-		launchMemoryMb = snapshot.memory_mb ?? 512;
+		launchVcpus = snapshot.vcpus ?? 2;
+		launchMemoryMb = snapshot.memory_mb ?? 2048;
 		launchTimeoutSec = 0;
 		launchError = null;
 	}
@@ -637,7 +637,7 @@
 					</label>
 					{#if launchTarget.type === 'snapshot'}
 						<div class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-0)] px-3 py-2 font-mono text-ui text-[var(--color-text-muted)]">
-							{launchTarget.memory_mb ?? 512}
+							{launchTarget.memory_mb ?? 2048}
 						</div>
 					{:else}
 						<input

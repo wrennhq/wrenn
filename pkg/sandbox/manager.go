@@ -15,13 +15,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
-	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
-	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/models"
-	"git.omukk.dev/wrenn/wrenn/internal/network"
-	"git.omukk.dev/wrenn/wrenn/internal/vm"
+	"git.omukk.dev/wrenn/wrenn/pkg/devicemapper"
+	"git.omukk.dev/wrenn/wrenn/pkg/envdclient"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/models"
+	"git.omukk.dev/wrenn/wrenn/pkg/network"
+	"git.omukk.dev/wrenn/wrenn/pkg/vm"
 	envdpb "git.omukk.dev/wrenn/wrenn/proto/envd/gen"
 )
 
@@ -211,6 +211,15 @@ type sandboxState struct {
 	// find rootfs.ext4 in the new mount namespace.
 	sandboxDirOverride string
 
+	// lazyRestore records that this sandbox's CH process was launched with
+	// --restore ...,memory_restore_mode=ondemand (Resume or snapshot-template
+	// launch): guest pages fault in lazily from the source memory-ranges, so
+	// any vm.snapshot taken before the guest-side preload completes would emit
+	// holes for never-faulted pages — silent corruption on the next restore.
+	// Pause/CreateSnapshot consult this via ensureMemoryMaterialized. Persisted
+	// in the running-state file so re-attached sandboxes keep the guarantee.
+	lazyRestore bool
+
 	// Background memory loading state (set during Resume for UFFD sandboxes).
 	// nil for freshly-created sandboxes. For resumed sandboxes, memLoadDone
 	// is closed when the background loader finishes (success or failure).
@@ -264,10 +273,16 @@ func New(cfg Config) *Manager {
 	if cfg.EnvdTimeout == 0 {
 		cfg.EnvdTimeout = 30 * time.Second
 	}
+	slots := network.NewSlotAllocator(layout.SlotsDir(cfg.WrennDir))
+	// Honor slots claimed by other live processes (e.g. a concurrent CLI
+	// invocation mid-Create) before handing any out ourselves.
+	if err := slots.SeedFromDir(); err != nil {
+		slog.Warn("failed to seed slot allocator from disk", "error", err)
+	}
 	return &Manager{
 		cfg:     cfg,
 		vm:      vm.NewManager(),
-		slots:   network.NewSlotAllocator(),
+		slots:   slots,
 		loops:   devicemapper.NewLoopRegistry(),
 		boxes:   make(map[string]*sandboxState),
 		creates: make(map[string]*createHandle),
@@ -314,10 +329,10 @@ func (m *Manager) Create(
 	}
 
 	if vcpus <= 0 {
-		vcpus = 1
+		vcpus = 2
 	}
 	if memoryMB <= 0 {
-		memoryMB = 512
+		memoryMB = 2048
 	}
 	if diskSizeMB <= 0 {
 		diskSizeMB = m.cfg.DefaultRootfsSizeMB
@@ -505,6 +520,7 @@ func (m *Manager) Create(
 
 	m.startSampler(sb)
 	m.startCrashWatcher(sb)
+	m.writeRunningState(sb)
 
 	slog.Info("sandbox created",
 		"id", sandboxID,
@@ -606,6 +622,8 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 	m.slots.Release(sb.SlotIndex)
 
 	// Tear down dm-snapshot and release the base image loop device.
+	// RemoveSnapshot detaches the CoW loop even on failure, so deleting the
+	// CoW file below cannot orphan it.
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("dm-snapshot remove error", "id", sb.ID, "error", err)
@@ -613,8 +631,10 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 		os.Remove(sb.dmDevice.CowPath)
 	}
 	// Paused branch: dm-snapshot and loop were already released by
-	// releaseRuntime; the CoW file inside the sandbox dir is removed by
-	// Destroy's os.RemoveAll(SandboxDir) below.
+	// releaseRuntime, which also cleared dmDevice and baseImagePath — both
+	// guards below are nil/empty for a paused sandbox, so nothing double-
+	// releases. The CoW file inside the sandbox dir is removed by Destroy's
+	// os.RemoveAll(SandboxDir) below.
 	if sb.baseImagePath != "" {
 		m.loops.Release(sb.baseImagePath)
 	}
@@ -1262,6 +1282,8 @@ func (m *Manager) cleanupAfterCrash(sb *sandboxState) {
 	}
 	m.slots.Release(sb.SlotIndex)
 
+	// RemoveSnapshot detaches the CoW loop even on failure, so the RemoveAll
+	// below (which deletes the CoW backing file) cannot orphan it.
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("crash cleanup: dm-snapshot error", "id", sb.ID, "error", err)

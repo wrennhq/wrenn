@@ -41,13 +41,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
-	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/models"
-	"git.omukk.dev/wrenn/wrenn/internal/network"
 	"git.omukk.dev/wrenn/wrenn/internal/snapshot"
-	"git.omukk.dev/wrenn/wrenn/internal/vm"
+	"git.omukk.dev/wrenn/wrenn/pkg/devicemapper"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/models"
+	"git.omukk.dev/wrenn/wrenn/pkg/network"
+	"git.omukk.dev/wrenn/wrenn/pkg/vm"
 )
 
 const (
@@ -178,11 +178,12 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		lastPhase = now
 	}
 
-	// Wait for the post-resume memory loader to finish before snapshotting.
-	// Without this, ch.snapshot's SEEK_DATA/SEEK_HOLE writer would emit holes
-	// for any page not yet faulted in, which read back as zero on the next
-	// restore — silent corruption across pause/resume chains.
-	if err := m.waitForMemoryLoader(ctx, sb); err != nil {
+	// Ensure every guest page is resident before snapshotting. Without this,
+	// ch.snapshot's SEEK_DATA/SEEK_HOLE writer would emit holes for any page
+	// not yet faulted in, which read back as zero on the next restore —
+	// silent corruption across pause/resume chains. Verified against envd's
+	// preload status, not just the in-process loader goroutine.
+	if err := m.ensureMemoryMaterialized(ctx, sb); err != nil {
 		return fmt.Errorf("pause %s: %w", sandboxID, err)
 	}
 	phase("memory_loader_wait")
@@ -204,6 +205,26 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 			sb.Status = models.StatusError
 			m.mu.Unlock()
 			sb.connTracker.Reset()
+			// The VM is dead (typically it crashed mid-quiesce — the crash
+			// watcher saw StatusPausing and deliberately stood down). Nothing
+			// will ever resume this sandbox, so release its runtime now:
+			// otherwise the network slot, dm-snapshot, loop refcount, and
+			// sampler goroutine stay held until an explicit Destroy or agent
+			// shutdown. Zero SlotIndex so a later Destroy's cleanup() cannot
+			// release the (possibly re-allocated) slot a second time.
+			m.releaseRuntime(sb, dropCow)
+			m.mu.Lock()
+			sb.SlotIndex = 0
+			m.mu.Unlock()
+			// Remove the sandbox dir wholesale, mirroring cleanupAfterCrash.
+			// This drops the running-state file — its recorded slot is freed
+			// and may be re-claimed, so a later restart's sweep must not tear
+			// down the new owner's network — and any previous pause
+			// generation, which is unusable anyway: the CoW has advanced past
+			// the memory image it was captured with.
+			if err := os.RemoveAll(layout.SandboxDir(m.cfg.WrennDir, sandboxID)); err != nil {
+				slog.Warn("pause rollback: sandbox dir remove failed", "id", sandboxID, "error", err)
+			}
 			return fmt.Errorf("pause %s: %s: %w (and resume failed: %v)",
 				sandboxID, stage, cause, rerr)
 		}
@@ -220,7 +241,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 	phase("quiesce_and_pause")
 
 	// Memory materialisation is handled out-of-band by the background loader
-	// kicked off by Resume after /init. We blocked on it above (waitForMemoryLoader)
+	// kicked off by Resume after /init. We blocked on it above (ensureMemoryMaterialized)
 	// so by the time we reach ch.snapshot every guest page is resident in CH's
 	// memfile and SEEK_DATA/SEEK_HOLE produces a self-contained snapshot.
 
@@ -499,6 +520,8 @@ func (m *Manager) releaseRuntime(sb *sandboxState, cow cowDisposition) {
 		m.slots.Release(sb.SlotIndex)
 	}
 
+	// RemoveSnapshot detaches the CoW loop even on failure, so dropCow's file
+	// deletion cannot orphan it and keepCow's Resume cannot double-attach.
 	if sb.dmDevice != nil {
 		if err := devicemapper.RemoveSnapshot(context.Background(), sb.dmDevice); err != nil {
 			slog.Warn("dm-snapshot remove on pause", "id", sb.ID, "error", err)
@@ -511,10 +534,16 @@ func (m *Manager) releaseRuntime(sb *sandboxState, cow cowDisposition) {
 		m.loops.Release(sb.baseImagePath)
 	}
 
-	// Clear runtime references; they're rebuilt on resume.
+	// Clear runtime references; they're rebuilt on resume. baseImagePath MUST
+	// be cleared along with the rest: it pairs 1:1 with the loop refcount just
+	// released, and a later Destroy-of-paused runs cleanup(), which releases
+	// the loop again whenever baseImagePath is set — underflowing the shared
+	// registry and detaching the base image loop out from under every other
+	// sandbox running on the same template.
 	sb.slot = nil
 	sb.client.Store(nil)
 	sb.dmDevice = nil
+	sb.baseImagePath = ""
 }
 
 // Resume re-launches a paused sandbox from its on-disk snapshot. The same
@@ -667,6 +696,7 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 	// baseImagePath is populated — the restored entry intentionally leaves
 	// it empty so a Destroy-before-Resume cannot underflow the registry.
 	sb.baseImagePath = meta.BaseTemplate
+	sb.lazyRestore = true
 	sb.connTracker.Reset()
 	sb.HostIP = slot.HostIP
 	sb.RootfsPath = dmDev.DevicePath
@@ -676,6 +706,7 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 
 	m.startSampler(sb)
 	m.startCrashWatcher(sb)
+	m.writeRunningState(sb)
 
 	// Background memory loader is started by the outer Resume AFTER /init
 	// completes — see comment there for the race rationale.
@@ -752,23 +783,65 @@ func (m *Manager) startMemoryLoader(sb *sandboxState) {
 	}()
 }
 
-// waitForMemoryLoader blocks until the background memory loader finishes, or
-// until ctx is cancelled. Returns nil if the loader is already done or not
-// running. A pause must wait on this before ch.snapshot so the resulting
-// memory-ranges is self-contained.
-func (m *Manager) waitForMemoryLoader(ctx context.Context, sb *sandboxState) error {
+// ensureMemoryMaterialized guarantees that every guest page of a
+// lazily-restored sandbox is resident in CH's memfile before a vm.snapshot.
+// For cold-booted sandboxes (lazyRestore unset) it is a no-op.
+//
+// envd's /memory/preload status is the source of truth — not the in-process
+// loader goroutine, which does not survive a host-agent restart and whose
+// completion only means "polling ended", not "preload succeeded". The
+// in-process channel is still awaited first so a running loader isn't raced;
+// the verdict then comes from the guest:
+//
+//	done            → safe to snapshot
+//	idle / running  → (re)start and wait: idle happens when the agent died
+//	                  between restore and the loader's POST, or a previous
+//	                  start attempt failed on the wire
+//	failed / cancelled → hard error; snapshotting now would silently zero all
+//	                  never-faulted guest memory on the next restore
+func (m *Manager) ensureMemoryMaterialized(ctx context.Context, sb *sandboxState) error {
 	m.mu.RLock()
+	lazy := sb.lazyRestore
 	done := sb.memLoadDone
 	m.mu.RUnlock()
-	if done == nil {
+	if !lazy {
 		return nil
 	}
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("wait for memory loader: %w", ctx.Err())
+
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return fmt.Errorf("wait for memory loader: %w", ctx.Err())
+		}
 	}
+
+	client := sb.client.Load()
+	if client == nil {
+		return fmt.Errorf("memory preload verify: envd client unavailable")
+	}
+
+	// One POST covers every state: "done" reports immediately, "running"
+	// reports the in-flight run, "idle" starts one (agent died between
+	// restore and the loader's POST, or an earlier start failed on the wire),
+	// and a previous "failed"/"cancelled" run is re-armed — so a transient
+	// guest-side failure blocks only this attempt, not every future pause.
+	status, err := client.StartMemoryPreload(ctx)
+	if err != nil {
+		return fmt.Errorf("memory preload start: %w", err)
+	}
+	if status.State != "done" {
+		status, err = client.WaitMemoryPreload(ctx)
+		if err != nil {
+			return fmt.Errorf("memory preload wait: %w", err)
+		}
+	}
+
+	if status.State != "done" {
+		return fmt.Errorf("memory preload %s: %s (source %q, %d pages, %d bytes)",
+			status.State, status.Error, status.Source, status.Pages, status.Bytes)
+	}
+	return nil
 }
 
 // CreateSnapshot writes a self-contained template snapshot to
@@ -812,10 +885,10 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 func (m *Manager) snapshotRunningToTemplate(ctx context.Context, sb *sandboxState, teamID, templateID pgtype.UUID, name string) (int64, error) {
 	sandboxID := sb.ID
 
-	// Same rationale as Pause: wait for the background memory loader so the
-	// resulting memory-ranges is self-contained when this sandbox itself was
-	// previously restored from an ondemand snapshot.
-	if err := m.waitForMemoryLoader(ctx, sb); err != nil {
+	// Same rationale as Pause: ensure guest memory is fully materialised so
+	// the resulting memory-ranges is self-contained when this sandbox itself
+	// was previously restored from an ondemand snapshot.
+	if err := m.ensureMemoryMaterialized(ctx, sb); err != nil {
 		return 0, fmt.Errorf("create snapshot %s: %w", sandboxID, err)
 	}
 

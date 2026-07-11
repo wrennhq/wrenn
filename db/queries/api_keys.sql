@@ -28,3 +28,6 @@ DELETE FROM team_api_keys WHERE team_id = $1;
 
 -- name: DeleteAPIKeysByCreator :exec
 DELETE FROM team_api_keys WHERE created_by = $1;
+
+-- name: DeleteAPIKeysByTeamAndCreator :exec
+DELETE FROM team_api_keys WHERE team_id = $1 AND created_by = $2;

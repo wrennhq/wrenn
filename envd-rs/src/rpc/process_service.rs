@@ -305,7 +305,7 @@ impl Process for ProcessServiceImpl {
                         ConnectError::new(ErrorCode::FailedPrecondition, "no start event received")
                     })?;
                     if let Some(input) = data.input.as_option() {
-                        write_input(h, input)?;
+                        write_input(h, input).await?;
                     }
                 }
                 Some(stream_input_request::EventView::Keepalive(_)) => {}
@@ -332,7 +332,7 @@ impl Process for ProcessServiceImpl {
         let handle = self.get_process_by_selector(selector)?;
 
         if let Some(input) = request.input.as_option() {
-            write_input(&handle, input)?;
+            write_input(&handle, input).await?;
         }
 
         Ok((
@@ -392,10 +392,18 @@ impl Process for ProcessServiceImpl {
     }
 }
 
-fn write_input(handle: &ProcessHandle, input: &ProcessInputView) -> Result<(), ConnectError> {
+// Input writes go straight to the fd, which is O_NONBLOCK (set at spawn):
+// small interactive writes complete inline on the async worker, and a full
+// buffer parks the task awaiting writability with a bounded deadline inside
+// write_stdin / write_pty — no blocking-pool thread is ever pinned by a
+// process that stopped reading its input.
+async fn write_input(
+    handle: &Arc<ProcessHandle>,
+    input: &ProcessInputView<'_>,
+) -> Result<(), ConnectError> {
     match &input.input {
-        Some(process_input::InputView::Pty(d)) => handle.write_pty(d),
-        Some(process_input::InputView::Stdin(d)) => handle.write_stdin(d),
+        Some(process_input::InputView::Pty(d)) => handle.write_pty(d).await,
+        Some(process_input::InputView::Stdin(d)) => handle.write_stdin(d).await,
         None => Ok(()),
     }
 }

@@ -71,16 +71,22 @@ pub async fn post_init(
         // back in the source memory-ranges file as the host re-restored them
         // lazily. Reset the flags so the next POST /memory/preload kicks off
         // a new loader instead of returning the stale "already-done".
+        //
+        // The generation bump + reset happen under the error mutex — the same
+        // critical section a loader thread publishes its result in. A loader
+        // from the PREVIOUS lifecycle can be frozen mid-walk by the pause and
+        // thaw here; the bump makes it stop and discard its result instead of
+        // storing a stale done=true that the host would trust for the next
+        // snapshot. cancel is deliberately cleared (not set): the stale thread
+        // stops on generation mismatch, and the new run must start uncancelled.
         use std::sync::atomic::Ordering;
-        state.mem_preload_cancel.store(false, Ordering::SeqCst);
-        state.mem_preload_done.store(false, Ordering::SeqCst);
-        state.mem_preload_started.store(false, Ordering::SeqCst);
-        state.mem_preload_regions.store(0, Ordering::SeqCst);
-        state.mem_preload_pages.store(0, Ordering::SeqCst);
-        state.mem_preload_bytes.store(0, Ordering::SeqCst);
-        state.mem_preload_elapsed_us.store(0, Ordering::SeqCst);
-        state.mem_preload_source.store(0, Ordering::SeqCst);
-        *state.mem_preload_error.lock().unwrap() = None;
+        {
+            let mut err = state.mem_preload_error.lock().unwrap();
+            state.mem_preload_generation.fetch_add(1, Ordering::SeqCst);
+            state.mem_preload_cancel.store(false, Ordering::SeqCst);
+            state.mem_preload_started.store(false, Ordering::SeqCst);
+            state.reset_preload_run(&mut err);
+        }
 
         if let Some(ref port_sub) = state.port_subsystem {
             tracing::info!("lifecycle changed, restarting port subsystem");
@@ -191,11 +197,15 @@ pub async fn post_init(
         futures::future::join_all(futs).await;
     }
 
-    // Set sandbox/template metadata from request body.
+    // Set sandbox/template metadata from request body. Deliberately NOT
+    // written into envd's own process environment: std::env::set_var is
+    // undefined behavior with the multi-threaded runtime live (concurrent
+    // getenv from any thread races the environ rewrite), and nothing needs
+    // it there — spawned processes get these via defaults.env_vars, and
+    // out-of-band consumers (e.g. the `envd ports` subcommand's
+    // read_identity) fall back to the run files.
     if let Some(ref id) = init_req.sandbox_id {
         tracing::debug!(sandbox_id = %id, "setting sandbox ID from init request");
-        // SAFETY: envd is single-threaded at init time; no concurrent env reads.
-        unsafe { std::env::set_var("WRENN_SANDBOX_ID", id) };
         write_run_file(".WRENN_SANDBOX_ID", id);
         state
             .defaults
@@ -204,8 +214,6 @@ pub async fn post_init(
     }
     if let Some(ref id) = init_req.template_id {
         tracing::debug!(template_id = %id, "setting template ID from init request");
-        // SAFETY: envd is single-threaded at init time; no concurrent env reads.
-        unsafe { std::env::set_var("WRENN_TEMPLATE_ID", id) };
         write_run_file(".WRENN_TEMPLATE_ID", id);
         state
             .defaults
@@ -215,8 +223,6 @@ pub async fn post_init(
     if let Some(ref domain) = init_req.proxy_domain {
         if !domain.is_empty() {
             tracing::debug!(proxy_domain = %domain, "setting proxy domain from init request");
-            // SAFETY: envd is single-threaded at init time; no concurrent env reads.
-            unsafe { std::env::set_var("WRENN_PROXY_DOMAIN", domain) };
             write_run_file(".WRENN_PROXY_DOMAIN", domain);
             state
                 .defaults
@@ -254,6 +260,14 @@ async fn validate_init_access_token(state: &AppState, request_token: &str) -> Re
 }
 
 async fn setup_hyperloop(address: &str, env_vars: &dashmap::DashMap<String, String>) {
+    // Reject anything that is not a bare IP address before it reaches
+    // /etc/hosts. Without this, a newline in `address` would inject arbitrary
+    // additional host entries into the file.
+    if address.parse::<std::net::IpAddr>().is_err() {
+        tracing::error!(%address, "hyperloop address is not a valid IP; skipping /etc/hosts entry");
+        return;
+    }
+
     // Write to /etc/hosts: events.wrenn.local → address
     let entry = format!("{address} events.wrenn.local\n");
 

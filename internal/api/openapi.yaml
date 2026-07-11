@@ -3852,10 +3852,10 @@ components:
           default: minimal-ubuntu
         vcpus:
           type: integer
-          default: 1
+          default: 2
         memory_mb:
           type: integer
-          default: 512
+          default: 2048
         timeout_sec:
           type: integer
           minimum: 0

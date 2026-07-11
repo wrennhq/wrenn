@@ -54,14 +54,14 @@ type SandboxCreateParams struct {
 	Metadata map[string]string
 }
 
-// MinTimeoutSec mirrors internal/sandbox.MinTimeoutSec. Sub-minute TTLs race
+// MinTimeoutSec mirrors pkg/sandbox.MinTimeoutSec. Sub-minute TTLs race
 // the post-create startup window (DB insert → /init → memory loader); the
 // agent silently clamps anyway, but the CP must clamp too so the DB record
 // agrees with what the agent runs. 0 is preserved (no TTL).
 const MinTimeoutSec int32 = 60
 
 // clampTimeout normalises a caller-supplied TTL the same way the host agent
-// does. Keep in sync with internal/sandbox.clampTimeout.
+// does. Keep in sync with pkg/sandbox.clampTimeout.
 func clampTimeout(timeoutSec int32) int32 {
 	if timeoutSec <= 0 {
 		return 0
@@ -132,10 +132,10 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		return db.Sandbox{}, fmt.Errorf("invalid metadata: %w", err)
 	}
 	if p.VCPUs <= 0 {
-		p.VCPUs = 1
+		p.VCPUs = 2
 	}
 	if p.MemoryMB <= 0 {
-		p.MemoryMB = 512
+		p.MemoryMB = 2048
 	}
 	p.TimeoutSec = clampTimeout(p.TimeoutSec)
 

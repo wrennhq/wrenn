@@ -45,8 +45,8 @@
 	let createForm = $state({
 		name: '',
 		base_template: 'minimal-ubuntu',
-		vcpus: 1,
-		memory_mb: 512,
+		vcpus: 2,
+		memory_mb: 2048,
 		recipe: '',
 		healthcheck: '',
 		skip_pre_post: false,
@@ -152,7 +152,7 @@
 
 		if (result.ok) {
 			showCreate = false;
-			createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null };
+			createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 2, memory_mb: 2048, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null };
 			toast.success('Build queued');
 			goto(`/admin/templates/builds/${result.data.id}`);
 		} else {
@@ -246,7 +246,7 @@
 					</p>
 				</div>
 				<button
-					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
+					onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 2, memory_mb: 2048, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
 					class="group flex items-center gap-2.5 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2.5 text-ui font-semibold text-white shadow-sm transition-all duration-200 hover:shadow-[0_0_20px_var(--color-accent-glow-mid)] hover:brightness-115 hover:-translate-y-px active:translate-y-0"
 				>
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform duration-200 group-hover:rotate-90"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -397,7 +397,7 @@
 		</p>
 		{#if type === 'templates'}
 			<button
-				onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 1, memory_mb: 512, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
+				onclick={() => { showCreate = true; createError = null; createForm = { name: '', base_template: 'minimal-ubuntu', vcpus: 2, memory_mb: 2048, recipe: '', healthcheck: '', skip_pre_post: false, run_as_root: false, archive: null }; }}
 				class="mt-6 flex items-center gap-2 rounded-[var(--radius-button)] border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 px-4 py-2 text-ui font-medium text-[var(--color-accent-bright)] transition-all duration-200 hover:bg-[var(--color-accent)]/20 hover:border-[var(--color-accent)]/50"
 			>
 				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>

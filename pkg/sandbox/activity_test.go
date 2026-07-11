@@ -3,7 +3,7 @@ package sandbox
 import (
 	"testing"
 
-	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
+	"git.omukk.dev/wrenn/wrenn/pkg/envdclient"
 )
 
 func TestIsBusy(t *testing.T) {

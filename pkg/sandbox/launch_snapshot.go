@@ -17,11 +17,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"git.omukk.dev/wrenn/wrenn/internal/devicemapper"
-	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/models"
-	"git.omukk.dev/wrenn/wrenn/internal/network"
+	"git.omukk.dev/wrenn/wrenn/pkg/devicemapper"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/models"
+	"git.omukk.dev/wrenn/wrenn/pkg/network"
 )
 
 // createFromSnapshotTemplate launches a new sandbox from a snapshot-template
@@ -147,6 +147,7 @@ func (m *Manager) createFromSnapshotTemplate(
 		dmDevice:           dmDev,
 		baseImagePath:      baseRootfs,
 		sandboxDirOverride: meta.SandboxDir,
+		lazyRestore:        true,
 	}
 	sb.client.Store(client)
 
@@ -162,6 +163,7 @@ func (m *Manager) createFromSnapshotTemplate(
 
 	m.startSampler(sb)
 	m.startCrashWatcher(sb)
+	m.writeRunningState(sb)
 
 	slog.Info("sandbox launched from snapshot template",
 		"id", sandboxID,

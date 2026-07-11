@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
+	"git.omukk.dev/wrenn/wrenn/pkg/envdclient"
 )
 
 // cpuStat holds raw CPU jiffies read from /proc/{pid}/stat.

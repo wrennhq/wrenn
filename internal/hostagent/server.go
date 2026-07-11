@@ -19,8 +19,8 @@ import (
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 
-	"git.omukk.dev/wrenn/wrenn/internal/envdclient"
-	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/pkg/envdclient"
+	"git.omukk.dev/wrenn/wrenn/pkg/sandbox"
 )
 
 // Server implements the HostAgentService Connect RPC handler.
@@ -76,8 +76,11 @@ func (s *Server) CreateSandbox(
 		return nil, err
 	}
 
+	// disk_size_mb in the request is deprecated and never set by the control
+	// plane; passing 0 lets the manager pick the size (DefaultRootfsSizeMB,
+	// floored at the origin image size).
 	sb, diskSizeBytes, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID,
-		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), int(msg.DiskSizeMb),
+		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), 0,
 		msg.DefaultUser, msg.DefaultEnv)
 	if err != nil {
 		if errors.Is(err, sandbox.ErrDraining) {

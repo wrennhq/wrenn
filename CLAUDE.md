@@ -83,7 +83,7 @@ It can optionally implement any of these hook interfaces (the OSS server type-as
 
 **Auth helpers for extensions** (`pkg/auth/session/middleware/`, re-exported via `cpextension`): `RequireSession(sctx)`, `RequireSessionOrAPIKey(sctx)`, `RequireAdmin(sctx)`, `RequireCSRF()`, `IssueSession(w, r, sctx, userID, teamID)`, `ClearSessionCookies(w, r)`. Cookie/header names are exported as `SessionCookieName`, `CSRFCookieName`, `CSRFHeaderName`. OSS handlers (`internal/api/middleware_session.go`) are thin shims over this package — single source of truth.
 
-**pkg/ vs internal/ decision rule:** A package belongs in `pkg/` only if the cloud repo needs to import it directly. Everything else stays in `internal/`. New OSS services (e.g. email, notifications) go in `internal/` — the cloud repo accesses them through `ServerContext`, not by importing the package. Do not put a service in `pkg/` just because the cloud repo uses it.
+**pkg/ vs internal/ decision rule:** A package belongs in `pkg/` only if an external module needs to import it directly — the cloud repo, or standalone consumers of the sandbox runtime (e.g. the `wr` CLI, which embeds the host agent's orchestration packages to run sandboxes without a control plane). Everything else stays in `internal/`. New OSS services (e.g. email, notifications) go in `internal/` — the cloud repo accesses them through `ServerContext`, not by importing the package. Do not put a service in `pkg/` just because the cloud repo uses it.
 
 Startup (`cmd/control-plane/main.go`) is a thin wrapper: `cpserver.Run(cpserver.WithVersion(...))`. All 20 initialization steps live in `pkg/cpserver/run.go`: config → pgxpool → `db.Queries` → Redis → mTLS CA → host client pool → scheduler → OAuth → channels → audit logger → `api.New()` → background workers → HTTP server. Everything flows through constructor injection.
 
@@ -95,18 +95,20 @@ Startup (`cmd/control-plane/main.go`) is a thin wrapper: `cpserver.Run(cpserver.
 
 ### Host Agent
 
-**Packages:** `internal/hostagent/`, `internal/sandbox/`, `internal/vm/`, `internal/network/`, `internal/devicemapper/`, `internal/envdclient/`, `internal/snapshot/`
+**Packages:** `internal/hostagent/` (CP-facing: RPC server, registration, heartbeat, mTLS, proxy), plus the public sandbox runtime importable by external consumers such as the `wr` CLI: `pkg/sandbox/`, `pkg/vm/`, `pkg/network/`, `pkg/devicemapper/`, `pkg/envdclient/`, `pkg/layout/`, `pkg/models/`. `internal/snapshot/` stays internal (only used by `pkg/sandbox`, which may import it intra-module).
+
+**Standalone/library use:** `pkg/sandbox` exposes the full startup ritual (`CheckPrivileges`, `EnsureIPForward`, `Setup(SetupOptions)`) so a CLI can wire a `sandbox.Manager` without the RPC server. A library consumer that re-attaches to sandboxes created by earlier processes must set `SetupOptions.SkipCleanup` — the default stale-cleanup kills every cloud-hypervisor process on the host. Running sandboxes persist re-attach state to `{wrennDir}/sandboxes/{id}/sandbox.json`; `Manager.RestoreRunningSandboxes()` (call before `RestorePausedSandboxes()`) re-attaches live VMs across processes. Network slots are claimed cross-process-safely via O_EXCL files in `{wrennDir}/slots/`.
 
 **Production deployment:** `make setup-host` (→ `scripts/setup-host.sh`) prepares the host: creates the `wrenn` system user, sets Linux capabilities (setcap) on wrenn-agent and all child binaries (iptables, losetup, dmsetup, etc.), installs an apt hook to restore capabilities after package updates, configures udev rules for `/dev/net/tun`, and loads required kernel modules. No sudo grants — all privilege is via capabilities. `make install` then copies the binaries to `/usr/local/bin` and installs the systemd units from `deploy/systemd/`.
 
 Startup (`cmd/host-agent/main.go`) wires: root/capabilities check → enable IP forwarding → clean up stale dm devices → `sandbox.Manager` (containing `vm.Manager` + `network.SlotAllocator` + `devicemapper.LoopRegistry`) → `hostagent.Server` (Connect RPC handler) → HTTP server.
 
 - **RPC Server** (`internal/hostagent/server.go`): implements `hostagentv1connect.HostAgentServiceHandler`. Thin wrapper — every method delegates to `sandbox.Manager`. Maps Connect error codes on return.
-- **Sandbox Manager** (`internal/sandbox/manager.go`): the core orchestration layer. Maintains in-memory state in `boxes map[string]*sandboxState` (protected by `sync.RWMutex`). Each `sandboxState` holds a `models.Sandbox`, a `*network.Slot`, and an `*envdclient.Client`. Runs a TTL reaper (every 10s) that auto-destroys timed-out sandboxes.
-- **VM Manager** (`internal/vm/manager.go`, `ch.go`, `config.go`): manages Cloud Hypervisor processes. Uses raw HTTP API over Unix socket (`/tmp/ch-{sandboxID}.sock`). Launches Cloud Hypervisor via `unshare -m` + `ip netns exec` with `--api-socket path=...`. Configures and boots VM via `PUT /vm.create` + `PUT /vm.boot`. Snapshot restore uses `--restore source_url=file://...`.
-- **Network** (`internal/network/setup.go`, `allocator.go`): per-sandbox network namespace with veth pair + TAP device. See Networking section below.
-- **Device Mapper** (`internal/devicemapper/devicemapper.go`): CoW rootfs via device-mapper snapshots. Shared read-only loop devices per base template (refcounted `LoopRegistry`), per-sandbox sparse CoW files, dm-snapshot create/restore/remove/flatten operations.
-- **envd Client** (`internal/envdclient/client.go`, `health.go`): dual interface to the guest agent. Connect RPC for streaming process exec (`process.Start()` bidirectional stream). Plain HTTP for file operations (POST/GET `/files?path=...&username=root`). Health check polls `GET /health` every 100ms until ready (30s timeout).
+- **Sandbox Manager** (`pkg/sandbox/manager.go`): the core orchestration layer. Maintains in-memory state in `boxes map[string]*sandboxState` (protected by `sync.RWMutex`). Each `sandboxState` holds a `models.Sandbox`, a `*network.Slot`, and an `*envdclient.Client`. Runs a TTL reaper (every 10s) that auto-destroys timed-out sandboxes.
+- **VM Manager** (`pkg/vm/manager.go`, `ch.go`, `config.go`): manages Cloud Hypervisor processes. Uses raw HTTP API over Unix socket (`/tmp/ch-{sandboxID}.sock`). Launches Cloud Hypervisor via `unshare -m` + `ip netns exec` with `--api-socket path=...`. Configures and boots VM via `PUT /vm.create` + `PUT /vm.boot`. Snapshot restore uses `--restore source_url=file://...`. `Reattach()` adopts a still-live CH process started by an earlier process (exit detection via kill-0 polling).
+- **Network** (`pkg/network/setup.go`, `allocator.go`): per-sandbox network namespace with veth pair + TAP device. Slot indices claimed cross-process via O_EXCL files. See Networking section below.
+- **Device Mapper** (`pkg/devicemapper/devicemapper.go`): CoW rootfs via device-mapper snapshots. Shared read-only loop devices per base template (refcounted `LoopRegistry`), per-sandbox sparse CoW files, dm-snapshot create/restore/remove/flatten/reattach operations.
+- **envd Client** (`pkg/envdclient/client.go`, `health.go`): dual interface to the guest agent. Connect RPC for streaming process exec (`process.Start()` bidirectional stream). Plain HTTP for file operations (POST/GET `/files?path=...&username=root`). Health check polls `GET /health` every 100ms until ready (30s timeout).
 
 ### envd (Guest Agent)
 
@@ -156,7 +158,7 @@ veth-{idx}  ←──── veth pair ────→  eth0
 - **Outbound NAT**: guest (169.254.0.21) → SNAT to vpeerIP inside namespace → MASQUERADE on host to default interface
 - **Inbound NAT**: host traffic to 10.11.0.{idx} → DNAT to 169.254.0.21 inside namespace
 - IP forwarding enabled inside each namespace
-- All details in `internal/network/setup.go`
+- All details in `pkg/network/setup.go`
 
 ### Sandbox State Machine
 ```

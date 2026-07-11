@@ -192,8 +192,19 @@ func RestoreSnapshot(ctx context.Context, name, originLoopDev, cowPath string, o
 
 // RemoveSnapshot tears down a dm-snapshot device and its CoW loop device.
 // The CoW file is NOT deleted — the caller decides whether to keep or remove it.
+//
+// The CoW loop is detached even when the dm removal fails (busy device):
+// callers treat a failed removal as fatal teardown and typically delete the
+// CoW backing file next, which would orphan a still-attached loop forever
+// (losetup can no longer find it by file). Detaching first is always safe —
+// while dm still references the loop the kernel just defers the release via
+// autoclear until that reference drops.
 func RemoveSnapshot(ctx context.Context, dev *SnapshotDevice) error {
 	if err := dmsetupRemove(ctx, dev.Name); err != nil {
+		if derr := losetupDetachRetry(dev.CowLoopDev); derr != nil {
+			slog.Warn("cow loop detach after failed dm remove",
+				"device", dev.CowLoopDev, "name", dev.Name, "error", derr)
+		}
 		return fmt.Errorf("dmsetup remove %s: %w", dev.Name, err)
 	}
 
@@ -203,6 +214,27 @@ func RemoveSnapshot(ctx context.Context, dev *SnapshotDevice) error {
 
 	slog.Info("dm-snapshot removed", "name", dev.Name)
 	return nil
+}
+
+// ReattachSnapshot reconstructs the SnapshotDevice handle for a dm-snapshot
+// that was created by an earlier process and is still live in the kernel. No
+// device-mapper state is modified — the existing dm device is verified and
+// the CoW loop device is rediscovered from its backing file, so a later
+// RemoveSnapshot can detach it as usual.
+func ReattachSnapshot(name, cowPath string) (*SnapshotDevice, error) {
+	if !dmDeviceExists(name) {
+		return nil, fmt.Errorf("dm device %s does not exist", name)
+	}
+	cowLoopDev, err := losetupFindByFile(cowPath)
+	if err != nil {
+		return nil, fmt.Errorf("find cow loop for %s: %w", cowPath, err)
+	}
+	return &SnapshotDevice{
+		Name:       name,
+		DevicePath: "/dev/mapper/" + name,
+		CowPath:    cowPath,
+		CowLoopDev: cowLoopDev,
+	}, nil
 }
 
 // FlattenSnapshot reads the full contents of a dm-snapshot device and writes
@@ -284,10 +316,55 @@ func LogLoopState() {
 	}
 }
 
+// DetachLoopsByFile best-effort detaches every loop device backed by path.
+//
+// Safety net for teardown paths that are about to delete a backing file whose
+// loop may still be attached (e.g. RemoveSnapshot failed on a busy dm device,
+// or startup cleanup removed the dm device before the CoW loop was found).
+// Deleting the file first orphans the loop permanently — losetup can no
+// longer find it by file, so no later sweep can reclaim it. Detaching first
+// always works: if device-mapper still references the loop, the kernel defers
+// the release via autoclear until that reference drops.
+func DetachLoopsByFile(path string) {
+	out, err := exec.Command("losetup", "-j", path, "--output", "NAME", "--noheadings").Output()
+	if err != nil {
+		slog.Debug("losetup -j failed", "path", path, "error", err)
+		return
+	}
+	for _, dev := range strings.Fields(strings.TrimSpace(string(out))) {
+		if err := losetupDetachRetry(dev); err != nil {
+			slog.Warn("loop detach by file failed", "device", dev, "path", path, "error", err)
+		} else {
+			slog.Info("detached leftover loop device", "device", dev, "path", path)
+		}
+	}
+}
+
 // --- low-level helpers ---
 
-// losetupCreate attaches a file as a read-only loop device.
+// losetupCreate attaches a file as a read-only loop device, reusing an existing
+// attachment for the same backing file when one is already present.
+//
+// `losetup --find` always allocates a NEW device even when the file is already
+// mapped. Within a single long-lived process the LoopRegistry hides this by
+// caching the device per image path, but a daemonless caller runs many
+// short-lived processes, each with its own registry: when a later process
+// re-attaches a sandbox created by an earlier one, a naive --find would attach a
+// second loop to the same origin image while the dm-snapshot still references
+// the first. That later process then balances its refcount by detaching only
+// its own (second) loop, orphaning the original — a loop leak that accumulates
+// one device per template per re-attach/destroy cycle. Reusing the existing
+// attachment keeps the kernel's loop set 1:1 with backing files, so the device a
+// caller releases is the same one the dm origin depends on. Mirrors how
+// ReattachSnapshot already rediscovers the CoW loop via losetupFindByFile.
 func losetupCreate(imagePath string) (string, error) {
+	// Reuse when exactly one loop already backs the image. losetupFindByFile
+	// errors on both "none" and "more than one"; either way fall through to
+	// attach a fresh device (the multi-attachment case only arises from loops
+	// leaked before this reuse logic existed, and is reclaimed separately).
+	if dev, err := losetupFindByFile(imagePath); err == nil {
+		return dev, nil
+	}
 	out, err := exec.Command("losetup", "--read-only", "--find", "--show", imagePath).Output()
 	if err != nil {
 		return "", fmt.Errorf("losetup --read-only: %w", err)
@@ -302,6 +379,23 @@ func losetupCreateRW(path string) (string, error) {
 		return "", fmt.Errorf("losetup: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// losetupFindByFile returns the loop device backed by the given file.
+// Errors if none or more than one is attached.
+func losetupFindByFile(path string) (string, error) {
+	out, err := exec.Command("losetup", "-j", path, "--output", "NAME", "--noheadings").Output()
+	if err != nil {
+		return "", fmt.Errorf("losetup -j: %w", err)
+	}
+	devs := strings.Fields(strings.TrimSpace(string(out)))
+	if len(devs) == 0 {
+		return "", fmt.Errorf("no loop device attached to %s", path)
+	}
+	if len(devs) > 1 {
+		return "", fmt.Errorf("multiple loop devices attached to %s: %v", path, devs)
+	}
+	return devs[0], nil
 }
 
 // losetupDetach detaches a loop device.

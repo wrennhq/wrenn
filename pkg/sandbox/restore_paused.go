@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"git.omukk.dev/wrenn/wrenn/internal/layout"
-	"git.omukk.dev/wrenn/wrenn/internal/models"
+	"git.omukk.dev/wrenn/wrenn/pkg/layout"
+	"git.omukk.dev/wrenn/wrenn/pkg/models"
 )
 
 // RestorePausedSandboxes scans WRENN_DIR/sandboxes/ for paused-sandbox
@@ -65,6 +65,29 @@ func (m *Manager) RestorePausedSandboxes() {
 		// Skip CleanupOrphanPauseDirs's territory. If it ran before us
 		// these are already gone; if not, leave them alone.
 		if strings.Contains(name, ".staging-") || strings.Contains(name, ".trash-") {
+			continue
+		}
+
+		// Skip sandboxes already registered — a resumed-then-still-running
+		// sandbox re-attached by RestoreRunningSandboxes keeps its previous
+		// pause generation on disk, but the live VM wins.
+		m.mu.RLock()
+		_, known := m.boxes[name]
+		m.mu.RUnlock()
+		if known {
+			continue
+		}
+
+		// A readable running-state file that survived RestoreRunningSandboxes
+		// means the adoption of a verified-LIVE CH process failed (probe
+		// timeout etc.) and its slot/loop were deliberately left held. The
+		// stale pause generation in the same dir must not be registered — and
+		// above all not trashed: trashing renames the whole sandbox dir,
+		// carrying away the live VM's CoW file and the state file the next
+		// restart needs to retry the adoption.
+		if _, err := readRunningState(m.cfg.WrennDir, name); err == nil {
+			slog.Warn("restore: skipping paused candidate — dir owned by live un-adopted VM",
+				"id", name)
 			continue
 		}
 

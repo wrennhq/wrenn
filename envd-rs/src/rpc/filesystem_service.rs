@@ -159,26 +159,33 @@ impl Filesystem for FilesystemServiceImpl {
 
         let path = self.resolve_path(request.path, &ctx)?;
 
-        let resolved = std::fs::canonicalize(&path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                ConnectError::new(ErrorCode::NotFound, format!("path not found: {e}"))
-            } else {
-                ConnectError::new(ErrorCode::Internal, format!("error resolving path: {e}"))
+        // The recursive walk stats every entry (plus uid/gid lookups) — on a
+        // large tree that is seconds of blocking syscalls, so it runs on the
+        // blocking pool instead of a runtime worker thread.
+        let entries = tokio::task::spawn_blocking(move || {
+            let resolved = std::fs::canonicalize(&path).map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ConnectError::new(ErrorCode::NotFound, format!("path not found: {e}"))
+                } else {
+                    ConnectError::new(ErrorCode::Internal, format!("error resolving path: {e}"))
+                }
+            })?;
+            let resolved_str = resolved.to_string_lossy().to_string();
+
+            let meta = std::fs::metadata(&resolved).map_err(|e| {
+                ConnectError::new(ErrorCode::Internal, format!("error getting file info: {e}"))
+            })?;
+            if !meta.is_dir() {
+                return Err(ConnectError::new(
+                    ErrorCode::InvalidArgument,
+                    format!("path is not a directory: {path}"),
+                ));
             }
-        })?;
-        let resolved_str = resolved.to_string_lossy().to_string();
 
-        let meta = std::fs::metadata(&resolved).map_err(|e| {
-            ConnectError::new(ErrorCode::Internal, format!("error getting file info: {e}"))
-        })?;
-        if !meta.is_dir() {
-            return Err(ConnectError::new(
-                ErrorCode::InvalidArgument,
-                format!("path is not a directory: {path}"),
-            ));
-        }
-
-        let entries = walk_dir(&path, &resolved_str, depth)?;
+            walk_dir(&path, &resolved_str, depth)
+        })
+        .await
+        .map_err(|e| ConnectError::new(ErrorCode::Internal, format!("list_dir task: {e}")))??;
         Ok((
             ListDirResponse {
                 entries,
@@ -195,14 +202,21 @@ impl Filesystem for FilesystemServiceImpl {
     ) -> Result<(RemoveResponse, Context), ConnectError> {
         let path = self.resolve_path(request.path, &ctx)?;
 
-        if let Err(e1) = std::fs::remove_dir_all(&path) {
-            if let Err(e2) = std::fs::remove_file(&path) {
-                return Err(ConnectError::new(
-                    ErrorCode::Internal,
-                    format!("error removing: {e1}; also tried as file: {e2}"),
-                ));
+        // remove_dir_all recurses through the whole tree — blocking pool, not
+        // a runtime worker thread.
+        tokio::task::spawn_blocking(move || {
+            if let Err(e1) = std::fs::remove_dir_all(&path) {
+                if let Err(e2) = std::fs::remove_file(&path) {
+                    return Err(ConnectError::new(
+                        ErrorCode::Internal,
+                        format!("error removing: {e1}; also tried as file: {e2}"),
+                    ));
+                }
             }
-        }
+            Ok(())
+        })
+        .await
+        .map_err(|e| ConnectError::new(ErrorCode::Internal, format!("remove task: {e}")))??;
 
         Ok((
             RemoveResponse {

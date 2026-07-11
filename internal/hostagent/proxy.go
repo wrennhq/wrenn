@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"git.omukk.dev/wrenn/wrenn/internal/sandbox"
+	"git.omukk.dev/wrenn/wrenn/pkg/sandbox"
 )
 
 const (
