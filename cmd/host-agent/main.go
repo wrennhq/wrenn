@@ -19,6 +19,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/internal/hostagent"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/logging"
+	"git.omukk.dev/wrenn/wrenn/pkg/network"
 	"git.omukk.dev/wrenn/wrenn/pkg/sandbox"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 )
@@ -51,6 +52,14 @@ func main() {
 	// unit's ExecStartPre already set it.
 	if err := sandbox.EnsureIPForward(); err != nil {
 		slog.Error("ip_forward is not enabled — sandbox networking will be broken", "error", err)
+		os.Exit(1)
+	}
+
+	// Install the egress guard: block capsule traffic to private ranges from
+	// leaving the public NIC (which would leak private-destined packets onto the
+	// upstream network and read as a port scan) and deny cross-capsule reach.
+	if err := network.EnsureEgressGuard(); err != nil {
+		slog.Error("failed to install network egress guard", "error", err)
 		os.Exit(1)
 	}
 

@@ -545,6 +545,80 @@ func RemoveNetwork(slot *Slot) error {
 	return errors.Join(errs...)
 }
 
+var privateEgressGuardNets = []string{
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"169.254.0.0/16",
+	"100.64.0.0/10",
+}
+
+var sandboxSuperNets = []string{"10.11.0.0/16", "10.12.0.0/16"}
+
+const vethMatch = "wrenn-veth+"
+
+// Installs host-level protections that stop capsule from (a) leaking traffic
+// destined to private ranges onto the upstream network via the public NIC
+// and (b) reaching another capsule's host-reachable IP.
+func EnsureEgressGuard() error {
+	defaultIface, err := getDefaultInterface()
+	if err != nil {
+		return fmt.Errorf("resolve default interface: %w", err)
+	}
+
+	// Drop forwarded capsule traffic destined to private ranges out the public
+	// NIC. Insert at the head of FORWARD so it precedes the per-sandbox ACCEPT
+	// rules appended when a sandbox is created.
+	for _, n := range privateEgressGuardNets {
+		if err := ensureHostRule(
+			[]string{"-C", "FORWARD", "-o", defaultIface, "-d", n, "-j", "DROP"},
+			[]string{"-I", "FORWARD", "1", "-o", defaultIface, "-d", n, "-j", "DROP"},
+		); err != nil {
+			return fmt.Errorf("install egress guard for %s: %w", n, err)
+		}
+	}
+
+	// Deny capsule-to-capsule forwarding outright: a veth may reach the uplink,
+	// never another sandbox's veth. This closes cross-tenant reach to the
+	// unauthenticated guest agent even for allocated slots.
+	if err := ensureHostRule(
+		[]string{"-C", "FORWARD", "-i", vethMatch, "-o", vethMatch, "-j", "DROP"},
+		[]string{"-I", "FORWARD", "1", "-i", vethMatch, "-o", vethMatch, "-j", "DROP"},
+	); err != nil {
+		return fmt.Errorf("install inter-sandbox guard: %w", err)
+	}
+
+	// Blackhole the sandbox supernets so packets to unallocated slot IPs are
+	// dropped rather than routed to the default gateway.
+	for _, cidr := range sandboxSuperNets {
+		if err := ensureBlackholeRoute(cidr); err != nil {
+			return fmt.Errorf("blackhole %s: %w", cidr, err)
+		}
+	}
+
+	slog.Info("egress guard installed", "default_iface", defaultIface)
+	return nil
+}
+
+// ensureHostRule inserts a host iptables rule only when an identical rule is
+// not already present, keeping EnsureEgressGuard idempotent across restarts.
+func ensureHostRule(checkArgs, insertArgs []string) error {
+	if exec.Command("iptables", checkArgs...).Run() == nil {
+		return nil // already present
+	}
+	return iptablesHost(insertArgs...)
+}
+
+// ensureBlackholeRoute idempotently installs a blackhole route via `ip route
+// replace` (a no-op if the route already matches).
+func ensureBlackholeRoute(cidr string) error {
+	cmd := exec.Command("ip", "route", "replace", "blackhole", cidr)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ip route replace blackhole %s: %s: %w", cidr, string(out), err)
+	}
+	return nil
+}
+
 // nsExec runs a command inside a network namespace.
 func nsExec(nsName string, command string, args ...string) error {
 	cmdArgs := append([]string{"netns", "exec", nsName, command}, args...)
