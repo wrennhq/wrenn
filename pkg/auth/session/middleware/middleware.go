@@ -116,7 +116,13 @@ func hydrateFromDB(queries *db.Queries) func(context.Context, *session.Session) 
 		role := ""
 		if err == nil {
 			role = membership.Role
-		} else if !errors.Is(err, pgx.ErrNoRows) {
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			// The session's active team no longer lists this user as a member
+			// (e.g. they were removed from the team). Strip the team binding so
+			// the stale session can no longer authorize against team-scoped
+			// resources such as GetSandboxByTeam.
+			sess.TeamID = pgtype.UUID{}
+		} else {
 			return err
 		}
 		sess.Email = user.Email

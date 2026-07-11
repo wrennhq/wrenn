@@ -43,6 +43,20 @@ func (q *Queries) DeleteAPIKeysByTeam(ctx context.Context, teamID pgtype.UUID) e
 	return err
 }
 
+const deleteAPIKeysByTeamAndCreator = `-- name: DeleteAPIKeysByTeamAndCreator :exec
+DELETE FROM team_api_keys WHERE team_id = $1 AND created_by = $2
+`
+
+type DeleteAPIKeysByTeamAndCreatorParams struct {
+	TeamID    pgtype.UUID `json:"team_id"`
+	CreatedBy pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) DeleteAPIKeysByTeamAndCreator(ctx context.Context, arg DeleteAPIKeysByTeamAndCreatorParams) error {
+	_, err := q.db.Exec(ctx, deleteAPIKeysByTeamAndCreator, arg.TeamID, arg.CreatedBy)
+	return err
+}
+
 const getAPIKeyByHash = `-- name: GetAPIKeyByHash :one
 SELECT id, team_id, name, key_hash, key_prefix, created_by, created_at, last_used FROM team_api_keys WHERE key_hash = $1
 `

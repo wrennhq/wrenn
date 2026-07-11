@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -25,6 +26,10 @@ type TeamService struct {
 	DB       *db.Queries
 	Pool     *pgxpool.Pool
 	HostPool *lifecycle.HostClientPool
+	// Sessions drops cached sessions when a member is removed so their access
+	// is stripped at the next request. Optional: nil in contexts without a
+	// session store (revocation is then skipped).
+	Sessions *session.Service
 }
 
 // TeamWithRole pairs a team with the calling user's role in it.
@@ -377,6 +382,26 @@ func (s *TeamService) RemoveMember(ctx context.Context, teamID, callerUserID, ta
 		UserID: targetUserID,
 	}); err != nil {
 		return fmt.Errorf("delete member: %w", err)
+	}
+
+	// Revoke the removed member's standing access to this team immediately.
+	// Deleting the membership row alone leaves two credentials live: the
+	// team-scoped API keys they created, and any cached session still holding
+	// this team_id. Purge the keys, and drop the session cache so the next
+	// request rehydrates from Postgres (where the membership is now gone) —
+	// hydrateFromDB then clears the stale team binding.
+	if err := s.DB.DeleteAPIKeysByTeamAndCreator(ctx, db.DeleteAPIKeysByTeamAndCreatorParams{
+		TeamID:    teamID,
+		CreatedBy: targetUserID,
+	}); err != nil {
+		slog.Warn("failed to delete API keys for removed member",
+			"team_id", teamID, "user_id", targetUserID, "error", err)
+	}
+	if s.Sessions != nil {
+		if err := s.Sessions.InvalidateCacheForUser(ctx, targetUserID); err != nil {
+			slog.Warn("failed to invalidate session cache for removed member",
+				"user_id", targetUserID, "error", err)
+		}
 	}
 	return nil
 }
