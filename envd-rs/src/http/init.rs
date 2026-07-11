@@ -260,6 +260,14 @@ async fn validate_init_access_token(state: &AppState, request_token: &str) -> Re
 }
 
 async fn setup_hyperloop(address: &str, env_vars: &dashmap::DashMap<String, String>) {
+    // Reject anything that is not a bare IP address before it reaches
+    // /etc/hosts. Without this, a newline in `address` would inject arbitrary
+    // additional host entries into the file.
+    if address.parse::<std::net::IpAddr>().is_err() {
+        tracing::error!(%address, "hyperloop address is not a valid IP; skipping /etc/hosts entry");
+        return;
+    }
+
     // Write to /etc/hosts: events.wrenn.local → address
     let entry = format!("{address} events.wrenn.local\n");
 

@@ -393,6 +393,30 @@ pub struct SpawnedProcess {
     pub end_rx: broadcast::Receiver<EndEvent>,
 }
 
+/// Switch the child to the target gid/uid, dropping supplementary groups first
+/// and checking every step. Order is load-bearing: supplementary groups must be
+/// cleared while still privileged (setgroups after setuid fails), otherwise a
+/// non-root child inherits PID 1's root supplementary groups. Checking the
+/// return values turns a failed drop into a failed spawn instead of silently
+/// executing the command as root.
+///
+/// Runs inside `pre_exec`, so it must stay async-signal-safe: raw libc calls
+/// only, no allocation.
+unsafe fn switch_user(uid: libc::uid_t, gid: libc::gid_t) -> std::io::Result<()> {
+    unsafe {
+        if libc::setgroups(0, std::ptr::null()) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if libc::setgid(gid) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if libc::setuid(uid) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 pub fn spawn_process(
     cmd_str: &str,
     args: &[String],
@@ -530,8 +554,7 @@ exec {nice_prefix}{target}"#
                 if slave_raw > 2 {
                     libc::close(slave_raw);
                 }
-                libc::setgid(gid);
-                libc::setuid(uid);
+                switch_user(uid, gid)?;
                 Ok(())
             });
         }
@@ -644,8 +667,7 @@ exec {nice_prefix}{target}"#
                 // for free via setsid().
                 nix::unistd::setpgid(Pid::from_raw(0), Pid::from_raw(0))
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                libc::setgid(gid);
-                libc::setuid(uid);
+                switch_user(uid, gid)?;
                 Ok(())
             });
         }

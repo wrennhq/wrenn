@@ -588,6 +588,33 @@ func EnsureEgressGuard() error {
 		return fmt.Errorf("install inter-sandbox guard: %w", err)
 	}
 
+	// Deny capsule-initiated connections to the host's own services. The
+	// FORWARD guard above only covers transit traffic; packets addressed to
+	// one of the host's own IPs are delivered locally via INPUT and would
+	// otherwise reach anything the host binds on all interfaces (control
+	// plane, host agent, SSH). Replies to host-initiated connections
+	// (e.g. envd health checks / exec, where the host is the client) arrive
+	// on the same veth and MUST still be accepted, so allow ESTABLISHED first
+	// and drop only NEW capsule-sourced flows. Guest DNS points at public
+	// resolvers (routed out the uplink, not INPUT), so this does not affect
+	// name resolution.
+	// Insert the DROP first, then prepend the ESTABLISHED accept ahead of it
+	// (each "-I INPUT 1" prepends), so the final order is always accept-then-
+	// drop without hardcoding a chain position that other host rules could
+	// shift.
+	if err := ensureHostRule(
+		[]string{"-C", "INPUT", "-i", vethMatch, "-j", "DROP"},
+		[]string{"-I", "INPUT", "1", "-i", vethMatch, "-j", "DROP"},
+	); err != nil {
+		return fmt.Errorf("install host input guard: %w", err)
+	}
+	if err := ensureHostRule(
+		[]string{"-C", "INPUT", "-i", vethMatch, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"},
+		[]string{"-I", "INPUT", "1", "-i", vethMatch, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"},
+	); err != nil {
+		return fmt.Errorf("install host input allow-established: %w", err)
+	}
+
 	// Blackhole the sandbox supernets so packets to unallocated slot IPs are
 	// dropped rather than routed to the default gateway.
 	for _, cidr := range sandboxSuperNets {
