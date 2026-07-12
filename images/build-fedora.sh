@@ -11,7 +11,7 @@ source "$(cd "$(dirname "$0")" && pwd)/build-common.sh"
 PREP="set -e
 # install_weak_deps=False keeps the image lean. The guest never runs systemd:
 # PID 1 is wrenn-init -> tini -> envd.
-dnf install -y --setopt=install_weak_deps=False socat chrony sudo wget curl ca-certificates git iproute hostname tini
+dnf install -y --setopt=install_weak_deps=False socat chrony sudo wget curl ca-certificates git iproute hostname tini gcc make nano vim
 useradd -m -s /bin/bash wrenn-user
 ${WRENN_SUDOERS_SETUP}
 dnf clean all"

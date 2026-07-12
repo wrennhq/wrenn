@@ -152,7 +152,7 @@ echo ""
 echo "==> Checking required container packages..."
 MISSING_PKGS=""
 for bin in socat chronyd chronyc curl git; do
-    if ! find "${MOUNT_DIR}" -name "${bin}" -type f 2>/dev/null | head -1 | grep -q .; then
+    if ! find "${MOUNT_DIR}" -name "${bin}" \( -type f -o -type l \) 2>/dev/null | head -1 | grep -q .; then
         MISSING_PKGS="${MISSING_PKGS} ${bin}"
     fi
 done
