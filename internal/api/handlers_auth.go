@@ -25,6 +25,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/netutil"
 	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 )
 
@@ -188,24 +189,12 @@ func (h *authHandler) issueSession(
 	email, name, role string,
 	isAdmin bool,
 ) error {
-	sess, err := h.sessions.Create(r.Context(), userID, teamID, email, name, role, isAdmin, r.UserAgent(), clientIP(r))
+	sess, err := h.sessions.Create(r.Context(), userID, teamID, email, name, role, isAdmin, r.UserAgent(), netutil.ClientIP(r))
 	if err != nil {
 		return err
 	}
 	setSessionCookies(w, sess.RawSID, sess.CSRFToken, isSecure(r))
 	return nil
-}
-
-// clientIP returns the request's apparent client IP, honoring
-// X-Forwarded-For when behind a reverse proxy.
-func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		if i := strings.IndexByte(fwd, ','); i > 0 {
-			return strings.TrimSpace(fwd[:i])
-		}
-		return strings.TrimSpace(fwd)
-	}
-	return r.RemoteAddr
 }
 
 type signupResponse struct {
@@ -549,7 +538,7 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 
 	// Rotate the SID so any leaked old cookie loses access at the moment of
 	// privilege change.
-	newSess, err := h.sessions.Rotate(ctx, ac.SessionID, ac.UserID, teamID, user.Email, user.Name, membership.Role, user.IsAdmin, r.UserAgent(), clientIP(r))
+	newSess, err := h.sessions.Rotate(ctx, ac.SessionID, ac.UserID, teamID, user.Email, user.Name, membership.Role, user.IsAdmin, r.UserAgent(), netutil.ClientIP(r))
 	if err != nil {
 		slog.Error("switch team: failed to rotate session", "error", err)
 		writeErr(w, r, apperr.Internal.Wrap(err))

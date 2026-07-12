@@ -33,7 +33,6 @@ go.work.sum
 
 ## AI
 .claude/
-e2b/
 .impeccable.md
 .gstack
 .mcp.json

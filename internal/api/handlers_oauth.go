@@ -23,6 +23,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/netutil"
 	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 )
 
@@ -475,7 +476,7 @@ func (h *oauthHandler) issueSessionAndRedirect(
 	isAdmin bool,
 	redirectBase string,
 ) error {
-	sess, err := h.sessions.Create(r.Context(), userID, teamID, email, name, role, isAdmin, r.UserAgent(), clientIP(r))
+	sess, err := h.sessions.Create(r.Context(), userID, teamID, email, name, role, isAdmin, r.UserAgent(), netutil.ClientIP(r))
 	if err != nil {
 		return err
 	}

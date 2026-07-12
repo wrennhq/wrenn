@@ -10,7 +10,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,6 +19,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/netutil"
 )
 
 // Cookie + header names. Exported so extensions and frontends can reference
@@ -264,7 +264,7 @@ func IssueSession(
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	sess, err := svc.Create(ctx, userID, teamID, user.Email, user.Name, role, user.IsAdmin, r.UserAgent(), clientIP(r))
+	sess, err := svc.Create(ctx, userID, teamID, user.Email, user.Name, role, user.IsAdmin, r.UserAgent(), netutil.ClientIP(r))
 	if err != nil {
 		return nil, err
 	}
@@ -272,12 +272,3 @@ func IssueSession(
 	return sess, nil
 }
 
-func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		if i := strings.IndexByte(fwd, ','); i > 0 {
-			return strings.TrimSpace(fwd[:i])
-		}
-		return strings.TrimSpace(fwd)
-	}
-	return r.RemoteAddr
-}

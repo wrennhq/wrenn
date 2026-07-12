@@ -53,7 +53,7 @@ func Load() Config {
 	cfg := Config{
 		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://wrenn:wrenn@localhost:5432/wrenn?sslmode=disable"),
 		RedisURL:    envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
-		ListenAddr:  envOrDefault("WRENN_CP_LISTEN_ADDR", ":8080"),
+		ListenAddr:  envOrDefault("WRENN_CP_LISTEN_ADDR", ":9725"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
 		WrennDir:    envOrDefault("WRENN_DIR", "/var/lib/wrenn"),
 
