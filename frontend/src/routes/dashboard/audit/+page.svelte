@@ -37,7 +37,7 @@
 	};
 
 	const ACTIONS_BY_RESOURCE: Record<string, string[]> = {
-		sandbox: ['create', 'pause', 'resume', 'destroy'],
+		sandbox: ['create', 'pause', 'resume', 'destroy', 'error'],
 		snapshot: ['create', 'delete'],
 		team: ['rename'],
 		api_key: ['create', 'revoke'],
@@ -50,6 +50,7 @@
 		pause: 'Paused',
 		resume: 'Resumed',
 		destroy: 'Destroyed',
+		error: 'Error',
 		delete: 'Deleted',
 		rename: 'Renamed',
 		revoke: 'Revoked',
@@ -207,6 +208,10 @@
 			case 'sandbox:pause':      return `${actor} paused a capsule`;
 			case 'sandbox:resume':     return `${actor} resumed a capsule`;
 			case 'sandbox:destroy':    return `${actor} destroyed a capsule`;
+			case 'sandbox:error':
+				if (meta.phase === 'resume') return 'A capsule failed to resume';
+				if (meta.phase === 'create') return 'A capsule failed to start';
+				return 'A capsule encountered an error';
 			case 'snapshot:create':    return `${actor} created a template`;
 			case 'snapshot:delete':    return `${actor} deleted a template`;
 			case 'team:rename':        return `${actor} renamed the team from "${meta.old_name}" to "${meta.new_name}"`;
