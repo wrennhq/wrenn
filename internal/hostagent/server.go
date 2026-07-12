@@ -484,11 +484,11 @@ func (s *Server) WriteFileStream(
 		errCh <- nil
 	}()
 
-	// Send the raw streaming body to envd.
+	// Send the raw streaming body to envd. No username is sent, so envd resolves
+	// the sandbox default user — the same user process execution runs as.
 	base := client.BaseURL()
 	u := fmt.Sprintf("%s/files?%s", base, url.Values{
-		"path":     {meta.Path},
-		"username": {"root"},
+		"path": {meta.Path},
 	}.Encode())
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, u, pr)
@@ -533,10 +533,11 @@ func (s *Server) ReadFileStream(
 		return connect.NewError(connect.CodeNotFound, err)
 	}
 
+	// No username is sent, so envd resolves the sandbox default user, matching
+	// process execution.
 	base := client.BaseURL()
 	u := fmt.Sprintf("%s/files?%s", base, url.Values{
-		"path":     {msg.Path},
-		"username": {"root"},
+		"path": {msg.Path},
 	}.Encode())
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
