@@ -22,6 +22,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 )
 
 const (
@@ -159,8 +160,8 @@ func (h *meHandler) UpdateName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || len(req.Name) > 100 {
-		writeErr(w, r, apperr.ValidationFailed.Msg("Name must be between 1 and 100 characters.").With("field", "name"))
+	if err := validate.DisplayName(req.Name); err != nil {
+		writeErr(w, r, apperr.ValidationFailed.WrapMsg(err, "Name may only contain letters, numbers, spaces, and . _ - (max 100 characters).").With("field", "name"))
 		return
 	}
 

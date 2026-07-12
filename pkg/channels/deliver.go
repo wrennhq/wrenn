@@ -12,14 +12,16 @@ import (
 
 // Deliver sends a notification to a single provider with the given config.
 // For webhooks it uses HMAC-signed HTTP POST; for all others it uses shoutrrr.
-func Deliver(ctx context.Context, provider string, config map[string]string, e events.Event) error {
+// allowPrivate relaxes the SSRF guard on the webhook client for self-hosted
+// deployments that deliver to internal endpoints.
+func Deliver(ctx context.Context, provider string, config map[string]string, e events.Event, allowPrivate bool) error {
 	payload, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
 	}
 
 	if provider == "webhook" {
-		wh := NewWebhookDelivery()
+		wh := NewWebhookDelivery(allowPrivate)
 		return wh.Deliver(ctx, config["url"], config["secret"], payload)
 	}
 

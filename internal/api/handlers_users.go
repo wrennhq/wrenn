@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -159,9 +160,13 @@ func (h *usersHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	if req.Active {
 		h.audit.LogUserActivate(r.Context(), ac, userID, user.Email)
 	} else {
-		// Disabled users must be kicked out of every active session.
+		// Disabled users must be kicked out of every active session. A failure
+		// here leaves the account's cached sessions live (Session.Get only
+		// re-checks user status on a cache miss), so it must be surfaced loudly
+		// rather than swallowed — an operator may need to force revocation.
 		if err := h.sessions.RevokeAllForUser(r.Context(), userID); err != nil {
-			_ = err
+			slog.Error("deactivate user: revoke sessions failed",
+				"user_id", id.FormatUserID(userID), "error", err)
 		}
 		h.audit.LogUserDeactivate(r.Context(), ac, userID, user.Email)
 	}

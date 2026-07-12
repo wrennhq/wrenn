@@ -40,8 +40,14 @@ func requireAdmin(queries *db.Queries) func(http.Handler) http.Handler {
 				return
 			}
 			user, err := queries.GetUserByID(r.Context(), ac.UserID)
-			if err != nil || !user.IsAdmin {
-				writeErr(w, r, apperr.Forbidden.WrapMsg(err, "Admin access required."))
+			if err != nil {
+				// A transient DB failure is not an authorization decision — a
+				// legitimate admin must not see "Admin access required" (403).
+				writeErr(w, r, apperr.Internal.Wrap(err))
+				return
+			}
+			if !user.IsAdmin {
+				writeErr(w, r, apperr.Forbidden.Msg("Admin access required."))
 				return
 			}
 			next.ServeHTTP(w, r)

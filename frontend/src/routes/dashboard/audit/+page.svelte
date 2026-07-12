@@ -196,6 +196,9 @@
 	const DELETED_BADGE = '\x00DELETED\x00';
 	const deletedBadgeHtml = '<span class="deleted-user-badge">deleted-user</span>';
 
+	// The interpolated fields (user/API-key/team names, emails) are constrained
+	// on the backend to an HTML-safe charset — no < > & " ' can be stored — so
+	// the only markup here is the trusted DELETED_BADGE swap.
 	function renderDeleted(text: string): string {
 		return text.replaceAll(DELETED_BADGE, deletedBadgeHtml);
 	}

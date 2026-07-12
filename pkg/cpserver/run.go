@@ -150,8 +150,8 @@ func Run(opts ...Option) {
 		os.Exit(1)
 	}
 	channelPub := channels.NewPublisher(rdb)
-	channelSvc := &channels.Service{DB: queries, EncKey: cfg.EncryptionKey}
-	channelDispatcher := channels.NewDispatcher(rdb, queries, cfg.EncryptionKey)
+	channelSvc := &channels.Service{DB: queries, EncKey: cfg.EncryptionKey, AllowPrivateTargets: cfg.ChannelsAllowPrivateTargets}
+	channelDispatcher := channels.NewDispatcher(rdb, queries, cfg.EncryptionKey, cfg.ChannelsAllowPrivateTargets)
 
 	// Shared audit logger with event publishing.
 	al := audit.NewWithPublisher(queries, channelPub)

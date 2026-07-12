@@ -25,6 +25,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 )
 
 const (
@@ -221,16 +222,16 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	req.Name = strings.TrimSpace(req.Name)
-	if !strings.Contains(req.Email, "@") || len(req.Email) < 3 {
-		writeErr(w, r, apperr.ValidationFailed.Msg("A valid email address is required.").With("field", "email"))
+	if err := validate.Email(req.Email); err != nil {
+		writeErr(w, r, apperr.ValidationFailed.WrapMsg(err, "A valid email address is required.").With("field", "email"))
 		return
 	}
 	if len(req.Password) < 8 {
 		writeErr(w, r, apperr.ValidationFailed.Msg("Password must be at least 8 characters.").With("field", "password"))
 		return
 	}
-	if req.Name == "" || len(req.Name) > 100 {
-		writeErr(w, r, apperr.ValidationFailed.Msg("Name must be between 1 and 100 characters.").With("field", "name"))
+	if err := validate.DisplayName(req.Name); err != nil {
+		writeErr(w, r, apperr.ValidationFailed.WrapMsg(err, "Name may only contain letters, numbers, spaces, and . _ - (max 100 characters).").With("field", "name"))
 		return
 	}
 

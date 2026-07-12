@@ -56,6 +56,8 @@ func init() {
 type Service struct {
 	DB     *db.Queries
 	EncKey [32]byte
+	// AllowPrivateTargets disables the SSRF guard on channel destination URLs.
+	AllowPrivateTargets bool
 }
 
 // CreateParams holds the parameters for creating a channel.
@@ -99,6 +101,11 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (CreateResult, err
 		if p.Config[field] == "" {
 			return CreateResult{}, apperr.ValidationFailed.Msgf("The %s field is required for %s.", field, p.Provider).With("field", field)
 		}
+	}
+
+	// Reject destination URLs pointing at internal/private addresses (SSRF).
+	if err := validateConfigURLs(p.Config, s.AllowPrivateTargets); err != nil {
+		return CreateResult{}, err
 	}
 
 	// For webhooks, auto-generate secret if not provided.
@@ -211,6 +218,11 @@ func (s *Service) RotateConfig(ctx context.Context, channelID, teamID pgtype.UUI
 		}
 	}
 
+	// Reject destination URLs pointing at internal/private addresses (SSRF).
+	if err := validateConfigURLs(config, s.AllowPrivateTargets); err != nil {
+		return db.Channel{}, err
+	}
+
 	// For webhooks, auto-generate secret if not provided.
 	if ch.Provider == "webhook" && config["secret"] == "" {
 		config["secret"] = generateSecret()
@@ -257,6 +269,12 @@ func (s *Service) Test(ctx context.Context, provider string, config map[string]s
 		}
 	}
 
+	// Reject destination URLs pointing at internal/private addresses (SSRF).
+	// Test is the sharpest oracle: it returns the delivery result synchronously.
+	if err := validateConfigURLs(config, s.AllowPrivateTargets); err != nil {
+		return err
+	}
+
 	// For webhooks, auto-generate a temporary secret if not provided.
 	if provider == "webhook" && config["secret"] == "" {
 		config["secret"] = generateSecret()
@@ -270,7 +288,7 @@ func (s *Service) Test(ctx context.Context, provider string, config map[string]s
 		Resource:  events.Resource{ID: "test", Type: "channel"},
 	}
 
-	return Deliver(ctx, provider, config, testEvent)
+	return Deliver(ctx, provider, config, testEvent, s.AllowPrivateTargets)
 }
 
 // Delete removes a channel by ID, scoped to the given team.

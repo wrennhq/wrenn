@@ -30,6 +30,12 @@ type Config struct {
 	EncryptionKeyHex string   // WRENN_ENCRYPTION_KEY raw hex string (for validation)
 	EncryptionKey    [32]byte // parsed 32-byte key
 
+	// ChannelsAllowPrivateTargets permits notification channels (webhooks etc.)
+	// to point at private/loopback/link-local addresses. Off by default to
+	// prevent SSRF against internal services; enable only on self-hosted
+	// deployments that legitimately deliver to internal endpoints.
+	ChannelsAllowPrivateTargets bool // WRENN_CHANNELS_ALLOW_PRIVATE
+
 	// SMTP — transactional email. All fields optional; omitting SMTPHost disables email.
 	SMTPHost      string // SMTP_HOST
 	SMTPPort      int    // SMTP_PORT (default 587)
@@ -60,6 +66,8 @@ func Load() Config {
 		CPPublicURL:             os.Getenv("CP_PUBLIC_URL"),
 
 		EncryptionKeyHex: os.Getenv("WRENN_ENCRYPTION_KEY"),
+
+		ChannelsAllowPrivateTargets: envOrDefaultBool("WRENN_CHANNELS_ALLOW_PRIVATE", false),
 
 		SMTPHost:      os.Getenv("SMTP_HOST"),
 		SMTPPort:      envOrDefaultInt("SMTP_PORT", 587),
@@ -95,4 +103,16 @@ func envOrDefaultInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func envOrDefaultBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
 }
