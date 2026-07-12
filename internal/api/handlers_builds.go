@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -120,18 +120,18 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(ct, "multipart/") {
 		// 100 MB max for multipart (archive + JSON config).
 		if err := r.ParseMultipartForm(100 << 20); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse multipart form")
+			writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Failed to parse the multipart form."))
 			return
 		}
 
 		// Parse JSON config from "config" field.
 		configStr := r.FormValue("config")
 		if configStr == "" {
-			writeError(w, http.StatusBadRequest, "invalid_request", "multipart form requires a 'config' JSON field")
+			writeErr(w, r, apperr.ValidationFailed.Msg("The config field is required in the multipart form.").With("field", "config"))
 			return
 		}
 		if err := json.Unmarshal([]byte(configStr), &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "invalid config JSON in multipart form")
+			writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid config JSON in the multipart form."))
 			return
 		}
 
@@ -143,32 +143,32 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 			lr := io.LimitReader(file, maxArchiveSize+1)
 			archive, err = io.ReadAll(lr)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid_request", "failed to read archive file")
+				writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Failed to read the archive file."))
 				return
 			}
 			if int64(len(archive)) > maxArchiveSize {
-				writeError(w, http.StatusRequestEntityTooLarge, "invalid_request", "archive exceeds 100 MB limit")
+				writeErr(w, r, apperr.PayloadTooLarge.Msg("The archive exceeds the 100 MB limit."))
 				return
 			}
 			archiveName = header.Filename
 		}
 	} else {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 			return
 		}
 	}
 
 	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "name is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The name field is required.").With("field", "name"))
 		return
 	}
 	if err := validate.SafeName(req.Name); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid template name: %s", err))
+		writeErr(w, r, apperr.ValidationFailed.WrapMsg(err, "Invalid template name.").With("field", "name"))
 		return
 	}
 	if len(req.Recipe) == 0 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "recipe must contain at least one command")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The recipe must contain at least one command.").With("field", "recipe"))
 		return
 	}
 
@@ -186,7 +186,7 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Error("failed to create build", "error", err)
-		writeError(w, http.StatusInternalServerError, "build_error", "failed to create build")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -199,7 +199,7 @@ func (h *buildHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *buildHandler) List(w http.ResponseWriter, r *http.Request) {
 	builds, err := h.svc.List(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list builds")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -217,13 +217,13 @@ func (h *buildHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	buildID, err := id.ParseBuildID(buildIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid build ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid build ID."))
 		return
 	}
 
 	build, err := h.svc.Get(r.Context(), buildID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "build not found")
+		writeErr(w, r, apperr.BuildNotFound.Wrap(err))
 		return
 	}
 
@@ -234,7 +234,7 @@ func (h *buildHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 	templates, err := h.db.ListTemplates(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list templates")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -275,31 +275,30 @@ func (h *buildHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if err := validate.SafeName(name); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid template name: %s", err))
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid template name."))
 		return
 	}
 	ctx := r.Context()
 
 	tmpl, err := h.db.GetPlatformTemplateByName(ctx, name)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "template not found")
+		writeErr(w, r, apperr.TemplateNotFound.Wrap(err))
 		return
 	}
 	if layout.IsSystemTemplate(tmpl.TeamID, tmpl.ID) {
-		writeError(w, http.StatusForbidden, "forbidden", "system base templates cannot be deleted")
+		writeErr(w, r, apperr.TemplateProtected.New())
 		return
 	}
 
 	// Remove the files from every host before dropping the DB record, so a
 	// failure leaves the template intact and retryable rather than orphaned.
 	if err := deleteSnapshotEverywhere(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
-		writeError(w, http.StatusConflict, "delete_failed",
-			"could not remove template files from all hosts: "+err.Error())
+		writeErr(w, r, apperr.Conflict.WrapMsg(err, "Could not remove template files from all hosts. Try again when all hosts are online."))
 		return
 	}
 
 	if err := h.db.DeleteTemplate(ctx, tmpl.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete template record")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -314,12 +313,14 @@ func (h *buildHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 
 	buildID, err := id.ParseBuildID(buildIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid build ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid build ID."))
 		return
 	}
 
 	if err := h.svc.Cancel(r.Context(), buildID); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		// Cancel returns typed apperr errors (BuildNotFound / Conflict); pass
+		// them through so not-found stays 404 rather than collapsing to 409.
+		writeErr(w, r, err)
 		return
 	}
 

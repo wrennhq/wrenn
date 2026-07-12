@@ -19,6 +19,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/wrenn/internal/email"
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
@@ -214,22 +215,22 @@ type signupResponse struct {
 func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	var req signupRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	req.Name = strings.TrimSpace(req.Name)
 	if !strings.Contains(req.Email, "@") || len(req.Email) < 3 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid email address")
+		writeErr(w, r, apperr.ValidationFailed.Msg("A valid email address is required.").With("field", "email"))
 		return
 	}
 	if len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "password must be at least 8 characters")
+		writeErr(w, r, apperr.ValidationFailed.Msg("Password must be at least 8 characters.").With("field", "password"))
 		return
 	}
 	if req.Name == "" || len(req.Name) > 100 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "name must be between 1 and 100 characters")
+		writeErr(w, r, apperr.ValidationFailed.Msg("Name must be between 1 and 100 characters.").With("field", "name"))
 		return
 	}
 
@@ -243,28 +244,27 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		case "inactive":
 			// Unactivated user — allow re-signup after cooldown.
 			if time.Since(existing.CreatedAt.Time) < signupCooldown {
-				writeError(w, http.StatusConflict, "signup_cooldown",
-					"an activation email was recently sent to this address — please check your inbox or try again later")
+				writeErr(w, r, apperr.AuthSignupCooldown.New())
 				return
 			}
 			// Cooldown passed — delete the old row and proceed with fresh signup.
 			if err := h.db.HardDeleteUser(ctx, existing.ID); err != nil {
-				writeError(w, http.StatusInternalServerError, "db_error", "failed to clean up previous signup")
+				writeErr(w, r, apperr.Internal.Wrap(err))
 				return
 			}
 		default:
 			// active, disabled, deleted — email is taken.
-			writeError(w, http.StatusConflict, "email_taken", "an account with this email already exists")
+			writeErr(w, r, apperr.AuthEmailTaken.New())
 			return
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	passwordHash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to hash password")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -278,10 +278,10 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			writeError(w, http.StatusConflict, "email_taken", "an account with this email already exists")
+			writeErr(w, r, apperr.AuthEmailTaken.Wrap(err))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to create user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -292,7 +292,7 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.rdb.Set(ctx, redisKey, id.FormatUserID(userID), activationTTL).Err(); err != nil {
 		slog.Error("signup: failed to store activation token in redis", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create activation token")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -319,12 +319,12 @@ func (h *authHandler) Signup(w http.ResponseWriter, r *http.Request) {
 func (h *authHandler) Activate(w http.ResponseWriter, r *http.Request) {
 	var req activateRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if req.Token == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "token is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The token field is required.").With("field", "token"))
 		return
 	}
 
@@ -334,28 +334,28 @@ func (h *authHandler) Activate(w http.ResponseWriter, r *http.Request) {
 
 	userIDStr, err := h.rdb.GetDel(ctx, redisKey).Result()
 	if errors.Is(err, redis.Nil) {
-		writeError(w, http.StatusBadRequest, "invalid_token", "activation link is invalid or has expired")
+		writeErr(w, r, apperr.AuthTokenInvalid.Wrap(err))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to verify token")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	userID, err := id.ParseUserID(userIDStr)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "invalid stored user ID")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	user, err := h.db.GetUserByID(ctx, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	if user.Status != "inactive" {
-		writeError(w, http.StatusBadRequest, "already_activated", "this account has already been activated")
+		writeErr(w, r, apperr.AuthAlreadyActivated.New())
 		return
 	}
 
@@ -365,7 +365,7 @@ func (h *authHandler) Activate(w http.ResponseWriter, r *http.Request) {
 		Status: "active",
 	}); err != nil {
 		slog.Error("activate: failed to set user status", "user_id", id.FormatUserID(userID), "error", err)
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to activate user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -373,7 +373,7 @@ func (h *authHandler) Activate(w http.ResponseWriter, r *http.Request) {
 	team, role, isFirstUser, err := ensureDefaultTeam(ctx, h.db, h.pool, userID, user.Name)
 	if err != nil {
 		slog.Error("activate: failed to create default team", "error", err)
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to set up account")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -381,12 +381,12 @@ func (h *authHandler) Activate(w http.ResponseWriter, r *http.Request) {
 	// Fire OnSignup before issuing a session — billing must succeed first.
 	if err := fireOnSignup(ctx, h.authHooks, userID, team.ID, user.Email); err != nil {
 		slog.Error("activate: OnSignup hook failed", "user_id", id.FormatUserID(userID), "error", err)
-		writeError(w, http.StatusInternalServerError, "signup_hook_failed", "failed to finalize account setup")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	if err := h.issueSession(w, r, userID, team.ID, user.Email, user.Name, role, isAdmin); err != nil {
 		slog.Error("activate: failed to issue session", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	fireOnLogin(ctx, h.authHooks, userID)
@@ -405,13 +405,13 @@ func (h *authHandler) Activate(w http.ResponseWriter, r *http.Request) {
 func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "email and password are required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("Email and password are required."))
 		return
 	}
 
@@ -421,21 +421,21 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			slog.Warn("login failed: unknown email", "email", req.Email, "ip", r.RemoteAddr)
-			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
+			writeErr(w, r, apperr.AuthInvalidCredentials.New())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	if !user.PasswordHash.Valid {
 		slog.Warn("login failed: no password set", "email", req.Email, "ip", r.RemoteAddr)
-		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
+		writeErr(w, r, apperr.AuthInvalidCredentials.New())
 		return
 	}
 	if err := auth.CheckPassword(user.PasswordHash.String, req.Password); err != nil {
 		slog.Warn("login failed: wrong password", "email", req.Email, "ip", r.RemoteAddr)
-		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
+		writeErr(w, r, apperr.AuthInvalidCredentials.New())
 		return
 	}
 
@@ -444,18 +444,18 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 		// OK — proceed.
 	case "inactive":
 		slog.Warn("login failed: account not activated", "email", req.Email, "ip", r.RemoteAddr)
-		writeError(w, http.StatusForbidden, "account_not_activated", "please check your email and activate your account before signing in")
+		writeErr(w, r, apperr.AuthAccountNotActivated.New())
 		return
 	case "disabled":
 		slog.Warn("login failed: account disabled", "email", req.Email, "ip", r.RemoteAddr)
-		writeError(w, http.StatusForbidden, "account_disabled", "your account has been deactivated — contact your administrator to regain access")
+		writeErr(w, r, apperr.AuthAccountDisabled.New())
 		return
 	case "deleted":
 		slog.Warn("login failed: account deleted", "email", req.Email, "ip", r.RemoteAddr)
-		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
+		writeErr(w, r, apperr.AuthInvalidCredentials.New())
 		return
 	default:
-		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid email or password")
+		writeErr(w, r, apperr.AuthInvalidCredentials.New())
 		return
 	}
 
@@ -463,14 +463,14 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 	team, role, isFirstUser, err := ensureDefaultTeam(ctx, h.db, h.pool, user.ID, user.Name)
 	if err != nil {
 		slog.Error("login: failed to ensure default team", "error", err)
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up team")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	isAdmin := user.IsAdmin || isFirstUser
 	if err := h.issueSession(w, r, user.ID, team.ID, user.Email, user.Name, role, isAdmin); err != nil {
 		slog.Error("login: failed to issue session", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	fireOnLogin(ctx, h.authHooks, user.ID)
@@ -494,17 +494,17 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 
 	var req switchTeamRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	if req.TeamID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "team_id is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The team_id field is required.").With("field", "team_id"))
 		return
 	}
 
 	teamID, err := id.ParseTeamID(req.TeamID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid team_id")
+		writeErr(w, r, apperr.ValidationFailed.WrapMsg(err, "The team_id field is invalid.").With("field", "team_id"))
 		return
 	}
 
@@ -514,14 +514,14 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 	team, err := h.db.GetTeam(ctx, teamID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "not_found", "team not found")
+			writeErr(w, r, apperr.TeamNotFound.Wrap(err))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up team")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	if team.DeletedAt.Valid {
-		writeError(w, http.StatusNotFound, "not_found", "team not found")
+		writeErr(w, r, apperr.TeamNotFound.New())
 		return
 	}
 
@@ -532,17 +532,17 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusForbidden, "forbidden", "not a member of this team")
+			writeErr(w, r, apperr.Forbidden.WrapMsg(err, "You are not a member of this team."))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up membership")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	// Fetch current name from DB — JWT name is not trusted here (may be stale or empty for old tokens).
 	user, err := h.db.GetUserByID(ctx, ac.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to look up user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -551,7 +551,7 @@ func (h *authHandler) SwitchTeam(w http.ResponseWriter, r *http.Request) {
 	newSess, err := h.sessions.Rotate(ctx, ac.SessionID, ac.UserID, teamID, user.Email, user.Name, membership.Role, user.IsAdmin, r.UserAgent(), clientIP(r))
 	if err != nil {
 		slog.Error("switch team: failed to rotate session", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to switch team")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	setSessionCookies(w, newSess.RawSID, newSess.CSRFToken, isSecure(r))
@@ -582,7 +582,7 @@ func (h *authHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 	if err := h.sessions.RevokeAllForUser(r.Context(), ac.UserID); err != nil {
 		slog.Error("logout-all: revoke failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to revoke sessions")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	clearSessionCookies(w, isSecure(r))

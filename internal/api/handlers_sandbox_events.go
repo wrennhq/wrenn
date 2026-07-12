@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/channels"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -42,19 +43,19 @@ type sandboxEventRequest struct {
 func (h *sandboxEventHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	var req sandboxEventRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if req.Event == "" || req.SandboxID == "" || req.HostID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "event, sandbox_id, and host_id are required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The event, sandbox_id, and host_id fields are required."))
 		return
 	}
 
 	hc := auth.MustHostFromContext(r.Context())
 	callerHostID := id.FormatHostID(hc.HostID)
 	if callerHostID != req.HostID {
-		writeError(w, http.StatusForbidden, "forbidden", "host_id does not match authenticated host")
+		writeErr(w, r, apperr.Forbidden.Msg("The host_id does not match the authenticated host."))
 		return
 	}
 

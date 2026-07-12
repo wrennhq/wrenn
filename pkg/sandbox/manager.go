@@ -38,6 +38,12 @@ var (
 	ErrNotPaused = errors.New("sandbox not paused")
 	// ErrInvalidRange is returned when a metrics range parameter is invalid.
 	ErrInvalidRange = errors.New("invalid range")
+	// ErrTemplateNotFound is returned when a template's rootfs image does not
+	// exist on this host.
+	ErrTemplateNotFound = errors.New("template rootfs not found")
+	// ErrEnvdNotReady is returned when the VM booted (or resumed) but envd did
+	// not become healthy within the readiness budget.
+	ErrEnvdNotReady = errors.New("envd not ready")
 )
 
 // MinTimeoutSec is the minimum inactivity TTL accepted by Create/Resume.
@@ -386,7 +392,7 @@ func (m *Manager) Create(
 	// Resolve base rootfs image.
 	baseRootfs := layout.TemplateRootfs(m.cfg.WrennDir, teamID, templateID)
 	if _, err := os.Stat(baseRootfs); err != nil {
-		return nil, 0, fmt.Errorf("base rootfs not found at %s: %w", baseRootfs, err)
+		return nil, 0, fmt.Errorf("%w: base rootfs missing at %s: %w", ErrTemplateNotFound, baseRootfs, err)
 	}
 
 	// Acquire shared read-only loop device for the base image.
@@ -475,7 +481,7 @@ func (m *Manager) Create(
 
 	if err := client.WaitUntilReady(waitCtx); err != nil {
 		res.rollback()
-		return nil, 0, fmt.Errorf("wait for envd: %w", err)
+		return nil, 0, fmt.Errorf("%w: %w", ErrEnvdNotReady, err)
 	}
 
 	// Fetch envd version (best-effort).

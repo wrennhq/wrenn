@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -119,16 +120,16 @@ type createSnapshotRequest struct {
 func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createSnapshotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	if req.SandboxID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "sandbox_id is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The sandbox_id field is required.").With("field", "sandbox_id"))
 		return
 	}
 	sandboxID, err := id.ParseSandboxID(req.SandboxID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 	ac := auth.MustFromContext(r.Context())
@@ -138,8 +139,7 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// result via the SSE template.snapshot.create event (or by polling).
 	sb, name, err := h.sandboxSvc.CreateSnapshot(r.Context(), sandboxID, ac.TeamID, req.Name)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 	h.audit.LogSnapshotCreateRequested(r.Context(), ac, name)
@@ -154,7 +154,7 @@ func (h *snapshotHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	templates, err := h.svc.List(r.Context(), ac.TeamID, typeFilter)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list templates")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -175,7 +175,7 @@ func (h *snapshotHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if err := validate.SafeName(name); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid snapshot name: %s", err))
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid snapshot name."))
 		return
 	}
 	ctx := r.Context()
@@ -183,29 +183,28 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	tmpl, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: name, TeamID: ac.TeamID})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "template not found")
+		writeErr(w, r, apperr.TemplateNotFound.Wrap(err))
 		return
 	}
 	// Platform templates can only be deleted by admins via /v1/admin/templates.
 	if tmpl.TeamID == id.PlatformTeamID {
-		writeError(w, http.StatusForbidden, "forbidden", "platform templates cannot be deleted here")
+		writeErr(w, r, apperr.TemplateProtected.Msg("Platform templates cannot be deleted here."))
 		return
 	}
 	if layout.IsSystemTemplate(tmpl.TeamID, tmpl.ID) {
-		writeError(w, http.StatusForbidden, "forbidden", "system base templates cannot be deleted")
+		writeErr(w, r, apperr.TemplateProtected.New())
 		return
 	}
 
 	if err := deleteSnapshotEverywhere(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
 		h.audit.LogSnapshotDelete(r.Context(), ac, name, err)
-		writeError(w, http.StatusConflict, "delete_failed",
-			"could not remove snapshot files from all hosts: "+err.Error())
+		writeErr(w, r, apperr.Conflict.WrapMsg(err, "Could not remove snapshot files from all hosts. Try again when all hosts are online."))
 		return
 	}
 
 	if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: name, TeamID: ac.TeamID}); err != nil {
 		h.audit.LogSnapshotDelete(r.Context(), ac, name, err)
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete template record")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 

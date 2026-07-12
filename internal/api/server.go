@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/wrenn/internal/email"
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
@@ -61,6 +62,7 @@ func New(
 	version string,
 ) *Server {
 	r := chi.NewRouter()
+	r.Use(apperr.Middleware)
 	r.Use(requestLogger())
 
 	// Apply extension middleware before routes so it wraps all OSS routes.

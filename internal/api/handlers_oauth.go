@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
@@ -51,13 +52,13 @@ func (h *oauthHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	p, ok := h.registry.Get(provider)
 	if !ok {
-		writeError(w, http.StatusNotFound, "provider_not_found", "unsupported OAuth provider")
+		writeErr(w, r, apperr.NotFound.Msg("Unsupported OAuth provider."))
 		return
 	}
 
 	state, err := generateState()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate state")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -88,7 +89,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	p, ok := h.registry.Get(provider)
 	if !ok {
-		writeError(w, http.StatusNotFound, "provider_not_found", "unsupported OAuth provider")
+		writeErr(w, r, apperr.NotFound.Msg("Unsupported OAuth provider."))
 		return
 	}
 

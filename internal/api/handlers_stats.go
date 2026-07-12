@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
@@ -53,14 +54,14 @@ func (h *statsHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 	tr := service.TimeRange(rangeParam)
 	if !service.ValidRange(tr) {
-		writeError(w, http.StatusBadRequest, "invalid_request", "range must be one of: 5m, 1h, 6h, 24h, 30d")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The range parameter must be one of: 5m, 1h, 6h, 24h, 30d.").With("field", "range"))
 		return
 	}
 
 	current, peaks, series, err := h.svc.GetStats(r.Context(), ac.TeamID, tr)
 	if err != nil {
 		slog.Error("stats handler: get stats failed", "team_id", ac.TeamID, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to retrieve stats")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 

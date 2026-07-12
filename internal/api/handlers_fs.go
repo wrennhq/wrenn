@@ -5,6 +5,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -66,17 +67,17 @@ func (h *fsHandler) ListDir(w http.ResponseWriter, r *http.Request) {
 
 	var req listDirRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	if req.Path == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "path is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The path field is required.").With("field", "path"))
 		return
 	}
 
 	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -86,8 +87,7 @@ func (h *fsHandler) ListDir(w http.ResponseWriter, r *http.Request) {
 		Depth:     req.Depth,
 	}))
 	if err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -111,17 +111,17 @@ func (h *fsHandler) MakeDir(w http.ResponseWriter, r *http.Request) {
 
 	var req makeDirRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	if req.Path == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "path is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The path field is required.").With("field", "path"))
 		return
 	}
 
 	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -130,8 +130,7 @@ func (h *fsHandler) MakeDir(w http.ResponseWriter, r *http.Request) {
 		Path:      req.Path,
 	}))
 	if err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -150,17 +149,17 @@ func (h *fsHandler) Remove(w http.ResponseWriter, r *http.Request) {
 
 	var req removeRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	if req.Path == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "path is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The path field is required.").With("field", "path"))
 		return
 	}
 
 	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -168,8 +167,7 @@ func (h *fsHandler) Remove(w http.ResponseWriter, r *http.Request) {
 		SandboxId: sandboxIDStr,
 		Path:      req.Path,
 	})); err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 

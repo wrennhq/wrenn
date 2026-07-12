@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -39,17 +40,17 @@ func requireRunningSandbox(w http.ResponseWriter, r *http.Request, queries *db.Q
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return db.Sandbox{}, pgtype.UUID{}, "", false
 	}
 
 	sb, err := queries.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeErr(w, r, apperr.SandboxNotFound.Wrap(err))
 		return db.Sandbox{}, pgtype.UUID{}, "", false
 	}
 	if sb.Status != "running" {
-		writeError(w, http.StatusConflict, "invalid_state", "sandbox is not running (status: "+sb.Status+")")
+		writeErr(w, r, apperr.SandboxNotRunning.New().With("status", sb.Status))
 		return db.Sandbox{}, pgtype.UUID{}, "", false
 	}
 
@@ -71,7 +72,7 @@ func upgradeAndAuthenticate(w http.ResponseWriter, r *http.Request) (*websocket.
 func upgradeAndAuthenticateWith(w http.ResponseWriter, r *http.Request, up *websocket.Upgrader) (*websocket.Conn, auth.AuthContext, error) {
 	ac, hasAuth := auth.FromContext(r.Context())
 	if !hasAuth {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "session cookie or X-API-Key required")
+		writeErr(w, r, apperr.AuthSessionRequired.New())
 		return nil, auth.AuthContext{}, fmt.Errorf("unauthenticated")
 	}
 	conn, err := up.Upgrade(w, r, nil)

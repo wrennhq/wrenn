@@ -1,3 +1,5 @@
+import { apiFailure } from '$lib/api/client';
+
 export type AuthResponse = {
 	user_id: string;
 	team_id: string;
@@ -38,8 +40,8 @@ async function authFetch<T = AuthResponse>(url: string, body: Record<string, str
 		const data = await res.json();
 
 		if (!res.ok) {
-			const message = data?.error?.message ?? 'Something went wrong';
-			return { ok: false, error: message };
+			const failure = apiFailure(data);
+			return { ok: false, error: failure.error };
 		}
 
 		return { ok: true, data: data as T };

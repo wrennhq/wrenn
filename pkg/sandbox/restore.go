@@ -81,7 +81,7 @@ func (m *Manager) launchRestoredVM(ctx context.Context, vmCfg vm.VMConfig, hostI
 	defer waitCancel()
 	if err := client.WaitUntilReady(waitCtx); err != nil {
 		_ = m.vm.Destroy(context.Background(), vmCfg.SandboxID)
-		return nil, fmt.Errorf("wait envd: %w", err)
+		return nil, fmt.Errorf("%w after resume: %w", ErrEnvdNotReady, err)
 	}
 
 	// Best-effort balloon deflate. Free-page reporting drains pages while the

@@ -19,7 +19,9 @@ import (
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/envdclient"
+	"git.omukk.dev/wrenn/wrenn/pkg/network"
 	"git.omukk.dev/wrenn/wrenn/pkg/sandbox"
 )
 
@@ -56,11 +58,11 @@ func parseUUIDString(s string) (pgtype.UUID, error) {
 func parseSandboxIDs(teamIDStr, templateIDStr string) (teamID, templateID pgtype.UUID, err error) {
 	teamID, err = parseUUIDString(teamIDStr)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, connect.NewError(connect.CodeInvalidArgument, err)
+		return pgtype.UUID{}, pgtype.UUID{}, apperr.ToConnect(apperr.InvalidRequest.Wrap(err))
 	}
 	templateID, err = parseUUIDString(templateIDStr)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, connect.NewError(connect.CodeInvalidArgument, err)
+		return pgtype.UUID{}, pgtype.UUID{}, apperr.ToConnect(apperr.InvalidRequest.Wrap(err))
 	}
 	return teamID, templateID, nil
 }
@@ -83,10 +85,7 @@ func (s *Server) CreateSandbox(
 		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), 0,
 		msg.DefaultUser, msg.DefaultEnv)
 	if err != nil {
-		if errors.Is(err, sandbox.ErrDraining) {
-			return nil, connect.NewError(connect.CodeUnavailable, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create sandbox: %w", err))
+		return nil, mapSandboxError(fmt.Errorf("create sandbox: %w", err))
 	}
 
 	return connect.NewResponse(&pb.CreateSandboxResponse{
@@ -183,21 +182,32 @@ func (s *Server) FlattenRootfs(
 	}), nil
 }
 
-// mapSandboxError translates sandbox.Manager errors to Connect error codes
-// via sentinel errors (errors.Is). Adding a new precondition sentinel in the
-// sandbox package only requires extending this switch — no string sniffing.
+// mapSandboxError translates sandbox.Manager errors to Connect errors
+// carrying an apperr ErrorInfo detail, so the control plane surfaces the
+// precise catalog error instead of guessing from the Connect code. Sentinels
+// are matched with errors.Is — no string sniffing. Unmatched errors become
+// internal_error: the full cause crosses the (internal) RPC channel for CP
+// logs, while the client-safe detail stays generic.
 func mapSandboxError(err error) error {
 	switch {
 	case errors.Is(err, sandbox.ErrNotFound):
-		return connect.NewError(connect.CodeNotFound, err)
-	case errors.Is(err, sandbox.ErrNotRunning), errors.Is(err, sandbox.ErrNotPaused):
-		return connect.NewError(connect.CodeFailedPrecondition, err)
+		return apperr.ToConnect(apperr.SandboxNotFound.Wrap(err))
+	case errors.Is(err, sandbox.ErrNotRunning):
+		return apperr.ToConnect(apperr.SandboxNotRunning.Wrap(err))
+	case errors.Is(err, sandbox.ErrNotPaused):
+		return apperr.ToConnect(apperr.SandboxNotPaused.Wrap(err))
 	case errors.Is(err, sandbox.ErrDraining):
-		return connect.NewError(connect.CodeUnavailable, err)
+		return apperr.ToConnect(apperr.HostDraining.Wrap(err))
 	case errors.Is(err, sandbox.ErrInvalidRange):
-		return connect.NewError(connect.CodeInvalidArgument, err)
+		return apperr.ToConnect(apperr.InvalidRequest.WrapMsg(err, "Invalid metrics range."))
+	case errors.Is(err, sandbox.ErrTemplateNotFound):
+		return apperr.ToConnect(apperr.TemplateNotFound.WrapMsg(err, "The template's rootfs image is not available on this host."))
+	case errors.Is(err, sandbox.ErrEnvdNotReady):
+		return apperr.ToConnect(apperr.SandboxUnresponsive.WrapMsg(err, "The sandbox VM started but its agent did not become ready."))
+	case errors.Is(err, network.ErrNoFreeSlots):
+		return apperr.ToConnect(apperr.CapacityUnavailable.WrapMsg(err, "This host has no free network slots. Try again shortly."))
 	default:
-		return connect.NewError(connect.CodeInternal, err)
+		return apperr.ToConnect(err)
 	}
 }
 
@@ -212,9 +222,9 @@ func (s *Server) GetTemplateSize(
 	size, err := s.mgr.TemplateRootfsSize(teamID, templateID)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
+			return nil, apperr.ToConnect(apperr.TemplateNotFound.Wrap(err))
 		}
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get template size: %w", err))
+		return nil, mapSandboxError(fmt.Errorf("get template size: %w", err))
 	}
 	return connect.NewResponse(&pb.GetTemplateSizeResponse{
 		SizeBytes: size,
@@ -226,10 +236,7 @@ func (s *Server) PingSandbox(
 	req *connect.Request[pb.PingSandboxRequest],
 ) (*connect.Response[pb.PingSandboxResponse], error) {
 	if err := s.mgr.Ping(req.Msg.SandboxId); err != nil {
-		if errors.Is(err, sandbox.ErrNotFound) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		return nil, mapSandboxError(err)
 	}
 	return connect.NewResponse(&pb.PingSandboxResponse{}), nil
 }
@@ -265,15 +272,42 @@ func (s *Server) Exec(
 	}), nil
 }
 
-// envdErr propagates an error from the envd client, preserving its Connect
-// error code (e.g. AlreadyExists, NotFound) so the control plane maps it to
-// the correct HTTP status. Non-Connect errors fall back to CodeInternal.
+// envdErr propagates an error from the envd client. envd is a separate binary
+// that never attaches an apperr ErrorInfo detail, so its Connect code is the
+// only signal — and the control plane's fromConnect flattens any detail-less
+// error to internal_error. So client-fault codes are translated to their
+// catalog Def here, keeping envd's message (it describes the caller's own
+// request, e.g. a bad path inside their sandbox); without this a missing file
+// would surface as a misleading 500 instead of a 404. Transport failures
+// reaching envd become sandbox_unresponsive, everything else internal_error
+// with the cause preserved for CP logs.
 func envdErr(action string, err error) error {
-	code := connect.CodeOf(err)
-	if code == connect.CodeUnknown {
-		code = connect.CodeInternal
+	wrapped := fmt.Errorf("%s: %w", action, err)
+	switch connect.CodeOf(err) {
+	case connect.CodeNotFound:
+		return apperr.ToConnect(apperr.NotFound.WrapMsg(wrapped, connectMessage(err)))
+	case connect.CodeInvalidArgument:
+		return apperr.ToConnect(apperr.InvalidRequest.WrapMsg(wrapped, connectMessage(err)))
+	case connect.CodeAlreadyExists:
+		return apperr.ToConnect(apperr.Conflict.WrapMsg(wrapped, connectMessage(err)))
+	case connect.CodePermissionDenied:
+		return apperr.ToConnect(apperr.Forbidden.Wrap(wrapped))
+	case connect.CodeUnavailable:
+		return apperr.ToConnect(apperr.SandboxUnresponsive.Wrap(wrapped))
+	default:
+		return apperr.ToConnect(wrapped)
 	}
-	return connect.NewError(code, fmt.Errorf("%s: %w", action, err))
+}
+
+// connectMessage returns the human-readable message from a Connect error. envd
+// phrases its client-fault messages in terms of the caller's own request
+// ("path not found"), so they are safe to surface to API clients.
+func connectMessage(err error) string {
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		return ce.Message()
+	}
+	return "The request could not be completed."
 }
 
 func (s *Server) WriteFile(
@@ -284,7 +318,7 @@ func (s *Server) WriteFile(
 
 	client, err := s.mgr.GetClient(msg.SandboxId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, mapSandboxError(err)
 	}
 
 	if err := client.WriteFile(ctx, msg.Path, msg.Content); err != nil {
@@ -302,7 +336,7 @@ func (s *Server) ReadFile(
 
 	client, err := s.mgr.GetClient(msg.SandboxId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, mapSandboxError(err)
 	}
 
 	content, err := client.ReadFile(ctx, msg.Path)
@@ -321,7 +355,7 @@ func (s *Server) ListDir(
 
 	client, err := s.mgr.GetClient(msg.SandboxId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, mapSandboxError(err)
 	}
 
 	resp, err := client.ListDir(ctx, msg.Path, msg.Depth)
@@ -345,7 +379,7 @@ func (s *Server) MakeDir(
 
 	client, err := s.mgr.GetClient(msg.SandboxId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, mapSandboxError(err)
 	}
 
 	resp, err := client.MakeDir(ctx, msg.Path)
@@ -366,7 +400,7 @@ func (s *Server) RemovePath(
 
 	client, err := s.mgr.GetClient(msg.SandboxId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, mapSandboxError(err)
 	}
 
 	if err := client.Remove(ctx, msg.Path); err != nil {
@@ -393,7 +427,7 @@ func (s *Server) ExecStream(
 
 	events, err := s.mgr.ExecStream(execCtx, msg.SandboxId, msg.Cmd, msg.Args...)
 	if err != nil {
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("exec stream: %w", err))
+		return mapSandboxError(fmt.Errorf("exec stream: %w", err))
 	}
 
 	for ev := range events {
@@ -442,20 +476,20 @@ func (s *Server) WriteFileStream(
 	// First message must contain metadata.
 	if !stream.Receive() {
 		if err := stream.Err(); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return nil, apperr.ToConnect(err)
 		}
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("empty stream"))
+		return nil, apperr.ToConnect(apperr.InvalidRequest.Msg("The upload stream was empty."))
 	}
 
 	first := stream.Msg()
 	meta := first.GetMeta()
 	if meta == nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("first message must contain metadata"))
+		return nil, apperr.ToConnect(apperr.InvalidRequest.Msg("The first stream message must contain metadata."))
 	}
 
 	client, err := s.mgr.GetClient(meta.SandboxId)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, mapSandboxError(err)
 	}
 
 	// Use io.Pipe to stream raw chunks into envd's REST endpoint body.
@@ -495,7 +529,7 @@ func (s *Server) WriteFileStream(
 	if err != nil {
 		pw.CloseWithError(err)
 		<-errCh
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create request: %w", err))
+		return nil, apperr.ToConnect(fmt.Errorf("create request: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", "application/octet-stream")
 
@@ -503,18 +537,18 @@ func (s *Server) WriteFileStream(
 	if err != nil {
 		pw.CloseWithError(err)
 		<-errCh
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("write file stream: %w", err))
+		return nil, envdErr("write file stream", err)
 	}
 	defer resp.Body.Close()
 
 	// Wait for the writer goroutine.
 	if writerErr := <-errCh; writerErr != nil {
-		return nil, connect.NewError(connect.CodeInternal, writerErr)
+		return nil, apperr.ToConnect(writerErr)
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("envd write: status %d: %s", resp.StatusCode, string(body)))
+		return nil, envdErr("write file stream", fmt.Errorf("envd write: status %d: %s", resp.StatusCode, string(body)))
 	}
 
 	slog.Debug("streaming file write complete", "sandbox_id", meta.SandboxId, "path", meta.Path)
@@ -530,7 +564,7 @@ func (s *Server) ReadFileStream(
 
 	client, err := s.mgr.GetClient(msg.SandboxId)
 	if err != nil {
-		return connect.NewError(connect.CodeNotFound, err)
+		return mapSandboxError(err)
 	}
 
 	// No username is sent, so envd resolves the sandbox default user, matching
@@ -542,18 +576,18 @@ func (s *Server) ReadFileStream(
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("create request: %w", err))
+		return apperr.ToConnect(fmt.Errorf("create request: %w", err))
 	}
 
 	resp, err := client.StreamingHTTPClient().Do(httpReq)
 	if err != nil {
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("read file stream: %w", err))
+		return envdErr("read file stream", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("envd read: status %d: %s", resp.StatusCode, string(body)))
+		return envdErr("read file stream", fmt.Errorf("envd read: status %d: %s", resp.StatusCode, string(body)))
 	}
 
 	// Stream file content in 64KB chunks.
@@ -581,7 +615,7 @@ func (s *Server) ReadFileStream(
 			break
 		}
 		if err != nil {
-			return connect.NewError(connect.CodeInternal, fmt.Errorf("read body: %w", err))
+			return envdErr("read file stream", fmt.Errorf("read body: %w", err))
 		}
 	}
 
@@ -688,7 +722,7 @@ func (s *Server) PtyAttach(
 
 	events, err := s.mgr.PtyAttach(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Cols, msg.Rows, msg.Envs, msg.Cwd, msg.User, msg.Reconnect)
 	if err != nil {
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("pty attach: %w", err))
+		return mapSandboxError(fmt.Errorf("pty attach: %w", err))
 	}
 
 	for ev := range events {
@@ -724,7 +758,7 @@ func (s *Server) PtySendInput(
 	msg := req.Msg
 
 	if err := s.mgr.PtySendInput(ctx, msg.SandboxId, msg.Tag, msg.Data); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("pty send input: %w", err))
+		return nil, mapSandboxError(fmt.Errorf("pty send input: %w", err))
 	}
 
 	return connect.NewResponse(&pb.PtySendInputResponse{}), nil
@@ -737,7 +771,7 @@ func (s *Server) PtyResize(
 	msg := req.Msg
 
 	if err := s.mgr.PtyResize(ctx, msg.SandboxId, msg.Tag, msg.Cols, msg.Rows); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("pty resize: %w", err))
+		return nil, mapSandboxError(fmt.Errorf("pty resize: %w", err))
 	}
 
 	return connect.NewResponse(&pb.PtyResizeResponse{}), nil
@@ -750,7 +784,7 @@ func (s *Server) PtyKill(
 	msg := req.Msg
 
 	if err := s.mgr.PtyKill(ctx, msg.SandboxId, msg.Tag); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("pty kill: %w", err))
+		return nil, mapSandboxError(fmt.Errorf("pty kill: %w", err))
 	}
 
 	return connect.NewResponse(&pb.PtyKillResponse{}), nil
@@ -806,10 +840,7 @@ func (s *Server) StartBackground(
 
 	pid, err := s.mgr.StartBackground(ctx, msg.SandboxId, msg.Tag, msg.Cmd, msg.Args, msg.Envs, msg.Cwd)
 	if err != nil {
-		if errors.Is(err, sandbox.ErrNotFound) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("start background: %w", err))
+		return nil, mapSandboxError(fmt.Errorf("start background: %w", err))
 	}
 
 	return connect.NewResponse(&pb.StartBackgroundResponse{
@@ -824,10 +855,7 @@ func (s *Server) ListProcesses(
 ) (*connect.Response[pb.ListProcessesResponse], error) {
 	procs, err := s.mgr.ListProcesses(ctx, req.Msg.SandboxId)
 	if err != nil {
-		if errors.Is(err, sandbox.ErrNotFound) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list processes: %w", err))
+		return nil, mapSandboxError(fmt.Errorf("list processes: %w", err))
 	}
 
 	entries := make([]*pb.ProcessEntry, 0, len(procs))
@@ -860,7 +888,7 @@ func (s *Server) KillProcess(
 	case *pb.KillProcessRequest_Tag:
 		tag = sel.Tag
 	default:
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("pid or tag is required"))
+		return nil, apperr.ToConnect(apperr.InvalidRequest.Msg("A pid or tag is required."))
 	}
 
 	// Map signal string to envd enum.
@@ -871,14 +899,11 @@ func (s *Server) KillProcess(
 	case "SIGTERM":
 		signal = envdpb.Signal_SIGNAL_SIGTERM
 	default:
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unsupported signal: %s (use SIGKILL or SIGTERM)", msg.Signal))
+		return nil, apperr.ToConnect(apperr.InvalidRequest.Msgf("Unsupported signal: %s (use SIGKILL or SIGTERM).", msg.Signal))
 	}
 
 	if err := s.mgr.KillProcess(ctx, msg.SandboxId, pid, tag, signal); err != nil {
-		if errors.Is(err, sandbox.ErrNotFound) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
-		}
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("kill process: %w", err))
+		return nil, mapSandboxError(fmt.Errorf("kill process: %w", err))
 	}
 
 	return connect.NewResponse(&pb.KillProcessResponse{}), nil
@@ -899,15 +924,12 @@ func (s *Server) ConnectProcess(
 	case *pb.ConnectProcessRequest_Tag:
 		tag = sel.Tag
 	default:
-		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("pid or tag is required"))
+		return apperr.ToConnect(apperr.InvalidRequest.Msg("A pid or tag is required."))
 	}
 
 	events, err := s.mgr.ConnectProcess(ctx, msg.SandboxId, pid, tag)
 	if err != nil {
-		if errors.Is(err, sandbox.ErrNotFound) {
-			return connect.NewError(connect.CodeNotFound, err)
-		}
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("connect process: %w", err))
+		return mapSandboxError(fmt.Errorf("connect process: %w", err))
 	}
 
 	for ev := range events {

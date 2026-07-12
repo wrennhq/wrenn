@@ -1,12 +1,17 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 )
+
+// ErrNoFreeSlots is returned when every network slot index is claimed —
+// the host cannot take another sandbox until one is released.
+var ErrNoFreeSlots = errors.New("no free network slots")
 
 // SlotAllocator manages network slot indices for sandboxes.
 // Each sandbox needs a unique slot index for its network addressing.
@@ -58,7 +63,7 @@ func (a *SlotAllocator) Allocate() (int, error) {
 		a.inUse[i] = true
 		return i, nil
 	}
-	return 0, fmt.Errorf("no free network slots")
+	return 0, ErrNoFreeSlots
 }
 
 // Release frees a slot index for reuse.

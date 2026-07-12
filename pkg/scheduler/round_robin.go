@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 )
 
@@ -66,9 +67,9 @@ func (s *RoundRobinScheduler) SelectHost(ctx context.Context, teamID pgtype.UUID
 
 	if len(eligible) == 0 {
 		if isByoc {
-			return db.Host{}, fmt.Errorf("no online BYOC hosts available for team")
+			return db.Host{}, apperr.CapacityUnavailable.Msg("None of your team's hosts are online. Bring a host online and try again.")
 		}
-		return db.Host{}, fmt.Errorf("no online platform hosts available")
+		return db.Host{}, apperr.CapacityUnavailable.New()
 	}
 
 	idx := s.counter.Add(1) - 1

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -56,7 +57,7 @@ func (s *TeamService) callerRole(ctx context.Context, teamID, callerUserID pgtyp
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return "", fmt.Errorf("forbidden: not a member of this team")
+			return "", apperr.Forbidden.Msg("You are not a member of this team.")
 		}
 		return "", fmt.Errorf("get membership: %w", err)
 	}
@@ -66,7 +67,7 @@ func (s *TeamService) callerRole(ctx context.Context, teamID, callerUserID pgtyp
 // requireAdmin returns an error if the caller is not an admin or owner.
 func requireAdmin(role string) error {
 	if role != "owner" && role != "admin" {
-		return fmt.Errorf("forbidden: admin or owner role required")
+		return apperr.Forbidden.Msg("Admin or owner role required.")
 	}
 	return nil
 }
@@ -76,12 +77,12 @@ func (s *TeamService) GetTeam(ctx context.Context, teamID pgtype.UUID) (db.Team,
 	team, err := s.DB.GetTeam(ctx, teamID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return db.Team{}, fmt.Errorf("team not found")
+			return db.Team{}, apperr.TeamNotFound.New()
 		}
 		return db.Team{}, fmt.Errorf("get team: %w", err)
 	}
 	if team.DeletedAt.Valid {
-		return db.Team{}, fmt.Errorf("team not found")
+		return db.Team{}, apperr.TeamNotFound.New()
 	}
 	return team, nil
 }
@@ -105,7 +106,7 @@ func (s *TeamService) ListTeamsForUser(ctx context.Context, userID pgtype.UUID) 
 // CreateTeam creates a new team owned by the given user.
 func (s *TeamService) CreateTeam(ctx context.Context, ownerUserID pgtype.UUID, name string) (TeamWithRole, error) {
 	if !teamNameRE.MatchString(name) {
-		return TeamWithRole{}, fmt.Errorf("invalid team name: must be 1-128 characters, A-Z a-z 0-9 space _")
+		return TeamWithRole{}, apperr.ValidationFailed.Msg("Team name must be 1–128 characters: letters, numbers, spaces, and underscores.").With("field", "name")
 	}
 
 	tx, err := s.Pool.Begin(ctx)
@@ -145,7 +146,7 @@ func (s *TeamService) CreateTeam(ctx context.Context, ownerUserID pgtype.UUID, n
 // RenameTeam updates the team name. Caller must be admin or owner (verified from DB).
 func (s *TeamService) RenameTeam(ctx context.Context, teamID, callerUserID pgtype.UUID, newName string) error {
 	if !teamNameRE.MatchString(newName) {
-		return fmt.Errorf("invalid team name: must be 1-128 characters, A-Z a-z 0-9 space _")
+		return apperr.ValidationFailed.Msg("Team name must be 1–128 characters: letters, numbers, spaces, and underscores.").With("field", "name")
 	}
 
 	role, err := s.callerRole(ctx, teamID, callerUserID)
@@ -171,7 +172,7 @@ func (s *TeamService) DeleteTeam(ctx context.Context, teamID, callerUserID pgtyp
 		return err
 	}
 	if role != "owner" {
-		return fmt.Errorf("forbidden: only the owner can delete a team")
+		return apperr.Forbidden.Msg("Only the owner can delete a team.")
 	}
 
 	return s.deleteTeamCore(ctx, teamID)
@@ -323,7 +324,7 @@ func (s *TeamService) AddMember(ctx context.Context, teamID, callerUserID pgtype
 	target, err := s.DB.GetUserByEmail(ctx, email)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return MemberInfo{}, fmt.Errorf("user not found: no account with that email")
+			return MemberInfo{}, apperr.UserNotFound.Msg("No account exists with that email.")
 		}
 		return MemberInfo{}, fmt.Errorf("look up user: %w", err)
 	}
@@ -334,7 +335,7 @@ func (s *TeamService) AddMember(ctx context.Context, teamID, callerUserID pgtype
 		TeamID: teamID,
 	})
 	if memberCheckErr == nil {
-		return MemberInfo{}, fmt.Errorf("invalid: user is already a member of this team")
+		return MemberInfo{}, apperr.Conflict.Msg("This user is already a member of the team.")
 	} else if memberCheckErr != pgx.ErrNoRows {
 		return MemberInfo{}, fmt.Errorf("check membership: %w", memberCheckErr)
 	}
@@ -368,13 +369,13 @@ func (s *TeamService) RemoveMember(ctx context.Context, teamID, callerUserID, ta
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return fmt.Errorf("not found: user is not a member of this team")
+			return apperr.NotFound.Msg("This user is not a member of the team.")
 		}
 		return fmt.Errorf("get target membership: %w", err)
 	}
 
 	if targetMembership.Role == "owner" {
-		return fmt.Errorf("forbidden: the owner cannot be removed from the team")
+		return apperr.Forbidden.Msg("The owner cannot be removed from the team.")
 	}
 
 	if err := s.DB.DeleteTeamMember(ctx, db.DeleteTeamMemberParams{
@@ -411,7 +412,7 @@ func (s *TeamService) RemoveMember(ctx context.Context, teamID, callerUserID, ta
 // Valid target roles: "admin", "member".
 func (s *TeamService) UpdateMemberRole(ctx context.Context, teamID, callerUserID, targetUserID pgtype.UUID, newRole string) error {
 	if newRole != "admin" && newRole != "member" {
-		return fmt.Errorf("invalid: role must be admin or member")
+		return apperr.ValidationFailed.Msg("Role must be either admin or member.").With("field", "role")
 	}
 
 	callerRole, err := s.callerRole(ctx, teamID, callerUserID)
@@ -428,13 +429,13 @@ func (s *TeamService) UpdateMemberRole(ctx context.Context, teamID, callerUserID
 	})
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return fmt.Errorf("not found: user is not a member of this team")
+			return apperr.NotFound.Msg("This user is not a member of the team.")
 		}
 		return fmt.Errorf("get target membership: %w", err)
 	}
 
 	if targetMembership.Role == "owner" {
-		return fmt.Errorf("forbidden: the owner's role cannot be changed")
+		return apperr.Forbidden.Msg("The owner's role cannot be changed.")
 	}
 
 	if err := s.DB.UpdateMemberRole(ctx, db.UpdateMemberRoleParams{
@@ -455,7 +456,7 @@ func (s *TeamService) LeaveTeam(ctx context.Context, teamID, callerUserID pgtype
 		return err
 	}
 	if role == "owner" {
-		return fmt.Errorf("forbidden: the owner cannot leave the team; delete the team instead")
+		return apperr.Forbidden.Msg("The owner cannot leave the team; delete the team instead.")
 	}
 
 	if err := s.DB.DeleteTeamMember(ctx, db.DeleteTeamMemberParams{
@@ -473,13 +474,13 @@ func (s *TeamService) LeaveTeam(ctx context.Context, teamID, callerUserID pgtype
 func (s *TeamService) SetBYOC(ctx context.Context, teamID pgtype.UUID, enabled bool) error {
 	team, err := s.DB.GetTeam(ctx, teamID)
 	if err != nil {
-		return fmt.Errorf("team not found: %w", err)
+		return apperr.TeamNotFound.Wrap(err)
 	}
 	if team.DeletedAt.Valid {
-		return fmt.Errorf("team not found")
+		return apperr.TeamNotFound.New()
 	}
 	if !enabled {
-		return fmt.Errorf("invalid request: BYOC cannot be disabled once enabled")
+		return apperr.Conflict.Msg("BYOC cannot be disabled once enabled.")
 	}
 	if team.IsByoc {
 		// Already enabled — idempotent, no-op.
@@ -563,10 +564,10 @@ func (s *TeamService) DeleteTeamInternal(ctx context.Context, teamID pgtype.UUID
 func (s *TeamService) AdminDeleteTeam(ctx context.Context, teamID pgtype.UUID) error {
 	team, err := s.DB.GetTeam(ctx, teamID)
 	if err != nil {
-		return fmt.Errorf("team not found: %w", err)
+		return apperr.TeamNotFound.Wrap(err)
 	}
 	if team.DeletedAt.Valid {
-		return fmt.Errorf("team not found")
+		return apperr.TeamNotFound.New()
 	}
 
 	return s.deleteTeamCore(ctx, teamID)
