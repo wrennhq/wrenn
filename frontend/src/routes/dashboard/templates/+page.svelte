@@ -8,6 +8,7 @@
 		listSnapshots,
 		deleteSnapshot,
 		setTemplateVisibility,
+		renameTemplate,
 		createCapsule,
 		type Snapshot
 	} from '$lib/api/capsules';
@@ -36,6 +37,12 @@
 	let deleteTarget = $state<Snapshot | null>(null);
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
+
+	// Rename dialog.
+	let renameTarget = $state<Snapshot | null>(null);
+	let renameValue = $state('');
+	let renaming = $state(false);
+	let renameError = $state<string | null>(null);
 
 	// Row dropdown (split button chevron)
 	let openDropdownName = $state<string | null>(null);
@@ -134,6 +141,33 @@
 		} else {
 			error = result.error;
 		}
+	}
+
+	function openRename(s: Snapshot) {
+		openDropdownName = null;
+		renameTarget = s;
+		renameValue = s.name;
+		renameError = null;
+	}
+
+	async function handleRename() {
+		if (!renameTarget) return;
+		const newName = renameValue.trim();
+		if (!newName || newName === renameTarget.name) {
+			renameTarget = null;
+			return;
+		}
+		renaming = true;
+		renameError = null;
+		const result = await renameTemplate(renameTarget.name, newName);
+		if (result.ok) {
+			renameTarget = null;
+			// Refetch so the row reflects the new name and cleared publish flag.
+			await fetchSnapshots();
+		} else {
+			renameError = result.error;
+		}
+		renaming = false;
 	}
 
 	function openLaunch(snapshot: Snapshot) {
@@ -599,6 +633,20 @@
 				{/if}
 			</button>
 
+			<button
+				onclick={(e) => {
+					e.stopPropagation();
+					openRename(dropdownSnapshot);
+				}}
+				class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]"
+			>
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+					<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+					<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+				</svg>
+				Rename
+			</button>
+
 			<div class="my-1 h-px bg-[var(--color-border)]"></div>
 
 			<button
@@ -684,6 +732,89 @@
 					{/if}
 				</button>
 			</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Rename Dialog -->
+{#if renameTarget}
+	<div class="fixed inset-0 z-50 flex items-center justify-center">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="absolute inset-0 bg-black/60"
+			role="presentation"
+			onclick={() => { if (!renaming) renameTarget = null; }}
+			onkeydown={(e) => { if (e.key === 'Escape' && !renaming) renameTarget = null; }}
+		></div>
+
+		<div
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
+		>
+			<div class="p-6">
+				<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">Rename template</h2>
+				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
+					Rename <code class="rounded bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-[0.8rem] text-[var(--color-text-primary)]">{renameTarget.name}</code>.
+				</p>
+
+				{#if renameTarget.public}
+					<div class="mt-3 flex items-start gap-2 rounded-[var(--radius-input)] border border-[var(--color-amber)]/20 bg-[var(--color-amber)]/5 px-3 py-2.5">
+						<svg class="mt-0.5 shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+							<line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+						</svg>
+						<p class="text-meta leading-relaxed text-[var(--color-amber)]">
+							This template is published. Renaming unpublishes it — other teams' references stop working and you'll need to publish it again.
+						</p>
+					</div>
+				{/if}
+
+				<div class="mt-4">
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						type="text"
+						bind:value={renameValue}
+						autofocus
+						spellcheck="false"
+						autocomplete="off"
+						onkeydown={(e) => { if (e.key === 'Enter' && !renaming) handleRename(); }}
+						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-1)] px-3 py-2 font-mono text-ui text-[var(--color-text-primary)] outline-none transition-colors duration-150 focus:border-[var(--color-border-mid)]"
+					/>
+					<p class="mt-1.5 text-meta text-[var(--color-text-tertiary)]">
+						Letters, digits, dot, dash, underscore. Max 64 characters.
+					</p>
+				</div>
+
+				{#if renameError}
+					<div class="mt-3 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
+						{renameError}
+					</div>
+				{/if}
+
+				<div class="mt-6 flex justify-end gap-3">
+					<button
+						onclick={() => (renameTarget = null)}
+						disabled={renaming}
+						class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					>
+						Cancel
+					</button>
+					<button
+						onclick={handleRename}
+						disabled={renaming || !renameValue.trim() || renameValue.trim() === renameTarget.name}
+						class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					>
+						{#if renaming}
+							<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M21 12a9 9 0 1 1-6.219-8.56" />
+							</svg>
+							Renaming...
+						{:else}
+							Rename
+						{/if}
+					</button>
+				</div>
 			</div>
 		</div>
 	</div>

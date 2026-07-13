@@ -1745,6 +1745,53 @@ paths:
         schema:
           type: string
 
+    patch:
+      summary: Rename a template
+      operationId: renameTemplate
+      tags: [snapshots]
+      security:
+        - apiKeyAuth: []
+        - sessionAuth: []
+      description: |
+        Rename a template your team owns. Renaming unpublishes the template, so
+        any `<your-team-slug>/<name>` references other teams held stop resolving
+        and the owner must republish under the new name. Platform-owned and
+        system base templates cannot be renamed here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_name]
+              properties:
+                new_name:
+                  type: string
+                  description: New template name (letters, digits, dot, dash, underscore; max 64).
+      responses:
+        "204":
+          description: Template renamed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Cannot rename a platform-owned / system base template
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Your team does not own a template with that name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A template with the new name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
     delete:
       summary: Delete a snapshot template
       operationId: deleteSnapshot
@@ -3247,6 +3294,40 @@ paths:
                   $ref: "#/components/schemas/AdminTemplate"
 
   /v1/admin/templates/{name}:
+    patch:
+      summary: Rename a platform template (admin)
+      operationId: adminRenameTemplate
+      tags: [admin]
+      description: |
+        Rename a platform-owned template. The hardcoded system base templates
+        (minimal-ubuntu / -alpine / -arch / -fedora) cannot be renamed.
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_name]
+              properties:
+                new_name:
+                  type: string
+                  description: New template name (letters, digits, dot, dash, underscore; max 64).
+      responses:
+        "204":
+          description: Template renamed
+        "403":
+          description: Cannot rename a system base template
+        "404":
+          description: No platform template with that name
+        "409":
+          description: A template with the new name already exists
     delete:
       summary: Delete a template (admin)
       operationId: adminDeleteTemplate

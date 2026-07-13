@@ -2,12 +2,16 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 )
 
 // TemplateService provides template/snapshot operations shared between the
@@ -74,6 +78,32 @@ func (s *TemplateService) SetVisibility(ctx context.Context, teamID pgtype.UUID,
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return db.Template{}, apperr.TemplateNotFound.Msgf("Your team does not own a template named %q.", name)
+		}
+		return db.Template{}, apperr.Internal.Wrap(err)
+	}
+	return tmpl, nil
+}
+
+// Rename changes a template's name by ID. It validates the new name, then clears
+// the published flag (see RenameTemplate) so stale "<team-slug>/<name>"
+// references break loudly instead of silently resolving elsewhere. Callers must
+// apply ownership and protection guards before calling. A name collision — with
+// another of the team's templates or with a reserved platform name — is returned
+// as a Conflict.
+func (s *TemplateService) Rename(ctx context.Context, id pgtype.UUID, newName string) (db.Template, error) {
+	newName = strings.TrimSpace(newName)
+	if err := validate.SafeName(newName); err != nil {
+		return db.Template{}, apperr.InvalidRequest.WrapMsg(err, "Invalid template name.")
+	}
+
+	tmpl, err := s.DB.RenameTemplate(ctx, db.RenameTemplateParams{ID: id, NewName: newName})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return db.Template{}, apperr.Conflict.Msgf("A template named %q already exists.", newName)
+		}
+		if err == pgx.ErrNoRows {
+			return db.Template{}, apperr.TemplateNotFound.New()
 		}
 		return db.Template{}, apperr.Internal.Wrap(err)
 	}

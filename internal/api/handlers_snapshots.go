@@ -252,6 +252,52 @@ func (h *snapshotHandler) SetVisibility(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type renameTemplateRequest struct {
+	NewName string `json:"new_name"`
+}
+
+// Rename handles PATCH /v1/snapshots/{name}. Renames a template the team owns.
+// Renaming clears the published flag (see TemplateService.Rename). Platform and
+// system templates cannot be renamed here.
+func (h *snapshotHandler) Rename(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := validate.SafeName(name); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid template name."))
+		return
+	}
+	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
+
+	var req renameTemplateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
+		return
+	}
+
+	tmpl, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: name, TeamID: ac.TeamID})
+	if err != nil {
+		writeErr(w, r, apperr.TemplateNotFound.Wrap(err))
+		return
+	}
+	// Platform templates can only be renamed by admins via /v1/admin/templates.
+	if tmpl.TeamID == id.PlatformTeamID {
+		writeErr(w, r, apperr.TemplateProtected.Msg("Platform templates cannot be renamed here."))
+		return
+	}
+	if layout.IsSystemTemplate(tmpl.TeamID, tmpl.ID) {
+		writeErr(w, r, apperr.TemplateProtected.New())
+		return
+	}
+
+	if _, err := h.svc.Rename(ctx, tmpl.ID, req.NewName); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	h.audit.LogTemplateRename(ctx, ac, name, strings.TrimSpace(req.NewName))
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Delete handles DELETE /v1/snapshots/{name}.
 func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")

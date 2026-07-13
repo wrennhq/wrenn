@@ -7,8 +7,14 @@ RETURNING *;
 SELECT * FROM templates WHERE id = $1;
 
 -- name: GetTemplateByTeam :one
--- Platform templates (team_id = 00000000-...) are visible to all teams.
-SELECT * FROM templates WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000');
+-- Platform templates (team_id = 00000000-...) are visible to all teams. When a
+-- team owns a template whose name also matches a platform template, prefer the
+-- team's own row so mutation guards act on the caller's template, not the
+-- shared platform one.
+SELECT * FROM templates
+WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000')
+ORDER BY (team_id = $2) DESC
+LIMIT 1;
 
 -- name: GetTemplateByName :one
 -- Look up a template by team_id and name (exact team match, no global fallback).
@@ -90,6 +96,16 @@ DELETE FROM templates WHERE team_id = $1;
 
 -- name: UpdateTemplateSize :exec
 UPDATE templates SET size_bytes = $2 WHERE id = $1;
+
+-- name: RenameTemplate :one
+-- Rename a template by ID. Clears the published flag so stale
+-- "<team-slug>/<name>" references from other teams break loudly rather than
+-- silently resolving to a different template. Callers apply ownership and
+-- protection guards before calling. A name collision (team-scoped uniqueness or
+-- the global-template-name trigger) surfaces as a unique_violation.
+UPDATE templates SET name = @new_name, is_public = FALSE
+WHERE id = @id
+RETURNING *;
 
 -- name: ListTemplatesByTeamOnly :many
 -- List templates owned by a specific team (NOT including platform templates).

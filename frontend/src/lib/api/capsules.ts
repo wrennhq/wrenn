@@ -134,6 +134,16 @@ export async function deleteSnapshot(name: string): Promise<ApiResult<void>> {
 	return apiFetch('DELETE', `/api/v1/snapshots/${encodeURIComponent(name)}`);
 }
 
+/**
+ * Rename a template the team owns. Renaming unpublishes it, so any
+ * `<team_slug>/<name>` references other teams held stop resolving.
+ */
+export async function renameTemplate(name: string, newName: string): Promise<ApiResult<void>> {
+	return apiFetch('PATCH', `/api/v1/snapshots/${encodeURIComponent(name)}`, {
+		new_name: newName
+	});
+}
+
 /** Publish or unpublish a template the team owns. */
 export async function setTemplateVisibility(
 	name: string,

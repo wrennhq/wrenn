@@ -22,14 +22,15 @@ import (
 )
 
 type buildHandler struct {
-	svc   *service.BuildService
-	db    *db.Queries
-	pool  *lifecycle.HostClientPool
-	audit *audit.AuditLogger
+	svc         *service.BuildService
+	templateSvc *service.TemplateService
+	db          *db.Queries
+	pool        *lifecycle.HostClientPool
+	audit       *audit.AuditLogger
 }
 
-func newBuildHandler(svc *service.BuildService, db *db.Queries, pool *lifecycle.HostClientPool, al *audit.AuditLogger) *buildHandler {
-	return &buildHandler{svc: svc, db: db, pool: pool, audit: al}
+func newBuildHandler(svc *service.BuildService, templateSvc *service.TemplateService, db *db.Queries, pool *lifecycle.HostClientPool, al *audit.AuditLogger) *buildHandler {
+	return &buildHandler{svc: svc, templateSvc: templateSvc, db: db, pool: pool, audit: al}
 }
 
 type createBuildRequest struct {
@@ -304,6 +305,43 @@ func (h *buildHandler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 
 	ac := auth.MustFromContext(r.Context())
 	h.audit.LogTemplateDelete(r.Context(), ac, name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RenameTemplate handles PATCH /v1/admin/templates/{name}. Renames a platform
+// template. The hardcoded system base templates (minimal-ubuntu / -alpine /
+// -arch / -fedora) cannot be renamed.
+func (h *buildHandler) RenameTemplate(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := validate.SafeName(name); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid template name."))
+		return
+	}
+	ctx := r.Context()
+
+	var req renameTemplateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
+		return
+	}
+
+	tmpl, err := h.db.GetPlatformTemplateByName(ctx, name)
+	if err != nil {
+		writeErr(w, r, apperr.TemplateNotFound.Wrap(err))
+		return
+	}
+	if layout.IsSystemTemplate(tmpl.TeamID, tmpl.ID) {
+		writeErr(w, r, apperr.TemplateProtected.New())
+		return
+	}
+
+	if _, err := h.templateSvc.Rename(ctx, tmpl.ID, req.NewName); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	ac := auth.MustFromContext(ctx)
+	h.audit.LogTemplateRenameAdmin(ctx, ac, name, strings.TrimSpace(req.NewName))
 	w.WriteHeader(http.StatusNoContent)
 }
 

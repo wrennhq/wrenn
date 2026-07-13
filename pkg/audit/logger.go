@@ -462,6 +462,16 @@ func (l *AuditLogger) LogTeamSlugChange(ctx context.Context, ac auth.AuthContext
 	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "team", id.FormatTeamID(teamID), "slug_change", "info", map[string]any{"old_slug": oldSlug, "new_slug": newSlug}))
 }
 
+// LogTemplateRename records a team renaming one of its own templates.
+func (l *AuditLogger) LogTemplateRename(ctx context.Context, ac auth.AuthContext, oldName, newName string) {
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "template", oldName, "rename", "info", map[string]any{"old_name": oldName, "new_name": newName}))
+}
+
+// LogTemplateRenameAdmin records an admin renaming a platform template.
+func (l *AuditLogger) LogTemplateRenameAdmin(ctx context.Context, ac auth.AuthContext, oldName, newName string) {
+	l.Log(ctx, newAdminEntry(ac, "template", oldName, "rename", "info", map[string]any{"old_name": oldName, "new_name": newName}))
+}
+
 func (l *AuditLogger) LogTemplateVisibility(ctx context.Context, ac auth.AuthContext, name string, public bool) {
 	action := "unpublish"
 	if public {

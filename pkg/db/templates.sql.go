@@ -146,7 +146,10 @@ func (q *Queries) GetTemplateByName(ctx context.Context, arg GetTemplateByNamePa
 }
 
 const getTemplateByTeam = `-- name: GetTemplateByTeam :one
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000')
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates
+WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000')
+ORDER BY (team_id = $2) DESC
+LIMIT 1
 `
 
 type GetTemplateByTeamParams struct {
@@ -154,7 +157,10 @@ type GetTemplateByTeamParams struct {
 	TeamID pgtype.UUID `json:"team_id"`
 }
 
-// Platform templates (team_id = 00000000-...) are visible to all teams.
+// Platform templates (team_id = 00000000-...) are visible to all teams. When a
+// team owns a template whose name also matches a platform template, prefer the
+// team's own row so mutation guards act on the caller's template, not the
+// shared platform one.
 func (q *Queries) GetTemplateByTeam(ctx context.Context, arg GetTemplateByTeamParams) (Template, error) {
 	row := q.db.QueryRow(ctx, getTemplateByTeam, arg.Name, arg.TeamID)
 	var i Template
@@ -531,6 +537,42 @@ func (q *Queries) ListVisibleTemplates(ctx context.Context, arg ListVisibleTempl
 		return nil, err
 	}
 	return items, nil
+}
+
+const renameTemplate = `-- name: RenameTemplate :one
+UPDATE templates SET name = $1, is_public = FALSE
+WHERE id = $2
+RETURNING name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public
+`
+
+type RenameTemplateParams struct {
+	NewName string      `json:"new_name"`
+	ID      pgtype.UUID `json:"id"`
+}
+
+// Rename a template by ID. Clears the published flag so stale
+// "<team-slug>/<name>" references from other teams break loudly rather than
+// silently resolving to a different template. Callers apply ownership and
+// protection guards before calling. A name collision (team-scoped uniqueness or
+// the global-template-name trigger) surfaces as a unique_violation.
+func (q *Queries) RenameTemplate(ctx context.Context, arg RenameTemplateParams) (Template, error) {
+	row := q.db.QueryRow(ctx, renameTemplate, arg.NewName, arg.ID)
+	var i Template
+	err := row.Scan(
+		&i.Name,
+		&i.Type,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.TeamID,
+		&i.ID,
+		&i.DefaultUser,
+		&i.DefaultEnv,
+		&i.Metadata,
+		&i.IsPublic,
+	)
+	return i, err
 }
 
 const resolveTemplateForTeam = `-- name: ResolveTemplateForTeam :one

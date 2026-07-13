@@ -10,6 +10,7 @@
 		createBuild,
 		listAdminTemplates,
 		deleteAdminTemplate,
+		renameAdminTemplate,
 		type Build,
 		type AdminTemplate
 	} from '$lib/api/builds';
@@ -39,6 +40,12 @@
 	let deleteTarget = $state<AdminTemplate | null>(null);
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
+
+	// Rename dialog.
+	let renameTarget = $state<AdminTemplate | null>(null);
+	let renameValue = $state('');
+	let renaming = $state(false);
+	let renameError = $state<string | null>(null);
 
 	// Create dialog state
 	let showCreate = $state(false);
@@ -79,7 +86,10 @@
 
 	const PLATFORM_TEAM_ID = 'team-0000000000000000000000000';
 
-	function canDeleteTemplate(tmpl: AdminTemplate): boolean {
+	// Platform, non-system templates are the only ones an admin can rename or
+	// delete here. Other teams' templates and the hardcoded system base
+	// templates are off-limits.
+	function canModifyTemplate(tmpl: AdminTemplate): boolean {
 		if (tmpl.protected) return false;
 		return tmpl.team_id === PLATFORM_TEAM_ID;
 	}
@@ -175,6 +185,33 @@
 			deleteError = result.error;
 		}
 		deleting = false;
+	}
+
+	function openRename(tmpl: AdminTemplate) {
+		renameTarget = tmpl;
+		renameValue = tmpl.name;
+		renameError = null;
+	}
+
+	async function handleRenameTemplate() {
+		if (!renameTarget) return;
+		const oldName = renameTarget.name;
+		const newName = renameValue.trim();
+		if (!newName || newName === oldName) {
+			renameTarget = null;
+			return;
+		}
+		renaming = true;
+		renameError = null;
+		const result = await renameAdminTemplate(oldName, newName);
+		if (result.ok) {
+			templates = templates.map((t) => (t.name === oldName ? { ...t, name: newName } : t));
+			renameTarget = null;
+			toast.success('Template renamed');
+		} else {
+			renameError = result.error;
+		}
+		renaming = false;
 	}
 
 	function openBuild(buildId: string) {
@@ -473,16 +510,28 @@
 							</span>
 						</td>
 						<td class="px-5 py-3.5 text-right">
-							<button
-								onclick={() => { deleteTarget = tmpl; deleteError = null; }}
-								disabled={!canDeleteTemplate(tmpl)}
-								title={tmpl.protected ? 'System base templates cannot be deleted' : !canDeleteTemplate(tmpl) ? 'Cannot delete templates owned by other teams' : undefined}
-								class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta transition-all duration-150 {canDeleteTemplate(tmpl)
-									? 'text-[var(--color-text-tertiary)] hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]'
-									: 'text-[var(--color-text-muted)] cursor-not-allowed opacity-40'}"
-							>
-								Delete
-							</button>
+							<div class="flex items-center justify-end gap-1">
+								<button
+									onclick={() => openRename(tmpl)}
+									disabled={!canModifyTemplate(tmpl)}
+									title={tmpl.protected ? 'System base templates cannot be renamed' : !canModifyTemplate(tmpl) ? 'Only platform templates can be renamed here' : undefined}
+									class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta transition-all duration-150 {canModifyTemplate(tmpl)
+										? 'text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]'
+										: 'text-[var(--color-text-muted)] cursor-not-allowed opacity-40'}"
+								>
+									Rename
+								</button>
+								<button
+									onclick={() => { deleteTarget = tmpl; deleteError = null; }}
+									disabled={!canModifyTemplate(tmpl)}
+									title={tmpl.protected ? 'System base templates cannot be deleted' : !canModifyTemplate(tmpl) ? 'Cannot delete templates owned by other teams' : undefined}
+									class="rounded-[var(--radius-button)] px-3 py-1.5 text-meta transition-all duration-150 {canModifyTemplate(tmpl)
+										? 'text-[var(--color-text-tertiary)] hover:bg-[var(--color-red)]/10 hover:text-[var(--color-red)]'
+										: 'text-[var(--color-text-muted)] cursor-not-allowed opacity-40'}"
+								>
+									Delete
+								</button>
+							</div>
 						</td>
 					</tr>
 				{/each}
@@ -784,6 +833,75 @@
 					{/if}
 				</button>
 			</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- ── Rename Template ──────────────────────────────────────────────── -->
+{#if renameTarget}
+	<div class="fixed inset-0 z-50 flex items-center justify-center">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="absolute inset-0 bg-black/60"
+			onclick={() => { if (!renaming) renameTarget = null; }}
+			onkeydown={(e) => { if (e.key === 'Escape' && !renaming) renameTarget = null; }}
+		></div>
+		<div
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
+		>
+			<div class="p-6">
+				<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">
+					Rename Template
+				</h2>
+				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
+					Rename the platform template <code class="rounded bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-[0.8rem] text-[var(--color-text-primary)]">{renameTarget.name}</code>.
+				</p>
+
+				<div class="mt-4">
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						type="text"
+						bind:value={renameValue}
+						autofocus
+						spellcheck="false"
+						autocomplete="off"
+						onkeydown={(e) => { if (e.key === 'Enter' && !renaming) handleRenameTemplate(); }}
+						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-1)] px-3 py-2 font-mono text-ui text-[var(--color-text-primary)] outline-none transition-colors duration-150 focus:border-[var(--color-border-mid)]"
+					/>
+					<p class="mt-1.5 text-meta text-[var(--color-text-tertiary)]">
+						Letters, digits, dot, dash, underscore. Max 64 characters.
+					</p>
+				</div>
+
+				{#if renameError}
+					<div class="mt-3 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
+						{renameError}
+					</div>
+				{/if}
+
+				<div class="mt-6 flex justify-end gap-3">
+					<button
+						onclick={() => (renameTarget = null)}
+						disabled={renaming}
+						class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					>
+						Cancel
+					</button>
+					<button
+						onclick={handleRenameTemplate}
+						disabled={renaming || !renameValue.trim() || renameValue.trim() === renameTarget.name}
+						class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					>
+						{#if renaming}
+							<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+							Renaming…
+						{:else}
+							Rename
+						{/if}
+					</button>
+				</div>
 			</div>
 		</div>
 	</div>
