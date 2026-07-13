@@ -152,6 +152,10 @@ func Run(opts ...Option) {
 	channelPub := channels.NewPublisher(rdb)
 	channelSvc := &channels.Service{DB: queries, EncKey: cfg.EncryptionKey, AllowPrivateTargets: cfg.ChannelsAllowPrivateTargets}
 	channelDispatcher := channels.NewDispatcher(rdb, queries, cfg.EncryptionKey, cfg.ChannelsAllowPrivateTargets)
+	// Install the shoutrrr SSRF dial guard once, here at single-threaded
+	// startup, so the global transport swap happens before any concurrent
+	// outbound HTTP (defeats DNS rebinding on caller-controlled channel hosts).
+	channels.InstallSSRFDialGuard(cfg.ChannelsAllowPrivateTargets)
 
 	// Shared audit logger with event publishing.
 	al := audit.NewWithPublisher(queries, channelPub)

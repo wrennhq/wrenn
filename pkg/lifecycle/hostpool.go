@@ -24,12 +24,23 @@ type HostClientPool struct {
 	scheme     string // "http://" or "https://"
 }
 
+// pristineDefaultTransport is captured at package load, before anything can
+// replace http.DefaultTransport (e.g. the channels SSRF dial guard, which
+// clones the default and swaps in one that blocks private addresses). Host
+// agents legitimately live on private IPs, so host-agent clients must dial
+// through a standard transport that is never subject to that guard.
+var pristineDefaultTransport = http.DefaultTransport
+
 // NewHostClientPool creates a pool that connects to agents over plain HTTP.
 // Use NewHostClientPoolTLS when mTLS is required.
 func NewHostClientPool() *HostClientPool {
 	return &HostClientPool{
-		clients:    make(map[string]hostagentv1connect.HostAgentServiceClient),
-		httpClient: &http.Client{Timeout: 10 * time.Minute},
+		clients: make(map[string]hostagentv1connect.HostAgentServiceClient),
+		// Pin the pristine transport explicitly rather than relying on the
+		// nil-Transport fallback to http.DefaultTransport: the latter can be
+		// replaced by the channels SSRF guard, which would then block RPC to
+		// hosts on private IPs.
+		httpClient: &http.Client{Timeout: 10 * time.Minute, Transport: pristineDefaultTransport},
 		scheme:     "http://",
 	}
 }
