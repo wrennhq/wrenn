@@ -14,6 +14,12 @@ export type TeamInfo = {
 	name: string;
 	slug: string;
 	created_at: string;
+	/** Set only while within the 60-day slug cooldown; earliest next change. */
+	slug_change_allowed_at?: string | null;
+};
+
+export type SlugCheck = {
+	available: boolean;
 };
 
 export type TeamDetail = {
@@ -53,6 +59,22 @@ export async function getTeam(id: string): Promise<ApiResult<TeamDetail>> {
 
 export async function updateTeam(id: string, name: string): Promise<ApiResult<void>> {
 	return apiFetch('PATCH', `/api/v1/teams/${id}`, { name });
+}
+
+/**
+ * Change the team's URL slug. Allowed once every 60 days; the previous slug is
+ * reserved for 30 days. Admin or owner only.
+ */
+export async function changeTeamSlug(id: string, slug: string): Promise<ApiResult<void>> {
+	return apiFetch('PATCH', `/api/v1/teams/${id}/slug`, { slug });
+}
+
+/**
+ * Check whether a candidate slug is available to this team (format, reserved
+ * words, uniqueness, reservation). Does not consider the 60-day cooldown.
+ */
+export async function checkTeamSlug(slug: string): Promise<ApiResult<SlugCheck>> {
+	return apiFetch('GET', `/api/v1/teams/slug-check?slug=${encodeURIComponent(slug)}`);
 }
 
 export async function addMember(id: string, email: string): Promise<ApiResult<TeamMember>> {

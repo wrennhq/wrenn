@@ -100,6 +100,13 @@ type OauthProvider struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type ReservedSlug struct {
+	Slug       string             `json:"slug"`
+	TeamID     pgtype.UUID        `json:"team_id"`
+	ReservedAt pgtype.Timestamptz `json:"reserved_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+}
+
 type Sandbox struct {
 	ID             pgtype.UUID        `json:"id"`
 	TeamID         pgtype.UUID        `json:"team_id"`
@@ -152,12 +159,13 @@ type Session struct {
 }
 
 type Team struct {
-	ID        pgtype.UUID        `json:"id"`
-	Name      string             `json:"name"`
-	Slug      string             `json:"slug"`
-	IsByoc    bool               `json:"is_byoc"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	ID            pgtype.UUID        `json:"id"`
+	Name          string             `json:"name"`
+	Slug          string             `json:"slug"`
+	IsByoc        bool               `json:"is_byoc"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	DeletedAt     pgtype.Timestamptz `json:"deleted_at"`
+	SlugChangedAt pgtype.Timestamptz `json:"slug_changed_at"`
 }
 
 type TeamApiKey struct {
@@ -183,6 +191,7 @@ type Template struct {
 	DefaultUser string             `json:"default_user"`
 	DefaultEnv  []byte             `json:"default_env"`
 	Metadata    []byte             `json:"metadata"`
+	IsPublic    bool               `json:"is_public"`
 }
 
 type TemplateBuild struct {

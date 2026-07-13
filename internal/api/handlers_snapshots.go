@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -81,16 +82,25 @@ type snapshotResponse struct {
 	CreatedAt string            `json:"created_at"`
 	Platform  bool              `json:"platform"`
 	Protected bool              `json:"protected"`
+	Public    bool              `json:"public"`
+	Owned     bool              `json:"owned"`
+	TeamSlug  string            `json:"team_slug"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
-func templateToResponse(t db.Template) snapshotResponse {
+// visibleTemplateToResponse builds a response row for the templates list. The
+// requester's own team ID determines the "owned" flag, which drives the globe
+// (published) indicator on the team's own public templates.
+func visibleTemplateToResponse(t db.ListVisibleTemplatesRow, requesterTeamID pgtype.UUID) snapshotResponse {
 	resp := snapshotResponse{
 		Name:      t.Name,
 		Type:      t.Type,
 		SizeBytes: t.SizeBytes,
 		Platform:  t.TeamID == id.PlatformTeamID,
 		Protected: layout.IsSystemTemplate(t.TeamID, t.ID),
+		Public:    t.IsPublic,
+		Owned:     t.TeamID == requesterTeamID,
+		TeamSlug:  t.TeamSlug,
 	}
 	if t.Vcpus != 0 {
 		resp.VCPUs = &t.Vcpus
@@ -148,27 +158,98 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // List handles GET /v1/snapshots.
+//
+// Returns one page of the templates the team may launch: its own templates,
+// platform templates, and every public template across all teams. Foreign
+// public templates carry the owning team's slug so clients can reference and
+// display them as "<slug>/<name>". Query params: type (base|snapshot), q
+// (search over name/slug), page (1-based), per_page (default 50, max 200).
 func (h *snapshotHandler) List(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
-	typeFilter := r.URL.Query().Get("type")
+	q := r.URL.Query()
+	typeFilter := q.Get("type")
+	search := strings.TrimSpace(q.Get("q"))
 
-	templates, err := h.svc.List(r.Context(), ac.TeamID, typeFilter)
+	page := 1
+	if p := q.Get("page"); p != "" {
+		if _, err := fmt.Sscanf(p, "%d", &page); err != nil || page < 1 {
+			page = 1
+		}
+	}
+	perPage := 50
+	if pp := q.Get("per_page"); pp != "" {
+		if n, err := fmt.Sscanf(pp, "%d", &perPage); err != nil || n != 1 || perPage < 1 {
+			perPage = 50
+		}
+	}
+	if perPage > 200 {
+		perPage = 200
+	}
+	offset := int32((page - 1) * perPage)
+
+	rows, total, err := h.svc.ListVisible(r.Context(), service.ListVisibleParams{
+		TeamID:     ac.TeamID,
+		TypeFilter: typeFilter,
+		Search:     search,
+		Limit:      int32(perPage),
+		Offset:     offset,
+	})
 	if err != nil {
 		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
-	// Resolve actual on-disk sizes for templates with unknown size (e.g.
-	// system base templates seeded with size_bytes = 0). This queries a host
-	// agent and persists the result to the DB for subsequent requests.
-	templates = resolveTemplateSizes(r.Context(), h.db, h.pool, templates)
+	// Resolve actual on-disk sizes for rows with unknown size (e.g. system base
+	// templates seeded with size_bytes = 0). resolveTemplateSizes operates on
+	// db.Template, so project the rows, resolve, and copy sizes back by index.
+	sizeProbe := make([]db.Template, len(rows))
+	for i, t := range rows {
+		sizeProbe[i] = db.Template{Name: t.Name, SizeBytes: t.SizeBytes, TeamID: t.TeamID, ID: t.ID}
+	}
+	sizeProbe = resolveTemplateSizes(r.Context(), h.db, h.pool, sizeProbe)
 
-	resp := make([]snapshotResponse, len(templates))
-	for i, t := range templates {
-		resp[i] = templateToResponse(t)
+	resp := make([]snapshotResponse, len(rows))
+	for i, t := range rows {
+		t.SizeBytes = sizeProbe[i].SizeBytes
+		resp[i] = visibleTemplateToResponse(t, ac.TeamID)
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	totalPages := (int(total) + perPage - 1) / perPage
+	writeJSON(w, http.StatusOK, map[string]any{
+		"templates":   resp,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
+		"total_pages": totalPages,
+	})
+}
+
+// SetVisibility handles PATCH /v1/snapshots/{name}/visibility.
+// Publishes or unpublishes a template the team owns, making it launchable by
+// other teams as "<team-slug>/<name>".
+func (h *snapshotHandler) SetVisibility(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := validate.SafeName(name); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid template name."))
+		return
+	}
+	ac := auth.MustFromContext(r.Context())
+
+	var req struct {
+		Public bool `json:"public"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
+		return
+	}
+
+	if _, err := h.svc.SetVisibility(r.Context(), ac.TeamID, name, req.Public); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	h.audit.LogTemplateVisibility(r.Context(), ac, name, req.Public)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Delete handles DELETE /v1/snapshots/{name}.

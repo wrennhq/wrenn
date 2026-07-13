@@ -39,6 +39,9 @@ type teamResponse struct {
 	Slug      string `json:"slug"`
 	IsByoc    bool   `json:"is_byoc"`
 	CreatedAt string `json:"created_at"`
+	// SlugChangeAllowedAt is set only when the team is within the 60-day slug
+	// cooldown. Absent means a slug change is allowed now.
+	SlugChangeAllowedAt *string `json:"slug_change_allowed_at,omitempty"`
 }
 
 // teamWithRoleResponse includes the calling user's role.
@@ -64,6 +67,10 @@ func teamToResponse(t db.Team) teamResponse {
 	}
 	if t.CreatedAt.Valid {
 		resp.CreatedAt = t.CreatedAt.Time.Format(time.RFC3339)
+	}
+	if at, locked := service.SlugChangeAllowedAt(t); locked {
+		s := at.Format(time.RFC3339)
+		resp.SlugChangeAllowedAt = &s
 	}
 	return resp
 }
@@ -214,6 +221,48 @@ func (h *teamHandler) Rename(w http.ResponseWriter, r *http.Request) {
 
 	h.audit.LogTeamRename(r.Context(), ac, teamID, oldTeam.Name, req.Name)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ChangeSlug handles PATCH /v1/teams/{id}/slug
+// Changes the team's URL slug. Requires admin or owner role (verified from DB).
+// Enforces a 60-day cooldown and parks the old slug for 30 days.
+func (h *teamHandler) ChangeSlug(w http.ResponseWriter, r *http.Request) {
+	ac := auth.MustFromContext(r.Context())
+	teamID, ok := requireTeamAccess(w, r, ac)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Slug string `json:"slug"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
+		return
+	}
+
+	oldSlug, err := h.svc.ChangeSlug(r.Context(), teamID, ac.UserID, req.Slug)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	h.audit.LogTeamSlugChange(r.Context(), ac, teamID, oldSlug, strings.ToLower(strings.TrimSpace(req.Slug)))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CheckSlug handles GET /v1/teams/slug-check?slug=...
+// Reports whether the given slug can be adopted right now (format, reserved
+// words, uniqueness, tombstone). The result is team independent, so it needs
+// only a session — no team context. Lets the dashboard validate before the user
+// commits. Does not apply the 60-day cooldown.
+func (h *teamHandler) CheckSlug(w http.ResponseWriter, r *http.Request) {
+	res, err := h.svc.CheckSlug(r.Context(), r.URL.Query().Get("slug"))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // Delete handles DELETE /v1/teams/{id}

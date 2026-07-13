@@ -201,9 +201,13 @@ func New(
 		r.Use(csrf)
 		r.Get("/", teamH.List)
 		r.Post("/", teamH.Create)
+		// Slug availability check is team independent (scoped to the session's
+		// active team), so it lives outside the /{id} group.
+		r.Get("/slug-check", teamH.CheckSlug)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", teamH.Get)
 			r.Patch("/", teamH.Rename)
+			r.Patch("/slug", teamH.ChangeSlug)
 			r.Delete("/", teamH.Delete)
 			r.Get("/members", teamH.ListMembers)
 			r.Post("/members", teamH.AddMember)
@@ -269,6 +273,7 @@ func New(
 		r.Use(csrf)
 		r.Post("/", snapshots.Create)
 		r.Get("/", snapshots.List)
+		r.Patch("/{name}/visibility", snapshots.SetVisibility)
 		r.Delete("/{name}", snapshots.Delete)
 	})
 

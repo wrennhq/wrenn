@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -17,8 +18,12 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
+
+// slugChangeCooldown is the minimum time between team slug changes.
+const slugChangeCooldown = 60 * 24 * time.Hour
 
 var teamNameRE = regexp.MustCompile(`^[A-Za-z0-9 _\-@']{1,128}$`)
 
@@ -161,6 +166,135 @@ func (s *TeamService) RenameTeam(ctx context.Context, teamID, callerUserID pgtyp
 		return fmt.Errorf("update name: %w", err)
 	}
 	return nil
+}
+
+// SlugChangeAllowedAt returns the earliest time the team may change its slug
+// again and whether a cooldown is currently active. If the slug has never been
+// changed, no cooldown applies.
+func SlugChangeAllowedAt(t db.Team) (time.Time, bool) {
+	if !t.SlugChangedAt.Valid {
+		return time.Time{}, false
+	}
+	allowedAt := t.SlugChangedAt.Time.Add(slugChangeCooldown)
+	if time.Now().Before(allowedAt) {
+		return allowedAt, true
+	}
+	return time.Time{}, false
+}
+
+// SlugCheck is the result of a slug availability probe.
+type SlugCheck struct {
+	Available bool `json:"available"`
+}
+
+// CheckSlug reports whether the given slug can be adopted right now. It applies
+// the format, reserved-word, uniqueness, and tombstone rules so the UI can
+// validate before the user commits. It does NOT apply the 60-day cooldown —
+// that gates the whole editor and is surfaced separately via SlugChangeAllowedAt.
+//
+// The result is fully team independent: a slug is available unless a live team
+// holds it or it sits in the 30-day tombstone. There is no self-reclaim carve-out
+// because the 30-day reservation always expires before the 60-day cooldown lets
+// the same team change again, so a team can never encounter its own reservation.
+func (s *TeamService) CheckSlug(ctx context.Context, slug string) (SlugCheck, error) {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	if err := validate.TeamSlug(slug); err != nil {
+		return SlugCheck{Available: false}, nil
+	}
+
+	if _, err := s.DB.GetTeamBySlug(ctx, slug); err == nil {
+		return SlugCheck{Available: false}, nil
+	} else if err != pgx.ErrNoRows {
+		return SlugCheck{}, fmt.Errorf("check slug availability: %w", err)
+	}
+
+	if _, err := s.DB.GetActiveReservedSlug(ctx, slug); err == nil {
+		return SlugCheck{Available: false}, nil
+	} else if err != pgx.ErrNoRows {
+		return SlugCheck{}, fmt.Errorf("check reserved slug: %w", err)
+	}
+
+	return SlugCheck{Available: true}, nil
+}
+
+// ChangeSlug updates the team's URL slug. Caller must be admin or owner
+// (verified from DB). A team may change its slug at most once every 60 days.
+// The previous slug is parked in the reserved_slugs tombstone for 30 days so
+// another team cannot immediately reclaim it and serve different templates
+// under a name others may still reference. Returns the previous slug on success
+// so callers can record it in the audit log.
+func (s *TeamService) ChangeSlug(ctx context.Context, teamID, callerUserID pgtype.UUID, newSlug string) (oldSlug string, err error) {
+	newSlug = strings.ToLower(strings.TrimSpace(newSlug))
+	if verr := validate.TeamSlug(newSlug); verr != nil {
+		return "", apperr.ValidationFailed.WrapMsg(verr, verr.Error()).With("field", "slug")
+	}
+
+	role, err := s.callerRole(ctx, teamID, callerUserID)
+	if err != nil {
+		return "", err
+	}
+	if err := requireAdmin(role); err != nil {
+		return "", err
+	}
+
+	team, err := s.DB.GetTeam(ctx, teamID)
+	if err != nil {
+		return "", apperr.TeamNotFound.Wrap(err)
+	}
+	if team.DeletedAt.Valid {
+		return "", apperr.TeamNotFound.Msg("Team not found.")
+	}
+	if team.Slug == newSlug {
+		return team.Slug, nil // no-op, don't burn the cooldown
+	}
+
+	// Enforce the 60-day cooldown between changes.
+	if team.SlugChangedAt.Valid {
+		nextAllowed := team.SlugChangedAt.Time.Add(slugChangeCooldown)
+		if time.Now().Before(nextAllowed) {
+			return "", apperr.Conflict.Msgf("Team slug can only be changed once every 60 days. Next change allowed after %s.", nextAllowed.Format("2006-01-02"))
+		}
+	}
+
+	// The new slug must not belong to a live team.
+	if _, err := s.DB.GetTeamBySlug(ctx, newSlug); err == nil {
+		return "", apperr.Conflict.Msg(newSlug+" unavailable").With("field", "slug")
+	} else if err != pgx.ErrNoRows {
+		return "", fmt.Errorf("check slug availability: %w", err)
+	}
+
+	// The new slug must not be tombstoned by *another* team. A team may reclaim
+	// a slug it parked itself.
+	if rsv, err := s.DB.GetActiveReservedSlug(ctx, newSlug); err == nil {
+		if rsv.TeamID != teamID {
+			return "", apperr.Conflict.Msg(newSlug+" unavailable").With("field", "slug")
+		}
+	} else if err != pgx.ErrNoRows {
+		return "", fmt.Errorf("check reserved slug: %w", err)
+	}
+
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	qtx := s.DB.WithTx(tx)
+
+	// Park the outgoing slug for 30 days.
+	if err := qtx.InsertReservedSlug(ctx, db.InsertReservedSlugParams{Slug: team.Slug, TeamID: teamID}); err != nil {
+		return "", fmt.Errorf("reserve old slug: %w", err)
+	}
+	// Clear any tombstone this team held on the incoming slug (self-reclaim).
+	if err := qtx.DeleteReservedSlug(ctx, newSlug); err != nil {
+		return "", fmt.Errorf("clear reserved slug: %w", err)
+	}
+	if err := qtx.UpdateTeamSlug(ctx, db.UpdateTeamSlugParams{ID: teamID, Slug: newSlug}); err != nil {
+		return "", fmt.Errorf("update slug: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
+	}
+	return team.Slug, nil
 }
 
 // DeleteTeam soft-deletes the team and destroys all running/paused/starting sandboxes.

@@ -118,6 +118,42 @@ type hostagentClient = interface {
 	CreateSnapshot(ctx context.Context, req *connect.Request[pb.CreateSnapshotRequest]) (*connect.Response[pb.CreateSnapshotResponse], error)
 }
 
+// resolveTemplateRef resolves a parsed template reference to its owning
+// template row, enforcing cross-team visibility. It never distinguishes
+// "missing" from "not visible" — both yield TemplateNotFound so template
+// existence does not leak across teams.
+func (s *SandboxService) resolveTemplateRef(ctx context.Context, requesterTeamID pgtype.UUID, slug, name string) (db.Template, error) {
+	ref := name
+	if slug != "" {
+		ref = slug + "/" + name
+	}
+	notFound := apperr.TemplateNotFound.Msgf("Template %q not found.", ref)
+
+	// Unqualified: own team first, then platform.
+	if slug == "" {
+		tmpl, err := s.DB.ResolveTemplateForTeam(ctx, db.ResolveTemplateForTeamParams{Name: name, TeamID: requesterTeamID})
+		if err != nil {
+			return db.Template{}, notFound
+		}
+		return tmpl, nil
+	}
+
+	// Slug-qualified: resolve the owning team, then the visible template.
+	owner, err := s.DB.GetTeamBySlug(ctx, slug)
+	if err != nil {
+		return db.Template{}, notFound
+	}
+	tmpl, err := s.DB.GetVisibleTemplateByTeamName(ctx, db.GetVisibleTemplateByTeamNameParams{
+		TeamID:   owner.ID, // owning team
+		Name:     name,
+		TeamID_2: requesterTeamID, // requester (grants visibility to own templates)
+	})
+	if err != nil {
+		return db.Template{}, notFound
+	}
+	return tmpl, nil
+}
+
 // Create creates a new sandbox asynchronously: picks a host, inserts a
 // "starting" DB record, fires the agent RPC in a background goroutine, and
 // returns the sandbox immediately. The background goroutine publishes a
@@ -126,8 +162,9 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	if p.Template == "" {
 		p.Template = "minimal-ubuntu"
 	}
-	if err := validate.SafeName(p.Template); err != nil {
-		return db.Sandbox{}, apperr.ValidationFailed.Msgf("Invalid template name: %v.", err)
+	slugPart, namePart, err := validate.TemplateRef(p.Template)
+	if err != nil {
+		return db.Sandbox{}, apperr.ValidationFailed.Msgf("Invalid template reference: %v.", err)
 	}
 	if err := validate.Metadata(p.Metadata); err != nil {
 		return db.Sandbox{}, apperr.ValidationFailed.Msgf("Invalid metadata: %v.", err)
@@ -140,12 +177,18 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	}
 	p.TimeoutSec = clampTimeout(p.TimeoutSec)
 
-	// Resolve template name → (teamID, templateID). System base templates are
-	// platform-owned rows like any other, so the lookup handles them too (the
-	// query also matches platform templates for any team).
-	tmpl, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: p.Template, TeamID: p.TeamID})
+	if !p.TeamID.Valid {
+		return db.Sandbox{}, apperr.InvalidRequest.Msg("A team_id is required.")
+	}
+
+	// Resolve the template reference → owning (teamID, templateID). Unqualified
+	// names prefer the requesting team's own template, then fall back to
+	// platform templates. A "<slug>/<name>" reference targets a specific team
+	// and succeeds only if that template is public, owned by the requester, or
+	// a platform template.
+	tmpl, err := s.resolveTemplateRef(ctx, p.TeamID, slugPart, namePart)
 	if err != nil {
-		return db.Sandbox{}, apperr.TemplateNotFound.WrapMsg(err, fmt.Sprintf("Template %q not found.", p.Template))
+		return db.Sandbox{}, err
 	}
 	templateTeamID := tmpl.TeamID
 	templateID := tmpl.ID
@@ -157,10 +200,6 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	if tmpl.Type == "snapshot" {
 		p.VCPUs = tmpl.Vcpus
 		p.MemoryMB = tmpl.MemoryMb
-	}
-
-	if !p.TeamID.Valid {
-		return db.Sandbox{}, apperr.InvalidRequest.Msg("A team_id is required.")
 	}
 
 	team, err := s.DB.GetTeam(ctx, p.TeamID)
