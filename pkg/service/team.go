@@ -599,6 +599,26 @@ func (s *TeamService) LeaveTeam(ctx context.Context, teamID, callerUserID pgtype
 	}); err != nil {
 		return fmt.Errorf("leave team: %w", err)
 	}
+
+	// Revoke the departing member's standing access to this team immediately,
+	// exactly as RemoveMember does. Deleting the membership row alone leaves two
+	// credentials live: the team-scoped API keys they created (resolved by hash
+	// with no membership re-check, never expiring), and any cached session still
+	// holding this team_id. Purge the keys, and drop the session cache so the
+	// next request rehydrates from Postgres (where the membership is now gone).
+	if err := s.DB.DeleteAPIKeysByTeamAndCreator(ctx, db.DeleteAPIKeysByTeamAndCreatorParams{
+		TeamID:    teamID,
+		CreatedBy: callerUserID,
+	}); err != nil {
+		slog.Warn("failed to delete API keys for departing member",
+			"team_id", teamID, "user_id", callerUserID, "error", err)
+	}
+	if s.Sessions != nil {
+		if err := s.Sessions.InvalidateCacheForUser(ctx, callerUserID); err != nil {
+			slog.Warn("failed to invalidate session cache for departing member",
+				"user_id", callerUserID, "error", err)
+		}
+	}
 	return nil
 }
 
