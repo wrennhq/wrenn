@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -35,12 +36,18 @@ func requireAdmin(queries *db.Queries) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ac, ok := auth.FromContext(r.Context())
 			if !ok {
-				writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+				writeErr(w, r, apperr.Unauthorized.New())
 				return
 			}
 			user, err := queries.GetUserByID(r.Context(), ac.UserID)
-			if err != nil || !user.IsAdmin {
-				writeError(w, http.StatusForbidden, "forbidden", "admin access required")
+			if err != nil {
+				// A transient DB failure is not an authorization decision — a
+				// legitimate admin must not see "Admin access required" (403).
+				writeErr(w, r, apperr.Internal.Wrap(err))
+				return
+			}
+			if !user.IsAdmin {
+				writeErr(w, r, apperr.Forbidden.Msg("Admin access required."))
 				return
 			}
 			next.ServeHTTP(w, r)

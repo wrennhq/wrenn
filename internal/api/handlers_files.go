@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -42,35 +43,35 @@ func (h *filesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(100 << 20); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "too_large", "file exceeds 100 MB limit")
+			writeErr(w, r, apperr.PayloadTooLarge.Msg("File exceeds the 100 MB limit."))
 			return
 		}
-		writeError(w, http.StatusBadRequest, "invalid_request", "expected multipart/form-data")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Expected multipart/form-data."))
 		return
 	}
 
 	filePath := r.FormValue("path")
 	if filePath == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "path field is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The path field is required.").With("field", "path"))
 		return
 	}
 
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "file field is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The file field is required.").With("field", "file"))
 		return
 	}
 	defer file.Close()
 
 	content, err := io.ReadAll(file)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_error", "failed to read uploaded file")
+		writeErr(w, r, apperr.Internal.WrapMsg(err, "Failed to read the uploaded file."))
 		return
 	}
 
 	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -79,8 +80,7 @@ func (h *filesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		Path:      filePath,
 		Content:   content,
 	})); err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -104,18 +104,18 @@ func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
 
 	var req readFileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if req.Path == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "path is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The path field is required.").With("field", "path"))
 		return
 	}
 
 	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -124,8 +124,7 @@ func (h *filesHandler) Download(w http.ResponseWriter, r *http.Request) {
 		Path:      req.Path,
 	}))
 	if err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 

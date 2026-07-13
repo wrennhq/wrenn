@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -40,7 +41,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	contentType := r.Header.Get("Content-Type")
 	_, params, err := mime.ParseMediaType(contentType)
 	if err != nil || params["boundary"] == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "expected multipart/form-data with boundary")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Expected multipart/form-data with a boundary."))
 		return
 	}
 
@@ -56,7 +57,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 			break
 		}
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse multipart")
+			writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Malformed multipart request body."))
 			return
 		}
 		switch part.FormName() {
@@ -72,18 +73,18 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	if filePath == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "path field is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The path field is required.").With("field", "path"))
 		return
 	}
 	if filePart == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "file field is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The file field is required.").With("field", "file"))
 		return
 	}
 	defer filePart.Close()
 
 	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -105,7 +106,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 			},
 		},
 	}); err != nil {
-		writeError(w, http.StatusBadGateway, "agent_error", "failed to send file metadata")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -119,7 +120,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 			if sendErr := stream.Send(&pb.WriteFileStreamRequest{
 				Content: &pb.WriteFileStreamRequest_Chunk{Chunk: chunk},
 			}); sendErr != nil {
-				writeError(w, http.StatusBadGateway, "agent_error", "failed to stream file chunk")
+				writeErr(w, r, apperr.HostUnreachable.Wrap(sendErr))
 				return
 			}
 		}
@@ -127,7 +128,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 			break
 		}
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "read_error", "failed to read uploaded file")
+			writeErr(w, r, apperr.Internal.WrapMsg(err, "Failed to read the uploaded file."))
 			return
 		}
 	}
@@ -135,8 +136,7 @@ func (h *filesStreamHandler) StreamUpload(w http.ResponseWriter, r *http.Request
 	// Close and receive response.
 	streamClosed = true
 	if _, err := stream.CloseAndReceive(); err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -156,17 +156,17 @@ func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Reque
 
 	var req readFileRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	if req.Path == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "path is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The path field is required.").With("field", "path"))
 		return
 	}
 
 	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -176,8 +176,7 @@ func (h *filesStreamHandler) StreamDownload(w http.ResponseWriter, r *http.Reque
 		Path:      req.Path,
 	}))
 	if err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 	defer stream.Close()

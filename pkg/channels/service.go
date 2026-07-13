@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/events"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -55,6 +56,8 @@ func init() {
 type Service struct {
 	DB     *db.Queries
 	EncKey [32]byte
+	// AllowPrivateTargets disables the SSRF guard on channel destination URLs.
+	AllowPrivateTargets bool
 }
 
 // CreateParams holds the parameters for creating a channel.
@@ -81,23 +84,28 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (CreateResult, err
 	p.Name = clean
 
 	if !validProviders[p.Provider] {
-		return CreateResult{}, fmt.Errorf("invalid: unsupported provider %q", p.Provider)
+		return CreateResult{}, apperr.ValidationFailed.Msgf("Unsupported provider %q.", p.Provider).With("field", "provider")
 	}
 
 	if len(p.Events) == 0 {
-		return CreateResult{}, fmt.Errorf("invalid: at least one event type is required")
+		return CreateResult{}, apperr.ValidationFailed.Msg("At least one event type is required.").With("field", "events")
 	}
 	for _, et := range p.Events {
 		if !validEvents[et] {
-			return CreateResult{}, fmt.Errorf("invalid: unknown event type %q", et)
+			return CreateResult{}, apperr.ValidationFailed.Msgf("Unknown event type %q.", et).With("field", "events")
 		}
 	}
 
 	// Validate required config fields.
 	for _, field := range requiredFields[p.Provider] {
 		if p.Config[field] == "" {
-			return CreateResult{}, fmt.Errorf("invalid: %s is required for %s", field, p.Provider)
+			return CreateResult{}, apperr.ValidationFailed.Msgf("The %s field is required for %s.", field, p.Provider).With("field", field)
 		}
+	}
+
+	// Reject destination URLs pointing at internal/private addresses (SSRF).
+	if err := validateConfigURLs(p.Config, s.AllowPrivateTargets); err != nil {
+		return CreateResult{}, err
 	}
 
 	// For webhooks, auto-generate secret if not provided.
@@ -138,7 +146,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (CreateResult, err
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return CreateResult{}, fmt.Errorf("conflict: channel name %q already exists", p.Name)
+			return CreateResult{}, apperr.Conflict.Msgf("A channel named %q already exists.", p.Name)
 		}
 		return CreateResult{}, fmt.Errorf("insert channel: %w", err)
 	}
@@ -165,11 +173,11 @@ func (s *Service) Update(ctx context.Context, channelID, teamID pgtype.UUID, nam
 	name = clean
 
 	if len(eventTypes) == 0 {
-		return db.Channel{}, fmt.Errorf("invalid: at least one event type is required")
+		return db.Channel{}, apperr.ValidationFailed.Msg("At least one event type is required.").With("field", "events")
 	}
 	for _, et := range eventTypes {
 		if !validEvents[et] {
-			return db.Channel{}, fmt.Errorf("invalid: unknown event type %q", et)
+			return db.Channel{}, apperr.ValidationFailed.Msgf("Unknown event type %q.", et).With("field", "events")
 		}
 	}
 
@@ -181,11 +189,11 @@ func (s *Service) Update(ctx context.Context, channelID, teamID pgtype.UUID, nam
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.Channel{}, fmt.Errorf("channel not found")
+			return db.Channel{}, apperr.NotFound.Msg("Channel not found.")
 		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return db.Channel{}, fmt.Errorf("conflict: channel name %q already exists", name)
+			return db.Channel{}, apperr.Conflict.Msgf("A channel named %q already exists.", name)
 		}
 		return db.Channel{}, fmt.Errorf("update channel: %w", err)
 	}
@@ -198,7 +206,7 @@ func (s *Service) RotateConfig(ctx context.Context, channelID, teamID pgtype.UUI
 	ch, err := s.DB.GetChannelByTeam(ctx, db.GetChannelByTeamParams{ID: channelID, TeamID: teamID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.Channel{}, fmt.Errorf("channel not found")
+			return db.Channel{}, apperr.NotFound.Msg("Channel not found.")
 		}
 		return db.Channel{}, fmt.Errorf("get channel: %w", err)
 	}
@@ -206,8 +214,13 @@ func (s *Service) RotateConfig(ctx context.Context, channelID, teamID pgtype.UUI
 	// Validate required config fields for this provider.
 	for _, field := range requiredFields[ch.Provider] {
 		if config[field] == "" {
-			return db.Channel{}, fmt.Errorf("invalid: %s is required for %s", field, ch.Provider)
+			return db.Channel{}, apperr.ValidationFailed.Msgf("The %s field is required for %s.", field, ch.Provider).With("field", field)
 		}
+	}
+
+	// Reject destination URLs pointing at internal/private addresses (SSRF).
+	if err := validateConfigURLs(config, s.AllowPrivateTargets); err != nil {
+		return db.Channel{}, err
 	}
 
 	// For webhooks, auto-generate secret if not provided.
@@ -237,7 +250,7 @@ func (s *Service) RotateConfig(ctx context.Context, channelID, teamID pgtype.UUI
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.Channel{}, fmt.Errorf("channel not found")
+			return db.Channel{}, apperr.NotFound.Msg("Channel not found.")
 		}
 		return db.Channel{}, fmt.Errorf("update channel config: %w", err)
 	}
@@ -247,13 +260,19 @@ func (s *Service) RotateConfig(ctx context.Context, channelID, teamID pgtype.UUI
 // Test validates config and sends a test notification without persisting anything.
 func (s *Service) Test(ctx context.Context, provider string, config map[string]string) error {
 	if !validProviders[provider] {
-		return fmt.Errorf("invalid: unsupported provider %q", provider)
+		return apperr.ValidationFailed.Msgf("Unsupported provider %q.", provider).With("field", "provider")
 	}
 
 	for _, field := range requiredFields[provider] {
 		if config[field] == "" {
-			return fmt.Errorf("invalid: %s is required for %s", field, provider)
+			return apperr.ValidationFailed.Msgf("The %s field is required for %s.", field, provider).With("field", field)
 		}
+	}
+
+	// Reject destination URLs pointing at internal/private addresses (SSRF).
+	// Test is the sharpest oracle: it returns the delivery result synchronously.
+	if err := validateConfigURLs(config, s.AllowPrivateTargets); err != nil {
+		return err
 	}
 
 	// For webhooks, auto-generate a temporary secret if not provided.
@@ -269,7 +288,7 @@ func (s *Service) Test(ctx context.Context, provider string, config map[string]s
 		Resource:  events.Resource{ID: "test", Type: "channel"},
 	}
 
-	return Deliver(ctx, provider, config, testEvent)
+	return Deliver(ctx, provider, config, testEvent, s.AllowPrivateTargets)
 }
 
 // Delete removes a channel by ID, scoped to the given team.
@@ -284,7 +303,7 @@ func cleanName(name string) (string, error) {
 	name = strings.ToLower(name)
 	name = strings.ReplaceAll(name, " ", "-")
 	if err := validate.SafeName(name); err != nil {
-		return "", fmt.Errorf("invalid: %w", err)
+		return "", apperr.ValidationFailed.WrapMsg(err, "Invalid channel name.").With("field", "name")
 	}
 	return name, nil
 }

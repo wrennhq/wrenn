@@ -17,11 +17,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/cpextension"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/netutil"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 )
 
 type oauthHandler struct {
@@ -51,13 +54,13 @@ func (h *oauthHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	p, ok := h.registry.Get(provider)
 	if !ok {
-		writeError(w, http.StatusNotFound, "provider_not_found", "unsupported OAuth provider")
+		writeErr(w, r, apperr.NotFound.Msg("Unsupported OAuth provider."))
 		return
 	}
 
 	state, err := generateState()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate state")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -88,7 +91,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	p, ok := h.registry.Get(provider)
 	if !ok {
-		writeError(w, http.StatusNotFound, "provider_not_found", "unsupported OAuth provider")
+		writeErr(w, r, apperr.NotFound.Msg("Unsupported OAuth provider."))
 		return
 	}
 
@@ -270,6 +273,18 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A brand-new account: the email and provider-supplied name enter our
+	// database here. Validate the email, and coerce the name into the safe
+	// display-name charset (OAuth names cannot be rejected interactively, so
+	// they are cleaned rather than refused).
+	if err := validate.Email(email); err != nil {
+		slog.Warn("oauth: provider returned an invalid email", "provider", provider)
+		redirectWithError(w, r, redirectBase, "invalid_email")
+		return
+	}
+	emailLocal, _, _ := strings.Cut(email, "@")
+	displayName := validate.SanitizeDisplayName(profile.Name, validate.SanitizeDisplayName(emailLocal, "user"))
+
 	// New OAuth identity — check for email collision.
 	existingUser, err := h.db.GetUserByEmail(ctx, email)
 	if err == nil {
@@ -315,7 +330,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	_, err = qtx.InsertUserOAuth(ctx, db.InsertUserOAuthParams{
 		ID:    userID,
 		Email: email,
-		Name:  profile.Name,
+		Name:  displayName,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -332,7 +347,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	teamID := id.NewTeamID()
-	teamName := profile.Name + "'s Team"
+	teamName := displayName + "'s Team"
 	if _, err := qtx.InsertTeam(ctx, db.InsertTeamParams{
 		ID:   teamID,
 		Name: teamName,
@@ -397,7 +412,7 @@ func (h *oauthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		Secure:   isSecure(r),
 	})
 
-	if err := h.issueSessionAndRedirect(w, r, userID, teamID, email, profile.Name, "owner", isFirstUser, redirectBase); err != nil {
+	if err := h.issueSessionAndRedirect(w, r, userID, teamID, email, displayName, "owner", isFirstUser, redirectBase); err != nil {
 		slog.Error("oauth: failed to issue session", "error", err)
 		redirectWithError(w, r, redirectBase, "internal_error")
 		return
@@ -461,7 +476,7 @@ func (h *oauthHandler) issueSessionAndRedirect(
 	isAdmin bool,
 	redirectBase string,
 ) error {
-	sess, err := h.sessions.Create(r.Context(), userID, teamID, email, name, role, isAdmin, r.UserAgent(), clientIP(r))
+	sess, err := h.sessions.Create(r.Context(), userID, teamID, email, name, role, isAdmin, r.UserAgent(), netutil.ClientIP(r))
 	if err != nil {
 		return err
 	}

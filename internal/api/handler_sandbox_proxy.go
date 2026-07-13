@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -143,25 +144,26 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// Validate port.
 	portNum, err := strconv.Atoi(port)
 	if err != nil || portNum < 1 || portNum > 65535 {
-		http.Error(w, "invalid port", http.StatusBadRequest)
+		writeErr(w, r, apperr.InvalidRequest.Msg("Invalid port."))
 		return
 	}
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		http.Error(w, "invalid sandbox ID", http.StatusBadRequest)
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
 	agentURL, err := h.proxyTarget(r.Context(), sandboxID)
 	if err != nil {
+		var notRunning errProxySandboxNotRunning
 		switch {
 		case errors.Is(err, errProxySandboxNotFound):
-			http.Error(w, err.Error(), http.StatusNotFound)
-		case errors.As(err, new(errProxySandboxNotRunning)):
-			http.Error(w, err.Error(), http.StatusConflict)
+			writeErr(w, r, apperr.SandboxNotFound.Wrap(err))
+		case errors.As(err, &notRunning):
+			writeErr(w, r, apperr.SandboxNotRunning.New().With("status", notRunning.status))
 		default:
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		}
 		return
 	}
@@ -196,7 +198,7 @@ func (h *SandboxProxyWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				"error", err,
 			)
 			h.evictProxyCache(sandboxID)
-			http.Error(w, "proxy error: "+err.Error(), http.StatusBadGateway)
+			writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		},
 	}
 	proxy.ServeHTTP(w, r)

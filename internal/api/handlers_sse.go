@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
@@ -25,7 +26,7 @@ func newSSEHandler(broker *SSEBroker) *sseHandler {
 func (h *sseHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	ac, ok := auth.FromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "session cookie or X-API-Key required")
+		writeErr(w, r, apperr.AuthSessionRequired.New())
 		return
 	}
 	h.serveSSE(w, r, id.FormatTeamID(ac.TeamID), false)
@@ -36,7 +37,7 @@ func (h *sseHandler) Stream(w http.ResponseWriter, r *http.Request) {
 func (h *sseHandler) AdminStream(w http.ResponseWriter, r *http.Request) {
 	ac, ok := auth.FromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "admin session required")
+		writeErr(w, r, apperr.Unauthorized.Msg("An admin session is required."))
 		return
 	}
 	h.serveSSE(w, r, id.FormatTeamID(ac.TeamID), true)

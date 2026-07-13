@@ -307,15 +307,20 @@ func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtyp
 		return
 	}
 
-	action := "create"
+	// The lifecycle op that failed is recorded as a distinct "error" action
+	// (attributed to system) rather than a second "create"/"resume" row, so the
+	// audit log reads "a capsule encountered an error" instead of masquerading
+	// as a duplicate, system-attributed creation. The user-attributed create row
+	// was already written at request-accept time by the handler.
+	phase := "create"
 	if event.Event == events.CapsuleResume {
-		action = "resume"
+		phase = "resume"
 	}
 	reason := event.Metadata["reason"]
 	if reason == "" {
-		reason = action + "_failed"
+		reason = phase + "_failed"
 	}
-	meta := map[string]any{"reason": reason}
+	meta := map[string]any{"reason": reason, "phase": phase}
 	if event.Error != "" {
 		meta["error"] = event.Error
 	}
@@ -325,7 +330,7 @@ func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtyp
 		ActorType:    "system",
 		ResourceType: "sandbox",
 		ResourceID:   id.FormatSandboxID(sandboxID),
-		Action:       action,
+		Action:       "error",
 		Scope:        "team",
 		Status:       "error",
 		Metadata:     meta,

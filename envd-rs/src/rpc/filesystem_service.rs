@@ -30,8 +30,8 @@ impl FilesystemServiceImpl {
         }
     }
 
-    fn resolve_path(&self, path: &str, ctx: &Context) -> Result<String, ConnectError> {
-        let username = extract_username(ctx).unwrap_or_else(|| self.state.defaults.user());
+    fn resolve_path(&self, path: &str) -> Result<String, ConnectError> {
+        let username = self.state.defaults.user();
         let user = lookup_user(&username).map_err(|e| {
             ConnectError::new(ErrorCode::Unauthenticated, format!("invalid user: {e}"))
         })?;
@@ -44,20 +44,13 @@ impl FilesystemServiceImpl {
     }
 }
 
-fn extract_username(ctx: &Context) -> Option<String> {
-    ctx.extensions.get::<AuthUser>().map(|u| u.0.clone())
-}
-
-#[derive(Clone)]
-pub struct AuthUser(pub String);
-
 impl Filesystem for FilesystemServiceImpl {
     async fn stat(
         &self,
         ctx: Context,
         request: buffa::view::OwnedView<StatRequestView<'static>>,
     ) -> Result<(StatResponse, Context), ConnectError> {
-        let path = self.resolve_path(request.path, &ctx)?;
+        let path = self.resolve_path(request.path)?;
         let entry = build_entry_info(&path)?;
         Ok((
             StatResponse {
@@ -73,7 +66,7 @@ impl Filesystem for FilesystemServiceImpl {
         ctx: Context,
         request: buffa::view::OwnedView<MakeDirRequestView<'static>>,
     ) -> Result<(MakeDirResponse, Context), ConnectError> {
-        let path = self.resolve_path(request.path, &ctx)?;
+        let path = self.resolve_path(request.path)?;
 
         match std::fs::metadata(&path) {
             Ok(meta) => {
@@ -97,7 +90,7 @@ impl Filesystem for FilesystemServiceImpl {
             }
         }
 
-        let username = extract_username(&ctx).unwrap_or_else(|| self.state.defaults.user());
+        let username = self.state.defaults.user();
         let user = lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
         ensure_dirs(&path, user.uid, user.gid)
@@ -118,10 +111,10 @@ impl Filesystem for FilesystemServiceImpl {
         ctx: Context,
         request: buffa::view::OwnedView<MoveRequestView<'static>>,
     ) -> Result<(MoveResponse, Context), ConnectError> {
-        let source = self.resolve_path(request.source, &ctx)?;
-        let destination = self.resolve_path(request.destination, &ctx)?;
+        let source = self.resolve_path(request.source)?;
+        let destination = self.resolve_path(request.destination)?;
 
-        let username = extract_username(&ctx).unwrap_or_else(|| self.state.defaults.user());
+        let username = self.state.defaults.user();
         let user = lookup_user(&username).map_err(|e| ConnectError::new(ErrorCode::Internal, e))?;
 
         if let Some(parent) = Path::new(&destination).parent() {
@@ -157,7 +150,7 @@ impl Filesystem for FilesystemServiceImpl {
             depth = 1;
         }
 
-        let path = self.resolve_path(request.path, &ctx)?;
+        let path = self.resolve_path(request.path)?;
 
         // The recursive walk stats every entry (plus uid/gid lookups) — on a
         // large tree that is seconds of blocking syscalls, so it runs on the
@@ -200,7 +193,7 @@ impl Filesystem for FilesystemServiceImpl {
         ctx: Context,
         request: buffa::view::OwnedView<RemoveRequestView<'static>>,
     ) -> Result<(RemoveResponse, Context), ConnectError> {
-        let path = self.resolve_path(request.path, &ctx)?;
+        let path = self.resolve_path(request.path)?;
 
         // remove_dir_all recurses through the whole tree — blocking pool, not
         // a runtime worker thread.
@@ -250,7 +243,7 @@ impl Filesystem for FilesystemServiceImpl {
     ) -> Result<(CreateWatcherResponse, Context), ConnectError> {
         use notify::{RecursiveMode, Watcher};
 
-        let path = self.resolve_path(request.path, &ctx)?;
+        let path = self.resolve_path(request.path)?;
         let recursive = request.recursive;
 
         if let Ok(true) = crate::rpc::entry::is_network_mount(&path) {

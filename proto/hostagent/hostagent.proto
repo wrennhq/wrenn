@@ -595,3 +595,14 @@ message ConnectProcessResponse {
     ExecStreamEnd end = 3;
   }
 }
+
+// ErrorInfo travels as a Connect error detail so the control plane can
+// surface precise, client-safe errors instead of guessing from Connect
+// codes. Fields mirror pkg/apperr.Error; details values are stringified.
+message ErrorInfo {
+  string code = 1;        // apperr catalog code, e.g. "sandbox_not_running"
+  string message = 2;     // client-safe message
+  bool retryable = 3;
+  int32 http_status = 4;
+  map<string, string> details = 5;
+}

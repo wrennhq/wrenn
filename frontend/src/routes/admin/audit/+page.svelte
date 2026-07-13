@@ -39,7 +39,7 @@
 	};
 
 	const ACTIONS_BY_RESOURCE: Record<string, string[]> = {
-		sandbox: ['create', 'pause', 'resume', 'destroy'],
+		sandbox: ['create', 'pause', 'resume', 'destroy', 'error'],
 		snapshot: ['create', 'delete'],
 		template: ['delete'],
 		build: ['create', 'cancel'],
@@ -56,6 +56,7 @@
 		pause: 'Paused',
 		resume: 'Resumed',
 		destroy: 'Destroyed',
+		error: 'Error',
 		delete: 'Deleted',
 		rename: 'Renamed',
 		revoke: 'Revoked',
@@ -207,6 +208,9 @@
 	const DELETED_BADGE = '\x00DELETED\x00';
 	const deletedBadgeHtml = '<span class="deleted-user-badge">deleted-user</span>';
 
+	// The interpolated fields (user/API-key/team names, emails) are constrained
+	// on the backend to an HTML-safe charset — no < > & " ' can be stored — so
+	// the only markup here is the trusted DELETED_BADGE swap.
 	function renderDeleted(text: string): string {
 		return text.replaceAll(DELETED_BADGE, deletedBadgeHtml);
 	}
@@ -219,6 +223,10 @@
 			case 'sandbox:pause':           return `${actor} paused a capsule`;
 			case 'sandbox:resume':          return `${actor} resumed a capsule`;
 			case 'sandbox:destroy':         return `${actor} destroyed a capsule`;
+			case 'sandbox:error':
+				if (meta.phase === 'resume')  return 'A capsule failed to resume';
+				if (meta.phase === 'create')  return 'A capsule failed to start';
+				return 'A capsule encountered an error';
 			case 'snapshot:create':         return `${actor} created a snapshot`;
 			case 'snapshot:delete':         return `${actor} deleted a snapshot`;
 			case 'template:delete':         return `${actor} deleted template "${log.resource_id}"`;

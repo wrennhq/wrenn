@@ -258,11 +258,12 @@ func (c *Client) ExecStream(ctx context.Context, cmd string, args ...string) (<-
 }
 
 // WriteFile writes content to a file inside the sandbox via envd's REST endpoint.
-// envd expects PUT /files?path=...&username=root with the raw file content as the body.
+// envd expects PUT /files?path=... with the raw file content as the body. No
+// username is sent, so envd resolves the sandbox default user — the same user
+// process execution runs as.
 func (c *Client) WriteFile(ctx context.Context, path string, content []byte) error {
 	u := fmt.Sprintf("%s/files?%s", c.base, url.Values{
-		"path":     {path},
-		"username": {"root"},
+		"path": {path},
 	}.Encode())
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(content))
@@ -288,11 +289,11 @@ func (c *Client) WriteFile(ctx context.Context, path string, content []byte) err
 }
 
 // ReadFile reads a file from inside the sandbox via envd's REST endpoint.
-// envd expects GET /files?path=...&username=root.
+// envd expects GET /files?path=... — no username is sent, so envd resolves the
+// sandbox default user, matching process execution.
 func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	u := fmt.Sprintf("%s/files?%s", c.base, url.Values{
-		"path":     {path},
-		"username": {"root"},
+		"path": {path},
 	}.Encode())
 
 	slog.Debug("envd read file", "url", u, "path", path)

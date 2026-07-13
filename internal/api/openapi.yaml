@@ -3718,7 +3718,7 @@ components:
             $ref: "#/components/schemas/Error"
 
     ServiceUnavailable:
-      description: The host serving this capsule is unreachable (host_unavailable)
+      description: Temporarily unavailable — no capacity (capacity_unavailable), host draining (host_draining), or the capsule's host is unreachable (host_unreachable, returned as 502)
       content:
         application/json:
           schema:
@@ -4426,21 +4426,13 @@ components:
           description: IDs of capsules that would be destroyed on force-delete.
 
     HostHasCapsulesError:
-      type: object
-      properties:
-        error:
-          type: object
-          properties:
-            code:
-              type: string
-              example: has_active_sandboxes
-            message:
-              type: string
-            sandbox_ids:
-              type: array
-              items:
-                type: string
-              description: IDs of active capsules blocking deletion.
+      allOf:
+        - $ref: "#/components/schemas/Error"
+      description: |
+        Standard error envelope returned by host delete (409) when the host
+        still has active capsules. `error.code` is `has_active_sandboxes` and
+        `error.details.sandbox_ids` lists the IDs of the capsules blocking
+        deletion — pass `?force=true` to destroy them and delete the host.
 
     AddTagRequest:
       type: object
@@ -4724,14 +4716,37 @@ components:
 
     Error:
       type: object
+      description: |
+        Standard error envelope returned by every non-2xx JSON response.
+        `code` is a stable machine-readable identifier (snake_case, e.g.
+        `sandbox_not_running`, `capacity_unavailable`, `internal_error`).
+        `message` is human-readable and safe to display. `request_id` matches
+        the `X-Request-ID` response header and the server logs — quote it when
+        reporting issues. `retryable` indicates the same request may succeed
+        if retried. `details` carries optional machine-readable context
+        (e.g. `{"status": "paused"}` on `sandbox_not_running`, or
+        `{"field": "path"}` on `validation_failed`).
       properties:
         error:
           type: object
+          required: [code, message, retryable]
           properties:
             code:
               type: string
+              example: sandbox_not_running
             message:
               type: string
+              example: Sandbox is not running.
+            request_id:
+              type: string
+              example: req_8f3ka92b1c04d7e6
+            retryable:
+              type: boolean
+              example: false
+            details:
+              type: object
+              additionalProperties: true
+              example: { status: paused }
 
     AuditLogEntry:
       type: object

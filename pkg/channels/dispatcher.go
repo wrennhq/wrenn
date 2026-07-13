@@ -18,22 +18,31 @@ const (
 	consumerName = "cp-0"
 )
 
+// maxConcurrentRetries bounds the number of in-flight delivery retries. Without
+// it, an endpoint outage during an event burst would spawn one goroutine per
+// failed delivery — each holding decrypted secrets in memory for up to the full
+// retry window.
+const maxConcurrentRetries = 64
+
 // Dispatcher consumes events from the Redis stream and delivers them
 // to matching notification channels.
 type Dispatcher struct {
-	rdb     *redis.Client
-	db      *db.Queries
-	encKey  [32]byte
-	webhook *WebhookDelivery
+	rdb          *redis.Client
+	db           *db.Queries
+	encKey       [32]byte
+	allowPrivate bool
+	retrySem     chan struct{}
 }
 
-// NewDispatcher constructs an event dispatcher.
-func NewDispatcher(rdb *redis.Client, queries *db.Queries, encKey [32]byte) *Dispatcher {
+// NewDispatcher constructs an event dispatcher. allowPrivate relaxes the SSRF
+// guard on outbound webhook deliveries.
+func NewDispatcher(rdb *redis.Client, queries *db.Queries, encKey [32]byte, allowPrivate bool) *Dispatcher {
 	return &Dispatcher{
-		rdb:     rdb,
-		db:      queries,
-		encKey:  encKey,
-		webhook: NewWebhookDelivery(),
+		rdb:          rdb,
+		db:           queries,
+		encKey:       encKey,
+		allowPrivate: allowPrivate,
+		retrySem:     make(chan struct{}, maxConcurrentRetries),
 	}
 }
 
@@ -138,10 +147,21 @@ func (d *Dispatcher) dispatch(ctx context.Context, ch db.Channel, e events.Event
 
 	chID := id.FormatChannelID(ch.ID)
 
-	if err := Deliver(ctx, ch.Provider, config, e); err != nil {
+	if err := Deliver(ctx, ch.Provider, config, e, d.allowPrivate); err != nil {
 		slog.Warn("channels: delivery failed, scheduling retries",
 			"channel_id", chID, "provider", ch.Provider, "error", err)
-		go d.retryDeliver(ctx, ch.Provider, config, e, chID)
+		// Bound concurrent retries: acquire a slot or drop (with a log) rather
+		// than spawning unbounded goroutines during a sustained outage.
+		select {
+		case d.retrySem <- struct{}{}:
+			go func() {
+				defer func() { <-d.retrySem }()
+				d.retryDeliver(ctx, ch.Provider, config, e, chID)
+			}()
+		default:
+			slog.Warn("channels: retry queue saturated, dropping retry",
+				"channel_id", chID, "provider", ch.Provider)
+		}
 	}
 }
 
@@ -153,7 +173,7 @@ func (d *Dispatcher) retryDeliver(ctx context.Context, provider string, config m
 		case <-time.After(delay):
 		}
 
-		if err := Deliver(ctx, provider, config, e); err != nil {
+		if err := Deliver(ctx, provider, config, e, d.allowPrivate); err != nil {
 			slog.Warn("channels: retry delivery failed",
 				"channel_id", chID, "provider", provider,
 				"attempt", i+2, "error", err)

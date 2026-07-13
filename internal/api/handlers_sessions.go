@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 )
@@ -26,7 +27,7 @@ func (h *sessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.sessions.ListForUser(r.Context(), ac.UserID)
 	if err != nil {
 		slog.Error("list sessions: db error", "error", err)
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list sessions")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	out := make([]sessionRow, 0, len(rows))
@@ -51,12 +52,12 @@ func (h *sessionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 	sid := chi.URLParam(r, "id")
 	if sid == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "missing session id")
+		writeErr(w, r, apperr.InvalidRequest.Msg("The session id is required."))
 		return
 	}
 	if err := h.sessions.DeleteForUser(r.Context(), sid, ac.UserID); err != nil {
 		slog.Error("delete session: db error", "error", err)
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete session")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	if sid == ac.SessionID {

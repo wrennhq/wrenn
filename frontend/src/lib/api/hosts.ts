@@ -1,4 +1,4 @@
-import { apiFetch } from './client';
+import { apiFetch, type ApiFailure } from './client';
 
 export type Host = {
 	id: string;
@@ -55,11 +55,11 @@ export async function createHost(
 export async function deleteHost(
 	id: string,
 	force = false
-): Promise<{ ok: true } | { ok: false; error: string; sandbox_ids?: string[] }> {
+): Promise<{ ok: true } | ApiFailure> {
 	const url = `/api/v1/hosts/${id}${force ? '?force=true' : ''}`;
 	const res = await apiFetch<void>('DELETE', url);
 	if (!res.ok) {
-		return res as { ok: false; error: string };
+		return res;
 	}
 	return { ok: true };
 }

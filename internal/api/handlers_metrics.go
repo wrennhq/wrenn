@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -9,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -46,7 +46,7 @@ func (h *sandboxMetricsHandler) GetMetrics(w http.ResponseWriter, r *http.Reques
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
@@ -56,13 +56,13 @@ func (h *sandboxMetricsHandler) GetMetrics(w http.ResponseWriter, r *http.Reques
 	}
 	validRanges := map[string]bool{"5m": true, "10m": true, "1h": true, "2h": true, "6h": true, "12h": true, "24h": true}
 	if !validRanges[rangeTier] {
-		writeError(w, http.StatusBadRequest, "invalid_request", "range must be one of: 5m, 10m, 1h, 2h, 6h, 12h, 24h")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The range parameter must be one of: 5m, 10m, 1h, 2h, 6h, 12h, 24h.").With("field", "range"))
 		return
 	}
 
 	sb, err := h.db.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: ac.TeamID})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeErr(w, r, apperr.SandboxNotFound.Wrap(err))
 		return
 	}
 
@@ -70,9 +70,9 @@ func (h *sandboxMetricsHandler) GetMetrics(w http.ResponseWriter, r *http.Reques
 	case "running":
 		h.getFromAgent(w, r, sandboxIDStr, rangeTier, sb.HostID)
 	case "paused":
-		h.getFromDB(ctx, w, sandboxIDStr, sandboxID, rangeTier)
+		h.getFromDB(w, r, sandboxIDStr, sandboxID, rangeTier)
 	default:
-		writeError(w, http.StatusNotFound, "not_found", "metrics not available for sandbox in state: "+sb.Status)
+		writeErr(w, r, apperr.NotFound.Msg("Metrics are not available for a sandbox in state "+sb.Status+".").With("status", sb.Status))
 	}
 }
 
@@ -81,7 +81,7 @@ func (h *sandboxMetricsHandler) getFromAgent(w http.ResponseWriter, r *http.Requ
 
 	agent, err := agentForHost(ctx, h.db, h.pool, hostID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -90,8 +90,7 @@ func (h *sandboxMetricsHandler) getFromAgent(w http.ResponseWriter, r *http.Requ
 		Range:     rangeTier,
 	}))
 	if err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -126,7 +125,8 @@ var rangeToDB = map[string]struct {
 	"24h": {"24h", 24 * time.Hour},
 }
 
-func (h *sandboxMetricsHandler) getFromDB(ctx context.Context, w http.ResponseWriter, sandboxIDStr string, sandboxID pgtype.UUID, rangeTier string) {
+func (h *sandboxMetricsHandler) getFromDB(w http.ResponseWriter, r *http.Request, sandboxIDStr string, sandboxID pgtype.UUID, rangeTier string) {
+	ctx := r.Context()
 	mapping := rangeToDB[rangeTier]
 	rows, err := h.db.GetSandboxMetricPoints(ctx, db.GetSandboxMetricPointsParams{
 		SandboxID: sandboxID,
@@ -134,7 +134,7 @@ func (h *sandboxMetricsHandler) getFromDB(ctx context.Context, w http.ResponseWr
 		Ts:        time.Now().Add(-mapping.cutoff).Unix(),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to read metrics")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -187,7 +188,7 @@ func (h *hostHandler) isAdmin(r *http.Request, userID pgtype.UUID) bool {
 func (h *hostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createHostRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
@@ -203,7 +204,7 @@ func (h *hostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.TeamID != "" {
 		teamID, err := id.ParseTeamID(req.TeamID)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "invalid team_id")
+			writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid team ID.").With("field", "team_id"))
 			return
 		}
 		params.TeamID = teamID
@@ -211,8 +212,7 @@ func (h *hostHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.svc.Create(r.Context(), params)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -232,7 +232,7 @@ func (h *hostHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	hosts, err := h.svc.List(r.Context(), ac.TeamID, admin)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list hosts")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -284,14 +284,13 @@ func (h *hostHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	hostID, err := id.ParseHostID(hostIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid host ID."))
 		return
 	}
 
 	host, err := h.svc.Get(r.Context(), hostID, ac.TeamID, h.isAdmin(r, ac.UserID))
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -306,14 +305,13 @@ func (h *hostHandler) DeletePreview(w http.ResponseWriter, r *http.Request) {
 
 	hostID, err := id.ParseHostID(hostIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid host ID."))
 		return
 	}
 
 	preview, err := h.svc.DeletePreview(r.Context(), hostID, ac.TeamID, h.isAdmin(r, ac.UserID))
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -333,7 +331,7 @@ func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	hostID, err := id.ParseHostID(hostIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid host ID."))
 		return
 	}
 
@@ -353,18 +351,11 @@ func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Check if it's a "has running sandboxes" error and return a structured 409.
 	var hasSandboxes *service.HostHasSandboxesError
 	if errors.As(err, &hasSandboxes) {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": map[string]any{
-				"code":        "has_active_sandboxes",
-				"message":     "host has active sandboxes; use ?force=true to destroy them and delete the host",
-				"sandbox_ids": hasSandboxes.SandboxIDs,
-			},
-		})
+		writeErr(w, r, apperr.HostHasActiveSandboxes.Wrap(err).With("sandbox_ids", hasSandboxes.SandboxIDs))
 		return
 	}
 
-	status, code, msg := serviceErrToHTTP(err)
-	writeError(w, status, code, msg)
+	writeErr(w, r, err)
 }
 
 // AdminList handles GET /v1/admin/hosts.
@@ -372,7 +363,7 @@ func (h *hostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *hostHandler) AdminList(w http.ResponseWriter, r *http.Request) {
 	hosts, err := h.svc.ListAdmin(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list hosts")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -422,14 +413,13 @@ func (h *hostHandler) RegenerateToken(w http.ResponseWriter, r *http.Request) {
 
 	hostID, err := id.ParseHostID(hostIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid host ID."))
 		return
 	}
 
 	result, err := h.svc.RegenerateToken(r.Context(), hostID, ac.UserID, ac.TeamID, h.isAdmin(r, ac.UserID))
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -443,16 +433,16 @@ func (h *hostHandler) RegenerateToken(w http.ResponseWriter, r *http.Request) {
 func (h *hostHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerHostRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if req.Token == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "token is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The token field is required.").With("field", "token"))
 		return
 	}
 	if req.Address == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "address is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The address field is required.").With("field", "address"))
 		return
 	}
 
@@ -465,8 +455,7 @@ func (h *hostHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Address:  req.Address,
 	})
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -487,13 +476,13 @@ func (h *hostHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 
 	hostID, err := id.ParseHostID(hostIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid host ID."))
 		return
 	}
 
 	// Prevent a host from heartbeating for a different host.
 	if hostID != hc.HostID {
-		writeError(w, http.StatusForbidden, "forbidden", "host ID mismatch")
+		writeErr(w, r, apperr.Forbidden.Msg("Host ID does not match the authenticated host."))
 		return
 	}
 
@@ -501,8 +490,7 @@ func (h *hostHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	prevHost, _ := h.queries.GetHost(r.Context(), hc.HostID)
 
 	if err := h.svc.Heartbeat(r.Context(), hc.HostID); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -525,23 +513,22 @@ func (h *hostHandler) AddTag(w http.ResponseWriter, r *http.Request) {
 
 	hostID, err := id.ParseHostID(hostIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid host ID."))
 		return
 	}
 
 	var req addTagRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	if req.Tag == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "tag is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The tag field is required.").With("field", "tag"))
 		return
 	}
 
 	if err := h.svc.AddTag(r.Context(), hostID, ac.TeamID, admin, req.Tag); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -556,13 +543,12 @@ func (h *hostHandler) RemoveTag(w http.ResponseWriter, r *http.Request) {
 
 	hostID, err := id.ParseHostID(hostIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid host ID."))
 		return
 	}
 
 	if err := h.svc.RemoveTag(r.Context(), hostID, ac.TeamID, h.isAdmin(r, ac.UserID), tag); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -574,18 +560,17 @@ func (h *hostHandler) RemoveTag(w http.ResponseWriter, r *http.Request) {
 func (h *hostHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	var req refreshTokenRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	if req.RefreshToken == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The refresh_token field is required.").With("field", "refresh_token"))
 		return
 	}
 
 	result, err := h.svc.Refresh(r.Context(), req.RefreshToken)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -606,14 +591,13 @@ func (h *hostHandler) ListTags(w http.ResponseWriter, r *http.Request) {
 
 	hostID, err := id.ParseHostID(hostIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid host ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid host ID."))
 		return
 	}
 
 	tags, err := h.svc.ListTags(r.Context(), hostID, ac.TeamID, h.isAdmin(r, ac.UserID))
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 

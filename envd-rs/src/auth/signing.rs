@@ -1,3 +1,5 @@
+use subtle::ConstantTimeEq;
+
 use crate::auth::token::SecureToken;
 use crate::crypto;
 use zeroize::Zeroize;
@@ -67,7 +69,9 @@ pub fn validate_signing(
     let expected = generate_signature(token, path, username, operation, signature_expiration)
         .map_err(|e| format!("error generating signing key: {e}"))?;
 
-    if expected != sig {
+    // Constant-time compare: both values are fixed-length `v1_<64 hex>` digests,
+    // so this matches the timing-side-channel posture of SecureToken::equals.
+    if expected.as_bytes().ct_eq(sig.as_bytes()).unwrap_u8() != 1 {
         return Err("invalid signature".into());
     }
 

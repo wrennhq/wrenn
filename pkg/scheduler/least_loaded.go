@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 )
 
@@ -95,9 +96,9 @@ func (s *LeastLoadedScheduler) SelectHost(ctx context.Context, teamID pgtype.UUI
 
 	if len(candidates) == 0 {
 		if isByoc {
-			return db.Host{}, fmt.Errorf("no online BYOC hosts available for team")
+			return db.Host{}, apperr.CapacityUnavailable.Msg("None of your team's hosts are online. Bring a host online and try again.")
 		}
-		return db.Host{}, fmt.Errorf("no online platform hosts available")
+		return db.Host{}, apperr.CapacityUnavailable.New()
 	}
 
 	// Phase 2: admission control + selection — pick the highest-scoring host
@@ -119,7 +120,10 @@ func (s *LeastLoadedScheduler) SelectHost(ctx context.Context, teamID pgtype.UUI
 	}
 
 	if best == -1 {
-		return db.Host{}, fmt.Errorf("no host has sufficient resources: need %d MB memory, %d MB disk", memoryMb, diskSizeMb)
+		return db.Host{}, apperr.CapacityUnavailable.
+			Msg("No host has enough free resources for this sandbox. Try again shortly or request a smaller size.").
+			With("memory_mb", memoryMb).
+			With("disk_mb", diskSizeMb)
 	}
 
 	return candidates[best].host, nil

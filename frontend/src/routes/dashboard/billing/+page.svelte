@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { apiFailure } from '$lib/api/client';
 
 	type EndpointStatus = 'loading' | 'available' | 'not_available' | 'error';
 	let status = $state<EndpointStatus>('loading');
@@ -16,7 +17,7 @@
 				status = 'error';
 				try {
 					const data = await res.json();
-					errorMsg = data?.error?.message ?? `Server returned ${res.status}`;
+					errorMsg = apiFailure(data, `Server returned ${res.status}`).error;
 				} catch {
 					errorMsg = `Server returned ${res.status}`;
 				}

@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/wrenn/internal/recipe"
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -188,11 +189,11 @@ func (s *BuildService) List(ctx context.Context) ([]db.TemplateBuild, error) {
 func (s *BuildService) Cancel(ctx context.Context, buildID pgtype.UUID) error {
 	build, err := s.DB.GetTemplateBuild(ctx, buildID)
 	if err != nil {
-		return fmt.Errorf("get build: %w", err)
+		return apperr.BuildNotFound.Wrap(err)
 	}
 	switch build.Status {
 	case "success", "failed", "cancelled":
-		return fmt.Errorf("build is already %s", build.Status)
+		return apperr.Conflict.Msgf("The build is already %s.", build.Status)
 	}
 
 	// Mark cancelled in DB first. This handles both pending builds (which haven't
@@ -441,13 +442,14 @@ func (s *BuildService) provisionBuildSandbox(
 ) (buildAgentClient, string, map[string]string, error) {
 	host, err := s.Scheduler.SelectHost(ctx, id.PlatformTeamID, false, build.MemoryMb, 5120)
 	if err != nil {
-		s.failBuild(ctx, buildID, fmt.Sprintf("no host available: %v", err))
+		// Persist the client-safe message — this string surfaces in the build UI.
+		s.failBuild(ctx, buildID, apperr.From(err).Message)
 		return nil, "", nil, err
 	}
 
 	agent, err := s.Pool.GetForHost(host)
 	if err != nil {
-		s.failBuild(ctx, buildID, fmt.Sprintf("agent client error: %v", err))
+		s.failBuild(ctx, buildID, apperr.From(err).Message)
 		return nil, "", nil, err
 	}
 
@@ -459,7 +461,7 @@ func (s *BuildService) provisionBuildSandbox(
 	// platform-owned rows, so resolve the path from the DB record.
 	baseTmpl, err := s.DB.GetPlatformTemplateByName(ctx, build.BaseTemplate)
 	if err != nil {
-		s.failBuild(ctx, buildID, fmt.Sprintf("base template %q not found: %v", build.BaseTemplate, err))
+		s.failBuild(ctx, buildID, fmt.Sprintf("base template %q not found", build.BaseTemplate))
 		return nil, "", nil, err
 	}
 	baseTeamID := baseTmpl.TeamID
@@ -476,7 +478,7 @@ func (s *BuildService) provisionBuildSandbox(
 		DiskSizeMb: 0,
 	}))
 	if err != nil {
-		s.failBuild(ctx, buildID, fmt.Sprintf("create sandbox failed: %v", err))
+		s.failBuild(ctx, buildID, apperr.From(err).Message)
 		return nil, "", nil, err
 	}
 	sandboxMetadata := resp.Msg.Metadata

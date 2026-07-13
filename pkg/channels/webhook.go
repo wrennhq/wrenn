@@ -18,13 +18,17 @@ type WebhookDelivery struct {
 	client *http.Client
 }
 
-// NewWebhookDelivery constructs a webhook delivery client.
-func NewWebhookDelivery() *WebhookDelivery {
+// NewWebhookDelivery constructs a webhook delivery client. When allowPrivate is
+// false the client refuses to connect to non-public addresses (SSRF guard).
+func NewWebhookDelivery(allowPrivate bool) *WebhookDelivery {
 	return &WebhookDelivery{
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
+			},
+			Transport: &http.Transport{
+				DialContext: dialContext(allowPrivate),
 			},
 		},
 	}

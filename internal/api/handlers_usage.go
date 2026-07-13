@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
 )
@@ -41,7 +42,7 @@ func (h *usageHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		var err error
 		from, err = time.Parse("2006-01-02", s)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "from must be YYYY-MM-DD")
+			writeErr(w, r, apperr.ValidationFailed.Msg("The from parameter must be YYYY-MM-DD.").With("field", "from"))
 			return
 		}
 	} else {
@@ -52,7 +53,7 @@ func (h *usageHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		var err error
 		to, err = time.Parse("2006-01-02", s)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "to must be YYYY-MM-DD")
+			writeErr(w, r, apperr.ValidationFailed.Msg("The to parameter must be YYYY-MM-DD.").With("field", "to"))
 			return
 		}
 	} else {
@@ -60,18 +61,18 @@ func (h *usageHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if from.After(to) {
-		writeError(w, http.StatusBadRequest, "invalid_request", "from must be before or equal to to")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The from date must be before or equal to the to date."))
 		return
 	}
 	if to.Sub(from).Hours()/24 > 92 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "range cannot exceed 92 days")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The range cannot exceed 92 days."))
 		return
 	}
 
 	points, err := h.svc.GetUsage(r.Context(), ac.TeamID, from, to)
 	if err != nil {
 		slog.Error("usage handler: get usage failed", "team_id", ac.TeamID, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to retrieve usage")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 

@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -76,7 +77,7 @@ func clampTimeout(timeoutSec int32) int32 {
 func (s *SandboxService) agentForSandbox(ctx context.Context, sandboxID pgtype.UUID) (hostagentClient, db.Sandbox, error) {
 	sb, err := s.DB.GetSandbox(ctx, sandboxID)
 	if err != nil {
-		return nil, db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
+		return nil, db.Sandbox{}, apperr.SandboxNotFound.Wrap(err)
 	}
 	agent, err := s.agentForHost(ctx, sb.HostID)
 	if err != nil {
@@ -90,7 +91,7 @@ func (s *SandboxService) agentForSandbox(ctx context.Context, sandboxID pgtype.U
 func (s *SandboxService) agentForHost(ctx context.Context, hostID pgtype.UUID) (hostagentClient, error) {
 	host, err := s.DB.GetHost(ctx, hostID)
 	if err != nil {
-		return nil, fmt.Errorf("host not found: %w", err)
+		return nil, apperr.HostNotFound.Wrap(err)
 	}
 	agent, err := s.Pool.GetForHost(host)
 	if err != nil {
@@ -126,10 +127,10 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		p.Template = "minimal-ubuntu"
 	}
 	if err := validate.SafeName(p.Template); err != nil {
-		return db.Sandbox{}, fmt.Errorf("invalid template name: %w", err)
+		return db.Sandbox{}, apperr.ValidationFailed.Msgf("Invalid template name: %v.", err)
 	}
 	if err := validate.Metadata(p.Metadata); err != nil {
-		return db.Sandbox{}, fmt.Errorf("invalid metadata: %w", err)
+		return db.Sandbox{}, apperr.ValidationFailed.Msgf("Invalid metadata: %v.", err)
 	}
 	if p.VCPUs <= 0 {
 		p.VCPUs = 2
@@ -144,7 +145,7 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	// query also matches platform templates for any team).
 	tmpl, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: p.Template, TeamID: p.TeamID})
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("template %q not found: %w", p.Template, err)
+		return db.Sandbox{}, apperr.TemplateNotFound.WrapMsg(err, fmt.Sprintf("Template %q not found.", p.Template))
 	}
 	templateTeamID := tmpl.TeamID
 	templateID := tmpl.ID
@@ -159,12 +160,12 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	}
 
 	if !p.TeamID.Valid {
-		return db.Sandbox{}, fmt.Errorf("invalid request: team_id is required")
+		return db.Sandbox{}, apperr.InvalidRequest.Msg("A team_id is required.")
 	}
 
 	team, err := s.DB.GetTeam(ctx, p.TeamID)
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("team not found: %w", err)
+		return db.Sandbox{}, apperr.TeamNotFound.Wrap(err)
 	}
 
 	host, err := s.Scheduler.SelectHost(ctx, p.TeamID, team.IsByoc, p.MemoryMB, 0)
@@ -324,7 +325,7 @@ func (s *SandboxService) Get(ctx context.Context, sandboxID, teamID pgtype.UUID)
 func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID pgtype.UUID) (db.Sandbox, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
+		return db.Sandbox{}, apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status == "paused" {
 		return sb, nil
@@ -333,7 +334,7 @@ func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID pgtype.UUI
 	if _, err := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 		ID: sandboxID, Status: "running", Status_2: "pausing",
 	}); err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox not in running state (current: %s)", sb.Status)
+		return db.Sandbox{}, apperr.SandboxNotRunning.Wrap(err).With("status", sb.Status)
 	}
 
 	agent, err := s.agentForHost(ctx, sb.HostID)
@@ -400,7 +401,7 @@ func (s *SandboxService) pauseInBackground(sandboxID pgtype.UUID, sandboxIDStr, 
 func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID pgtype.UUID) (db.Sandbox, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
+		return db.Sandbox{}, apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status == "running" {
 		return sb, nil
@@ -409,7 +410,7 @@ func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID pgtype.UU
 	if _, err := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 		ID: sandboxID, Status: "paused", Status_2: "resuming",
 	}); err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox not in paused state (current: %s)", sb.Status)
+		return db.Sandbox{}, apperr.SandboxNotPaused.Wrap(err).With("status", sb.Status)
 	}
 
 	agent, err := s.agentForHost(ctx, sb.HostID)
@@ -509,10 +510,10 @@ func (s *SandboxService) resumeInBackground(
 func (s *SandboxService) CreateSnapshot(ctx context.Context, sandboxID, teamID pgtype.UUID, name string) (db.Sandbox, string, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return db.Sandbox{}, "", fmt.Errorf("sandbox not found: %w", err)
+		return db.Sandbox{}, "", apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status != "running" && sb.Status != "paused" {
-		return db.Sandbox{}, "", fmt.Errorf("sandbox is not running or paused (status: %s)", sb.Status)
+		return db.Sandbox{}, "", apperr.Conflict.Msg("Sandbox must be running or paused to snapshot.").With("status", sb.Status)
 	}
 	origStatus := sb.Status
 
@@ -520,18 +521,18 @@ func (s *SandboxService) CreateSnapshot(ctx context.Context, sandboxID, teamID p
 		name = id.NewSnapshotName()
 	}
 	if err := validate.SafeName(name); err != nil {
-		return db.Sandbox{}, "", fmt.Errorf("invalid name: %w", err)
+		return db.Sandbox{}, "", apperr.ValidationFailed.Msgf("Invalid snapshot name: %v.", err)
 	}
 	// Reject duplicate names up front so we don't pause the VM and dump memory
 	// only to fail on the template insert at the very end.
 	if _, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: name, TeamID: teamID}); err == nil {
-		return db.Sandbox{}, "", fmt.Errorf("conflict: a snapshot named %q already exists", name)
+		return db.Sandbox{}, "", apperr.Conflict.Msgf("A snapshot named %q already exists.", name)
 	}
 
 	if _, err := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 		ID: sandboxID, Status: origStatus, Status_2: "snapshotting",
 	}); err != nil {
-		return db.Sandbox{}, "", fmt.Errorf("sandbox not in %s state (current: %s)", origStatus, sb.Status)
+		return db.Sandbox{}, "", apperr.Conflict.WrapMsg(err, fmt.Sprintf("Sandbox is no longer in %s state.", origStatus)).With("status", origStatus)
 	}
 
 	agent, err := s.agentForHost(ctx, sb.HostID)
@@ -639,7 +640,7 @@ func (s *SandboxService) publishStateChanged(ctx context.Context, sandboxIDStr, 
 func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID pgtype.UUID) error {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return fmt.Errorf("sandbox not found: %w", err)
+		return apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status == "stopped" || sb.Status == "error" {
 		return nil
@@ -745,7 +746,7 @@ func (s *SandboxService) persistMetricPoints(ctx context.Context, sandboxID pgty
 func (s *SandboxService) GetDiskUsage(ctx context.Context, sandboxID, teamID pgtype.UUID) (int64, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return 0, fmt.Errorf("sandbox not found: %w", err)
+		return 0, apperr.SandboxNotFound.Wrap(err)
 	}
 
 	// For running or paused sandboxes, try the agent for live disk usage.
@@ -776,10 +777,10 @@ func (s *SandboxService) GetDiskUsage(ctx context.Context, sandboxID, teamID pgt
 func (s *SandboxService) Ping(ctx context.Context, sandboxID, teamID pgtype.UUID) error {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return fmt.Errorf("sandbox not found: %w", err)
+		return apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status != "running" {
-		return fmt.Errorf("sandbox is not running (status: %s)", sb.Status)
+		return apperr.SandboxNotRunning.New().With("status", sb.Status)
 	}
 
 	agent, _, err := s.agentForSandbox(ctx, sandboxID)

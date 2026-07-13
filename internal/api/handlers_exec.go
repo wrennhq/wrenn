@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -65,18 +66,18 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 
 	var req execRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if req.Cmd == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "cmd is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The cmd field is required.").With("field", "cmd"))
 		return
 	}
 
 	agent, err := agentForHost(ctx, h.db, h.pool, sb.HostID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "host_unavailable", "sandbox host is not reachable")
+		writeErr(w, r, apperr.HostUnreachable.Wrap(err))
 		return
 	}
 
@@ -96,8 +97,7 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 			Cwd:       req.Cwd,
 		}))
 		if err != nil {
-			status, code, msg := agentErrToHTTP(err)
-			writeError(w, status, code, msg)
+			writeErr(w, r, err)
 			return
 		}
 
@@ -123,8 +123,7 @@ func (h *execHandler) Exec(w http.ResponseWriter, r *http.Request) {
 		Cwd:        req.Cwd,
 	}))
 	if err != nil {
-		status, code, msg := agentErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 

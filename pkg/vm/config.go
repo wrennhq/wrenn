@@ -27,7 +27,7 @@ type VMConfig struct {
 	KernelPath string
 
 	// RootfsPath is the path to the rootfs block device for this sandbox.
-	// Typically a dm-snapshot device (e.g., /dev/mapper/wrenn-sb-a1b2c3d4).
+	// Typically a dm-snapshot device (e.g., /dev/mapper/wrenn-cl-a1b2c3d4).
 	RootfsPath string
 
 	// VCPUs is the number of virtual CPUs to allocate (default: 1).

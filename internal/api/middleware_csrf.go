@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"net/http"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 )
 
@@ -29,7 +30,7 @@ func requireCSRF() func(http.Handler) http.Handler {
 			header := r.Header.Get("X-CSRF-Token")
 			if err != nil || cookie.Value == "" || header == "" ||
 				subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) != 1 {
-				writeError(w, http.StatusForbidden, "csrf_failed", "missing or invalid CSRF token")
+				writeErr(w, r, apperr.AuthCSRF.New())
 				return
 			}
 			next.ServeHTTP(w, r)
