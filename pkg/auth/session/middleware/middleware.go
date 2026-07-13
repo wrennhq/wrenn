@@ -271,4 +271,3 @@ func IssueSession(
 	SetCookies(w, sess.RawSID, sess.CSRFToken, IsSecure(r))
 	return sess, nil
 }
-

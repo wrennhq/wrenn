@@ -38,6 +38,9 @@ export async function listPlatformTemplates(): Promise<ApiResult<Snapshot[]>> {
 		created_at: t.created_at,
 		platform: true,
 		protected: t.protected,
+		public: false,
+		owned: false,
+		team_slug: 'wrenn',
 	}));
 	return { ok: true, data: snapshots };
 }

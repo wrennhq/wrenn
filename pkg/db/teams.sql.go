@@ -24,6 +24,24 @@ func (q *Queries) CountTeamsAdmin(ctx context.Context) (int32, error) {
 	return total, err
 }
 
+const deleteExpiredReservedSlugs = `-- name: DeleteExpiredReservedSlugs :exec
+DELETE FROM reserved_slugs WHERE expires_at <= NOW()
+`
+
+func (q *Queries) DeleteExpiredReservedSlugs(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteExpiredReservedSlugs)
+	return err
+}
+
+const deleteReservedSlug = `-- name: DeleteReservedSlug :exec
+DELETE FROM reserved_slugs WHERE slug = $1
+`
+
+func (q *Queries) DeleteReservedSlug(ctx context.Context, slug string) error {
+	_, err := q.db.Exec(ctx, deleteReservedSlug, slug)
+	return err
+}
+
 const deleteTeamMember = `-- name: DeleteTeamMember :exec
 DELETE FROM users_teams WHERE team_id = $1 AND user_id = $2
 `
@@ -38,8 +56,25 @@ func (q *Queries) DeleteTeamMember(ctx context.Context, arg DeleteTeamMemberPara
 	return err
 }
 
+const getActiveReservedSlug = `-- name: GetActiveReservedSlug :one
+SELECT slug, team_id, reserved_at, expires_at FROM reserved_slugs WHERE slug = $1 AND expires_at > NOW()
+`
+
+// Returns a non-expired reservation for the slug, if any.
+func (q *Queries) GetActiveReservedSlug(ctx context.Context, slug string) (ReservedSlug, error) {
+	row := q.db.QueryRow(ctx, getActiveReservedSlug, slug)
+	var i ReservedSlug
+	err := row.Scan(
+		&i.Slug,
+		&i.TeamID,
+		&i.ReservedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getBYOCTeams = `-- name: GetBYOCTeams :many
-SELECT id, name, slug, is_byoc, created_at, deleted_at FROM teams WHERE is_byoc = TRUE AND deleted_at IS NULL ORDER BY created_at
+SELECT id, name, slug, is_byoc, created_at, deleted_at, slug_changed_at FROM teams WHERE is_byoc = TRUE AND deleted_at IS NULL ORDER BY created_at
 `
 
 func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
@@ -58,6 +93,7 @@ func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
 			&i.IsByoc,
 			&i.CreatedAt,
 			&i.DeletedAt,
+			&i.SlugChangedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -70,7 +106,7 @@ func (q *Queries) GetBYOCTeams(ctx context.Context) ([]Team, error) {
 }
 
 const getDefaultTeamForUser = `-- name: GetDefaultTeamForUser :one
-SELECT t.id, t.name, t.slug, t.is_byoc, t.created_at, t.deleted_at FROM teams t
+SELECT t.id, t.name, t.slug, t.is_byoc, t.created_at, t.deleted_at, t.slug_changed_at FROM teams t
 JOIN users_teams ut ON ut.team_id = t.id
 WHERE ut.user_id = $1 AND ut.is_default = TRUE AND t.deleted_at IS NULL
 LIMIT 1
@@ -86,6 +122,7 @@ func (q *Queries) GetDefaultTeamForUser(ctx context.Context, userID pgtype.UUID)
 		&i.IsByoc,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.SlugChangedAt,
 	)
 	return i, err
 }
@@ -120,7 +157,7 @@ func (q *Queries) GetOwnedTeamIDs(ctx context.Context, userID pgtype.UUID) ([]pg
 }
 
 const getTeam = `-- name: GetTeam :one
-SELECT id, name, slug, is_byoc, created_at, deleted_at FROM teams WHERE id = $1
+SELECT id, name, slug, is_byoc, created_at, deleted_at, slug_changed_at FROM teams WHERE id = $1
 `
 
 func (q *Queries) GetTeam(ctx context.Context, id pgtype.UUID) (Team, error) {
@@ -133,12 +170,13 @@ func (q *Queries) GetTeam(ctx context.Context, id pgtype.UUID) (Team, error) {
 		&i.IsByoc,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.SlugChangedAt,
 	)
 	return i, err
 }
 
 const getTeamBySlug = `-- name: GetTeamBySlug :one
-SELECT id, name, slug, is_byoc, created_at, deleted_at FROM teams WHERE slug = $1 AND deleted_at IS NULL
+SELECT id, name, slug, is_byoc, created_at, deleted_at, slug_changed_at FROM teams WHERE slug = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetTeamBySlug(ctx context.Context, slug string) (Team, error) {
@@ -151,6 +189,7 @@ func (q *Queries) GetTeamBySlug(ctx context.Context, slug string) (Team, error) 
 		&i.IsByoc,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.SlugChangedAt,
 	)
 	return i, err
 }
@@ -265,10 +304,28 @@ func (q *Queries) GetTeamsForUser(ctx context.Context, userID pgtype.UUID) ([]Ge
 	return items, nil
 }
 
+const insertReservedSlug = `-- name: InsertReservedSlug :exec
+INSERT INTO reserved_slugs (slug, team_id, expires_at)
+VALUES ($1, $2, NOW() + INTERVAL '30 days')
+ON CONFLICT (slug) DO UPDATE
+    SET team_id = EXCLUDED.team_id, reserved_at = NOW(), expires_at = NOW() + INTERVAL '30 days'
+`
+
+type InsertReservedSlugParams struct {
+	Slug   string      `json:"slug"`
+	TeamID pgtype.UUID `json:"team_id"`
+}
+
+// Park an old slug for 30 days so nobody can immediately claim it after a rename.
+func (q *Queries) InsertReservedSlug(ctx context.Context, arg InsertReservedSlugParams) error {
+	_, err := q.db.Exec(ctx, insertReservedSlug, arg.Slug, arg.TeamID)
+	return err
+}
+
 const insertTeam = `-- name: InsertTeam :one
 INSERT INTO teams (id, name, slug)
 VALUES ($1, $2, $3)
-RETURNING id, name, slug, is_byoc, created_at, deleted_at
+RETURNING id, name, slug, is_byoc, created_at, deleted_at, slug_changed_at
 `
 
 type InsertTeamParams struct {
@@ -287,6 +344,7 @@ func (q *Queries) InsertTeam(ctx context.Context, arg InsertTeamParams) (Team, e
 		&i.IsByoc,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.SlugChangedAt,
 	)
 	return i, err
 }
@@ -473,5 +531,19 @@ type UpdateTeamNameParams struct {
 
 func (q *Queries) UpdateTeamName(ctx context.Context, arg UpdateTeamNameParams) error {
 	_, err := q.db.Exec(ctx, updateTeamName, arg.ID, arg.Name)
+	return err
+}
+
+const updateTeamSlug = `-- name: UpdateTeamSlug :exec
+UPDATE teams SET slug = $2, slug_changed_at = NOW() WHERE id = $1 AND deleted_at IS NULL
+`
+
+type UpdateTeamSlugParams struct {
+	ID   pgtype.UUID `json:"id"`
+	Slug string      `json:"slug"`
+}
+
+func (q *Queries) UpdateTeamSlug(ctx context.Context, arg UpdateTeamSlugParams) error {
+	_, err := q.db.Exec(ctx, updateTeamSlug, arg.ID, arg.Slug)
 	return err
 }

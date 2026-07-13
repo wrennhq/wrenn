@@ -458,6 +458,18 @@ func (l *AuditLogger) LogTeamRename(ctx context.Context, ac auth.AuthContext, te
 	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "team", id.FormatTeamID(teamID), "rename", "info", map[string]any{"old_name": oldName, "new_name": newName}))
 }
 
+func (l *AuditLogger) LogTeamSlugChange(ctx context.Context, ac auth.AuthContext, teamID pgtype.UUID, oldSlug, newSlug string) {
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "team", id.FormatTeamID(teamID), "slug_change", "info", map[string]any{"old_slug": oldSlug, "new_slug": newSlug}))
+}
+
+func (l *AuditLogger) LogTemplateVisibility(ctx context.Context, ac auth.AuthContext, name string, public bool) {
+	action := "unpublish"
+	if public {
+		action = "publish"
+	}
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "template", name, action, "info", map[string]any{"public": public}))
+}
+
 // --- Channel events (scope: team) ---
 
 func (l *AuditLogger) LogChannelCreate(ctx context.Context, ac auth.AuthContext, channelID pgtype.UUID, name, provider string) {

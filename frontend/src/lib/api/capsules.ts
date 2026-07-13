@@ -90,6 +90,27 @@ export type Snapshot = {
 	platform: boolean;
 	/** True for built-in system base templates, which cannot be deleted. */
 	protected?: boolean;
+	/** True when the template is published and launchable by other teams. */
+	public: boolean;
+	/** True when the template belongs to the viewing team. */
+	owned: boolean;
+	/** Slug of the owning team. Foreign public templates launch as `<team_slug>/<name>`. */
+	team_slug: string;
+};
+
+export type SnapshotPage = {
+	templates: Snapshot[];
+	total: number;
+	page: number;
+	per_page: number;
+	total_pages: number;
+};
+
+export type ListSnapshotsParams = {
+	type?: string;
+	q?: string;
+	page?: number;
+	per_page?: number;
 };
 
 // Snapshots are async: the call returns 202 with the capsule now in the
@@ -99,11 +120,26 @@ export async function createSnapshot(capsuleId: string, name?: string): Promise<
 	return apiFetch('POST', '/api/v1/snapshots', { sandbox_id: capsuleId, name });
 }
 
-export async function listSnapshots(typeFilter?: string): Promise<ApiResult<Snapshot[]>> {
-	const url = typeFilter ? `/api/v1/snapshots?type=${typeFilter}` : '/api/v1/snapshots';
-	return apiFetch('GET', url);
+export async function listSnapshots(params: ListSnapshotsParams = {}): Promise<ApiResult<SnapshotPage>> {
+	const q = new URLSearchParams();
+	if (params.type) q.set('type', params.type);
+	if (params.q) q.set('q', params.q);
+	if (params.page) q.set('page', String(params.page));
+	if (params.per_page) q.set('per_page', String(params.per_page));
+	const qs = q.toString();
+	return apiFetch('GET', qs ? `/api/v1/snapshots?${qs}` : '/api/v1/snapshots');
 }
 
 export async function deleteSnapshot(name: string): Promise<ApiResult<void>> {
-	return apiFetch('DELETE', `/api/v1/snapshots/${name}`);
+	return apiFetch('DELETE', `/api/v1/snapshots/${encodeURIComponent(name)}`);
+}
+
+/** Publish or unpublish a template the team owns. */
+export async function setTemplateVisibility(
+	name: string,
+	isPublic: boolean
+): Promise<ApiResult<void>> {
+	return apiFetch('PATCH', `/api/v1/snapshots/${encodeURIComponent(name)}/visibility`, {
+		public: isPublic
+	});
 }
