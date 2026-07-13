@@ -402,8 +402,15 @@ pub struct SpawnedProcess {
 ///
 /// Runs inside `pre_exec`, so it must stay async-signal-safe: raw libc calls
 /// only, no allocation.
+///
+/// When envd is not running as root (dev/test hosts), it holds no privilege to
+/// drop — `setgroups`/`setgid`/`setuid` would fail with EPERM. In that case the
+/// child already runs unprivileged as the current user, so skip the drop.
 unsafe fn switch_user(uid: libc::uid_t, gid: libc::gid_t) -> std::io::Result<()> {
     unsafe {
+        if libc::geteuid() != 0 {
+            return Ok(());
+        }
         if libc::setgroups(0, std::ptr::null()) != 0 {
             return Err(std::io::Error::last_os_error());
         }
