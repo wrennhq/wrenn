@@ -228,51 +228,58 @@ func Run(opts ...Option) {
 		}
 	}
 
-	// Hard-delete accounts that have been soft-deleted for more than 15 days (runs every 24h).
+	// Hard-delete accounts that have been soft-deleted for more than 15 days.
 	// Audit logs referencing deleted users are anonymized before the user row is removed.
 	// A notification email is sent to the user before their data is permanently removed.
+	// Runs once at startup, then every 24h — the startup pass matters because frequent
+	// restarts (deploys) would otherwise keep resetting the 24h ticker so it never fires.
+	runAccountCleanup := func() {
+		expired, err := queries.ListExpiredSoftDeletedUsers(ctx)
+		if err != nil {
+			slog.Error("account cleanup: failed to list expired users", "error", err)
+			return
+		}
+		var deleted int
+		for _, row := range expired {
+			prefixedID := id.FormatUserID(row.ID)
+			if err := queries.AnonymizeAuditLogsByUserID(ctx, pgtype.Text{String: prefixedID, Valid: true}); err != nil {
+				slog.Error("account cleanup: failed to anonymize audit logs, skipping delete", "user_id", prefixedID, "error", err)
+				continue
+			}
+			if err := queries.HardDeleteUser(ctx, row.ID); err != nil {
+				slog.Error("account cleanup: failed to hard-delete user", "user_id", prefixedID, "error", err)
+				continue
+			}
+			for _, h := range authHooks {
+				if err := h.OnAccountHardDelete(ctx, row.ID); err != nil {
+					slog.Warn("account cleanup: OnAccountHardDelete hook failed", "user_id", prefixedID, "error", err)
+				}
+			}
+			if err := mailer.Send(ctx, row.Email, "Your Wrenn account has been deleted", email.EmailData{
+				Message: "Your Wrenn account and all associated data have been permanently deleted. " +
+					"This action was taken automatically because your account was scheduled for deletion more than 15 days ago.\n\n" +
+					"If you believe this was done in error, please contact support.",
+				Closing: "Thank you for using Wrenn.",
+			}); err != nil {
+				slog.Warn("account cleanup: failed to send deletion notification", "email", row.Email, "error", err)
+			}
+			deleted++
+		}
+		if len(expired) > 0 {
+			slog.Info("account cleanup: processed expired users", "total", len(expired), "deleted", deleted)
+		}
+	}
+
 	go func() {
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
+		runAccountCleanup()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				expired, err := queries.ListExpiredSoftDeletedUsers(ctx)
-				if err != nil {
-					slog.Error("account cleanup: failed to list expired users", "error", err)
-					continue
-				}
-				var deleted int
-				for _, row := range expired {
-					prefixedID := id.FormatUserID(row.ID)
-					if err := queries.AnonymizeAuditLogsByUserID(ctx, pgtype.Text{String: prefixedID, Valid: true}); err != nil {
-						slog.Error("account cleanup: failed to anonymize audit logs, skipping delete", "user_id", prefixedID, "error", err)
-						continue
-					}
-					if err := queries.HardDeleteUser(ctx, row.ID); err != nil {
-						slog.Error("account cleanup: failed to hard-delete user", "user_id", prefixedID, "error", err)
-						continue
-					}
-					for _, h := range authHooks {
-						if err := h.OnAccountHardDelete(ctx, row.ID); err != nil {
-							slog.Warn("account cleanup: OnAccountHardDelete hook failed", "user_id", prefixedID, "error", err)
-						}
-					}
-					if err := mailer.Send(ctx, row.Email, "Your Wrenn account has been deleted", email.EmailData{
-						Message: "Your Wrenn account and all associated data have been permanently deleted. " +
-							"This action was taken automatically because your account was scheduled for deletion more than 15 days ago.\n\n" +
-							"If you believe this was done in error, please contact support.",
-						Closing: "Thank you for using Wrenn.",
-					}); err != nil {
-						slog.Warn("account cleanup: failed to send deletion notification", "email", row.Email, "error", err)
-					}
-					deleted++
-				}
-				if len(expired) > 0 {
-					slog.Info("account cleanup: processed expired users", "total", len(expired), "deleted", deleted)
-				}
+				runAccountCleanup()
 			}
 		}
 	}()
