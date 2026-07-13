@@ -61,8 +61,8 @@ func newWithBase(hostIP, base string) *Client {
 		activityURL:     base + "/activity",
 		httpClient:      httpClient,
 		streamingClient: streamingClient,
-		process:         genconnect.NewProcessClient(streamingClient, base),
-		filesystem:      genconnect.NewFilesystemClient(httpClient, base),
+		process:         genconnect.NewProcessClient(streamingClient, base, connect.WithReadMaxBytes(MaxEnvdControlBytes)),
+		filesystem:      genconnect.NewFilesystemClient(httpClient, base, connect.WithReadMaxBytes(MaxEnvdControlBytes)),
 	}
 }
 
@@ -132,6 +132,7 @@ func (c *Client) Exec(ctx context.Context, cmd string, args []string, opts *Exec
 	defer stream.Close()
 
 	result := &ExecResult{}
+	var captured int
 
 	for stream.Receive() {
 		ev, ok := procEventToStreamEvent(stream.Msg().GetEvent())
@@ -139,10 +140,20 @@ func (c *Client) Exec(ctx context.Context, cmd string, args []string, opts *Exec
 			continue
 		}
 		switch ev.Type {
-		case "stdout":
-			result.Stdout = append(result.Stdout, ev.Data...)
-		case "stderr":
-			result.Stderr = append(result.Stderr, ev.Data...)
+		case "stdout", "stderr":
+			// Non-streaming Exec buffers all output in memory. A hostile guest
+			// (root inside its VM) can emit unbounded output (e.g. `cat
+			// /dev/zero`); cap the cumulative capture so it fails instead of
+			// growing the host-agent heap without bound.
+			if captured+len(ev.Data) > maxExecCaptureBytes {
+				return result, fmt.Errorf("exec output exceeded %d-byte cap; use streaming exec for large output", maxExecCaptureBytes)
+			}
+			captured += len(ev.Data)
+			if ev.Type == "stdout" {
+				result.Stdout = append(result.Stdout, ev.Data...)
+			} else {
+				result.Stderr = append(result.Stderr, ev.Data...)
+			}
 		case "end":
 			result.ExitCode = ev.ExitCode
 		}
@@ -278,7 +289,7 @@ func (c *Client) WriteFile(ctx context.Context, path string, content []byte) err
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxEnvdControlBytes))
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("write file %s: status %d: %s", path, resp.StatusCode, string(respBody))
@@ -310,13 +321,15 @@ func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxEnvdControlBytes))
 		return nil, fmt.Errorf("read file %s: status %d: %s", path, resp.StatusCode, string(respBody))
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	// Unary ReadFile buffers the whole file. A guest controls the body, so cap
+	// it — genuinely large files should use a streaming read for constant memory.
+	data, err := readCapped(resp.Body, maxEnvdFileBytes)
 	if err != nil {
-		return nil, fmt.Errorf("read file body: %w", err)
+		return nil, fmt.Errorf("read file %s body: %w", path, err)
 	}
 
 	return data, nil
@@ -340,7 +353,7 @@ func (c *Client) PrepareSnapshot(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxEnvdControlBytes))
 		return fmt.Errorf("prepare snapshot: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -391,10 +404,10 @@ func (c *Client) memoryPreloadRequest(ctx context.Context, method string) (Memor
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, MaxEnvdControlBytes))
 		return status, fmt.Errorf("memory preload %s: status %d: %s", method, resp.StatusCode, string(body))
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, MaxEnvdControlBytes)).Decode(&status); err != nil {
 		return status, fmt.Errorf("memory preload %s: decode: %w", method, err)
 	}
 	return status, nil
@@ -436,7 +449,7 @@ func (c *Client) CancelMemoryPreload(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, MaxEnvdControlBytes))
 		return fmt.Errorf("preload cancel: status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
@@ -501,7 +514,7 @@ func (c *Client) PostInitWithDefaults(ctx context.Context, defaultUser string, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxEnvdControlBytes))
 		return fmt.Errorf("post init: status %d: %s", resp.StatusCode, string(respBody))
 	}
 

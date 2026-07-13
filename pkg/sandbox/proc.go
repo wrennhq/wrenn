@@ -74,7 +74,10 @@ func readEnvdMetrics(ctx context.Context, client *envdclient.Client) (envdMetric
 		return envdMetrics{}, fmt.Errorf("envd metrics: status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	// The guest controls this body (guest root owns envd), and this runs on the
+	// 1s per-sandbox sampler, so cap it — an uncapped read here is a guest→host
+	// OOM vector.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, envdclient.MaxEnvdControlBytes))
 	if err != nil {
 		return envdMetrics{}, fmt.Errorf("read envd metrics body: %w", err)
 	}

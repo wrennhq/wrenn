@@ -57,6 +57,11 @@ func requireRunningSandbox(w http.ResponseWriter, r *http.Request, queries *db.Q
 	return sb, sandboxID, sandboxIDStr, true
 }
 
+// maxWSMessageBytes bounds a single inbound WebSocket frame on the exec/PTY
+// upgrade paths. These carry only stdin and small control messages, so a large
+// frame is either a bug or an attempt to grow the CP heap.
+const maxWSMessageBytes = 4 << 20 // 4 MiB
+
 // upgradeAndAuthenticate upgrades the HTTP connection to WebSocket. The
 // auth context must already be populated by upstream middleware — browser
 // clients via the wrenn_sid cookie (sent automatically on WS upgrade),
@@ -79,6 +84,10 @@ func upgradeAndAuthenticateWith(w http.ResponseWriter, r *http.Request, up *webs
 	if err != nil {
 		return nil, auth.AuthContext{}, fmt.Errorf("websocket upgrade: %w", err)
 	}
+	// Defense-in-depth: bound the size of a single inbound WS frame so a
+	// malicious client cannot stream an oversized message the CP buffers whole.
+	// Exec stdin and PTY input/control frames are small; 4 MiB is generous.
+	conn.SetReadLimit(maxWSMessageBytes)
 	return conn, ac, nil
 }
 

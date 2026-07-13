@@ -9,10 +9,18 @@ import (
 	"sync"
 	"time"
 
+	"connectrpc.com/connect"
+
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/proto/hostagent/gen/hostagentv1connect"
 )
+
+// maxHostResponseBytes caps each Connect message the control plane reads from a
+// host agent. Defense-in-depth: a compromised host could otherwise stream an
+// unbounded response and OOM the control plane. connectrpc-go defaults to no
+// limit, so this must be set explicitly.
+const maxHostResponseBytes = 256 << 20 // 256 MiB
 
 // HostClientPool maintains a cache of Connect RPC clients keyed by host ID.
 // Clients are created lazily on first access and evicted when a host is removed
@@ -90,7 +98,7 @@ func (p *HostClientPool) Get(hostID, address string) hostagentv1connect.HostAgen
 	if c, ok = p.clients[hostID]; ok {
 		return c
 	}
-	c = hostagentv1connect.NewHostAgentServiceClient(p.httpClient, p.ensureScheme(address))
+	c = hostagentv1connect.NewHostAgentServiceClient(p.httpClient, p.ensureScheme(address), connect.WithReadMaxBytes(maxHostResponseBytes))
 	p.clients[hostID] = c
 	return c
 }
