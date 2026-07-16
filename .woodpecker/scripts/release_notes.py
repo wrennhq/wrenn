@@ -9,7 +9,7 @@ REPO_DIR = "wrenn-releases"
 CAPSULE_OUTPUT = "/tmp/release_notes.md"
 LOCAL_OUTPUT = os.path.join(os.path.dirname(__file__), "..", "release_notes.md")
 
-DEFAULT_MODEL = "opencode/deepseek-v4-flash-free"
+DEFAULT_MODEL = "opencode/big-pickle"
 
 RELEASE_NOTES_EXAMPLE = """
 ## What's new
@@ -71,17 +71,13 @@ def generate_release_notes(
 
     git tag --sort=-version:refname
 
-    If there are at least two tags, compare the newest tag against the previous tag:
+    Compare the newest tag against the previous tag:
 
     git log PREVIOUS_TAG..LATEST_TAG --pretty=format:'%s (%h)'
     git diff PREVIOUS_TAG..LATEST_TAG --stat
     git diff PREVIOUS_TAG..LATEST_TAG --name-only
 
     If there is only one tag, inspect the latest tag with:
-
-    git log LATEST_TAG --pretty=format:'%s (%h)' -n 50
-    git show LATEST_TAG --stat
-    git show LATEST_TAG --name-only
 
     Do not rely on any pre-injected commit list or diff summary.
     You must inspect the git history yourself.
