@@ -2,7 +2,7 @@ openapi: "3.1.0"
 info:
   title: Wrenn API
   description: API for Wrenn — the runtime where AI coding agents live, work, and ship.
-  version: "0.3.0"
+  version: "0.4.0"
 
 servers:
   - url: http://localhost:8080
@@ -795,6 +795,96 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/teams/slug-check:
+    parameters:
+      - name: slug
+        in: query
+        required: true
+        schema:
+          type: string
+        description: Candidate slug to test.
+
+    get:
+      summary: Check whether a slug is available
+      operationId: checkTeamSlug
+      tags: [teams]
+      security:
+        - sessionAuth: []
+      description: |
+        Reports whether the given slug can be adopted right now — applying
+        format, reserved-word, uniqueness, and reservation rules — so the
+        dashboard can validate before the user commits. The result is team
+        independent (a slug is free unless a live team holds it or it sits in
+        the 30-day tombstone), so no team context is required. Does not apply
+        the 60-day cooldown (see `slug_change_allowed_at` on the team object).
+      responses:
+        "200":
+          description: Availability result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available:
+                    type: boolean
+
+  /v1/teams/{id}/slug:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Team ID (must match the session's team_id)
+
+    patch:
+      summary: Change the team slug
+      operationId: changeTeamSlug
+      tags: [teams]
+      security:
+        - sessionAuth: []
+      description: |
+        Change the team's URL slug. Admin or owner role required (verified from
+        DB). A team may change its slug at most once every 60 days. The previous
+        slug is parked for 30 days so it cannot be immediately reclaimed by
+        another team. Existing `<old-slug>/<name>` template references stop
+        resolving once the slug changes. The names `platform`, `wrenn`, and `0`
+        are reserved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug:
+                  type: string
+                  description: |
+                    Lowercase letters, numbers, and dashes; 3–40 characters.
+      responses:
+        "204":
+          description: Slug changed
+        "400":
+          description: Invalid or reserved slug
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Insufficient role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: |
+            Slug is taken, reserved by another team, or within the 60-day cooldown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/teams/{id}/members:
     parameters:
       - name: id
@@ -1542,12 +1632,17 @@ paths:
                 $ref: "#/components/schemas/Error"
 
     get:
-      summary: List templates for your team
+      summary: List templates your team can launch
       operationId: listSnapshots
       tags: [snapshots]
       security:
         - apiKeyAuth: []
         - sessionAuth: []
+      description: |
+        Returns one page of the templates your team may launch: your own
+        templates, platform templates, and every public template across all
+        teams. Public templates owned by another team carry that team's `slug`
+        and are referenced as `<slug>/<name>` when creating a capsule.
       parameters:
         - name: type
           in: query
@@ -1556,15 +1651,91 @@ paths:
             type: string
             enum: [base, snapshot]
           description: Filter by template type.
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Search over template name and owning team slug.
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: 1-based page number.
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Page size (max 200).
       responses:
         "200":
-          description: List of templates
+          description: Paginated list of visible templates
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Template"
+                type: object
+                properties:
+                  templates:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Template"
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  per_page:
+                    type: integer
+                  total_pages:
+                    type: integer
+
+  /v1/snapshots/{name}/visibility:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+
+    patch:
+      summary: Publish or unpublish a template
+      operationId: setTemplateVisibility
+      tags: [snapshots]
+      security:
+        - apiKeyAuth: []
+        - sessionAuth: []
+      description: |
+        Publish or unpublish a template your team owns. A public template can be
+        launched by any team as `<your-team-slug>/<name>`. Only the owning team
+        may change visibility.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [public]
+              properties:
+                public:
+                  type: boolean
+                  description: True to publish, false to unpublish.
+      responses:
+        "204":
+          description: Visibility updated
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Your team does not own a template with that name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/snapshots/{name}:
     parameters:
@@ -1573,6 +1744,53 @@ paths:
         required: true
         schema:
           type: string
+
+    patch:
+      summary: Rename a template
+      operationId: renameTemplate
+      tags: [snapshots]
+      security:
+        - apiKeyAuth: []
+        - sessionAuth: []
+      description: |
+        Rename a template your team owns. Renaming unpublishes the template, so
+        any `<your-team-slug>/<name>` references other teams held stop resolving
+        and the owner must republish under the new name. Platform-owned and
+        system base templates cannot be renamed here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_name]
+              properties:
+                new_name:
+                  type: string
+                  description: New template name (letters, digits, dot, dash, underscore; max 64).
+      responses:
+        "204":
+          description: Template renamed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Cannot rename a platform-owned / system base template
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Your team does not own a template with that name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A template with the new name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
     delete:
       summary: Delete a snapshot template
@@ -3076,6 +3294,40 @@ paths:
                   $ref: "#/components/schemas/AdminTemplate"
 
   /v1/admin/templates/{name}:
+    patch:
+      summary: Rename a platform template (admin)
+      operationId: adminRenameTemplate
+      tags: [admin]
+      description: |
+        Rename a platform-owned template. The hardcoded system base templates
+        (minimal-ubuntu / -alpine / -arch / -fedora) cannot be renamed.
+      security:
+        - sessionAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_name]
+              properties:
+                new_name:
+                  type: string
+                  description: New template name (letters, digits, dot, dash, underscore; max 64).
+      responses:
+        "204":
+          description: Template renamed
+        "403":
+          description: Cannot rename a system base template
+        "404":
+          description: No platform template with that name
+        "409":
+          description: A template with the new name already exists
     delete:
       summary: Delete a template (admin)
       operationId: adminDeleteTemplate
@@ -3718,7 +3970,7 @@ components:
             $ref: "#/components/schemas/Error"
 
     ServiceUnavailable:
-      description: The host serving this capsule is unreachable (host_unavailable)
+      description: Temporarily unavailable — no capacity (capacity_unavailable), host draining (host_draining), or the capsule's host is unreachable (host_unreachable, returned as 502)
       content:
         application/json:
           schema:
@@ -3850,6 +4102,11 @@ components:
         template:
           type: string
           default: minimal-ubuntu
+          description: |
+            Template reference. Either `<name>` — resolved against your team's
+            templates first, then platform templates — or `<team-slug>/<name>`
+            to launch another team's public template (or a `wrenn/<name>`
+            platform template explicitly).
         vcpus:
           type: integer
           default: 2
@@ -4049,6 +4306,21 @@ components:
             True for built-in system base templates (minimal-ubuntu,
             minimal-alpine, minimal-arch, minimal-fedora). Protected templates
             cannot be deleted.
+        public:
+          type: boolean
+          description: |
+            True when the template is published, making it launchable by other
+            teams as `<team_slug>/<name>`.
+        owned:
+          type: boolean
+          description: |
+            True when the template belongs to your team. A globe indicator is
+            shown on your own `public` templates.
+        team_slug:
+          type: string
+          description: |
+            Slug of the owning team. For foreign public templates, reference the
+            template as `<team_slug>/<name>` when creating a capsule.
         metadata:
           type: object
           additionalProperties: { type: string }
@@ -4426,21 +4698,13 @@ components:
           description: IDs of capsules that would be destroyed on force-delete.
 
     HostHasCapsulesError:
-      type: object
-      properties:
-        error:
-          type: object
-          properties:
-            code:
-              type: string
-              example: has_active_sandboxes
-            message:
-              type: string
-            sandbox_ids:
-              type: array
-              items:
-                type: string
-              description: IDs of active capsules blocking deletion.
+      allOf:
+        - $ref: "#/components/schemas/Error"
+      description: |
+        Standard error envelope returned by host delete (409) when the host
+        still has active capsules. `error.code` is `has_active_sandboxes` and
+        `error.details.sandbox_ids` lists the IDs of the capsules blocking
+        deletion — pass `?force=true` to destroy them and delete the host.
 
     AddTagRequest:
       type: object
@@ -4466,13 +4730,23 @@ components:
           type: string
         slug:
           type: string
-          description: Immutable 12-char hex slug (e.g. a1b2c3-d1e2f3)
+          description: |
+            URL slug (auto-generated, e.g. a1b2c3-d1e2f3). Changeable once every
+            60 days; used to reference the team's public templates as
+            `<slug>/<name>`.
         is_byoc:
           type: boolean
           description: Whether the team runs on its own bring-your-own-cloud hosts
         created_at:
           type: string
           format: date-time
+        slug_change_allowed_at:
+          type: string
+          format: date-time
+          description: |
+            Present only while the team is within the 60-day slug-change
+            cooldown; the earliest time the slug may be changed again. Absent
+            means a change is allowed now.
 
     TeamWithRole:
       allOf:
@@ -4724,14 +4998,37 @@ components:
 
     Error:
       type: object
+      description: |
+        Standard error envelope returned by every non-2xx JSON response.
+        `code` is a stable machine-readable identifier (snake_case, e.g.
+        `sandbox_not_running`, `capacity_unavailable`, `internal_error`).
+        `message` is human-readable and safe to display. `request_id` matches
+        the `X-Request-ID` response header and the server logs — quote it when
+        reporting issues. `retryable` indicates the same request may succeed
+        if retried. `details` carries optional machine-readable context
+        (e.g. `{"status": "paused"}` on `sandbox_not_running`, or
+        `{"field": "path"}` on `validation_failed`).
       properties:
         error:
           type: object
+          required: [code, message, retryable]
           properties:
             code:
               type: string
+              example: sandbox_not_running
             message:
               type: string
+              example: Sandbox is not running.
+            request_id:
+              type: string
+              example: req_8f3ka92b1c04d7e6
+            retryable:
+              type: boolean
+              example: false
+            details:
+              type: object
+              additionalProperties: true
+              example: { status: paused }
 
     AuditLogEntry:
       type: object

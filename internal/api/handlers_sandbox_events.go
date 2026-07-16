@@ -1,14 +1,12 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/channels"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -42,19 +40,43 @@ type sandboxEventRequest struct {
 func (h *sandboxEventHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	var req sandboxEventRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if req.Event == "" || req.SandboxID == "" || req.HostID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "event, sandbox_id, and host_id are required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The event, sandbox_id, and host_id fields are required."))
 		return
 	}
 
 	hc := auth.MustHostFromContext(r.Context())
 	callerHostID := id.FormatHostID(hc.HostID)
 	if callerHostID != req.HostID {
-		writeError(w, http.StatusForbidden, "forbidden", "host_id does not match authenticated host")
+		writeErr(w, r, apperr.Forbidden.Msg("The host_id does not match the authenticated host."))
+		return
+	}
+
+	sandboxUUID, parseErr := id.ParseSandboxID(req.SandboxID)
+	if parseErr != nil {
+		writeErr(w, r, apperr.ValidationFailed.Msg("Invalid sandbox_id."))
+		return
+	}
+
+	sb, sbErr := h.db.GetSandbox(r.Context(), sandboxUUID)
+	if sbErr != nil {
+		// Unknown sandbox — accept and ignore so the host agent does not retry a
+		// callback for a row we no longer have (e.g. already destroyed).
+		slog.Warn("sandbox event callback: unknown sandbox", "sandbox_id", req.SandboxID)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// The host_id check above only proves the caller is *a* valid host, not the
+	// owner of this sandbox. Without this a host could report state for any
+	// team's sandbox by ID — flipping its status and spoofing lifecycle events
+	// into the victim team's audit log, channels, and dashboard.
+	if sb.HostID != hc.HostID {
+		writeErr(w, r, apperr.Forbidden.Msg("The sandbox is not managed by the authenticated host."))
 		return
 	}
 
@@ -62,7 +84,7 @@ func (h *sandboxEventHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		req.Timestamp = time.Now().Unix()
 	}
 
-	evt, ok := h.translate(r.Context(), req)
+	evt, ok := h.translate(req, sb)
 	if !ok {
 		// Unknown event type — log and accept so the host agent doesn't retry.
 		slog.Warn("sandbox event callback: untranslatable event", "event", req.Event, "sandbox_id", req.SandboxID)
@@ -74,23 +96,15 @@ func (h *sandboxEventHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// translate converts a raw host-agent callback into the canonical event.
+// translate converts a raw host-agent callback into the canonical event. The
+// sandbox row is resolved and ownership-checked by the caller (Handle) and
+// passed in, so this is a pure mapping with no further DB access.
 // For failure events without an in-flight verb (e.g. sandbox.failed), the
-// current DB status is consulted to pick the appropriate verb.
-func (h *sandboxEventHandler) translate(ctx context.Context, req sandboxEventRequest) (events.Event, bool) {
-	sandboxUUID, parseErr := id.ParseSandboxID(req.SandboxID)
-	if parseErr != nil {
-		return events.Event{}, false
-	}
-
-	var teamID pgtype.UUID
-	if sb, dbErr := h.db.GetSandbox(ctx, sandboxUUID); dbErr == nil {
-		teamID = sb.TeamID
-	}
-
+// sandbox's current status is consulted to pick the appropriate verb.
+func (h *sandboxEventHandler) translate(req sandboxEventRequest, sb db.Sandbox) (events.Event, bool) {
 	base := events.Event{
 		Timestamp: time.Unix(req.Timestamp, 0).UTC().Format(time.RFC3339),
-		TeamID:    id.FormatTeamID(teamID),
+		TeamID:    id.FormatTeamID(sb.TeamID),
 		Actor:     events.SystemActor(),
 		Resource:  events.Resource{ID: req.SandboxID, Type: "sandbox"},
 	}
@@ -134,9 +148,8 @@ func (h *sandboxEventHandler) translate(ctx context.Context, req sandboxEventReq
 		base.Error = req.Error
 		base.Metadata = map[string]string{"reason": "host_failure"}
 	case "sandbox.failed", "sandbox.error":
-		// Pick a verb based on the sandbox's current DB status.
-		verb := h.verbForFailure(ctx, sandboxUUID)
-		base.Event = verb
+		// Pick a verb based on the sandbox's current status.
+		base.Event = verbForFailure(sb.Status)
 		base.Outcome = events.OutcomeError
 		base.Error = req.Error
 		base.Metadata = map[string]string{"reason": "host_failure"}
@@ -146,12 +159,8 @@ func (h *sandboxEventHandler) translate(ctx context.Context, req sandboxEventReq
 	return base, true
 }
 
-func (h *sandboxEventHandler) verbForFailure(ctx context.Context, sandboxID pgtype.UUID) string {
-	sb, err := h.db.GetSandbox(ctx, sandboxID)
-	if err != nil {
-		return events.CapsuleDestroy
-	}
-	switch sb.Status {
+func verbForFailure(status string) string {
+	switch status {
 	case "starting":
 		return events.CapsuleCreate
 	case "resuming":

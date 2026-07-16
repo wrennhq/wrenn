@@ -34,6 +34,26 @@ UPDATE teams SET deleted_at = NOW() WHERE id = $1;
 -- name: GetTeamBySlug :one
 SELECT * FROM teams WHERE slug = $1 AND deleted_at IS NULL;
 
+-- name: UpdateTeamSlug :exec
+UPDATE teams SET slug = $2, slug_changed_at = NOW() WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: InsertReservedSlug :exec
+-- Park an old slug for 30 days so nobody can immediately claim it after a rename.
+INSERT INTO reserved_slugs (slug, team_id, expires_at)
+VALUES ($1, $2, NOW() + INTERVAL '30 days')
+ON CONFLICT (slug) DO UPDATE
+    SET team_id = EXCLUDED.team_id, reserved_at = NOW(), expires_at = NOW() + INTERVAL '30 days';
+
+-- name: GetActiveReservedSlug :one
+-- Returns a non-expired reservation for the slug, if any.
+SELECT * FROM reserved_slugs WHERE slug = $1 AND expires_at > NOW();
+
+-- name: DeleteReservedSlug :exec
+DELETE FROM reserved_slugs WHERE slug = $1;
+
+-- name: DeleteExpiredReservedSlugs :exec
+DELETE FROM reserved_slugs WHERE expires_at <= NOW();
+
 -- name: GetTeamsForUser :many
 SELECT t.id, t.name, t.slug, t.is_byoc, t.created_at, t.deleted_at, ut.role
 FROM teams t

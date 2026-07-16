@@ -105,6 +105,12 @@ export async function listAdminTemplates(): Promise<ApiResult<AdminTemplate[]>> 
 	return apiFetch('GET', '/api/v1/admin/templates');
 }
 
+export async function renameAdminTemplate(name: string, newName: string): Promise<ApiResult<void>> {
+	return apiFetch('PATCH', `/api/v1/admin/templates/${encodeURIComponent(name)}`, {
+		new_name: newName
+	});
+}
+
 export async function deleteAdminTemplate(name: string): Promise<ApiResult<void>> {
 	return apiFetch('DELETE', `/api/v1/admin/templates/${name}`);
 }

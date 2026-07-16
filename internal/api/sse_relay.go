@@ -155,6 +155,15 @@ func impliedSandboxStatus(event events.Event) (string, bool) {
 	if event.Outcome != events.OutcomeSuccess {
 		return "", false
 	}
+	// Only system-initiated completion events (host callbacks, TTL reaper) imply
+	// a terminal status. User/API-key create/resume/pause events are published at
+	// request-accept time — while the sandbox is still transient (starting /
+	// resuming / pausing) — so their hydrated DB row is authoritative and must
+	// not be overridden. Overriding them masks the transient state on the
+	// dashboard (a launching capsule jumps straight to "running").
+	if event.Actor.Type != events.ActorSystem {
+		return "", false
+	}
 	switch event.Event {
 	case events.CapsulePause:
 		return "paused", true

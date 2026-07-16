@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"git.omukk.dev/wrenn/wrenn/internal/recipe"
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
@@ -39,13 +40,13 @@ func (h *buildStreamHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	buildIDStr := chi.URLParam(r, "id")
 	buildID, err := id.ParseBuildID(buildIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid build ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid build ID."))
 		return
 	}
 
 	build, err := h.db.GetTemplateBuild(r.Context(), buildID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "build not found")
+		writeErr(w, r, apperr.BuildNotFound.Wrap(err))
 		return
 	}
 

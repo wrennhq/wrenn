@@ -308,15 +308,18 @@ func (l *AuditLogger) LogSandboxDestroyWithReason(ctx context.Context, ac auth.A
 	})
 }
 
-// LogSandboxCreateSystem records a system-derived create outcome (e.g. the
+// LogSandboxCreateSystem records a system-derived create failure (e.g. the
 // reconciler inferring a failed first-boot after the grace period expired).
-// reason is added to metadata; err controls outcome.
+// It writes an "error" action — not a "create" one — so the entry reads as a
+// capsule error rather than a system-attributed creation; the user-attributed
+// create row is written separately by the request handler. reason and the
+// "create" phase are added to metadata; err controls outcome.
 func (l *AuditLogger) LogSandboxCreateSystem(ctx context.Context, teamID, sandboxID pgtype.UUID, reason string, err error) {
-	meta := map[string]any{"reason": reason}
+	meta := map[string]any{"reason": reason, "phase": "create"}
 	l.Log(ctx, Entry{
 		TeamID: teamID, ActorType: "system",
 		ResourceType: "sandbox", ResourceID: id.FormatSandboxID(sandboxID),
-		Action: "create", Scope: "team", Status: auditStatusFor(err, "info"),
+		Action: "error", Scope: "team", Status: auditStatusFor(err, "info"),
 		Metadata: mergeMeta(meta, err),
 	})
 	l.publish(ctx, events.Event{
@@ -331,14 +334,16 @@ func (l *AuditLogger) LogSandboxCreateSystem(ctx context.Context, teamID, sandbo
 	})
 }
 
-// LogSandboxResumeSystem records a system-derived resume outcome (typically
-// reconciler-inferred error after the grace period).
+// LogSandboxResumeSystem records a system-derived resume failure (typically
+// reconciler-inferred error after the grace period). Like LogSandboxCreateSystem
+// it writes an "error" action so the entry reads as a capsule error rather than
+// a system-attributed resume; reason and the "resume" phase go to metadata.
 func (l *AuditLogger) LogSandboxResumeSystem(ctx context.Context, teamID, sandboxID pgtype.UUID, reason string, err error) {
-	meta := map[string]any{"reason": reason}
+	meta := map[string]any{"reason": reason, "phase": "resume"}
 	l.Log(ctx, Entry{
 		TeamID: teamID, ActorType: "system",
 		ResourceType: "sandbox", ResourceID: id.FormatSandboxID(sandboxID),
-		Action: "resume", Scope: "team", Status: auditStatusFor(err, "info"),
+		Action: "error", Scope: "team", Status: auditStatusFor(err, "info"),
 		Metadata: mergeMeta(meta, err),
 	})
 	l.publish(ctx, events.Event{
@@ -451,6 +456,28 @@ func (l *AuditLogger) LogSnapshotDeleteSystem(ctx context.Context, teamID pgtype
 
 func (l *AuditLogger) LogTeamRename(ctx context.Context, ac auth.AuthContext, teamID pgtype.UUID, oldName, newName string) {
 	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "team", id.FormatTeamID(teamID), "rename", "info", map[string]any{"old_name": oldName, "new_name": newName}))
+}
+
+func (l *AuditLogger) LogTeamSlugChange(ctx context.Context, ac auth.AuthContext, teamID pgtype.UUID, oldSlug, newSlug string) {
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "team", id.FormatTeamID(teamID), "slug_change", "info", map[string]any{"old_slug": oldSlug, "new_slug": newSlug}))
+}
+
+// LogTemplateRename records a team renaming one of its own templates.
+func (l *AuditLogger) LogTemplateRename(ctx context.Context, ac auth.AuthContext, oldName, newName string) {
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "template", oldName, "rename", "info", map[string]any{"old_name": oldName, "new_name": newName}))
+}
+
+// LogTemplateRenameAdmin records an admin renaming a platform template.
+func (l *AuditLogger) LogTemplateRenameAdmin(ctx context.Context, ac auth.AuthContext, oldName, newName string) {
+	l.Log(ctx, newAdminEntry(ac, "template", oldName, "rename", "info", map[string]any{"old_name": oldName, "new_name": newName}))
+}
+
+func (l *AuditLogger) LogTemplateVisibility(ctx context.Context, ac auth.AuthContext, name string, public bool) {
+	action := "unpublish"
+	if public {
+		action = "publish"
+	}
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "template", name, action, "info", map[string]any{"public": public}))
 }
 
 // --- Channel events (scope: team) ---

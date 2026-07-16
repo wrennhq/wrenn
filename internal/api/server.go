@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/wrenn/internal/email"
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
@@ -61,6 +62,7 @@ func New(
 	version string,
 ) *Server {
 	r := chi.NewRouter()
+	r.Use(apperr.Middleware)
 	r.Use(requestLogger())
 
 	// Apply extension middleware before routes so it wraps all OSS routes.
@@ -121,7 +123,7 @@ func New(
 	statsH := newStatsHandler(statsSvc)
 	usageH := newUsageHandler(usageSvc)
 	metricsH := newSandboxMetricsHandler(queries, pool)
-	buildH := newBuildHandler(buildSvc, queries, pool, al)
+	buildH := newBuildHandler(buildSvc, templateSvc, queries, pool, al)
 	buildStreamH := newBuildStreamHandler(queries, buildBroker)
 	channelH := newChannelHandler(channelSvc, al)
 	ptyH := newPtyHandler(queries, pool)
@@ -199,9 +201,13 @@ func New(
 		r.Use(csrf)
 		r.Get("/", teamH.List)
 		r.Post("/", teamH.Create)
+		// Slug availability check is team independent (scoped to the session's
+		// active team), so it lives outside the /{id} group.
+		r.Get("/slug-check", teamH.CheckSlug)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", teamH.Get)
 			r.Patch("/", teamH.Rename)
+			r.Patch("/slug", teamH.ChangeSlug)
 			r.Delete("/", teamH.Delete)
 			r.Get("/members", teamH.ListMembers)
 			r.Post("/members", teamH.AddMember)
@@ -267,6 +273,8 @@ func New(
 		r.Use(csrf)
 		r.Post("/", snapshots.Create)
 		r.Get("/", snapshots.List)
+		r.Patch("/{name}/visibility", snapshots.SetVisibility)
+		r.Patch("/{name}", snapshots.Rename)
 		r.Delete("/{name}", snapshots.Delete)
 	})
 
@@ -341,6 +349,7 @@ func New(
 			r.Put("/users/{id}/admin", usersH.SetUserAdmin)
 			r.Get("/audit-logs", auditH.AdminList)
 			r.Get("/templates", buildH.ListTemplates)
+			r.Patch("/templates/{name}", buildH.RenameTemplate)
 			r.Delete("/templates/{name}", buildH.DeleteTemplate)
 			r.Post("/builds", buildH.Create)
 			r.Get("/builds", buildH.List)

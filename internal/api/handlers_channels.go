@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/channels"
@@ -79,7 +80,7 @@ func (h *channelHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req createChannelRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
@@ -91,8 +92,7 @@ func (h *channelHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Events:   req.Events,
 	})
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *channelHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	chs, err := h.svc.List(r.Context(), ac.TeamID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list channels")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -131,16 +131,16 @@ func (h *channelHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	channelID, err := id.ParseChannelID(channelIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid channel ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid channel ID."))
 		return
 	}
 
 	ch, err := h.svc.Get(r.Context(), channelID, ac.TeamID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "not_found", "channel not found")
+			writeErr(w, r, apperr.NotFound.WrapMsg(err, "Channel not found."))
 		} else {
-			writeError(w, http.StatusInternalServerError, "db_error", "failed to get channel")
+			writeErr(w, r, apperr.Internal.Wrap(err))
 		}
 		return
 	}
@@ -155,20 +155,19 @@ func (h *channelHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	channelID, err := id.ParseChannelID(channelIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid channel ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid channel ID."))
 		return
 	}
 
 	var req updateChannelRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	ch, err := h.svc.Update(r.Context(), channelID, ac.TeamID, req.Name, req.Events)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -180,13 +179,12 @@ func (h *channelHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *channelHandler) Test(w http.ResponseWriter, r *http.Request) {
 	var req testChannelRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if err := h.svc.Test(r.Context(), req.Provider, req.Config); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -200,20 +198,19 @@ func (h *channelHandler) RotateConfig(w http.ResponseWriter, r *http.Request) {
 
 	channelID, err := id.ParseChannelID(channelIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid channel ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid channel ID."))
 		return
 	}
 
 	var req rotateConfigRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	ch, err := h.svc.RotateConfig(r.Context(), channelID, ac.TeamID, req.Config)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -228,12 +225,12 @@ func (h *channelHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	channelID, err := id.ParseChannelID(channelIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid channel ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid channel ID."))
 		return
 	}
 
 	if err := h.svc.Delete(r.Context(), channelID, ac.TeamID); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete channel")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 

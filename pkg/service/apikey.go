@@ -3,12 +3,15 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 )
 
 // APIKeyService provides API key operations shared between the REST API and the dashboard.
@@ -25,8 +28,13 @@ type APIKeyCreateResult struct {
 
 // Create generates a new API key for the given team.
 func (s *APIKeyService) Create(ctx context.Context, teamID, userID pgtype.UUID, name string) (APIKeyCreateResult, error) {
+	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "Unnamed API Key"
+	} else if err := validate.DisplayName(name); err != nil {
+		return APIKeyCreateResult{}, apperr.ValidationFailed.
+			WrapMsg(err, "API key name may only contain letters, numbers, spaces, and . _ - (max 100 characters).").
+			With("field", "name")
 	}
 
 	plaintext, hash, err := auth.GenerateAPIKey()

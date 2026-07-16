@@ -5,7 +5,7 @@
 -- No user can become a member of this team — it exists solely to satisfy
 -- foreign key constraints and to act as a namespace for platform resources.
 INSERT INTO teams (id, name, slug)
-VALUES ('00000000-0000-0000-0000-000000000000', 'Platform', 'platform')
+VALUES ('00000000-0000-0000-0000-000000000000', 'Platform', 'wrenn')
 ON CONFLICT (id) DO NOTHING;
 
 -- +goose Down

@@ -3,28 +3,17 @@ package api
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 )
-
-type errorResponse struct {
-	Error errorDetail `json:"error"`
-}
-
-type errorDetail struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -32,41 +21,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, errorResponse{
-		Error: errorDetail{Code: code, Message: message},
-	})
+// writeErr resolves any error to its client-safe envelope and writes it,
+// logging the cause chain keyed by request ID. Handlers construct errors
+// from the pkg/apperr catalog.
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
+	apperr.WriteHTTP(w, r, err)
 }
 
 // formatUUIDForRPC converts a pgtype.UUID to a hex string for RPC messages.
 func formatUUIDForRPC(u pgtype.UUID) string {
 	return id.UUIDString(u)
-}
-
-// agentErrToHTTP maps a Connect RPC error to an HTTP status, error code, and message.
-func agentErrToHTTP(err error) (int, string, string) {
-	switch connect.CodeOf(err) {
-	case connect.CodeNotFound:
-		return http.StatusNotFound, "not_found", err.Error()
-	case connect.CodeInvalidArgument:
-		return http.StatusBadRequest, "invalid_request", err.Error()
-	case connect.CodeAlreadyExists:
-		return http.StatusConflict, "already_exists", err.Error()
-	case connect.CodeFailedPrecondition:
-		return http.StatusConflict, "conflict", err.Error()
-	case connect.CodePermissionDenied:
-		return http.StatusForbidden, "forbidden", err.Error()
-	case connect.CodeUnavailable:
-		return http.StatusServiceUnavailable, "no_hosts_available", "no servers available — try again later"
-	case connect.CodeUnimplemented:
-		return http.StatusNotImplemented, "agent_error", err.Error()
-	case connect.CodeDeadlineExceeded:
-		return http.StatusGatewayTimeout, "timeout", "command timed out"
-	case connect.CodeInternal:
-		return http.StatusInternalServerError, "agent_error", err.Error()
-	default:
-		return http.StatusBadGateway, "agent_error", err.Error()
-	}
 }
 
 // requestLogger returns middleware that logs each request.
@@ -77,6 +41,7 @@ func requestLogger() func(http.Handler) http.Handler {
 			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(sw, r)
 			slog.Info("request",
+				"request_id", apperr.RequestID(r.Context()),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", sw.status,
@@ -88,45 +53,6 @@ func requestLogger() func(http.Handler) http.Handler {
 
 func decodeJSON(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
-}
-
-// serviceErrToHTTP maps a service-layer error to an HTTP status, code, and message.
-// It inspects the underlying Connect RPC error if present, otherwise returns 500.
-func serviceErrToHTTP(err error) (int, string, string) {
-	msg := err.Error()
-
-	// Check for Connect RPC errors wrapped by the service layer.
-	var connectErr *connect.Error
-	if errors.As(err, &connectErr) {
-		return agentErrToHTTP(connectErr)
-	}
-
-	// Map well-known service error patterns.
-	// Return generic messages for most cases to avoid leaking internal details.
-	switch {
-	case strings.Contains(msg, "not found"):
-		return http.StatusNotFound, "not_found", "resource not found"
-	case strings.Contains(msg, "not running"):
-		return http.StatusConflict, "invalid_state", "resource is not running"
-	case strings.Contains(msg, "not paused"):
-		return http.StatusConflict, "invalid_state", "resource is not paused"
-	case strings.Contains(msg, "conflict:"):
-		return http.StatusConflict, "conflict", strings.TrimPrefix(msg, "conflict: ")
-	case strings.Contains(msg, "forbidden"):
-		return http.StatusForbidden, "forbidden", "forbidden"
-	case strings.Contains(msg, "invalid or expired"):
-		return http.StatusUnauthorized, "unauthorized", "invalid or expired credentials"
-	case strings.Contains(msg, "no online") && strings.Contains(msg, "hosts available"),
-		strings.Contains(msg, "no host has sufficient resources"):
-		return http.StatusServiceUnavailable, "no_hosts_available", "no servers available — try again later"
-	case strings.HasPrefix(msg, "invalid metadata: "):
-		return http.StatusBadRequest, "invalid_metadata", strings.TrimPrefix(msg, "invalid metadata: ")
-	case strings.Contains(msg, "invalid"):
-		return http.StatusBadRequest, "invalid_request", "invalid request"
-	default:
-		slog.Error("unhandled service error", "error", err)
-		return http.StatusInternalServerError, "internal_error", "an internal error occurred"
-	}
 }
 
 type statusWriter struct {

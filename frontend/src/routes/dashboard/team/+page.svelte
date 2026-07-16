@@ -9,6 +9,8 @@
 		getTeam,
 		listTeams,
 		updateTeam,
+		changeTeamSlug,
+		checkTeamSlug,
 		addMember,
 		removeMember,
 		updateMemberRole,
@@ -41,6 +43,19 @@
 	let savingName = $state(false);
 	let nameError = $state<string | null>(null);
 	let nameInputEl = $state<HTMLInputElement | null>(null);
+
+	// Inline slug edit
+	let editingSlug = $state(false);
+	let editSlug = $state('');
+	let savingSlug = $state(false);
+	let slugError = $state<string | null>(null);
+	let slugInputEl = $state<HTMLInputElement | null>(null);
+	// Confirmation before committing a slug change (irreversible for 60 days).
+	let showSlugConfirm = $state(false);
+	// Live availability check as the user types.
+	let slugCheck = $state<'idle' | 'checking' | 'available' | 'unavailable'>('idle');
+	// Reveal the cooldown date only once the user tries to edit a locked slug.
+	let slugLockNoticeShown = $state(false);
 
 	// Copy state
 	let copiedId = $state(false);
@@ -129,6 +144,99 @@
 			nameError = result.error;
 		}
 		savingName = false;
+	}
+
+	// True while the team is within the 60-day slug-change cooldown.
+	let slugLocked = $derived(
+		!!team?.slug_change_allowed_at && new Date(team.slug_change_allowed_at) > new Date()
+	);
+
+	// MMM DD, YYYY (e.g. "Jul 13, 2026").
+	function fmtSlugDate(iso: string): string {
+		return new Date(iso).toLocaleDateString('en-US', {
+			month: 'short',
+			day: '2-digit',
+			year: 'numeric'
+		});
+	}
+
+	function startEditSlug() {
+		if (!team || !canManage) return;
+		// Within the cooldown the slug can't change yet — reveal the date instead
+		// of opening the editor.
+		if (slugLocked) {
+			slugLockNoticeShown = true;
+			return;
+		}
+		slugLockNoticeShown = false;
+		editSlug = team.slug;
+		editingSlug = true;
+		slugError = null;
+		slugCheck = 'idle';
+		setTimeout(() => slugInputEl?.focus(), 0);
+	}
+
+	function cancelEditSlug() {
+		editingSlug = false;
+		slugError = null;
+		slugCheck = 'idle';
+	}
+
+	// Debounced availability check so the user learns a slug is taken, reserved,
+	// or malformed before committing.
+	let slugCheckTimer: ReturnType<typeof setTimeout> | undefined;
+	function onSlugInput() {
+		slugError = null;
+		const trimmed = editSlug.trim().toLowerCase();
+		clearTimeout(slugCheckTimer);
+		if (!team || !trimmed || trimmed === team.slug) {
+			slugCheck = 'idle';
+			return;
+		}
+		slugCheck = 'checking';
+		slugCheckTimer = setTimeout(async () => {
+			if (!team) return;
+			const result = await checkTeamSlug(trimmed);
+			// Drop stale responses if the input moved on while we were waiting.
+			if (editSlug.trim().toLowerCase() !== trimmed) return;
+			slugCheck = result.ok && result.data.available ? 'available' : 'unavailable';
+		}, 350);
+	}
+
+	// First step: validate and open the confirmation dialog. Changing a slug is
+	// irreversible for 60 days, so it must be confirmed explicitly.
+	function saveEditSlug() {
+		if (!team) return;
+		const trimmed = editSlug.trim().toLowerCase();
+		if (!trimmed || trimmed === team.slug) {
+			cancelEditSlug();
+			return;
+		}
+		// Only proceed once the live check has confirmed availability.
+		if (slugCheck !== 'available') return;
+		slugError = null;
+		showSlugConfirm = true;
+	}
+
+	// Second step: commit the change after the user confirms.
+	async function confirmSlugChange() {
+		if (!team) return;
+		const trimmed = editSlug.trim().toLowerCase();
+		savingSlug = true;
+		slugError = null;
+		const result = await changeTeamSlug(team.id, trimmed);
+		if (result.ok) {
+			team = { ...team, slug: trimmed };
+			editingSlug = false;
+			showSlugConfirm = false;
+			toast.success('Team slug updated');
+		} else {
+			// Surface the error back in the inline editor (e.g. taken, reserved,
+			// or still within the 60-day cooldown).
+			slugError = result.error;
+			showSlugConfirm = false;
+		}
+		savingSlug = false;
 	}
 
 	async function copyToClipboard(text: string) {
@@ -495,6 +603,149 @@
 												{team.name}
 											</span>
 										{/if}
+									{/if}
+								</div>
+							</div>
+
+							<!-- Team slug -->
+							<div class="flex items-start gap-4 border-b border-[var(--color-border)] px-5 py-4">
+								<div class="min-w-0 flex-1">
+									<div
+										class="mb-1.5 text-label font-semibold uppercase tracking-[0.05em] text-[var(--color-text-muted)]"
+									>
+										Team slug
+									</div>
+									{#if editingSlug}
+										<div class="flex items-center gap-2">
+											<div class="relative min-w-0 flex-1">
+												<input
+													bind:this={slugInputEl}
+													bind:value={editSlug}
+													oninput={onSlugInput}
+													onkeydown={(e) => {
+														if (e.key === 'Enter' && !savingSlug) saveEditSlug();
+														if (e.key === 'Escape') cancelEditSlug();
+													}}
+													disabled={savingSlug}
+													spellcheck="false"
+													autocapitalize="off"
+													autocomplete="off"
+													class="w-full rounded-[var(--radius-input)] border bg-[var(--color-bg-4)] px-3 py-1.5 pr-8 font-mono text-ui text-[var(--color-text-bright)] outline-none transition-colors duration-150 disabled:opacity-60
+														{slugCheck === 'unavailable'
+															? 'border-[var(--color-red)]/60'
+															: slugCheck === 'available'
+																? 'border-[var(--color-accent)]'
+																: 'border-[var(--color-border-mid)]'}"
+												/>
+												<!-- Inline status glyph -->
+												<span class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
+													{#if slugCheck === 'checking'}
+														<svg class="animate-spin text-[var(--color-text-tertiary)]" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+															<path d="M21 12a9 9 0 1 1-6.219-8.56" />
+														</svg>
+													{:else if slugCheck === 'available'}
+														<svg class="text-[var(--color-accent)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+															<polyline points="20 6 9 17 4 12" />
+														</svg>
+													{:else if slugCheck === 'unavailable'}
+														<svg class="text-[var(--color-red)]" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+															<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+														</svg>
+													{/if}
+												</span>
+											</div>
+											<button
+												onclick={saveEditSlug}
+												disabled={savingSlug || slugCheck !== 'available'}
+												title="Save"
+												class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-button)] border border-[var(--color-accent)]/40 bg-[var(--color-accent-glow-mid)] text-[var(--color-accent-bright)] transition-colors duration-150 hover:bg-[var(--color-accent-glow)] disabled:opacity-40"
+											>
+												<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+													<polyline points="20 6 9 17 4 12" />
+												</svg>
+											</button>
+											<button
+												onclick={cancelEditSlug}
+												disabled={savingSlug}
+												title="Cancel"
+												class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-button)] border border-[var(--color-border-mid)] text-[var(--color-text-tertiary)] transition-colors duration-150 hover:text-[var(--color-text-secondary)] disabled:opacity-40"
+											>
+												<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+													<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+												</svg>
+											</button>
+										</div>
+
+										<!-- Live availability feedback -->
+										{#if slugCheck === 'unavailable'}
+											<p class="mt-1.5 text-meta text-[var(--color-red)]">
+												<strong>{editSlug.trim().toLowerCase()}</strong> unavailable.
+											</p>
+										{:else if slugCheck === 'available'}
+											<p class="mt-1.5 text-meta text-[var(--color-accent-mid)]">Available.</p>
+										{:else if slugError}
+											<p class="mt-1.5 text-meta text-[var(--color-red)]">{slugError}</p>
+										{/if}
+										<p class="mt-1.5 text-meta text-[var(--color-text-tertiary)]">
+											Lowercase letters, numbers, and dashes. Changeable once every 60 days;
+											the old slug stays reserved for 30 days.
+										</p>
+									{:else if slugLocked && team.slug_change_allowed_at}
+										<!-- Within cooldown: clicking edit reveals the date rather than opening the editor -->
+										{#if canManage}
+											<button
+												type="button"
+												class="group flex cursor-pointer items-center gap-2"
+												onclick={startEditSlug}
+												title="Click to edit"
+											>
+												<span class="font-mono text-ui text-[var(--color-text-secondary)] transition-colors duration-150 group-hover:text-[var(--color-text-primary)]">
+													{team.slug}
+												</span>
+												<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-[var(--color-text-tertiary)]">
+													<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+													<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+												</svg>
+											</button>
+										{:else}
+											<span class="font-mono text-ui text-[var(--color-text-secondary)]">{team.slug}</span>
+										{/if}
+										{#if slugLockNoticeShown}
+											<p class="mt-1 flex items-center gap-1.5 text-meta text-[var(--color-amber)]">
+												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+													<rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+												</svg>
+												Changeable again on {fmtSlugDate(team.slug_change_allowed_at)}.
+											</p>
+										{:else}
+											<p class="mt-1 text-meta text-[var(--color-text-tertiary)]">
+												Public templates are shared as
+												<span class="font-mono text-[var(--color-text-secondary)]">{team.slug}/name</span>.
+											</p>
+										{/if}
+									{:else}
+										{#if canManage}
+											<button
+												type="button"
+												class="group flex cursor-pointer items-center gap-2"
+												onclick={startEditSlug}
+												title="Click to edit"
+											>
+												<span class="font-mono text-ui text-[var(--color-text-secondary)] transition-colors duration-150 group-hover:text-[var(--color-text-primary)]">
+													{team.slug}
+												</span>
+												<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-[var(--color-text-tertiary)]">
+													<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+													<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+												</svg>
+											</button>
+										{:else}
+											<span class="font-mono text-ui text-[var(--color-text-secondary)]">{team.slug}</span>
+										{/if}
+										<p class="mt-1 text-meta text-[var(--color-text-tertiary)]">
+											Public templates are shared as
+											<span class="font-mono text-[var(--color-text-secondary)]">{team.slug}/name</span>.
+										</p>
 									{/if}
 								</div>
 							</div>
@@ -1195,6 +1446,101 @@
 						</svg>
 					{/if}
 					{myRole === 'owner' ? 'Delete Team' : 'Leave Team'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Slug Change Confirmation Dialog -->
+{#if showSlugConfirm && team}
+	<div class="fixed inset-0 z-50 flex items-center justify-center">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="absolute inset-0 bg-black/60"
+			onclick={() => {
+				if (!savingSlug) showSlugConfirm = false;
+			}}
+			onkeydown={(e) => {
+				if (e.key === 'Escape' && !savingSlug) showSlugConfirm = false;
+			}}
+		></div>
+
+		<div
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] p-6"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
+		>
+			<h2 class="font-serif text-heading text-[var(--color-text-bright)]">Change team slug?</h2>
+			<p class="mt-2 text-ui text-[var(--color-text-tertiary)]">
+				Rename from
+				<span class="font-mono text-[var(--color-text-secondary)]">{team.slug}</span>
+				to
+				<span class="font-mono text-[var(--color-text-primary)]">{editSlug.trim().toLowerCase()}</span>.
+			</p>
+
+			<!-- Amber warning -->
+			<div
+				class="mt-4 flex items-start gap-2 rounded-[var(--radius-input)] border border-[var(--color-amber)]/20 bg-[var(--color-amber)]/5 px-3 py-2.5"
+			>
+				<svg
+					class="mt-0.5 shrink-0"
+					width="13"
+					height="13"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="var(--color-amber)"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+					<line x1="12" y1="9" x2="12" y2="13" />
+					<line x1="12" y1="17" x2="12.01" y2="17" />
+				</svg>
+				<p class="text-meta leading-relaxed text-[var(--color-amber)]">
+					You won't be able to change the slug again for 60 days. The old slug
+					<span class="font-mono">{team.slug}</span> stays reserved for 30 days, and any
+					<span class="font-mono">{team.slug}/template</span> references others use will stop working.
+				</p>
+			</div>
+
+			{#if slugError}
+				<div
+					class="mt-4 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]"
+				>
+					{slugError}
+				</div>
+			{/if}
+
+			<div class="mt-6 flex justify-end gap-3">
+				<button
+					onclick={() => {
+						showSlugConfirm = false;
+					}}
+					disabled={savingSlug}
+					class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+				>
+					Cancel
+				</button>
+				<button
+					onclick={confirmSlugChange}
+					disabled={savingSlug}
+					class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+				>
+					{#if savingSlug}
+						<svg
+							class="animate-spin"
+							width="13"
+							height="13"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path d="M21 12a9 9 0 1 1-6.219-8.56" />
+						</svg>
+					{/if}
+					Change slug
 				</button>
 			</div>
 		</div>

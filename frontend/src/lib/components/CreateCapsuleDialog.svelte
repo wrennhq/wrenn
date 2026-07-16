@@ -24,27 +24,43 @@
 	let inputEl = $state<HTMLInputElement | undefined>(undefined);
 	let listEl = $state<HTMLUListElement | undefined>(undefined);
 
+	// The reference the API understands. Anything the team doesn't own launches
+	// as "<slug>/<name>" — foreign public templates by their team slug, platform
+	// templates as "wrenn/<name>". Own templates (and any missing a slug) use
+	// their bare name.
+	function templateRef(t: Snapshot): string {
+		return t.owned || !t.team_slug ? t.name : `${t.team_slug}/${t.name}`;
+	}
+
 	// Resolve selected template for type indicator + snapshot locking
 	let selectedTemplate = $derived(
-		templates.find((t) => t.name === createForm.template)
+		templates.find((t) => templateRef(t) === createForm.template)
 	);
 	let selectedIsSnapshot = $derived(selectedTemplate?.type === 'snapshot');
 
 	let filtered = $derived.by(() => {
 		const q = templateQuery.toLowerCase();
 		if (!q) return templates;
-		return templates.filter((t) => t.name.toLowerCase().includes(q));
+		return templates.filter(
+			(t) => templateRef(t).toLowerCase().includes(q) || t.name.toLowerCase().includes(q)
+		);
 	});
 
 	// Fetch templates when dialog opens
 	$effect(() => {
 		if (open && templates.length === 0 && !templatesLoading) {
 			templatesLoading = true;
-			const fetcher = templateSource === 'platform' ? listPlatformTemplates : listSnapshots;
-			fetcher().then((result) => {
-				if (result.ok) templates = result.data;
-				templatesLoading = false;
-			});
+			if (templateSource === 'platform') {
+				listPlatformTemplates().then((result) => {
+					if (result.ok) templates = result.data;
+					templatesLoading = false;
+				});
+			} else {
+				listSnapshots().then((result) => {
+					if (result.ok) templates = result.data.templates;
+					templatesLoading = false;
+				});
+			}
 		}
 		if (open) {
 			templateQuery = createForm.template ?? '';
@@ -52,8 +68,9 @@
 	});
 
 	function selectTemplate(t: Snapshot) {
-		createForm.template = t.name;
-		templateQuery = t.name;
+		const ref = templateRef(t);
+		createForm.template = ref;
+		templateQuery = ref;
 		// Pre-fill specs from the template if available
 		if (t.vcpus) createForm.vcpus = t.vcpus;
 		if (t.memory_mb) createForm.memory_mb = t.memory_mb;
@@ -206,7 +223,7 @@
 									{templateQuery ? 'No matching templates' : 'No templates available'}
 								</li>
 							{:else}
-								{#each filtered as t, i (t.name)}
+								{#each filtered as t, i (templateRef(t))}
 									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<li
 										role="option"
@@ -215,7 +232,7 @@
 											{i === highlightIdx
 												? 'bg-[var(--color-bg-5)] text-[var(--color-text-bright)]'
 												: 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-4)]'}
-											{createForm.template === t.name ? 'font-medium' : ''}"
+											{createForm.template === templateRef(t) ? 'font-medium' : ''}"
 										onmousedown={(e) => { e.preventDefault(); selectTemplate(t); }}
 										onmouseenter={() => { highlightIdx = i; }}
 									>
@@ -229,7 +246,16 @@
 												base
 											</span>
 										{/if}
-										<span class="truncate font-mono text-meta">{t.name}</span>
+										<span class="truncate font-mono text-meta">
+											{#if !t.owned && t.team_slug}<span class="text-[var(--color-text-tertiary)]">{t.team_slug}/</span>{/if}{t.name}
+										</span>
+										{#if t.public}
+											<span class="shrink-0 text-[var(--color-accent-mid)]" title="Public template">
+												<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+													<circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+												</svg>
+											</span>
+										{/if}
 										<!-- Specs hint -->
 										{#if t.vcpus && t.memory_mb}
 											<span class="ml-auto shrink-0 text-[10px] text-[var(--color-text-muted)]">
@@ -237,7 +263,7 @@
 											</span>
 										{/if}
 										<!-- Selected check -->
-										{#if createForm.template === t.name}
+										{#if createForm.template === templateRef(t)}
 											<svg class="ml-auto shrink-0 text-[var(--color-accent)]" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 												<polyline points="20 6 9 17 4 12" />
 											</svg>

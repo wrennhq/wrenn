@@ -103,7 +103,7 @@ func (r *LoopRegistry) ReleaseAll() {
 
 // SnapshotDevice holds the state for a single dm-snapshot device.
 type SnapshotDevice struct {
-	Name       string // dm device name, e.g., "wrenn-sb-a1b2c3d4"
+	Name       string // dm device name, e.g., "wrenn-cl-a1b2c3d4"
 	DevicePath string // /dev/mapper/<Name>
 	CowPath    string // path to the sparse CoW file
 	CowLoopDev string // loop device for the CoW file

@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
@@ -36,7 +38,7 @@ func (h *usersHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 	prefix := strings.TrimSpace(r.URL.Query().Get("email"))
 	if len(prefix) < 3 || !strings.Contains(prefix, "@") {
-		writeError(w, http.StatusBadRequest, "invalid_request", "email prefix must be at least 3 characters and contain '@'")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The email prefix must be at least 3 characters and contain '@'.").With("field", "email"))
 		return
 	}
 
@@ -45,7 +47,7 @@ func (h *usersHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.db.SearchUsersByEmailPrefix(r.Context(), pgtype.Text{String: escaped, Valid: true})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "search failed")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -74,8 +76,7 @@ func (h *usersHandler) AdminListUsers(w http.ResponseWriter, r *http.Request) {
 
 	users, total, err := h.svc.AdminListUsers(r.Context(), perPage, offset)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -122,7 +123,7 @@ func (h *usersHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := id.ParseUserID(userIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid user ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid user ID."))
 		return
 	}
 
@@ -130,12 +131,12 @@ func (h *usersHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 		Active bool `json:"active"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if ac.UserID == userID && !req.Active {
-		writeError(w, http.StatusBadRequest, "invalid_request", "cannot deactivate your own account")
+		writeErr(w, r, apperr.InvalidRequest.Msg("You cannot deactivate your own account."))
 		return
 	}
 
@@ -147,22 +148,25 @@ func (h *usersHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	// Look up user email for audit log before changing status.
 	user, err := h.db.GetUserByID(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "user not found")
+		writeErr(w, r, apperr.UserNotFound.Wrap(err))
 		return
 	}
 
 	if err := h.svc.SetUserStatus(r.Context(), userID, newStatus); err != nil {
-		httpStatus, code, msg := serviceErrToHTTP(err)
-		writeError(w, httpStatus, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
 	if req.Active {
 		h.audit.LogUserActivate(r.Context(), ac, userID, user.Email)
 	} else {
-		// Disabled users must be kicked out of every active session.
+		// Disabled users must be kicked out of every active session. A failure
+		// here leaves the account's cached sessions live (Session.Get only
+		// re-checks user status on a cache miss), so it must be surfaced loudly
+		// rather than swallowed — an operator may need to force revocation.
 		if err := h.sessions.RevokeAllForUser(r.Context(), userID); err != nil {
-			_ = err
+			slog.Error("deactivate user: revoke sessions failed",
+				"user_id", id.FormatUserID(userID), "error", err)
 		}
 		h.audit.LogUserDeactivate(r.Context(), ac, userID, user.Email)
 	}
@@ -177,7 +181,7 @@ func (h *usersHandler) SetUserAdmin(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := id.ParseUserID(userIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid user ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid user ID."))
 		return
 	}
 
@@ -185,13 +189,13 @@ func (h *usersHandler) SetUserAdmin(w http.ResponseWriter, r *http.Request) {
 		Admin bool `json:"admin"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	user, err := h.db.GetUserByID(r.Context(), userID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "user not found")
+		writeErr(w, r, apperr.UserNotFound.Wrap(err))
 		return
 	}
 
@@ -205,18 +209,18 @@ func (h *usersHandler) SetUserAdmin(w http.ResponseWriter, r *http.Request) {
 			ID:      userID,
 			IsAdmin: true,
 		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to update admin status")
+			writeErr(w, r, apperr.Internal.Wrap(err))
 			return
 		}
 		h.audit.LogUserGrantAdmin(r.Context(), ac, userID, user.Email)
 	} else {
 		affected, err := h.db.RevokeUserAdmin(r.Context(), userID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to update admin status")
+			writeErr(w, r, apperr.Internal.Wrap(err))
 			return
 		}
 		if affected == 0 {
-			writeError(w, http.StatusBadRequest, "invalid_request", "cannot remove the last admin")
+			writeErr(w, r, apperr.InvalidRequest.Msg("Cannot remove the last admin."))
 			return
 		}
 		h.audit.LogUserRevokeAdmin(r.Context(), ac, userID, user.Email)

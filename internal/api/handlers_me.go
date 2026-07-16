@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.omukk.dev/wrenn/wrenn/internal/email"
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/oauth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
@@ -22,6 +22,7 @@ import (
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
+	"git.omukk.dev/wrenn/wrenn/pkg/validate"
 )
 
 const (
@@ -119,13 +120,13 @@ func (h *meHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.db.GetUserByID(ctx, ac.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	providers, err := h.db.GetOAuthProvidersByUserID(ctx, ac.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get providers")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -154,13 +155,13 @@ func (h *meHandler) UpdateName(w http.ResponseWriter, r *http.Request) {
 
 	var req updateNameRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || len(req.Name) > 100 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "name must be between 1 and 100 characters")
+	if err := validate.DisplayName(req.Name); err != nil {
+		writeErr(w, r, apperr.ValidationFailed.WrapMsg(err, "Name may only contain letters, numbers, spaces, and . _ - (max 100 characters).").With("field", "name"))
 		return
 	}
 
@@ -168,7 +169,7 @@ func (h *meHandler) UpdateName(w http.ResponseWriter, r *http.Request) {
 		ID:   ac.UserID,
 		Name: req.Name,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to update name")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -188,46 +189,46 @@ func (h *meHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	var req changePasswordRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	user, err := h.db.GetUserByID(ctx, ac.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	if user.PasswordHash.Valid {
 		// Changing existing password — verify current.
 		if req.CurrentPassword == "" {
-			writeError(w, http.StatusBadRequest, "invalid_request", "current_password is required")
+			writeErr(w, r, apperr.ValidationFailed.Msg("The current_password field is required.").With("field", "current_password"))
 			return
 		}
 		if err := auth.CheckPassword(user.PasswordHash.String, req.CurrentPassword); err != nil {
-			writeError(w, http.StatusUnauthorized, "wrong_password", "current password is incorrect")
+			writeErr(w, r, apperr.AuthInvalidCredentials.WrapMsg(err, "Current password is incorrect."))
 			return
 		}
 	} else {
 		// OAuth user adding a password — confirm must match.
 		if req.ConfirmPassword == "" {
-			writeError(w, http.StatusBadRequest, "invalid_request", "confirm_password is required")
+			writeErr(w, r, apperr.ValidationFailed.Msg("The confirm_password field is required.").With("field", "confirm_password"))
 			return
 		}
 		if req.NewPassword != req.ConfirmPassword {
-			writeError(w, http.StatusBadRequest, "invalid_request", "passwords do not match")
+			writeErr(w, r, apperr.ValidationFailed.Msg("Passwords do not match.").With("field", "confirm_password"))
 			return
 		}
 	}
 
 	if len(req.NewPassword) < 8 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "password must be at least 8 characters")
+		writeErr(w, r, apperr.ValidationFailed.Msg("Password must be at least 8 characters.").With("field", "new_password"))
 		return
 	}
 
 	hash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to hash password")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -235,7 +236,7 @@ func (h *meHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		ID:           ac.UserID,
 		PasswordHash: pgtype.Text{String: hash, Valid: true},
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to update password")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -328,16 +329,16 @@ func (h *meHandler) RequestPasswordReset(w http.ResponseWriter, r *http.Request)
 func (h *meHandler) ConfirmPasswordReset(w http.ResponseWriter, r *http.Request) {
 	var req confirmPasswordResetRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if req.Token == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "token is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The token field is required.").With("field", "token"))
 		return
 	}
 	if len(req.NewPassword) < 8 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "password must be at least 8 characters")
+		writeErr(w, r, apperr.ValidationFailed.Msg("Password must be at least 8 characters.").With("field", "new_password"))
 		return
 	}
 
@@ -349,29 +350,29 @@ func (h *meHandler) ConfirmPasswordReset(w http.ResponseWriter, r *http.Request)
 	// preventing concurrent requests from both consuming the same token.
 	userIDStr, err := h.rdb.GetDel(ctx, redisKey).Result()
 	if errors.Is(err, redis.Nil) {
-		writeError(w, http.StatusBadRequest, "invalid_token", "reset token is invalid or has expired")
+		writeErr(w, r, apperr.AuthTokenInvalid.Wrap(err))
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to verify token")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	userID, err := id.ParseUserID(userIDStr)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "invalid stored user ID")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	user, err := h.db.GetUserByID(ctx, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	hash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to hash password")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -379,7 +380,7 @@ func (h *meHandler) ConfirmPasswordReset(w http.ResponseWriter, r *http.Request)
 		ID:           userID,
 		PasswordHash: pgtype.Text{String: hash, Valid: true},
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to update password")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -411,13 +412,13 @@ func (h *meHandler) ConnectProvider(w http.ResponseWriter, r *http.Request) {
 
 	p, ok := h.oauthRegistry.Get(provider)
 	if !ok {
-		writeError(w, http.StatusNotFound, "provider_not_found", "unsupported OAuth provider")
+		writeErr(w, r, apperr.NotFound.Msg("Unsupported OAuth provider."))
 		return
 	}
 
 	state, err := generateState()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate state")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -455,19 +456,19 @@ func (h *meHandler) DisconnectProvider(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.db.GetUserByID(ctx, ac.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	providers, err := h.db.GetOAuthProvidersByUserID(ctx, ac.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get providers")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	// Ensure the user will still have at least one login method after disconnecting.
 	if !user.PasswordHash.Valid && len(providers) <= 1 {
-		writeError(w, http.StatusBadRequest, "last_login_method", "cannot disconnect your only login method — add a password first")
+		writeErr(w, r, apperr.InvalidRequest.Msg("You cannot disconnect your only login method — add a password first."))
 		return
 	}
 
@@ -480,7 +481,7 @@ func (h *meHandler) DisconnectProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !found {
-		writeError(w, http.StatusNotFound, "not_found", "provider not connected")
+		writeErr(w, r, apperr.NotFound.Msg("This provider is not connected to your account."))
 		return
 	}
 
@@ -488,7 +489,7 @@ func (h *meHandler) DisconnectProvider(w http.ResponseWriter, r *http.Request) {
 		UserID:   ac.UserID,
 		Provider: provider,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to disconnect provider")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -502,29 +503,28 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 
 	var req deleteAccountRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	user, err := h.db.GetUserByID(ctx, ac.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to get user")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	if !strings.EqualFold(strings.TrimSpace(req.Confirmation), user.Email) {
-		writeError(w, http.StatusBadRequest, "invalid_request", "confirmation does not match your email address")
+		writeErr(w, r, apperr.ValidationFailed.Msg("Confirmation does not match your email address.").With("field", "confirmation"))
 		return
 	}
 
 	teamsBlocking, err := h.db.CountUserOwnedTeamsWithOtherMembers(ctx, ac.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to check team ownership")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	if teamsBlocking > 0 {
-		writeError(w, http.StatusConflict, "owns_team_with_members",
-			fmt.Sprintf("you own %d team(s) with other members — transfer ownership or remove members before deleting your account", teamsBlocking))
+		writeErr(w, r, apperr.Conflict.Msgf("You own %d team(s) with other members — transfer ownership or remove members before deleting your account.", teamsBlocking).With("owned_teams_with_members", teamsBlocking))
 		return
 	}
 
@@ -534,20 +534,19 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	// DB-only cleanup in a transaction.
 	soleTeams, err := h.db.ListSoleOwnedTeams(ctx, ac.UserID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list owned teams")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	for _, teamID := range soleTeams {
 		if err := h.teamSvc.DeleteTeamInternal(ctx, teamID); err != nil {
-			writeError(w, http.StatusInternalServerError, "db_error",
-				fmt.Sprintf("failed to delete sole-owned team %s", id.FormatTeamID(teamID)))
+			writeErr(w, r, apperr.Internal.Wrap(err))
 			return
 		}
 	}
 
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to start transaction")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
@@ -555,17 +554,17 @@ func (h *meHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	qtx := h.db.WithTx(tx)
 
 	if err := qtx.DeleteAPIKeysByCreator(ctx, ac.UserID); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete user's API keys")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	if err := qtx.SoftDeleteUser(ctx, ac.UserID); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete account")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to commit account deletion")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -81,13 +82,13 @@ func (h *apiKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req createAPIKeyRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	result, err := h.svc.Create(r.Context(), ac.TeamID, ac.UserID, req.Name)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create API key")
+		writeErr(w, r, err)
 		return
 	}
 
@@ -104,7 +105,7 @@ func (h *apiKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	keys, err := h.svc.ListWithCreator(r.Context(), ac.TeamID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list API keys")
+		writeErr(w, r, err)
 		return
 	}
 
@@ -123,12 +124,12 @@ func (h *apiKeyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	keyID, err := id.ParseAPIKeyID(keyIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid API key ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid API key ID."))
 		return
 	}
 
 	if err := h.svc.Delete(r.Context(), keyID, ac.TeamID); err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete API key")
+		writeErr(w, r, err)
 		return
 	}
 

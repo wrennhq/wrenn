@@ -11,6 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countVisibleTemplates = `-- name: CountVisibleTemplates :one
+SELECT COUNT(*)::int AS total
+FROM templates t
+JOIN teams tm ON tm.id = t.team_id
+WHERE (t.team_id = $1 OR t.team_id = '00000000-0000-0000-0000-000000000000' OR t.is_public = TRUE)
+  AND ($2::text = '' OR t.type = $2::text)
+  AND ($3::text = '' OR t.name ILIKE '%' || $3::text || '%' OR tm.slug ILIKE '%' || $3::text || '%')
+`
+
+type CountVisibleTemplatesParams struct {
+	TeamID     pgtype.UUID `json:"team_id"`
+	TypeFilter string      `json:"type_filter"`
+	Search     string      `json:"search"`
+}
+
+func (q *Queries) CountVisibleTemplates(ctx context.Context, arg CountVisibleTemplatesParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countVisibleTemplates, arg.TeamID, arg.TypeFilter, arg.Search)
+	var total int32
+	err := row.Scan(&total)
+	return total, err
+}
+
 const deleteTemplate = `-- name: DeleteTemplate :exec
 DELETE FROM templates WHERE id = $1
 `
@@ -45,7 +67,7 @@ func (q *Queries) DeleteTemplatesByTeam(ctx context.Context, teamID pgtype.UUID)
 }
 
 const getPlatformTemplateByName = `-- name: GetPlatformTemplateByName :one
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata FROM templates WHERE team_id = '00000000-0000-0000-0000-000000000000' AND name = $1
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates WHERE team_id = '00000000-0000-0000-0000-000000000000' AND name = $1
 `
 
 // Check if a global (platform) template exists with the given name.
@@ -64,12 +86,13 @@ func (q *Queries) GetPlatformTemplateByName(ctx context.Context, name string) (T
 		&i.DefaultUser,
 		&i.DefaultEnv,
 		&i.Metadata,
+		&i.IsPublic,
 	)
 	return i, err
 }
 
 const getTemplate = `-- name: GetTemplate :one
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata FROM templates WHERE id = $1
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates WHERE id = $1
 `
 
 func (q *Queries) GetTemplate(ctx context.Context, id pgtype.UUID) (Template, error) {
@@ -87,12 +110,13 @@ func (q *Queries) GetTemplate(ctx context.Context, id pgtype.UUID) (Template, er
 		&i.DefaultUser,
 		&i.DefaultEnv,
 		&i.Metadata,
+		&i.IsPublic,
 	)
 	return i, err
 }
 
 const getTemplateByName = `-- name: GetTemplateByName :one
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata FROM templates WHERE team_id = $1 AND name = $2
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates WHERE team_id = $1 AND name = $2
 `
 
 type GetTemplateByNameParams struct {
@@ -116,12 +140,16 @@ func (q *Queries) GetTemplateByName(ctx context.Context, arg GetTemplateByNamePa
 		&i.DefaultUser,
 		&i.DefaultEnv,
 		&i.Metadata,
+		&i.IsPublic,
 	)
 	return i, err
 }
 
 const getTemplateByTeam = `-- name: GetTemplateByTeam :one
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata FROM templates WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000')
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates
+WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000')
+ORDER BY (team_id = $2) DESC
+LIMIT 1
 `
 
 type GetTemplateByTeamParams struct {
@@ -129,7 +157,10 @@ type GetTemplateByTeamParams struct {
 	TeamID pgtype.UUID `json:"team_id"`
 }
 
-// Platform templates (team_id = 00000000-...) are visible to all teams.
+// Platform templates (team_id = 00000000-...) are visible to all teams. When a
+// team owns a template whose name also matches a platform template, prefer the
+// team's own row so mutation guards act on the caller's template, not the
+// shared platform one.
 func (q *Queries) GetTemplateByTeam(ctx context.Context, arg GetTemplateByTeamParams) (Template, error) {
 	row := q.db.QueryRow(ctx, getTemplateByTeam, arg.Name, arg.TeamID)
 	var i Template
@@ -145,6 +176,42 @@ func (q *Queries) GetTemplateByTeam(ctx context.Context, arg GetTemplateByTeamPa
 		&i.DefaultUser,
 		&i.DefaultEnv,
 		&i.Metadata,
+		&i.IsPublic,
+	)
+	return i, err
+}
+
+const getVisibleTemplateByTeamName = `-- name: GetVisibleTemplateByTeamName :one
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates
+WHERE team_id = $1 AND name = $2
+  AND (is_public = TRUE OR team_id = $3 OR team_id = '00000000-0000-0000-0000-000000000000')
+`
+
+type GetVisibleTemplateByTeamNameParams struct {
+	TeamID   pgtype.UUID `json:"team_id"`
+	Name     string      `json:"name"`
+	TeamID_2 pgtype.UUID `json:"team_id_2"`
+}
+
+// Slug-qualified reference resolution: the template must belong to the named
+// owning team ($1) and be visible to the requester ($3) — public, owned by the
+// requester, or a platform template.
+func (q *Queries) GetVisibleTemplateByTeamName(ctx context.Context, arg GetVisibleTemplateByTeamNameParams) (Template, error) {
+	row := q.db.QueryRow(ctx, getVisibleTemplateByTeamName, arg.TeamID, arg.Name, arg.TeamID_2)
+	var i Template
+	err := row.Scan(
+		&i.Name,
+		&i.Type,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.TeamID,
+		&i.ID,
+		&i.DefaultUser,
+		&i.DefaultEnv,
+		&i.Metadata,
+		&i.IsPublic,
 	)
 	return i, err
 }
@@ -152,7 +219,7 @@ func (q *Queries) GetTemplateByTeam(ctx context.Context, arg GetTemplateByTeamPa
 const insertTemplate = `-- name: InsertTemplate :one
 INSERT INTO templates (id, name, type, vcpus, memory_mb, size_bytes, team_id, default_user, default_env, metadata)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata
+RETURNING name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public
 `
 
 type InsertTemplateParams struct {
@@ -194,12 +261,13 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 		&i.DefaultUser,
 		&i.DefaultEnv,
 		&i.Metadata,
+		&i.IsPublic,
 	)
 	return i, err
 }
 
 const listTemplates = `-- name: ListTemplates :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata FROM templates ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
@@ -223,6 +291,7 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
 			&i.DefaultUser,
 			&i.DefaultEnv,
 			&i.Metadata,
+			&i.IsPublic,
 		); err != nil {
 			return nil, err
 		}
@@ -235,7 +304,7 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]Template, error) {
 }
 
 const listTemplatesByTeam = `-- name: ListTemplatesByTeam :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') ORDER BY created_at DESC
 `
 
 // Platform templates are visible to all teams.
@@ -260,6 +329,7 @@ func (q *Queries) ListTemplatesByTeam(ctx context.Context, teamID pgtype.UUID) (
 			&i.DefaultUser,
 			&i.DefaultEnv,
 			&i.Metadata,
+			&i.IsPublic,
 		); err != nil {
 			return nil, err
 		}
@@ -272,7 +342,7 @@ func (q *Queries) ListTemplatesByTeam(ctx context.Context, teamID pgtype.UUID) (
 }
 
 const listTemplatesByTeamAndType = `-- name: ListTemplatesByTeamAndType :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') AND type = $2 ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates WHERE (team_id = $1 OR team_id = '00000000-0000-0000-0000-000000000000') AND type = $2 ORDER BY created_at DESC
 `
 
 type ListTemplatesByTeamAndTypeParams struct {
@@ -302,6 +372,7 @@ func (q *Queries) ListTemplatesByTeamAndType(ctx context.Context, arg ListTempla
 			&i.DefaultUser,
 			&i.DefaultEnv,
 			&i.Metadata,
+			&i.IsPublic,
 		); err != nil {
 			return nil, err
 		}
@@ -314,7 +385,7 @@ func (q *Queries) ListTemplatesByTeamAndType(ctx context.Context, arg ListTempla
 }
 
 const listTemplatesByTeamOnly = `-- name: ListTemplatesByTeamOnly :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata FROM templates WHERE team_id = $1 ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates WHERE team_id = $1 ORDER BY created_at DESC
 `
 
 // List templates owned by a specific team (NOT including platform templates).
@@ -339,6 +410,7 @@ func (q *Queries) ListTemplatesByTeamOnly(ctx context.Context, teamID pgtype.UUI
 			&i.DefaultUser,
 			&i.DefaultEnv,
 			&i.Metadata,
+			&i.IsPublic,
 		); err != nil {
 			return nil, err
 		}
@@ -351,7 +423,7 @@ func (q *Queries) ListTemplatesByTeamOnly(ctx context.Context, teamID pgtype.UUI
 }
 
 const listTemplatesByType = `-- name: ListTemplatesByType :many
-SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata FROM templates WHERE type = $1 ORDER BY created_at DESC
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates WHERE type = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTemplatesByType(ctx context.Context, type_ string) ([]Template, error) {
@@ -375,6 +447,7 @@ func (q *Queries) ListTemplatesByType(ctx context.Context, type_ string) ([]Temp
 			&i.DefaultUser,
 			&i.DefaultEnv,
 			&i.Metadata,
+			&i.IsPublic,
 		); err != nil {
 			return nil, err
 		}
@@ -384,6 +457,190 @@ func (q *Queries) ListTemplatesByType(ctx context.Context, type_ string) ([]Temp
 		return nil, err
 	}
 	return items, nil
+}
+
+const listVisibleTemplates = `-- name: ListVisibleTemplates :many
+SELECT t.name, t.type, t.vcpus, t.memory_mb, t.size_bytes, t.created_at, t.team_id, t.id, t.default_user, t.default_env, t.metadata, t.is_public, tm.slug AS team_slug
+FROM templates t
+JOIN teams tm ON tm.id = t.team_id
+WHERE (t.team_id = $1 OR t.team_id = '00000000-0000-0000-0000-000000000000' OR t.is_public = TRUE)
+  AND ($2::text = '' OR t.type = $2::text)
+  AND ($3::text = '' OR t.name ILIKE '%' || $3::text || '%' OR tm.slug ILIKE '%' || $3::text || '%')
+ORDER BY
+  (t.team_id = $1) DESC,
+  (t.team_id = '00000000-0000-0000-0000-000000000000') DESC,
+  t.created_at DESC
+LIMIT $5 OFFSET $4
+`
+
+type ListVisibleTemplatesParams struct {
+	TeamID     pgtype.UUID `json:"team_id"`
+	TypeFilter string      `json:"type_filter"`
+	Search     string      `json:"search"`
+	RowOffset  int32       `json:"row_offset"`
+	RowLimit   int32       `json:"row_limit"`
+}
+
+type ListVisibleTemplatesRow struct {
+	Name        string             `json:"name"`
+	Type        string             `json:"type"`
+	Vcpus       int32              `json:"vcpus"`
+	MemoryMb    int32              `json:"memory_mb"`
+	SizeBytes   int64              `json:"size_bytes"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	TeamID      pgtype.UUID        `json:"team_id"`
+	ID          pgtype.UUID        `json:"id"`
+	DefaultUser string             `json:"default_user"`
+	DefaultEnv  []byte             `json:"default_env"`
+	Metadata    []byte             `json:"metadata"`
+	IsPublic    bool               `json:"is_public"`
+	TeamSlug    string             `json:"team_slug"`
+}
+
+// Templates the team may launch: its own, platform, and every public template.
+// $2 = type filter (” = any), $3 = search over name/slug (” = no search).
+func (q *Queries) ListVisibleTemplates(ctx context.Context, arg ListVisibleTemplatesParams) ([]ListVisibleTemplatesRow, error) {
+	rows, err := q.db.Query(ctx, listVisibleTemplates,
+		arg.TeamID,
+		arg.TypeFilter,
+		arg.Search,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVisibleTemplatesRow
+	for rows.Next() {
+		var i ListVisibleTemplatesRow
+		if err := rows.Scan(
+			&i.Name,
+			&i.Type,
+			&i.Vcpus,
+			&i.MemoryMb,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.TeamID,
+			&i.ID,
+			&i.DefaultUser,
+			&i.DefaultEnv,
+			&i.Metadata,
+			&i.IsPublic,
+			&i.TeamSlug,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameTemplate = `-- name: RenameTemplate :one
+UPDATE templates SET name = $1, is_public = FALSE
+WHERE id = $2
+RETURNING name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public
+`
+
+type RenameTemplateParams struct {
+	NewName string      `json:"new_name"`
+	ID      pgtype.UUID `json:"id"`
+}
+
+// Rename a template by ID. Clears the published flag so stale
+// "<team-slug>/<name>" references from other teams break loudly rather than
+// silently resolving to a different template. Callers apply ownership and
+// protection guards before calling. A name collision (team-scoped uniqueness or
+// the global-template-name trigger) surfaces as a unique_violation.
+func (q *Queries) RenameTemplate(ctx context.Context, arg RenameTemplateParams) (Template, error) {
+	row := q.db.QueryRow(ctx, renameTemplate, arg.NewName, arg.ID)
+	var i Template
+	err := row.Scan(
+		&i.Name,
+		&i.Type,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.TeamID,
+		&i.ID,
+		&i.DefaultUser,
+		&i.DefaultEnv,
+		&i.Metadata,
+		&i.IsPublic,
+	)
+	return i, err
+}
+
+const resolveTemplateForTeam = `-- name: ResolveTemplateForTeam :one
+SELECT name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public FROM templates
+WHERE name = $1 AND (team_id = $2 OR team_id = '00000000-0000-0000-0000-000000000000')
+ORDER BY (team_id = $2) DESC
+LIMIT 1
+`
+
+type ResolveTemplateForTeamParams struct {
+	Name   string      `json:"name"`
+	TeamID pgtype.UUID `json:"team_id"`
+}
+
+// Unqualified reference resolution: prefer the requesting team's own template,
+// then fall back to a platform template of the same name.
+func (q *Queries) ResolveTemplateForTeam(ctx context.Context, arg ResolveTemplateForTeamParams) (Template, error) {
+	row := q.db.QueryRow(ctx, resolveTemplateForTeam, arg.Name, arg.TeamID)
+	var i Template
+	err := row.Scan(
+		&i.Name,
+		&i.Type,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.TeamID,
+		&i.ID,
+		&i.DefaultUser,
+		&i.DefaultEnv,
+		&i.Metadata,
+		&i.IsPublic,
+	)
+	return i, err
+}
+
+const setTemplateVisibility = `-- name: SetTemplateVisibility :one
+UPDATE templates SET is_public = $3
+WHERE team_id = $1 AND name = $2
+RETURNING name, type, vcpus, memory_mb, size_bytes, created_at, team_id, id, default_user, default_env, metadata, is_public
+`
+
+type SetTemplateVisibilityParams struct {
+	TeamID   pgtype.UUID `json:"team_id"`
+	Name     string      `json:"name"`
+	IsPublic bool        `json:"is_public"`
+}
+
+// Publish or unpublish a template the team owns. Returns the updated row (or no
+// rows if the team does not own a template of that name).
+func (q *Queries) SetTemplateVisibility(ctx context.Context, arg SetTemplateVisibilityParams) (Template, error) {
+	row := q.db.QueryRow(ctx, setTemplateVisibility, arg.TeamID, arg.Name, arg.IsPublic)
+	var i Template
+	err := row.Scan(
+		&i.Name,
+		&i.Type,
+		&i.Vcpus,
+		&i.MemoryMb,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.TeamID,
+		&i.ID,
+		&i.DefaultUser,
+		&i.DefaultEnv,
+		&i.Metadata,
+		&i.IsPublic,
+	)
+	return i, err
 }
 
 const updateTemplateSize = `-- name: UpdateTemplateSize :exec

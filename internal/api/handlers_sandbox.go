@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -84,13 +85,13 @@ func sandboxToResponse(sb db.Sandbox) sandboxResponse {
 func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createSandboxRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	ac := auth.MustFromContext(r.Context())
 	if !ac.TeamID.Valid {
-		writeError(w, http.StatusForbidden, "no_team", "no active team context; re-authenticate")
+		writeErr(w, r, apperr.Forbidden.Msg("No active team context; re-authenticate."))
 		return
 	}
 
@@ -107,8 +108,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if sb.ID.Valid {
 			h.audit.LogSandboxDestroySystem(r.Context(), ac.TeamID, sb.ID, "cleanup_after_create_error", nil)
 		}
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -120,7 +120,7 @@ func (h *sandboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 	sandboxes, err := h.svc.List(r.Context(), ac.TeamID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list sandboxes")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -139,13 +139,13 @@ func (h *sandboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
 	sb, err := h.svc.Get(r.Context(), sandboxID, ac.TeamID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeErr(w, r, apperr.SandboxNotFound.Wrap(err))
 		return
 	}
 
@@ -167,15 +167,14 @@ func (h *sandboxHandler) Pause(w http.ResponseWriter, r *http.Request) {
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
 	sb, err := h.svc.Pause(r.Context(), sandboxID, ac.TeamID)
 	h.audit.LogSandboxPause(r.Context(), ac, sandboxID, err)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -189,15 +188,14 @@ func (h *sandboxHandler) Resume(w http.ResponseWriter, r *http.Request) {
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
 	sb, err := h.svc.Resume(r.Context(), sandboxID, ac.TeamID)
 	h.audit.LogSandboxResume(r.Context(), ac, sandboxID, err)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -211,13 +209,12 @@ func (h *sandboxHandler) Ping(w http.ResponseWriter, r *http.Request) {
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
 	if err := h.svc.Ping(r.Context(), sandboxID, ac.TeamID); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -231,15 +228,14 @@ func (h *sandboxHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
 	err = h.svc.Destroy(r.Context(), sandboxID, ac.TeamID)
 	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID, err)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 

@@ -304,7 +304,7 @@ func (s *Service) RevokeAllForUser(ctx context.Context, userID pgtype.UUID) erro
 // first. Backed by Postgres directly — the Redis cache is opportunistic and
 // is not consulted here.
 func (s *Service) ListForUser(ctx context.Context, userID pgtype.UUID) ([]db.Session, error) {
-	rows, err := s.db.ListSessionsByUserID(ctx, userID)
+	rows, err := s.db.ListActiveSessionsByUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}

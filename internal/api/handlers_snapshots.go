@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -80,16 +82,25 @@ type snapshotResponse struct {
 	CreatedAt string            `json:"created_at"`
 	Platform  bool              `json:"platform"`
 	Protected bool              `json:"protected"`
+	Public    bool              `json:"public"`
+	Owned     bool              `json:"owned"`
+	TeamSlug  string            `json:"team_slug"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
-func templateToResponse(t db.Template) snapshotResponse {
+// visibleTemplateToResponse builds a response row for the templates list. The
+// requester's own team ID determines the "owned" flag, which drives the globe
+// (published) indicator on the team's own public templates.
+func visibleTemplateToResponse(t db.ListVisibleTemplatesRow, requesterTeamID pgtype.UUID) snapshotResponse {
 	resp := snapshotResponse{
 		Name:      t.Name,
 		Type:      t.Type,
 		SizeBytes: t.SizeBytes,
 		Platform:  t.TeamID == id.PlatformTeamID,
 		Protected: layout.IsSystemTemplate(t.TeamID, t.ID),
+		Public:    t.IsPublic,
+		Owned:     t.TeamID == requesterTeamID,
+		TeamSlug:  t.TeamSlug,
 	}
 	if t.Vcpus != 0 {
 		resp.VCPUs = &t.Vcpus
@@ -119,16 +130,16 @@ type createSnapshotRequest struct {
 func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createSnapshotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	if req.SandboxID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "sandbox_id is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The sandbox_id field is required.").With("field", "sandbox_id"))
 		return
 	}
 	sandboxID, err := id.ParseSandboxID(req.SandboxID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 	ac := auth.MustFromContext(r.Context())
@@ -138,8 +149,7 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// result via the SSE template.snapshot.create event (or by polling).
 	sb, name, err := h.sandboxSvc.CreateSnapshot(r.Context(), sandboxID, ac.TeamID, req.Name)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 	h.audit.LogSnapshotCreateRequested(r.Context(), ac, name)
@@ -148,34 +158,151 @@ func (h *snapshotHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // List handles GET /v1/snapshots.
+//
+// Returns one page of the templates the team may launch: its own templates,
+// platform templates, and every public template across all teams. Foreign
+// public templates carry the owning team's slug so clients can reference and
+// display them as "<slug>/<name>". Query params: type (base|snapshot), q
+// (search over name/slug), page (1-based), per_page (default 50, max 200).
 func (h *snapshotHandler) List(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
-	typeFilter := r.URL.Query().Get("type")
+	q := r.URL.Query()
+	typeFilter := q.Get("type")
+	search := strings.TrimSpace(q.Get("q"))
 
-	templates, err := h.svc.List(r.Context(), ac.TeamID, typeFilter)
+	page := 1
+	if p := q.Get("page"); p != "" {
+		if _, err := fmt.Sscanf(p, "%d", &page); err != nil || page < 1 {
+			page = 1
+		}
+	}
+	perPage := 50
+	if pp := q.Get("per_page"); pp != "" {
+		if n, err := fmt.Sscanf(pp, "%d", &perPage); err != nil || n != 1 || perPage < 1 {
+			perPage = 50
+		}
+	}
+	if perPage > 200 {
+		perPage = 200
+	}
+	offset := int32((page - 1) * perPage)
+
+	rows, total, err := h.svc.ListVisible(r.Context(), service.ListVisibleParams{
+		TeamID:     ac.TeamID,
+		TypeFilter: typeFilter,
+		Search:     search,
+		Limit:      int32(perPage),
+		Offset:     offset,
+	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list templates")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
-	// Resolve actual on-disk sizes for templates with unknown size (e.g.
-	// system base templates seeded with size_bytes = 0). This queries a host
-	// agent and persists the result to the DB for subsequent requests.
-	templates = resolveTemplateSizes(r.Context(), h.db, h.pool, templates)
+	// Resolve actual on-disk sizes for rows with unknown size (e.g. system base
+	// templates seeded with size_bytes = 0). resolveTemplateSizes operates on
+	// db.Template, so project the rows, resolve, and copy sizes back by index.
+	sizeProbe := make([]db.Template, len(rows))
+	for i, t := range rows {
+		sizeProbe[i] = db.Template{Name: t.Name, SizeBytes: t.SizeBytes, TeamID: t.TeamID, ID: t.ID}
+	}
+	sizeProbe = resolveTemplateSizes(r.Context(), h.db, h.pool, sizeProbe)
 
-	resp := make([]snapshotResponse, len(templates))
-	for i, t := range templates {
-		resp[i] = templateToResponse(t)
+	resp := make([]snapshotResponse, len(rows))
+	for i, t := range rows {
+		t.SizeBytes = sizeProbe[i].SizeBytes
+		resp[i] = visibleTemplateToResponse(t, ac.TeamID)
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	totalPages := (int(total) + perPage - 1) / perPage
+	writeJSON(w, http.StatusOK, map[string]any{
+		"templates":   resp,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
+		"total_pages": totalPages,
+	})
+}
+
+// SetVisibility handles PATCH /v1/snapshots/{name}/visibility.
+// Publishes or unpublishes a template the team owns, making it launchable by
+// other teams as "<team-slug>/<name>".
+func (h *snapshotHandler) SetVisibility(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := validate.SafeName(name); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid template name."))
+		return
+	}
+	ac := auth.MustFromContext(r.Context())
+
+	var req struct {
+		Public bool `json:"public"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
+		return
+	}
+
+	if _, err := h.svc.SetVisibility(r.Context(), ac.TeamID, name, req.Public); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	h.audit.LogTemplateVisibility(r.Context(), ac, name, req.Public)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type renameTemplateRequest struct {
+	NewName string `json:"new_name"`
+}
+
+// Rename handles PATCH /v1/snapshots/{name}. Renames a template the team owns.
+// Renaming clears the published flag (see TemplateService.Rename). Platform and
+// system templates cannot be renamed here.
+func (h *snapshotHandler) Rename(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := validate.SafeName(name); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid template name."))
+		return
+	}
+	ctx := r.Context()
+	ac := auth.MustFromContext(ctx)
+
+	var req renameTemplateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
+		return
+	}
+
+	tmpl, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: name, TeamID: ac.TeamID})
+	if err != nil {
+		writeErr(w, r, apperr.TemplateNotFound.Wrap(err))
+		return
+	}
+	// Platform templates can only be renamed by admins via /v1/admin/templates.
+	if tmpl.TeamID == id.PlatformTeamID {
+		writeErr(w, r, apperr.TemplateProtected.Msg("Platform templates cannot be renamed here."))
+		return
+	}
+	if layout.IsSystemTemplate(tmpl.TeamID, tmpl.ID) {
+		writeErr(w, r, apperr.TemplateProtected.New())
+		return
+	}
+
+	if _, err := h.svc.Rename(ctx, tmpl.ID, req.NewName); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	h.audit.LogTemplateRename(ctx, ac, name, strings.TrimSpace(req.NewName))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Delete handles DELETE /v1/snapshots/{name}.
 func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if err := validate.SafeName(name); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("invalid snapshot name: %s", err))
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid snapshot name."))
 		return
 	}
 	ctx := r.Context()
@@ -183,29 +310,28 @@ func (h *snapshotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	tmpl, err := h.db.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: name, TeamID: ac.TeamID})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "template not found")
+		writeErr(w, r, apperr.TemplateNotFound.Wrap(err))
 		return
 	}
 	// Platform templates can only be deleted by admins via /v1/admin/templates.
 	if tmpl.TeamID == id.PlatformTeamID {
-		writeError(w, http.StatusForbidden, "forbidden", "platform templates cannot be deleted here")
+		writeErr(w, r, apperr.TemplateProtected.Msg("Platform templates cannot be deleted here."))
 		return
 	}
 	if layout.IsSystemTemplate(tmpl.TeamID, tmpl.ID) {
-		writeError(w, http.StatusForbidden, "forbidden", "system base templates cannot be deleted")
+		writeErr(w, r, apperr.TemplateProtected.New())
 		return
 	}
 
 	if err := deleteSnapshotEverywhere(ctx, h.db, h.pool, tmpl.TeamID, tmpl.ID); err != nil {
 		h.audit.LogSnapshotDelete(r.Context(), ac, name, err)
-		writeError(w, http.StatusConflict, "delete_failed",
-			"could not remove snapshot files from all hosts: "+err.Error())
+		writeErr(w, r, apperr.Conflict.WrapMsg(err, "Could not remove snapshot files from all hosts. Try again when all hosts are online."))
 		return
 	}
 
 	if err := h.db.DeleteTemplateByTeam(ctx, db.DeleteTemplateByTeamParams{Name: name, TeamID: ac.TeamID}); err != nil {
 		h.audit.LogSnapshotDelete(r.Context(), ac, name, err)
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to delete template record")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
@@ -29,7 +30,7 @@ func newAdminCapsuleHandler(svc *service.SandboxService, db *db.Queries, pool *l
 func (h *adminCapsuleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createSandboxRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
@@ -48,8 +49,7 @@ func (h *adminCapsuleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if sb.ID.Valid {
 			h.audit.LogSandboxDestroySystem(r.Context(), id.PlatformTeamID, sb.ID, "cleanup_after_create_error", nil)
 		}
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -60,7 +60,7 @@ func (h *adminCapsuleHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *adminCapsuleHandler) List(w http.ResponseWriter, r *http.Request) {
 	sandboxes, err := h.svc.List(r.Context(), id.PlatformTeamID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list sandboxes")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -78,13 +78,13 @@ func (h *adminCapsuleHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
 	sb, err := h.svc.Get(r.Context(), sandboxID, id.PlatformTeamID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeErr(w, r, apperr.SandboxNotFound.Wrap(err))
 		return
 	}
 
@@ -98,7 +98,7 @@ func (h *adminCapsuleHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
@@ -106,8 +106,7 @@ func (h *adminCapsuleHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 	err = h.svc.Destroy(r.Context(), sandboxID, id.PlatformTeamID)
 	h.audit.LogSandboxDestroy(r.Context(), ac, sandboxID, err)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -125,22 +124,21 @@ func (h *adminCapsuleHandler) Snapshot(w http.ResponseWriter, r *http.Request) {
 	sandboxIDStr := chi.URLParam(r, "id")
 	sandboxID, err := id.ParseSandboxID(sandboxIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid sandbox ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid sandbox ID."))
 		return
 	}
 
 	var req adminSnapshotRequest
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+			writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 			return
 		}
 	}
 
 	sb, name, err := h.svc.CreateSnapshot(r.Context(), sandboxID, id.PlatformTeamID, req.Name)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 	ac := auth.MustFromContext(r.Context())

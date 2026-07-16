@@ -1,5 +1,5 @@
 import { readCSRFToken } from '$lib/auth.svelte';
-import { apiFetch, type ApiResult } from '$lib/api/client';
+import { apiFailure, apiFetch, type ApiResult } from '$lib/api/client';
 
 export type FileEntry = {
 	name: string;
@@ -78,7 +78,8 @@ export async function readFile(
 		if (!res.ok) {
 			try {
 				const data = await res.json();
-				return { ok: false, error: data?.error?.message ?? 'Failed to read file' };
+				const failure = apiFailure(data, 'Failed to read file');
+				return { ok: false, error: failure.error };
 			} catch {
 				return { ok: false, error: `HTTP ${res.status}` };
 			}
@@ -114,7 +115,15 @@ export async function downloadFile(
 		signal,
 	});
 
-	if (!res.ok) throw new Error('Download failed');
+	if (!res.ok) {
+		let data: unknown;
+		try {
+			data = await res.json();
+		} catch {
+			throw new Error(`Download failed (HTTP ${res.status})`);
+		}
+		throw new Error(apiFailure(data, 'Download failed').error);
+	}
 
 	const blob = await res.blob();
 	const url = URL.createObjectURL(blob);

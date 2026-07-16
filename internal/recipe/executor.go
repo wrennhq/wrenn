@@ -276,7 +276,7 @@ func execUser(
 ) (BuildLogEntry, bool) {
 	username := st.Key
 	// Create user if not exists, with home directory and bash shell.
-	// Grant passwordless sudo access (E2B convention).
+	// Grant passwordless sudo access (matches the wrenn-user default in base images).
 	// Uses printf %s to avoid shell injection in the sudoers line.
 	script := fmt.Sprintf(
 		"id %s >/dev/null 2>&1 || (adduser --disabled-password --gecos '' --shell /bin/bash %s && printf '%%s ALL=(ALL) NOPASSWD:ALL\\n' %s >> /etc/sudoers)",

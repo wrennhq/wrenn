@@ -74,13 +74,6 @@ func LoadTokenFile(path string) (*TokenFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Support legacy format (raw JWT string) for backwards compatibility.
-	trimmed := strings.TrimSpace(string(data))
-	if !strings.HasPrefix(trimmed, "{") {
-		// Old format: just the JWT, no refresh token.
-		hostID, _ := hostIDFromJWT(trimmed)
-		return &TokenFile{HostID: hostID, JWT: trimmed}, nil
-	}
 	var tf TokenFile
 	if err := json.Unmarshal(data, &tf); err != nil {
 		return nil, fmt.Errorf("parse credentials file: %w", err)

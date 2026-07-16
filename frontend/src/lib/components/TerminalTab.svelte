@@ -95,7 +95,9 @@
 	// messages stay JSON text. Mirrors the binary output path.
 	function wsSendBinary(ws: WebSocket | null, data: Uint8Array) {
 		try {
-			if (ws?.readyState === WebSocket.OPEN) ws.send(data);
+			// Keystroke buffers come from TextEncoder and are always ArrayBuffer-backed
+			// (never SharedArrayBuffer); assert that so send() accepts them as BufferSource.
+			if (ws?.readyState === WebSocket.OPEN) ws.send(data as Uint8Array<ArrayBuffer>);
 		} catch {
 			// Connection closing — ignore
 		}

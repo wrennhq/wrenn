@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -52,7 +53,7 @@ func (c *Client) FetchVersion(ctx context.Context) (string, error) {
 	var data struct {
 		Version string `json:"version"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, MaxEnvdControlBytes)).Decode(&data); err != nil {
 		return "", fmt.Errorf("decode version response: %w", err)
 	}
 
@@ -110,7 +111,7 @@ func (c *Client) FetchActivity(ctx context.Context) (*Activity, error) {
 	}
 
 	var data Activity
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, MaxEnvdControlBytes)).Decode(&data); err != nil {
 		return nil, fmt.Errorf("decode activity response: %w", err)
 	}
 

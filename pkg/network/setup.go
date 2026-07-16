@@ -569,10 +569,16 @@ func EnsureEgressGuard() error {
 	// Drop forwarded capsule traffic destined to private ranges out the public
 	// NIC. Insert at the head of FORWARD so it precedes the per-sandbox ACCEPT
 	// rules appended when a sandbox is created.
+	// Match on the ingress veth (packet origin), not the egress NIC: a
+	// multi-homed host has NICs off the default route (mgmt/storage VLANs),
+	// and an "-o defaultIface" rule would let capsule packets reach those
+	// subnets. Source-scoping drops capsule traffic to private ranges no
+	// matter which interface it would leave by, while leaving
+	// capsule->public egress and host<->guest control traffic intact.
 	for _, n := range privateEgressGuardNets {
 		if err := ensureHostRule(
-			[]string{"-C", "FORWARD", "-o", defaultIface, "-d", n, "-j", "DROP"},
-			[]string{"-I", "FORWARD", "1", "-o", defaultIface, "-d", n, "-j", "DROP"},
+			[]string{"-C", "FORWARD", "-i", vethMatch, "-d", n, "-j", "DROP"},
+			[]string{"-I", "FORWARD", "1", "-i", vethMatch, "-d", n, "-j", "DROP"},
 		); err != nil {
 			return fmt.Errorf("install egress guard for %s: %w", n, err)
 		}
@@ -615,6 +621,26 @@ func EnsureEgressGuard() error {
 		return fmt.Errorf("install host input allow-established: %w", err)
 	}
 
+	// The v4 rules above have no effect on IPv6, but guests still auto-assign a
+	// link-local fe80::/10 address to eth0, so an unguarded v6 path silently
+	// re-opens both cross-tenant reach and capsule->host reach. Capsules have no
+	// legitimate IPv6 use (provisioned v4-only via the ip= boot arg), so
+	// blanket-drop all capsule v6 at the host, mirroring the v4 FORWARD/INPUT
+	// guards. Skipped (with a warning) on hosts where ip6tables is unavailable
+	// or IPv6 is disabled — nothing to guard there.
+	if err := ensureHostRule6(
+		[]string{"-C", "FORWARD", "-i", vethMatch, "-j", "DROP"},
+		[]string{"-I", "FORWARD", "1", "-i", vethMatch, "-j", "DROP"},
+	); err != nil {
+		return fmt.Errorf("install v6 forward guard: %w", err)
+	}
+	if err := ensureHostRule6(
+		[]string{"-C", "INPUT", "-i", vethMatch, "-j", "DROP"},
+		[]string{"-I", "INPUT", "1", "-i", vethMatch, "-j", "DROP"},
+	); err != nil {
+		return fmt.Errorf("install v6 input guard: %w", err)
+	}
+
 	// Blackhole the sandbox supernets so packets to unallocated slot IPs are
 	// dropped rather than routed to the default gateway.
 	for _, cidr := range sandboxSuperNets {
@@ -634,6 +660,20 @@ func ensureHostRule(checkArgs, insertArgs []string) error {
 		return nil // already present
 	}
 	return iptablesHost(insertArgs...)
+}
+
+// ensureHostRule6 is the IPv6 counterpart of ensureHostRule. It is a no-op on
+// hosts without ip6tables (IPv6 disabled / binary absent): there is no v6 path
+// to guard there, so skipping is safe rather than fatal to host-agent startup.
+func ensureHostRule6(checkArgs, insertArgs []string) error {
+	if _, err := exec.LookPath("ip6tables"); err != nil {
+		slog.Warn("ip6tables unavailable, skipping IPv6 capsule guard", "error", err)
+		return nil
+	}
+	if exec.Command("ip6tables", checkArgs...).Run() == nil {
+		return nil // already present
+	}
+	return ip6tablesHost(insertArgs...)
 }
 
 // ensureBlackholeRoute idempotently installs a blackhole route via `ip route
@@ -674,6 +714,16 @@ func iptablesHost(args ...string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("iptables %v: %s: %w", args, string(out), err)
+	}
+	return nil
+}
+
+// ip6tablesHost runs an ip6tables command in the host namespace.
+func ip6tablesHost(args ...string) error {
+	cmd := exec.Command("ip6tables", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ip6tables %v: %s: %w", args, string(out), err)
 	}
 	return nil
 }

@@ -7,6 +7,8 @@
 	import {
 		listSnapshots,
 		deleteSnapshot,
+		setTemplateVisibility,
+		renameTemplate,
 		createCapsule,
 		type Snapshot
 	} from '$lib/api/capsules';
@@ -15,12 +17,19 @@
 	// Page tab — Images is disabled/future
 	let pageTab = $state<'snapshots' | 'images'>('snapshots');
 
-	// Type filter within snapshots tab
+	// Server-driven filters. type + search + page are sent to the API, which
+	// returns the team's own templates, platform templates, and every public
+	// template across all teams.
 	type TypeFilter = 'all' | 'snapshot' | 'base';
 	let typeFilter = $state<TypeFilter>('all');
+	let search = $state('');
 
 	// List state
+	const PER_PAGE = 50;
 	let snapshots = $state<Snapshot[]>([]);
+	let total = $state(0);
+	let page = $state(1);
+	let totalPages = $state(1);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -28,6 +37,12 @@
 	let deleteTarget = $state<Snapshot | null>(null);
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
+
+	// Rename dialog.
+	let renameTarget = $state<Snapshot | null>(null);
+	let renameValue = $state('');
+	let renaming = $state(false);
+	let renameError = $state<string | null>(null);
 
 	// Row dropdown (split button chevron)
 	let openDropdownName = $state<string | null>(null);
@@ -41,20 +56,36 @@
 	let launching = $state(false);
 	let launchError = $state<string | null>(null);
 
-	let filteredSnapshots = $derived.by(() => {
-		if (typeFilter === 'all') return snapshots;
-		return snapshots.filter((s) => s.type === typeFilter);
-	});
-
 	// Suppress row fly-transitions after initial load so filter switches are instant.
 	let initialLoadDone = $state(false);
+
+	// A template reference the API understands. Anything the team doesn't own is
+	// referenced as "<slug>/<name>" — foreign public templates by their team
+	// slug, platform templates as "wrenn/<name>". The team's own templates
+	// resolve by bare name.
+	function launchRef(s: Snapshot): string {
+		return s.owned ? s.name : `${s.team_slug}/${s.name}`;
+	}
+
+	// Templates the team doesn't own display their owning team's slug as a
+	// "<slug>/" prefix (platform templates show "wrenn/").
+	function showsSlug(s: Snapshot): boolean {
+		return !s.owned && !!s.team_slug;
+	}
 
 	async function fetchSnapshots() {
 		loading = true;
 		error = null;
-		const result = await listSnapshots();
+		const result = await listSnapshots({
+			type: typeFilter === 'all' ? undefined : typeFilter,
+			q: search.trim() || undefined,
+			page,
+			per_page: PER_PAGE
+		});
 		if (result.ok) {
-			snapshots = result.data;
+			snapshots = result.data.templates;
+			total = result.data.total;
+			totalPages = Math.max(1, result.data.total_pages);
 		} else {
 			error = result.error;
 		}
@@ -64,19 +95,79 @@
 		setTimeout(() => { initialLoadDone = true; }, 400);
 	}
 
+	function setTypeFilter(f: TypeFilter) {
+		if (typeFilter === f) return;
+		typeFilter = f;
+		page = 1;
+		fetchSnapshots();
+	}
+
+	// Debounce search so we refetch once the user pauses typing.
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	function onSearchInput() {
+		clearTimeout(searchTimer);
+		searchTimer = setTimeout(() => {
+			page = 1;
+			fetchSnapshots();
+		}, 250);
+	}
+
+	function gotoPage(p: number) {
+		if (p < 1 || p > totalPages || p === page) return;
+		page = p;
+		fetchSnapshots();
+	}
+
 	async function handleDelete() {
 		if (!deleteTarget) return;
 		deleting = true;
 		deleteError = null;
-		const name = deleteTarget.name;
-		const result = await deleteSnapshot(name);
+		const result = await deleteSnapshot(deleteTarget.name);
 		if (result.ok) {
-			snapshots = snapshots.filter((s) => s.name !== name);
 			deleteTarget = null;
+			// Refetch so pagination and totals stay correct.
+			await fetchSnapshots();
 		} else {
 			deleteError = result.error;
 		}
 		deleting = false;
+	}
+
+	async function handleVisibility(s: Snapshot, next: boolean) {
+		openDropdownName = null;
+		const result = await setTemplateVisibility(s.name, next);
+		if (result.ok) {
+			snapshots = snapshots.map((t) => (t.name === s.name ? { ...t, public: next } : t));
+		} else {
+			error = result.error;
+		}
+	}
+
+	function openRename(s: Snapshot) {
+		openDropdownName = null;
+		renameTarget = s;
+		renameValue = s.name;
+		renameError = null;
+	}
+
+	async function handleRename() {
+		if (!renameTarget) return;
+		const newName = renameValue.trim();
+		if (!newName || newName === renameTarget.name) {
+			renameTarget = null;
+			return;
+		}
+		renaming = true;
+		renameError = null;
+		const result = await renameTemplate(renameTarget.name, newName);
+		if (result.ok) {
+			renameTarget = null;
+			// Refetch so the row reflects the new name and cleared publish flag.
+			await fetchSnapshots();
+		} else {
+			renameError = result.error;
+		}
+		renaming = false;
 	}
 
 	function openLaunch(snapshot: Snapshot) {
@@ -92,7 +183,7 @@
 		launching = true;
 		launchError = null;
 		const result = await createCapsule({
-			template: launchTarget.name,
+			template: launchRef(launchTarget),
 			vcpus: launchVcpus,
 			memory_mb: launchMemoryMb,
 			timeout_sec: launchTimeoutSec
@@ -243,11 +334,11 @@
 						</div>
 					{:else}
 						<!-- Filter row -->
-						<div class="mb-4 flex items-center justify-between">
+						<div class="mb-4 flex items-center justify-between gap-4">
 							<div class="flex gap-1.5">
 								{#each ([['all', 'All', ''], ['snapshot', 'Snapshots', 'var(--color-accent)'], ['base', 'Images', 'var(--color-blue)']] as const) as [val, label, color]}
 									<button
-										onclick={() => (typeFilter = val)}
+										onclick={() => setTypeFilter(val)}
 										class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-meta font-medium transition-all duration-150 active:scale-95
 											{typeFilter === val
 												? val === 'all'
@@ -267,17 +358,26 @@
 									</button>
 								{/each}
 							</div>
-							<span class="text-meta text-[var(--color-text-muted)]">
-								{filteredSnapshots.length}
-								{typeFilter === 'snapshot'
-									? filteredSnapshots.length === 1 ? 'snapshot' : 'snapshots'
-									: typeFilter === 'base'
-										? filteredSnapshots.length === 1 ? 'image' : 'images'
-										: filteredSnapshots.length === 1 ? 'item' : 'total'}
-							</span>
+
+							<!-- Search over template name and owning team slug -->
+							<div class="group relative w-full max-w-[280px]">
+								<svg
+									class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] transition-colors duration-150 group-focus-within:text-[var(--color-accent)]"
+									width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+								>
+									<circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+								</svg>
+								<input
+									type="text"
+									placeholder="Search name or team…"
+									bind:value={search}
+									oninput={onSearchInput}
+									class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-2)] py-1.5 pl-9 pr-3 text-ui text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] transition-colors duration-150 focus:border-[var(--color-accent)]/50 focus:outline-none"
+								/>
+							</div>
 						</div>
 
-						{#if filteredSnapshots.length === 0}
+						{#if snapshots.length === 0}
 							<!-- Empty state -->
 							<div class="flex flex-col items-center justify-center py-28 text-center">
 								<div class="relative mb-7">
@@ -325,7 +425,7 @@
 								</div>
 
 								<!-- Rows -->
-								{#each filteredSnapshots as snapshot, i (snapshot.name)}
+								{#each snapshots as snapshot, i (launchRef(snapshot))}
 									{@const isSnapshot = snapshot.type === 'snapshot'}
 									{@const typeColor = isSnapshot ? 'var(--color-accent)' : 'var(--color-blue)'}
 									<div
@@ -338,11 +438,25 @@
 										<!-- Left accent stripe -->
 										<div class="row-stripe pointer-events-none absolute left-0 top-0 h-full w-[3px]" style="background: {typeColor}"></div>
 
-										<!-- Name -->
+										<!-- Name (foreign public templates are prefixed with their owning team slug) -->
 										<div class="min-w-0 px-5 py-4">
 											<div class="flex items-center gap-1.5">
-												<span class="block truncate font-mono text-ui text-[var(--color-text-bright)]">{snapshot.name}</span>
-												<CopyButton value={snapshot.name} />
+												<span class="block truncate font-mono text-ui">
+													{#if showsSlug(snapshot)}<span class="text-[var(--color-text-tertiary)]">{snapshot.team_slug}/</span>{/if}<span class="text-[var(--color-text-bright)]">{snapshot.name}</span>
+												</span>
+												{#if snapshot.public}
+													<span
+														class="shrink-0 text-[var(--color-accent-mid)]"
+														title={snapshot.owned
+															? 'Published by your team — any team can launch it'
+															: `Public template shared by ${snapshot.team_slug}`}
+													>
+														<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Public template">
+															<circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+														</svg>
+													</span>
+												{/if}
+												<CopyButton value={launchRef(snapshot)} />
 											</div>
 										</div>
 
@@ -414,14 +528,15 @@
 												<!-- Chevron / dropdown trigger -->
 												<button
 													aria-label="More actions"
-													disabled={snapshot.platform}
+													disabled={!snapshot.owned}
+													title={snapshot.owned ? 'More actions' : 'Actions available to the owning team only'}
 													onclick={(e) => {
 														e.stopPropagation();
 														if (openDropdownName === snapshot.name) {
 															openDropdownName = null;
 														} else {
 															const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-															dropdownPos = { top: rect.bottom + 4, left: rect.right - 128 };
+															dropdownPos = { top: rect.bottom + 4, left: rect.right - 160 };
 															openDropdownName = snapshot.name;
 														}
 													}}
@@ -440,15 +555,39 @@
 								{/each}
 							</div>
 
-							<p class="mt-3 text-meta text-[var(--color-text-muted)]">
-								{filteredSnapshots.length}
-								{typeFilter === 'snapshot'
-									? filteredSnapshots.length === 1 ? 'snapshot' : 'snapshots'
-									: typeFilter === 'base'
-										? filteredSnapshots.length === 1 ? 'image' : 'images'
-										: filteredSnapshots.length === 1 ? 'item' : 'total'}
-								{typeFilter !== 'all' ? '· filtered' : '· total'}
-							</p>
+							<div class="mt-3 flex items-center justify-between gap-4">
+								<p class="text-meta text-[var(--color-text-muted)]">
+									{total}
+									{typeFilter === 'snapshot'
+										? total === 1 ? 'snapshot' : 'snapshots'
+										: typeFilter === 'base'
+											? total === 1 ? 'image' : 'images'
+											: total === 1 ? 'template' : 'templates'}
+									{search.trim() ? '· matching' : typeFilter !== 'all' ? '· filtered' : '· visible'}
+								</p>
+
+								{#if totalPages > 1}
+									<div class="flex items-center gap-1.5">
+										<button
+											onclick={() => gotoPage(page - 1)}
+											disabled={page <= 1}
+											class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-2.5 py-1 text-meta text-[var(--color-text-secondary)] transition-all duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[var(--color-border)] disabled:hover:text-[var(--color-text-secondary)]"
+										>
+											Prev
+										</button>
+										<span class="px-1 font-mono text-meta text-[var(--color-text-secondary)]">
+											{page} / {totalPages}
+										</span>
+										<button
+											onclick={() => gotoPage(page + 1)}
+											disabled={page >= totalPages}
+											class="rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-3)] px-2.5 py-1 text-meta text-[var(--color-text-secondary)] transition-all duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[var(--color-border)] disabled:hover:text-[var(--color-text-secondary)]"
+										>
+											Next
+										</button>
+									</div>
+								{/if}
+							</div>
 						{/if}
 					{/if}
 				</div>
@@ -471,26 +610,60 @@
 	{@const dropdownSnapshot = snapshots.find((s) => s.name === openDropdownName)}
 	{#if dropdownSnapshot}
 		<div
-			class="fixed z-50 w-32 overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] py-1"
+			class="fixed z-50 w-40 overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)] py-1"
 			style="top: {dropdownPos.top}px; left: {dropdownPos.left}px; animation: fadeUp 0.15s ease both"
 		>
-			{#if !dropdownSnapshot.platform}
-				<button
-					onclick={(e) => {
-						e.stopPropagation();
-						const target = snapshots.find((s) => s.name === openDropdownName);
-						openDropdownName = null;
-						if (target) { deleteTarget = target; deleteError = null; }
-					}}
-					class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
-				>
+			<button
+				onclick={(e) => {
+					e.stopPropagation();
+					handleVisibility(dropdownSnapshot, !dropdownSnapshot.public);
+				}}
+				class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]"
+			>
+				{#if dropdownSnapshot.public}
 					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-						<polyline points="3 6 5 6 21 6" />
-						<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+						<rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
 					</svg>
-					Delete
-				</button>
-			{/if}
+					Make private
+				{:else}
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+						<circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+					</svg>
+					Make public
+				{/if}
+			</button>
+
+			<button
+				onclick={(e) => {
+					e.stopPropagation();
+					openRename(dropdownSnapshot);
+				}}
+				class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-text-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-4)] hover:text-[var(--color-text-primary)]"
+			>
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+					<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+					<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+				</svg>
+				Rename
+			</button>
+
+			<div class="my-1 h-px bg-[var(--color-border)]"></div>
+
+			<button
+				onclick={(e) => {
+					e.stopPropagation();
+					const target = snapshots.find((s) => s.name === openDropdownName);
+					openDropdownName = null;
+					if (target) { deleteTarget = target; deleteError = null; }
+				}}
+				class="flex w-full items-center gap-2 px-3 py-2 text-meta text-[var(--color-red)] transition-colors duration-150 hover:bg-[var(--color-red)]/5"
+			>
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+					<polyline points="3 6 5 6 21 6" />
+					<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+				</svg>
+				Delete
+			</button>
 		</div>
 	{/if}
 {/if}
@@ -559,6 +732,89 @@
 					{/if}
 				</button>
 			</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Rename Dialog -->
+{#if renameTarget}
+	<div class="fixed inset-0 z-50 flex items-center justify-center">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="absolute inset-0 bg-black/60"
+			role="presentation"
+			onclick={() => { if (!renaming) renameTarget = null; }}
+			onkeydown={(e) => { if (e.key === 'Escape' && !renaming) renameTarget = null; }}
+		></div>
+
+		<div
+			class="relative w-full max-w-[420px] rounded-[var(--radius-card)] border border-[var(--color-border-mid)] bg-[var(--color-bg-2)]"
+			style="animation: fadeUp 0.2s ease both; box-shadow: var(--shadow-dialog)"
+		>
+			<div class="p-6">
+				<h2 class="font-serif text-heading leading-tight text-[var(--color-text-bright)]">Rename template</h2>
+				<p class="mt-1.5 text-ui text-[var(--color-text-tertiary)]">
+					Rename <code class="rounded bg-[var(--color-bg-4)] px-1.5 py-0.5 font-mono text-[0.8rem] text-[var(--color-text-primary)]">{renameTarget.name}</code>.
+				</p>
+
+				{#if renameTarget.public}
+					<div class="mt-3 flex items-start gap-2 rounded-[var(--radius-input)] border border-[var(--color-amber)]/20 bg-[var(--color-amber)]/5 px-3 py-2.5">
+						<svg class="mt-0.5 shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+							<line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+						</svg>
+						<p class="text-meta leading-relaxed text-[var(--color-amber)]">
+							This template is published. Renaming unpublishes it — other teams' references stop working and you'll need to publish it again.
+						</p>
+					</div>
+				{/if}
+
+				<div class="mt-4">
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						type="text"
+						bind:value={renameValue}
+						autofocus
+						spellcheck="false"
+						autocomplete="off"
+						onkeydown={(e) => { if (e.key === 'Enter' && !renaming) handleRename(); }}
+						class="w-full rounded-[var(--radius-input)] border border-[var(--color-border)] bg-[var(--color-bg-1)] px-3 py-2 font-mono text-ui text-[var(--color-text-primary)] outline-none transition-colors duration-150 focus:border-[var(--color-border-mid)]"
+					/>
+					<p class="mt-1.5 text-meta text-[var(--color-text-tertiary)]">
+						Letters, digits, dot, dash, underscore. Max 64 characters.
+					</p>
+				</div>
+
+				{#if renameError}
+					<div class="mt-3 rounded-[var(--radius-input)] border border-[var(--color-red)]/30 bg-[var(--color-red)]/5 px-3 py-2 text-meta text-[var(--color-red)]">
+						{renameError}
+					</div>
+				{/if}
+
+				<div class="mt-6 flex justify-end gap-3">
+					<button
+						onclick={() => (renameTarget = null)}
+						disabled={renaming}
+						class="rounded-[var(--radius-button)] border border-[var(--color-border)] px-4 py-2 text-ui text-[var(--color-text-secondary)] transition-colors duration-150 hover:border-[var(--color-border-mid)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
+					>
+						Cancel
+					</button>
+					<button
+						onclick={handleRename}
+						disabled={renaming || !renameValue.trim() || renameValue.trim() === renameTarget.name}
+						class="flex items-center gap-2 rounded-[var(--radius-button)] bg-[var(--color-accent)] px-5 py-2 text-ui font-semibold text-white transition-all duration-150 hover:brightness-115 hover:-translate-y-px active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0"
+					>
+						{#if renaming}
+							<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M21 12a9 9 0 1 1-6.219-8.56" />
+							</svg>
+							Renaming...
+						{:else}
+							Rename
+						{/if}
+					</button>
+				</div>
 			</div>
 		</div>
 	</div>

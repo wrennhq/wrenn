@@ -129,6 +129,40 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (S
 	return i, err
 }
 
+const listActiveSessionsByUserID = `-- name: ListActiveSessionsByUserID :many
+SELECT id, user_id, team_id, csrf_token, user_agent, ip_address, created_at, last_seen_at, expires_at FROM sessions WHERE user_id = $1 AND expires_at > NOW() ORDER BY last_seen_at DESC
+`
+
+func (q *Queries) ListActiveSessionsByUserID(ctx context.Context, userID pgtype.UUID) ([]Session, error) {
+	rows, err := q.db.Query(ctx, listActiveSessionsByUserID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.TeamID,
+			&i.CsrfToken,
+			&i.UserAgent,
+			&i.IpAddress,
+			&i.CreatedAt,
+			&i.LastSeenAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessionsByUserID = `-- name: ListSessionsByUserID :many
 SELECT id, user_id, team_id, csrf_token, user_agent, ip_address, created_at, last_seen_at, expires_at FROM sessions WHERE user_id = $1 ORDER BY last_seen_at DESC
 `

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/wrenn/internal/email"
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
@@ -38,6 +39,9 @@ type teamResponse struct {
 	Slug      string `json:"slug"`
 	IsByoc    bool   `json:"is_byoc"`
 	CreatedAt string `json:"created_at"`
+	// SlugChangeAllowedAt is set only when the team is within the 60-day slug
+	// cooldown. Absent means a slug change is allowed now.
+	SlugChangeAllowedAt *string `json:"slug_change_allowed_at,omitempty"`
 }
 
 // teamWithRoleResponse includes the calling user's role.
@@ -64,6 +68,10 @@ func teamToResponse(t db.Team) teamResponse {
 	if t.CreatedAt.Valid {
 		resp.CreatedAt = t.CreatedAt.Time.Format(time.RFC3339)
 	}
+	if at, locked := service.SlugChangeAllowedAt(t); locked {
+		s := at.Format(time.RFC3339)
+		resp.SlugChangeAllowedAt = &s
+	}
 	return resp
 }
 
@@ -84,11 +92,11 @@ func requireTeamAccess(w http.ResponseWriter, r *http.Request, ac auth.AuthConte
 	teamIDStr := chi.URLParam(r, "id")
 	teamID, err := id.ParseTeamID(teamIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid team ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid team ID."))
 		return pgtype.UUID{}, false
 	}
 	if ac.TeamID != teamID {
-		writeError(w, http.StatusForbidden, "forbidden", "JWT team does not match requested team; use switch-team first")
+		writeErr(w, r, apperr.Forbidden.Msg("Your active team does not match the requested team. Switch teams first."))
 		return pgtype.UUID{}, false
 	}
 	return teamID, true
@@ -101,8 +109,7 @@ func (h *teamHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	teams, err := h.svc.ListTeamsForUser(r.Context(), ac.UserID)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -125,15 +132,14 @@ func (h *teamHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 
 	team, err := h.svc.CreateTeam(r.Context(), ac.UserID, req.Name)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -163,15 +169,13 @@ func (h *teamHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	team, err := h.svc.GetTeam(r.Context(), teamID)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
 	members, err := h.svc.GetMembers(r.Context(), teamID)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -199,7 +203,7 @@ func (h *teamHandler) Rename(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -211,13 +215,54 @@ func (h *teamHandler) Rename(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.RenameTeam(r.Context(), teamID, ac.UserID, req.Name); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
 	h.audit.LogTeamRename(r.Context(), ac, teamID, oldTeam.Name, req.Name)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ChangeSlug handles PATCH /v1/teams/{id}/slug
+// Changes the team's URL slug. Requires admin or owner role (verified from DB).
+// Enforces a 60-day cooldown and parks the old slug for 30 days.
+func (h *teamHandler) ChangeSlug(w http.ResponseWriter, r *http.Request) {
+	ac := auth.MustFromContext(r.Context())
+	teamID, ok := requireTeamAccess(w, r, ac)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Slug string `json:"slug"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
+		return
+	}
+
+	oldSlug, err := h.svc.ChangeSlug(r.Context(), teamID, ac.UserID, req.Slug)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	h.audit.LogTeamSlugChange(r.Context(), ac, teamID, oldSlug, strings.ToLower(strings.TrimSpace(req.Slug)))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CheckSlug handles GET /v1/teams/slug-check?slug=...
+// Reports whether the given slug can be adopted right now (format, reserved
+// words, uniqueness, tombstone). The result is team independent, so it needs
+// only a session — no team context. Lets the dashboard validate before the user
+// commits. Does not apply the 60-day cooldown.
+func (h *teamHandler) CheckSlug(w http.ResponseWriter, r *http.Request) {
+	res, err := h.svc.CheckSlug(r.Context(), r.URL.Query().Get("slug"))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // Delete handles DELETE /v1/teams/{id}
@@ -230,8 +275,7 @@ func (h *teamHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.DeleteTeam(r.Context(), teamID, ac.UserID); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -248,8 +292,7 @@ func (h *teamHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 
 	members, err := h.svc.GetMembers(r.Context(), teamID)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -273,19 +316,18 @@ func (h *teamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		Email string `json:"email"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "email is required")
+		writeErr(w, r, apperr.ValidationFailed.Msg("The email field is required.").With("field", "email"))
 		return
 	}
 
 	member, err := h.svc.AddMember(r.Context(), teamID, ac.UserID, req.Email)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -324,13 +366,12 @@ func (h *teamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 
 	targetUserID, err := id.ParseUserID(targetUserIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid user ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid user ID."))
 		return
 	}
 
 	if err := h.svc.RemoveMember(r.Context(), teamID, ac.UserID, targetUserID); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -350,7 +391,7 @@ func (h *teamHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 
 	targetUserID, err := id.ParseUserID(targetUserIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid user ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid user ID."))
 		return
 	}
 
@@ -358,13 +399,12 @@ func (h *teamHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 		Role string `json:"role"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if err := h.svc.UpdateMemberRole(r.Context(), teamID, ac.UserID, targetUserID, req.Role); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -387,8 +427,7 @@ func (h *teamHandler) Leave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.LeaveTeam(r.Context(), teamID, ac.UserID); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -404,7 +443,7 @@ func (h *teamHandler) SetBYOC(w http.ResponseWriter, r *http.Request) {
 
 	teamID, err := id.ParseTeamID(teamIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid team ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid team ID."))
 		return
 	}
 
@@ -412,13 +451,12 @@ func (h *teamHandler) SetBYOC(w http.ResponseWriter, r *http.Request) {
 		Enabled bool `json:"enabled"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid JSON body."))
 		return
 	}
 
 	if err := h.svc.SetBYOC(r.Context(), teamID, req.Enabled); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -440,8 +478,7 @@ func (h *teamHandler) AdminListTeams(w http.ResponseWriter, r *http.Request) {
 
 	teams, total, err := h.svc.AdminListTeams(r.Context(), perPage, offset)
 	if err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 
@@ -502,13 +539,12 @@ func (h *teamHandler) AdminDeleteTeam(w http.ResponseWriter, r *http.Request) {
 
 	teamID, err := id.ParseTeamID(teamIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid team ID")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid team ID."))
 		return
 	}
 
 	if err := h.svc.AdminDeleteTeam(r.Context(), teamID); err != nil {
-		status, code, msg := serviceErrToHTTP(err)
-		writeError(w, status, code, msg)
+		writeErr(w, r, err)
 		return
 	}
 

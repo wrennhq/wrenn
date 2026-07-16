@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/lifecycle"
@@ -76,7 +77,7 @@ func clampTimeout(timeoutSec int32) int32 {
 func (s *SandboxService) agentForSandbox(ctx context.Context, sandboxID pgtype.UUID) (hostagentClient, db.Sandbox, error) {
 	sb, err := s.DB.GetSandbox(ctx, sandboxID)
 	if err != nil {
-		return nil, db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
+		return nil, db.Sandbox{}, apperr.SandboxNotFound.Wrap(err)
 	}
 	agent, err := s.agentForHost(ctx, sb.HostID)
 	if err != nil {
@@ -90,7 +91,7 @@ func (s *SandboxService) agentForSandbox(ctx context.Context, sandboxID pgtype.U
 func (s *SandboxService) agentForHost(ctx context.Context, hostID pgtype.UUID) (hostagentClient, error) {
 	host, err := s.DB.GetHost(ctx, hostID)
 	if err != nil {
-		return nil, fmt.Errorf("host not found: %w", err)
+		return nil, apperr.HostNotFound.Wrap(err)
 	}
 	agent, err := s.Pool.GetForHost(host)
 	if err != nil {
@@ -117,6 +118,42 @@ type hostagentClient = interface {
 	CreateSnapshot(ctx context.Context, req *connect.Request[pb.CreateSnapshotRequest]) (*connect.Response[pb.CreateSnapshotResponse], error)
 }
 
+// resolveTemplateRef resolves a parsed template reference to its owning
+// template row, enforcing cross-team visibility. It never distinguishes
+// "missing" from "not visible" — both yield TemplateNotFound so template
+// existence does not leak across teams.
+func (s *SandboxService) resolveTemplateRef(ctx context.Context, requesterTeamID pgtype.UUID, slug, name string) (db.Template, error) {
+	ref := name
+	if slug != "" {
+		ref = slug + "/" + name
+	}
+	notFound := apperr.TemplateNotFound.Msgf("Template %q not found.", ref)
+
+	// Unqualified: own team first, then platform.
+	if slug == "" {
+		tmpl, err := s.DB.ResolveTemplateForTeam(ctx, db.ResolveTemplateForTeamParams{Name: name, TeamID: requesterTeamID})
+		if err != nil {
+			return db.Template{}, notFound
+		}
+		return tmpl, nil
+	}
+
+	// Slug-qualified: resolve the owning team, then the visible template.
+	owner, err := s.DB.GetTeamBySlug(ctx, slug)
+	if err != nil {
+		return db.Template{}, notFound
+	}
+	tmpl, err := s.DB.GetVisibleTemplateByTeamName(ctx, db.GetVisibleTemplateByTeamNameParams{
+		TeamID:   owner.ID, // owning team
+		Name:     name,
+		TeamID_2: requesterTeamID, // requester (grants visibility to own templates)
+	})
+	if err != nil {
+		return db.Template{}, notFound
+	}
+	return tmpl, nil
+}
+
 // Create creates a new sandbox asynchronously: picks a host, inserts a
 // "starting" DB record, fires the agent RPC in a background goroutine, and
 // returns the sandbox immediately. The background goroutine publishes a
@@ -125,11 +162,12 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	if p.Template == "" {
 		p.Template = "minimal-ubuntu"
 	}
-	if err := validate.SafeName(p.Template); err != nil {
-		return db.Sandbox{}, fmt.Errorf("invalid template name: %w", err)
+	slugPart, namePart, err := validate.TemplateRef(p.Template)
+	if err != nil {
+		return db.Sandbox{}, apperr.ValidationFailed.Msgf("Invalid template reference: %v.", err)
 	}
 	if err := validate.Metadata(p.Metadata); err != nil {
-		return db.Sandbox{}, fmt.Errorf("invalid metadata: %w", err)
+		return db.Sandbox{}, apperr.ValidationFailed.Msgf("Invalid metadata: %v.", err)
 	}
 	if p.VCPUs <= 0 {
 		p.VCPUs = 2
@@ -139,12 +177,18 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 	}
 	p.TimeoutSec = clampTimeout(p.TimeoutSec)
 
-	// Resolve template name → (teamID, templateID). System base templates are
-	// platform-owned rows like any other, so the lookup handles them too (the
-	// query also matches platform templates for any team).
-	tmpl, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: p.Template, TeamID: p.TeamID})
+	if !p.TeamID.Valid {
+		return db.Sandbox{}, apperr.InvalidRequest.Msg("A team_id is required.")
+	}
+
+	// Resolve the template reference → owning (teamID, templateID). Unqualified
+	// names prefer the requesting team's own template, then fall back to
+	// platform templates. A "<slug>/<name>" reference targets a specific team
+	// and succeeds only if that template is public, owned by the requester, or
+	// a platform template.
+	tmpl, err := s.resolveTemplateRef(ctx, p.TeamID, slugPart, namePart)
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("template %q not found: %w", p.Template, err)
+		return db.Sandbox{}, err
 	}
 	templateTeamID := tmpl.TeamID
 	templateID := tmpl.ID
@@ -158,13 +202,9 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		p.MemoryMB = tmpl.MemoryMb
 	}
 
-	if !p.TeamID.Valid {
-		return db.Sandbox{}, fmt.Errorf("invalid request: team_id is required")
-	}
-
 	team, err := s.DB.GetTeam(ctx, p.TeamID)
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("team not found: %w", err)
+		return db.Sandbox{}, apperr.TeamNotFound.Wrap(err)
 	}
 
 	host, err := s.Scheduler.SelectHost(ctx, p.TeamID, team.IsByoc, p.MemoryMB, 0)
@@ -324,7 +364,7 @@ func (s *SandboxService) Get(ctx context.Context, sandboxID, teamID pgtype.UUID)
 func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID pgtype.UUID) (db.Sandbox, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
+		return db.Sandbox{}, apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status == "paused" {
 		return sb, nil
@@ -333,7 +373,7 @@ func (s *SandboxService) Pause(ctx context.Context, sandboxID, teamID pgtype.UUI
 	if _, err := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 		ID: sandboxID, Status: "running", Status_2: "pausing",
 	}); err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox not in running state (current: %s)", sb.Status)
+		return db.Sandbox{}, apperr.SandboxNotRunning.Wrap(err).With("status", sb.Status)
 	}
 
 	agent, err := s.agentForHost(ctx, sb.HostID)
@@ -400,7 +440,7 @@ func (s *SandboxService) pauseInBackground(sandboxID pgtype.UUID, sandboxIDStr, 
 func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID pgtype.UUID) (db.Sandbox, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox not found: %w", err)
+		return db.Sandbox{}, apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status == "running" {
 		return sb, nil
@@ -409,7 +449,7 @@ func (s *SandboxService) Resume(ctx context.Context, sandboxID, teamID pgtype.UU
 	if _, err := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 		ID: sandboxID, Status: "paused", Status_2: "resuming",
 	}); err != nil {
-		return db.Sandbox{}, fmt.Errorf("sandbox not in paused state (current: %s)", sb.Status)
+		return db.Sandbox{}, apperr.SandboxNotPaused.Wrap(err).With("status", sb.Status)
 	}
 
 	agent, err := s.agentForHost(ctx, sb.HostID)
@@ -509,10 +549,10 @@ func (s *SandboxService) resumeInBackground(
 func (s *SandboxService) CreateSnapshot(ctx context.Context, sandboxID, teamID pgtype.UUID, name string) (db.Sandbox, string, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return db.Sandbox{}, "", fmt.Errorf("sandbox not found: %w", err)
+		return db.Sandbox{}, "", apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status != "running" && sb.Status != "paused" {
-		return db.Sandbox{}, "", fmt.Errorf("sandbox is not running or paused (status: %s)", sb.Status)
+		return db.Sandbox{}, "", apperr.Conflict.Msg("Sandbox must be running or paused to snapshot.").With("status", sb.Status)
 	}
 	origStatus := sb.Status
 
@@ -520,18 +560,18 @@ func (s *SandboxService) CreateSnapshot(ctx context.Context, sandboxID, teamID p
 		name = id.NewSnapshotName()
 	}
 	if err := validate.SafeName(name); err != nil {
-		return db.Sandbox{}, "", fmt.Errorf("invalid name: %w", err)
+		return db.Sandbox{}, "", apperr.ValidationFailed.Msgf("Invalid snapshot name: %v.", err)
 	}
 	// Reject duplicate names up front so we don't pause the VM and dump memory
 	// only to fail on the template insert at the very end.
 	if _, err := s.DB.GetTemplateByTeam(ctx, db.GetTemplateByTeamParams{Name: name, TeamID: teamID}); err == nil {
-		return db.Sandbox{}, "", fmt.Errorf("conflict: a snapshot named %q already exists", name)
+		return db.Sandbox{}, "", apperr.Conflict.Msgf("A snapshot named %q already exists.", name)
 	}
 
 	if _, err := s.DB.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 		ID: sandboxID, Status: origStatus, Status_2: "snapshotting",
 	}); err != nil {
-		return db.Sandbox{}, "", fmt.Errorf("sandbox not in %s state (current: %s)", origStatus, sb.Status)
+		return db.Sandbox{}, "", apperr.Conflict.WrapMsg(err, fmt.Sprintf("Sandbox is no longer in %s state.", origStatus)).With("status", origStatus)
 	}
 
 	agent, err := s.agentForHost(ctx, sb.HostID)
@@ -639,7 +679,7 @@ func (s *SandboxService) publishStateChanged(ctx context.Context, sandboxIDStr, 
 func (s *SandboxService) Destroy(ctx context.Context, sandboxID, teamID pgtype.UUID) error {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return fmt.Errorf("sandbox not found: %w", err)
+		return apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status == "stopped" || sb.Status == "error" {
 		return nil
@@ -745,7 +785,7 @@ func (s *SandboxService) persistMetricPoints(ctx context.Context, sandboxID pgty
 func (s *SandboxService) GetDiskUsage(ctx context.Context, sandboxID, teamID pgtype.UUID) (int64, error) {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return 0, fmt.Errorf("sandbox not found: %w", err)
+		return 0, apperr.SandboxNotFound.Wrap(err)
 	}
 
 	// For running or paused sandboxes, try the agent for live disk usage.
@@ -776,10 +816,10 @@ func (s *SandboxService) GetDiskUsage(ctx context.Context, sandboxID, teamID pgt
 func (s *SandboxService) Ping(ctx context.Context, sandboxID, teamID pgtype.UUID) error {
 	sb, err := s.DB.GetSandboxByTeam(ctx, db.GetSandboxByTeamParams{ID: sandboxID, TeamID: teamID})
 	if err != nil {
-		return fmt.Errorf("sandbox not found: %w", err)
+		return apperr.SandboxNotFound.Wrap(err)
 	}
 	if sb.Status != "running" {
-		return fmt.Errorf("sandbox is not running (status: %s)", sb.Status)
+		return apperr.SandboxNotRunning.New().With("status", sb.Status)
 	}
 
 	agent, _, err := s.agentForSandbox(ctx, sandboxID)

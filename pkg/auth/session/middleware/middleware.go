@@ -7,19 +7,19 @@ package middleware
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth/session"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
+	"git.omukk.dev/wrenn/wrenn/pkg/netutil"
 )
 
 // Cookie + header names. Exported so extensions and frontends can reference
@@ -29,21 +29,6 @@ const (
 	CSRFCookieName    = "wrenn_csrf"
 	CSRFHeaderName    = "X-CSRF-Token"
 )
-
-type errorBody struct {
-	Error errorDetail `json:"error"`
-}
-
-type errorDetail struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorBody{Error: errorDetail{Code: code, Message: message}})
-}
 
 // IsSecure reports whether the inbound request should produce Secure cookies.
 // Honors X-Forwarded-Proto for deployments behind TLS-terminating proxies.
@@ -174,7 +159,7 @@ func RequireSession(svc *session.Service, queries *db.Queries) func(http.Handler
 			sess, err := ResolveSession(r.Context(), queries, svc, r)
 			if err != nil {
 				ClearCookies(w, IsSecure(r))
-				writeError(w, http.StatusUnauthorized, "unauthorized", "valid session required")
+				apperr.WriteHTTP(w, r, apperr.AuthSessionRequired.WrapMsg(err, "A valid session is required."))
 				return
 			}
 			ctx := auth.WithAuthContext(r.Context(), AuthContextFromSession(sess))
@@ -192,13 +177,13 @@ func RequireSessionOrAPIKey(svc *session.Service, queries *db.Queries) func(http
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
-				writeError(w, http.StatusUnauthorized, "unauthorized", "invalid API key")
+				apperr.WriteHTTP(w, r, apperr.AuthInvalidAPIKey.New())
 				return
 			}
 			sess, err := ResolveSession(r.Context(), queries, svc, r)
 			if err != nil {
 				ClearCookies(w, IsSecure(r))
-				writeError(w, http.StatusUnauthorized, "unauthorized", "X-API-Key header or session cookie required")
+				apperr.WriteHTTP(w, r, apperr.AuthSessionRequired.Wrap(err))
 				return
 			}
 			ctx := auth.WithAuthContext(r.Context(), AuthContextFromSession(sess))
@@ -216,12 +201,12 @@ func RequireAdmin(queries *db.Queries) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ac, ok := auth.FromContext(r.Context())
 			if !ok {
-				writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+				apperr.WriteHTTP(w, r, apperr.Unauthorized.New())
 				return
 			}
 			user, err := queries.GetUserByID(r.Context(), ac.UserID)
 			if err != nil || !user.IsAdmin {
-				writeError(w, http.StatusForbidden, "forbidden", "admin access required")
+				apperr.WriteHTTP(w, r, apperr.Forbidden.WrapMsg(err, "Admin access required."))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -248,7 +233,7 @@ func RequireCSRF() func(http.Handler) http.Handler {
 			header := r.Header.Get(CSRFHeaderName)
 			if err != nil || cookie.Value == "" || header == "" ||
 				subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) != 1 {
-				writeError(w, http.StatusForbidden, "csrf_failed", "missing or invalid CSRF token")
+				apperr.WriteHTTP(w, r, apperr.AuthCSRF.New())
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -279,20 +264,10 @@ func IssueSession(
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	sess, err := svc.Create(ctx, userID, teamID, user.Email, user.Name, role, user.IsAdmin, r.UserAgent(), clientIP(r))
+	sess, err := svc.Create(ctx, userID, teamID, user.Email, user.Name, role, user.IsAdmin, r.UserAgent(), netutil.ClientIP(r))
 	if err != nil {
 		return nil, err
 	}
 	SetCookies(w, sess.RawSID, sess.CSRFToken, IsSecure(r))
 	return sess, nil
-}
-
-func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		if i := strings.IndexByte(fwd, ','); i > 0 {
-			return strings.TrimSpace(fwd[:i])
-		}
-		return strings.TrimSpace(fwd)
-	}
-	return r.RemoteAddr
 }

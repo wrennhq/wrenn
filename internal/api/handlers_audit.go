@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/service"
@@ -48,8 +50,12 @@ func parseAuditParams(r *http.Request) (before time.Time, beforeID pgtype.UUID, 
 
 	if s := r.URL.Query().Get("limit"); s != "" {
 		n, parseErr := strconv.Atoi(s)
-		if parseErr != nil || n < 1 {
+		if parseErr != nil {
 			err = parseErr
+			return
+		}
+		if n < 1 {
+			err = fmt.Errorf("limit must be a positive integer, got %d", n)
 			return
 		}
 		limit = n
@@ -107,7 +113,7 @@ func (h *auditHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	before, beforeID, limit, err := parseAuditParams(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid query parameters")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid query parameters."))
 		return
 	}
 
@@ -121,7 +127,7 @@ func (h *auditHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:         limit,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list audit logs")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
@@ -134,7 +140,7 @@ func (h *auditHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *auditHandler) AdminList(w http.ResponseWriter, r *http.Request) {
 	before, beforeID, limit, err := parseAuditParams(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid query parameters")
+		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid query parameters."))
 		return
 	}
 
@@ -148,7 +154,7 @@ func (h *auditHandler) AdminList(w http.ResponseWriter, r *http.Request) {
 		Limit:         limit,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", "failed to list audit logs")
+		writeErr(w, r, apperr.Internal.Wrap(err))
 		return
 	}
 
