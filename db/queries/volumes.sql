@@ -166,3 +166,13 @@ WHERE status IN ('attaching', 'deleting')
 -- re-attached by a racing capsule create) would erase the record of a volume
 -- that is once again in use.
 DELETE FROM volumes WHERE id = $1 AND team_id = $2 AND status = 'deleting';
+
+-- name: DeleteVolumesByTeam :exec
+-- Drop every volume record belonging to a team being deleted. This is the one
+-- place volumes are removed without an explicit per-volume delete: the team that
+-- owns them is going away, so there is no longer anyone who could reference,
+-- re-attach, or delete them. Unlike DeleteVolumeRow there is no status guard —
+-- the team's capsules have already been destroyed, so no volume can still be
+-- legitimately in use, and a row left behind would be unreachable forever (and
+-- would keep blocking deletion of the host it is pinned to).
+DELETE FROM volumes WHERE team_id = $1;

@@ -94,6 +94,22 @@ func (q *Queries) DeleteVolumeRow(ctx context.Context, arg DeleteVolumeRowParams
 	return err
 }
 
+const deleteVolumesByTeam = `-- name: DeleteVolumesByTeam :exec
+DELETE FROM volumes WHERE team_id = $1
+`
+
+// Drop every volume record belonging to a team being deleted. This is the one
+// place volumes are removed without an explicit per-volume delete: the team that
+// owns them is going away, so there is no longer anyone who could reference,
+// re-attach, or delete them. Unlike DeleteVolumeRow there is no status guard —
+// the team's capsules have already been destroyed, so no volume can still be
+// legitimately in use, and a row left behind would be unreachable forever (and
+// would keep blocking deletion of the host it is pinned to).
+func (q *Queries) DeleteVolumesByTeam(ctx context.Context, teamID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteVolumesByTeam, teamID)
+	return err
+}
+
 const detachVolumesByHost = `-- name: DetachVolumesByHost :exec
 UPDATE volumes
 SET status       = 'detached',

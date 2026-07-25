@@ -782,7 +782,9 @@ paths:
         - sessionAuth: []
       description: |
         Owner only. Soft-deletes the team and destroys all running/paused/starting
-        capsules. All DB records are preserved. The team slug is permanently reserved.
+        capsules. Team-owned templates and storage volumes are deleted along with
+        their data; capsule records are preserved. The team slug is permanently
+        reserved.
       responses:
         "204":
           description: Team deleted
@@ -1594,7 +1596,9 @@ paths:
         Create an external storage volume. The volume starts detached and is
         not placed on any host until it is first attached to a capsule (via
         `volume_ids` on capsule create), at which point it is pinned to that
-        capsule's host for the rest of its life. Volumes are never auto-deleted.
+        capsule's host for the rest of its life. Destroying a capsule only frees
+        its volumes, never deletes them; the one case where a volume is removed
+        without an explicit delete is deleting the team that owns it.
 
         Every volume has a `vl-`-prefixed name that is unique within your team
         and can be used anywhere a volume ID is accepted. Omit `name` and the
