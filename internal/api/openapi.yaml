@@ -4263,7 +4263,8 @@ components:
           description: >
             External storage volumes to attach at boot, each given as a volume
             ID ("vol-...") or a name ("vl-cache"). Each is mounted at
-            /mnt/<volume-id> inside the guest. At most 4 per capsule. Volumes
+            /mnt/<volume-id> inside the guest, formatted on first use and
+            writable by any user in the capsule. At most 4 per capsule. Volumes
             can only be attached at create time and must be detached and owned
             by your team. If a volume is already pinned to a host, the capsule is
             scheduled onto that host; attaching volumes pinned to different hosts

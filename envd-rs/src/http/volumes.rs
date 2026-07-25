@@ -65,19 +65,23 @@ pub async fn post_mount(
 
     // blkid exit status: 0 = a filesystem/signature is present (leave it alone),
     // 2 = no recognized signature (format it), anything else = probe error.
-    match has_filesystem(&device).await {
+    // Tracked so the permissions of an existing volume are never touched — only
+    // a filesystem this call created gets opened up below.
+    let formatted = match has_filesystem(&device).await {
         Ok(true) => {
             tracing::info!(device, "volume already has a filesystem; skipping mkfs");
+            false
         }
         Ok(false) => {
             if let Err(e) = mkfs_ext4(&device).await {
                 return json_error(StatusCode::INTERNAL_SERVER_ERROR, &e);
             }
+            true
         }
         Err(e) => {
             return json_error(StatusCode::INTERNAL_SERVER_ERROR, &e);
         }
-    }
+    };
 
     if let Err(e) = tokio::fs::create_dir_all(&req.mount_path).await {
         return json_error(
@@ -95,6 +99,9 @@ pub async fn post_mount(
         .await
     {
         Ok(out) if out.status.success() => {
+            if formatted {
+                open_mount_root(&req.mount_path);
+            }
             tracing::info!(device, mount_path = %req.mount_path, "volume mounted");
             no_content()
         }
@@ -113,6 +120,35 @@ pub async fn post_mount(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("mount command failed: {e}"),
         ),
+    }
+}
+
+/// open_mount_root relaxes the permissions of a just-formatted volume so every
+/// user in the capsule can use it.
+///
+/// mkfs.ext4 leaves the filesystem root owned by root with mode 0755, which
+/// locks out every non-root user — including the template's default user, which
+/// is who the file API and exec run as. Without this a caller has to sudo to
+/// write to their own volume. 1777 is /tmp's mode: world-writable, with the
+/// sticky bit so one user cannot remove another's files.
+///
+/// Only ever called straight after a first-time format. Re-mounting an existing
+/// volume leaves its permissions exactly as its owner last set them.
+///
+/// Applied to the mounted root rather than the directory created before the
+/// mount — that one is hidden underneath and changing it would have no effect.
+///
+/// Best-effort: a failure here leaves a root-only volume that is still mounted
+/// and holds its data, which is not worth failing the whole capsule create over.
+fn open_mount_root(mount_path: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Err(e) = std::fs::set_permissions(mount_path, std::fs::Permissions::from_mode(0o1777)) {
+        tracing::warn!(
+            mount_path,
+            error = %e,
+            "failed to relax volume permissions; only root will be able to write to it"
+        );
     }
 }
 
