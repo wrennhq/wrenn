@@ -360,6 +360,62 @@ func (c *Client) PrepareSnapshot(ctx context.Context) error {
 	return nil
 }
 
+// MountVolume asks envd to mount a data volume inside the guest. The volume's
+// block device is resolved by its virtio-blk serial (set in the VM config), so
+// this is robust to device-enumeration order. envd formats the device with
+// ext4 only if it has no filesystem yet (existing data is never reformatted),
+// then mounts it at mountPath.
+func (c *Client) MountVolume(ctx context.Context, serial, mountPath string) error {
+	payload, err := json.Marshal(map[string]string{"serial": serial, "mount_path": mountPath})
+	if err != nil {
+		return fmt.Errorf("marshal mount body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/volumes/mount", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("mount volume: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxEnvdControlBytes))
+		return fmt.Errorf("mount volume: status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// UnmountVolume asks envd to flush (sync) and unmount a data volume. Used
+// best-effort before a graceful capsule destroy so buffered writes reach the
+// backing file. Safe to call even if the path is not mounted.
+func (c *Client) UnmountVolume(ctx context.Context, mountPath string) error {
+	payload, err := json.Marshal(map[string]string{"mount_path": mountPath})
+	if err != nil {
+		return fmt.Errorf("marshal unmount body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/volumes/unmount", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("unmount volume: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxEnvdControlBytes))
+		return fmt.Errorf("unmount volume: status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 // MemoryPreloadStatus mirrors envd's /memory/preload response.
 //
 // State values: "idle", "running", "done", "failed", "cancelled".

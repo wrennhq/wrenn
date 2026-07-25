@@ -22,23 +22,15 @@ pub struct InitRequest {
     #[serde(rename = "hyperloop_ip")]
     pub hyperloop_ip: Option<String>,
     pub timestamp: Option<String>,
-    #[serde(rename = "volume_mounts")]
-    pub volume_mounts: Option<Vec<VolumeMount>>,
     pub sandbox_id: Option<String>,
     pub template_id: Option<String>,
     /// Public proxy domain (e.g. "wrenn.dev"). Used by `envd ports` to build
     /// the {port}-{sandbox_id}.{domain} URLs.
     pub proxy_domain: Option<String>,
     /// New lifecycle identifier for this resume. When it changes between
-    /// /init calls, envd treats the call as a post-resume hook: port
-    /// forwarder is restarted and NFS mounts are refreshed.
+    /// /init calls, envd treats the call as a post-resume hook: the port
+    /// forwarder is restarted and the clock is stepped.
     pub lifecycle_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct VolumeMount {
-    pub nfs_target: String,
-    pub path: String,
 }
 
 /// POST /init — called by host agent after boot.
@@ -183,20 +175,6 @@ pub async fn post_init(
         setup_hyperloop(ip, &state.defaults.env_vars).await;
     }
 
-    // NFS mounts. Awaited in parallel so callers that immediately access the
-    // mount path don't race the mount(2). Previously these were detached via
-    // tokio::spawn, which let /init return success before mounts existed.
-    if let Some(ref mounts) = init_req.volume_mounts {
-        let futs = mounts.iter().map(|m| {
-            let target = m.nfs_target.clone();
-            let path = m.path.clone();
-            async move {
-                setup_nfs(&target, &path).await;
-            }
-        });
-        futures::future::join_all(futs).await;
-    }
-
     // Set sandbox/template metadata from request body. Deliberately NOT
     // written into envd's own process environment: std::env::set_var is
     // undefined behavior with the multi-threaded runtime live (concurrent
@@ -291,45 +269,6 @@ async fn setup_hyperloop(address: &str, env_vars: &dashmap::DashMap<String, Stri
     }
 
     env_vars.insert("WRENN_EVENTS_ADDRESS".into(), format!("http://{address}"));
-}
-
-async fn setup_nfs(nfs_target: &str, path: &str) {
-    let mkdir = tokio::process::Command::new("mkdir")
-        .args(["-p", path])
-        .output()
-        .await;
-    if let Err(e) = mkdir {
-        tracing::error!(error = %e, path, "nfs: mkdir failed");
-        return;
-    }
-
-    let mount = tokio::process::Command::new("mount")
-        .args([
-            "-v",
-            "-t",
-            "nfs",
-            "-o",
-            "mountproto=tcp,mountport=2049,proto=tcp,port=2049,nfsvers=3,noacl",
-            nfs_target,
-            path,
-        ])
-        .output()
-        .await;
-
-    match mount {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if output.status.success() {
-                tracing::info!(nfs_target, path, stdout = %stdout, "nfs: mount success");
-            } else {
-                tracing::error!(nfs_target, path, stderr = %stderr, "nfs: mount failed");
-            }
-        }
-        Err(e) => {
-            tracing::error!(error = %e, nfs_target, path, "nfs: mount command failed");
-        }
-    }
 }
 
 fn write_run_file(name: &str, value: &str) {

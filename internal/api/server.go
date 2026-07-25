@@ -82,7 +82,8 @@ func New(
 	}
 
 	// Shared service layer.
-	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
+	volumeSvc := &service.VolumeService{DB: queries, Pool: pool, MaxSizeMB: int32(sctx.Config.MaxVolumeSizeMB)}
+	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched, Volumes: volumeSvc}
 	sandboxSvc.PublishEvent = func(ctx context.Context, event service.SandboxStateEvent) {
 		if evt, ok := serviceEventToCanonical(event); ok {
 			// State-change events are ephemeral UI signals — mirror them to the
@@ -116,6 +117,7 @@ func New(
 	authH := newAuthHandler(queries, pgPool, sessionSvc, mailer, rdb, oauthRedirectURL, authHooks)
 	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, sessionSvc, oauthRegistry, oauthRedirectURL, authHooks)
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
+	volumes := newVolumeHandler(volumeSvc, al)
 	hostH := newHostHandler(hostSvc, queries, al, monitor)
 	teamH := newTeamHandler(teamSvc, al, mailer, sessionSvc)
 	usersH := newUsersHandler(queries, userSvc, al, sessionSvc)
@@ -276,6 +278,16 @@ func New(
 		r.Patch("/{name}/visibility", snapshots.SetVisibility)
 		r.Patch("/{name}", snapshots.Rename)
 		r.Delete("/{name}", snapshots.Delete)
+	})
+
+	// External storage volumes: API key (SDK) or session (browser).
+	r.Route("/v1/volumes", func(r chi.Router) {
+		r.Use(requireSessionOrAPIKey(queries, sessionSvc))
+		r.Use(csrf)
+		r.Post("/", volumes.Create)
+		r.Get("/", volumes.List)
+		r.Get("/{id}", volumes.Get)
+		r.Delete("/{id}", volumes.Delete)
 	})
 
 	// Host management.
@@ -480,6 +492,14 @@ func serviceEventToCanonical(e service.SandboxStateEvent) (events.Event, bool) {
 	case "sandbox.stopped":
 		eventType = events.CapsuleDestroy
 		outcome = events.OutcomeSuccess
+	case "sandbox.destroy_failed":
+		// The destroy RPC never reached the host, so the capsule stays in
+		// "stopping" holding its volumes until the host monitor re-issues it.
+		// This is the only lifecycle path that reaches no terminal state of its
+		// own, so the event is what tells anyone it is outstanding.
+		eventType = events.CapsuleDestroy
+		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "destroy_failed"}
 	case "sandbox.pause_failed":
 		// reason must be non-empty or channels.isRedundantSystemFollowup
 		// filters this system-actor event out of webhook delivery.

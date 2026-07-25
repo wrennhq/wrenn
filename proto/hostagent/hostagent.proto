@@ -109,6 +109,26 @@ service HostAgentService {
   // size 0 in the database (e.g. system base templates seeded before the
   // rootfs was built).
   rpc GetTemplateSize(GetTemplateSizeRequest) returns (GetTemplateSizeResponse);
+
+  // DeleteVolume removes an external storage volume's backing file from this
+  // host. Called by the control plane when a detached volume is deleted; the
+  // volume must not be attached to any sandbox on this host.
+  rpc DeleteVolume(DeleteVolumeRequest) returns (DeleteVolumeResponse);
+}
+
+// VolumeSpec describes an external storage volume to attach to a sandbox at
+// boot time. The host provisions the backing sparse file on first use, hands
+// it to Cloud Hypervisor as a Raw disk, and asks envd to format (if empty) and
+// mount it in the guest.
+message VolumeSpec {
+  // Volume UUID (hex string).
+  string volume_id = 1;
+  // Team UUID that owns the volume (hex string) — locates the backing file.
+  string team_id = 2;
+  // Size of the volume in MB (used to size the sparse file on first attach).
+  int32 size_mb = 3;
+  // Guest mount path. Empty means the default /mnt/<volume-id>.
+  string mount_path = 4;
 }
 
 message CreateSandboxRequest {
@@ -142,6 +162,9 @@ message CreateSandboxRequest {
 
   // Default environment variables (set in envd via PostInit).
   map<string, string> default_env = 10;
+
+  // External storage volumes to attach at boot time and mount in the guest.
+  repeated VolumeSpec volumes = 11;
 }
 
 message CreateSandboxResponse {
@@ -463,6 +486,15 @@ message GetTemplateSizeResponse {
   // accounting so sparse files report only allocated blocks.
   int64 size_bytes = 1;
 }
+
+message DeleteVolumeRequest {
+  // Team UUID that owns the volume (hex string).
+  string team_id = 1;
+  // Volume UUID (hex string).
+  string volume_id = 2;
+}
+
+message DeleteVolumeResponse {}
 
 // ── PTY ─────────────────────────────────────────────────────────────
 

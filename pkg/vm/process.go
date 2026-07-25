@@ -137,6 +137,15 @@ func buildLaunchScript(cfg *VMConfig, extraArgs string) string {
 	if extraArgs != "" {
 		chCmd += " " + extraArgs
 	}
+
+	// One symlink per data volume, pointing the stable in-namespace path (baked
+	// into CH's config.json) at the real backing file on the host. Recreated
+	// identically on every restore so the snapshot's disk paths resolve.
+	var volumeLinks strings.Builder
+	for _, v := range cfg.Volumes {
+		fmt.Fprintf(&volumeLinks, "ln -s %s %s/%s\n", v.HostPath, cfg.SandboxDir, v.symlinkName())
+	}
+
 	return fmt.Sprintf(`
 set -euo pipefail
 
@@ -147,13 +156,14 @@ mount -t tmpfs tmpfs %[1]s
 
 ln -s %[2]s %[1]s/vmlinux
 ln -s %[3]s %[1]s/rootfs.ext4
-
+%[5]s
 exec %[4]s
 `,
-		cfg.SandboxDir, // 1
-		cfg.KernelPath, // 2
-		cfg.RootfsPath, // 3
-		chCmd,          // 4
+		cfg.SandboxDir,       // 1
+		cfg.KernelPath,       // 2
+		cfg.RootfsPath,       // 3
+		chCmd,                // 4
+		volumeLinks.String(), // 5
 	)
 }
 

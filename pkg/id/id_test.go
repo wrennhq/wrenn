@@ -100,6 +100,51 @@ func TestMaxUUID(t *testing.T) {
 	}
 }
 
+func TestVolumeIDRoundTrip(t *testing.T) {
+	id := NewVolumeID()
+	formatted := FormatVolumeID(id)
+	if formatted[:len(PrefixVolume)] != PrefixVolume {
+		t.Fatalf("expected %s prefix, got %s", PrefixVolume, formatted)
+	}
+	parsed, err := ParseVolumeID(formatted)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if parsed != id {
+		t.Fatalf("round-trip failed: %v → %s → %v", id, formatted, parsed)
+	}
+}
+
+func TestVolumeSerial(t *testing.T) {
+	// The virtio-blk serial (VIRTIO_BLK_ID_BYTES) caps at 20 bytes; the guest
+	// resolves the device by this value, so it must always fit.
+	for i := 0; i < 1000; i++ {
+		s := VolumeSerial(NewVolumeID())
+		if len(s) > 20 {
+			t.Fatalf("serial %q exceeds 20 bytes (%d)", s, len(s))
+		}
+		if s == "" {
+			t.Fatal("serial must not be empty")
+		}
+	}
+	// Deterministic: the same volume yields the same serial (required so a
+	// resumed capsule rebuilds the identical disk symlink).
+	id := NewVolumeID()
+	first := VolumeSerial(id)
+	second := VolumeSerial(id)
+	if first != second {
+		t.Fatalf("VolumeSerial must be deterministic: %q != %q", first, second)
+	}
+}
+
+func TestDefaultVolumeMountPath(t *testing.T) {
+	id := NewVolumeID()
+	want := "/mnt/" + FormatVolumeID(id)
+	if got := DefaultVolumeMountPath(id); got != want {
+		t.Fatalf("DefaultVolumeMountPath = %q, want %q", got, want)
+	}
+}
+
 func BenchmarkFormatSandboxID(b *testing.B) {
 	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	b.ResetTimer()

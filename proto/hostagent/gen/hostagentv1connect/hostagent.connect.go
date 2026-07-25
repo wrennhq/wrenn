@@ -122,6 +122,9 @@ const (
 	// HostAgentServiceGetTemplateSizeProcedure is the fully-qualified name of the HostAgentService's
 	// GetTemplateSize RPC.
 	HostAgentServiceGetTemplateSizeProcedure = "/hostagent.v1.HostAgentService/GetTemplateSize"
+	// HostAgentServiceDeleteVolumeProcedure is the fully-qualified name of the HostAgentService's
+	// DeleteVolume RPC.
+	HostAgentServiceDeleteVolumeProcedure = "/hostagent.v1.HostAgentService/DeleteVolume"
 )
 
 // HostAgentServiceClient is a client for the hostagent.v1.HostAgentService service.
@@ -201,6 +204,10 @@ type HostAgentServiceClient interface {
 	// size 0 in the database (e.g. system base templates seeded before the
 	// rootfs was built).
 	GetTemplateSize(context.Context, *connect.Request[gen.GetTemplateSizeRequest]) (*connect.Response[gen.GetTemplateSizeResponse], error)
+	// DeleteVolume removes an external storage volume's backing file from this
+	// host. Called by the control plane when a detached volume is deleted; the
+	// volume must not be attached to any sandbox on this host.
+	DeleteVolume(context.Context, *connect.Request[gen.DeleteVolumeRequest]) (*connect.Response[gen.DeleteVolumeResponse], error)
 }
 
 // NewHostAgentServiceClient constructs a client for the hostagent.v1.HostAgentService service. By
@@ -394,6 +401,12 @@ func NewHostAgentServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(hostAgentServiceMethods.ByName("GetTemplateSize")),
 			connect.WithClientOptions(opts...),
 		),
+		deleteVolume: connect.NewClient[gen.DeleteVolumeRequest, gen.DeleteVolumeResponse](
+			httpClient,
+			baseURL+HostAgentServiceDeleteVolumeProcedure,
+			connect.WithSchema(hostAgentServiceMethods.ByName("DeleteVolume")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -429,6 +442,7 @@ type hostAgentServiceClient struct {
 	killProcess         *connect.Client[gen.KillProcessRequest, gen.KillProcessResponse]
 	connectProcess      *connect.Client[gen.ConnectProcessRequest, gen.ConnectProcessResponse]
 	getTemplateSize     *connect.Client[gen.GetTemplateSizeRequest, gen.GetTemplateSizeResponse]
+	deleteVolume        *connect.Client[gen.DeleteVolumeRequest, gen.DeleteVolumeResponse]
 }
 
 // CreateSandbox calls hostagent.v1.HostAgentService.CreateSandbox.
@@ -581,6 +595,11 @@ func (c *hostAgentServiceClient) GetTemplateSize(ctx context.Context, req *conne
 	return c.getTemplateSize.CallUnary(ctx, req)
 }
 
+// DeleteVolume calls hostagent.v1.HostAgentService.DeleteVolume.
+func (c *hostAgentServiceClient) DeleteVolume(ctx context.Context, req *connect.Request[gen.DeleteVolumeRequest]) (*connect.Response[gen.DeleteVolumeResponse], error) {
+	return c.deleteVolume.CallUnary(ctx, req)
+}
+
 // HostAgentServiceHandler is an implementation of the hostagent.v1.HostAgentService service.
 type HostAgentServiceHandler interface {
 	// CreateSandbox boots a new microVM with the given configuration.
@@ -658,6 +677,10 @@ type HostAgentServiceHandler interface {
 	// size 0 in the database (e.g. system base templates seeded before the
 	// rootfs was built).
 	GetTemplateSize(context.Context, *connect.Request[gen.GetTemplateSizeRequest]) (*connect.Response[gen.GetTemplateSizeResponse], error)
+	// DeleteVolume removes an external storage volume's backing file from this
+	// host. Called by the control plane when a detached volume is deleted; the
+	// volume must not be attached to any sandbox on this host.
+	DeleteVolume(context.Context, *connect.Request[gen.DeleteVolumeRequest]) (*connect.Response[gen.DeleteVolumeResponse], error)
 }
 
 // NewHostAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -847,6 +870,12 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 		connect.WithSchema(hostAgentServiceMethods.ByName("GetTemplateSize")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hostAgentServiceDeleteVolumeHandler := connect.NewUnaryHandler(
+		HostAgentServiceDeleteVolumeProcedure,
+		svc.DeleteVolume,
+		connect.WithSchema(hostAgentServiceMethods.ByName("DeleteVolume")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/hostagent.v1.HostAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HostAgentServiceCreateSandboxProcedure:
@@ -909,6 +938,8 @@ func NewHostAgentServiceHandler(svc HostAgentServiceHandler, opts ...connect.Han
 			hostAgentServiceConnectProcessHandler.ServeHTTP(w, r)
 		case HostAgentServiceGetTemplateSizeProcedure:
 			hostAgentServiceGetTemplateSizeHandler.ServeHTTP(w, r)
+		case HostAgentServiceDeleteVolumeProcedure:
+			hostAgentServiceDeleteVolumeHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1036,4 +1067,8 @@ func (UnimplementedHostAgentServiceHandler) ConnectProcess(context.Context, *con
 
 func (UnimplementedHostAgentServiceHandler) GetTemplateSize(context.Context, *connect.Request[gen.GetTemplateSizeRequest]) (*connect.Response[gen.GetTemplateSizeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.GetTemplateSize is not implemented"))
+}
+
+func (UnimplementedHostAgentServiceHandler) DeleteVolume(context.Context, *connect.Request[gen.DeleteVolumeRequest]) (*connect.Response[gen.DeleteVolumeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("hostagent.v1.HostAgentService.DeleteVolume is not implemented"))
 }

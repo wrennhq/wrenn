@@ -452,6 +452,38 @@ func (l *AuditLogger) LogSnapshotDeleteSystem(ctx context.Context, teamID pgtype
 	})
 }
 
+// --- Volume events (scope: team) ---
+
+// LogVolumeCreate records the creation of an external storage volume.
+func (l *AuditLogger) LogVolumeCreate(ctx context.Context, ac auth.AuthContext, volumeID pgtype.UUID, name string, sizeMB int, err error) {
+	meta := map[string]any{"name": name, "size_mb": sizeMB}
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "volume", id.FormatVolumeID(volumeID), "create", auditStatusFor(err, "success"), mergeMeta(meta, err)))
+	l.publish(ctx, events.Event{
+		Event:     events.VolumeCreate,
+		Outcome:   outcomeFromErr(err),
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(ac.TeamID),
+		Actor:     actorToEvent(ac),
+		Resource:  events.Resource{ID: id.FormatVolumeID(volumeID), Type: "volume"},
+		Metadata:  map[string]string{"name": name},
+		Error:     errString(err),
+	})
+}
+
+// LogVolumeDelete records the deletion of an external storage volume.
+func (l *AuditLogger) LogVolumeDelete(ctx context.Context, ac auth.AuthContext, volumeID pgtype.UUID, err error) {
+	l.Log(ctx, newEntry(ac, ac.TeamID, "team", "volume", id.FormatVolumeID(volumeID), "delete", auditStatusFor(err, "warning"), mergeMeta(nil, err)))
+	l.publish(ctx, events.Event{
+		Event:     events.VolumeDelete,
+		Outcome:   outcomeFromErr(err),
+		Timestamp: events.Now(),
+		TeamID:    id.FormatTeamID(ac.TeamID),
+		Actor:     actorToEvent(ac),
+		Resource:  events.Resource{ID: id.FormatVolumeID(volumeID), Type: "volume"},
+		Error:     errString(err),
+	})
+}
+
 // --- Team events (scope: team) ---
 
 func (l *AuditLogger) LogTeamRename(ctx context.Context, ac auth.AuthContext, teamID pgtype.UUID, oldName, newName string) {

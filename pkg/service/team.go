@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -346,6 +347,15 @@ func (s *TeamService) deleteTeamCore(ctx context.Context, teamID pgtype.UUID) er
 			// as that would leave orphaned "running" records for a deleted team.
 			return fmt.Errorf("update sandbox statuses: %w", err)
 		}
+
+		// Free any volumes those capsules held. The destroys above already ran
+		// against the host, so this is the same confirmed-gone signal the host
+		// monitor uses — no VM is left holding a backing file open. Doing it here
+		// (rather than relying on the volume cleanup below) keeps volume state
+		// consistent even if that cleanup fails.
+		if err := s.DB.DetachVolumesBySandboxIDs(ctx, stopIDs); err != nil {
+			slog.Warn("team delete: failed to detach volumes", "team_id", id.FormatTeamID(teamID), "error", err)
+		}
 	}
 
 	// Delete sandbox metrics for this team.
@@ -366,8 +376,10 @@ func (s *TeamService) deleteTeamCore(ctx context.Context, teamID pgtype.UUID) er
 		slog.Warn("team delete: failed to delete channels", "team_id", id.FormatTeamID(teamID), "error", err)
 	}
 
-	// Clean up team-owned templates from all hosts in the background.
+	// Clean up team-owned templates and storage volumes from all hosts in the
+	// background.
 	go s.cleanupTeamTemplates(context.Background(), teamID)
+	go s.cleanupTeamVolumes(context.Background(), teamID)
 
 	if err := s.DB.SoftDeleteTeam(ctx, teamID); err != nil {
 		return fmt.Errorf("soft delete team: %w", err)
@@ -418,6 +430,65 @@ func (s *TeamService) cleanupTeamTemplates(ctx context.Context, teamID pgtype.UU
 	// Remove DB records.
 	if err := s.DB.DeleteTemplatesByTeam(ctx, teamID); err != nil {
 		slog.Warn("team delete: failed to delete template records", "team_id", id.FormatTeamID(teamID), "error", err)
+	}
+}
+
+// cleanupTeamVolumes deletes every storage volume owned by a team being deleted:
+// the backing file on each volume's pinned host, then the DB records. Called
+// asynchronously during team deletion.
+//
+// Normal volume deletion is always explicit (VolumeService.Delete) — a destroyed
+// capsule only frees its volumes, it never removes them. Team deletion is the
+// exception: the owner of the volumes is going away, so leaving the data behind
+// would orphan it on the host with no way left to reach it.
+//
+// Unlike VolumeService.Delete there is no per-volume status claim: the team's
+// capsules were destroyed before this ran, so nothing can be attaching or
+// re-attaching. Records are dropped even when a host is unreachable, matching
+// template cleanup — a row kept for a deleted team is unreachable forever and
+// would keep blocking deletion of the host it is pinned to.
+func (s *TeamService) cleanupTeamVolumes(ctx context.Context, teamID pgtype.UUID) {
+	volumes, err := s.DB.ListVolumesByTeam(ctx, teamID)
+	if err != nil {
+		slog.Warn("team delete: failed to list volumes for cleanup", "team_id", id.FormatTeamID(teamID), "error", err)
+		return
+	}
+	if len(volumes) == 0 {
+		return
+	}
+
+	for _, vol := range volumes {
+		// A volume that was never attached has no file on any host, and one whose
+		// pinned host is gone lost its data with that host's disk. Either way
+		// there is nothing to remove — just drop the record below.
+		if !vol.HostID.Valid {
+			continue
+		}
+		host, err := s.DB.GetHost(ctx, vol.HostID)
+		if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				slog.Warn("team delete: failed to load volume host",
+					"volume_id", id.FormatVolumeID(vol.ID), "error", err)
+			}
+			continue
+		}
+		agent, err := s.HostPool.GetForHost(host)
+		if err != nil {
+			slog.Warn("team delete: failed to reach volume host",
+				"host_id", id.FormatHostID(host.ID), "volume_id", id.FormatVolumeID(vol.ID), "error", err)
+			continue
+		}
+		if _, err := agent.DeleteVolume(ctx, connect.NewRequest(&pb.DeleteVolumeRequest{
+			TeamId:   id.UUIDString(teamID),
+			VolumeId: id.UUIDString(vol.ID),
+		})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
+			slog.Warn("team delete: failed to delete volume on host",
+				"host_id", id.FormatHostID(host.ID), "volume_id", id.FormatVolumeID(vol.ID), "error", err)
+		}
+	}
+
+	if err := s.DB.DeleteVolumesByTeam(ctx, teamID); err != nil {
+		slog.Warn("team delete: failed to delete volume records", "team_id", id.FormatTeamID(teamID), "error", err)
 	}
 }
 

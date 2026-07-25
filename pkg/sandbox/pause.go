@@ -103,6 +103,11 @@ type snapshotMeta struct {
 	// forward verbatim through the chain.
 	SandboxDir string    `json:"sandbox_dir"`
 	CreatedAt  time.Time `json:"created_at"`
+	// Volumes records the data volumes attached at pause time so Resume can
+	// rebuild each disk symlink and CH's restored config.json paths resolve.
+	// Only ever set for pause snapshots — snapshot templates are volume-free
+	// (CreateSnapshot refuses to run while volumes are attached).
+	Volumes []*attachedVolume `json:"volumes,omitempty"`
 }
 
 // effectiveSandboxDir returns the tmpfs SandboxDir the running VM uses — the
@@ -269,6 +274,7 @@ func (m *Manager) Pause(ctx context.Context, sandboxID string) error {
 		CowPath:      sb.dmDevice.CowPath,
 		SandboxDir:   effectiveSandboxDir(sb),
 		CreatedAt:    time.Now(),
+		Volumes:      sb.volumes,
 	}
 	if err := writeSnapshotMeta(stageDir, meta); err != nil {
 		// Without meta, Resume cannot reconstruct the sandbox. Treat as fatal.
@@ -665,6 +671,12 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 	// keeps its original ID/SandboxDir so the disk path baked into
 	// config.json (`/tmp/ch-vm-{originalID}/rootfs.ext4`) resolves to the
 	// re-attached dm device via the tmpfs symlink set up by the launcher.
+	// The attached-volume records from the snapshot meta drive the restore
+	// launch: re-create each disk symlink (CH's saved config.json references
+	// them) so the guest mount — already present in the restored memory image —
+	// resolves to the same device.
+	restoredVols := meta.Volumes
+
 	vmCfg := m.buildRestoreVMConfig(restoreInputs{
 		sandboxID:  sb.ID,
 		templateID: id.UUIDString(pgtype.UUID{Bytes: sb.TemplateID, Valid: true}),
@@ -674,6 +686,7 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 		memoryMB:   meta.MemoryMB,
 		slot:       slot,
 		sandboxDir: meta.SandboxDir,
+		volumes:    volumeDisksFor(restoredVols),
 	})
 	client, err := m.launchRestoredVM(ctx, vmCfg, slot.HostIP.String())
 	if err != nil {
@@ -697,6 +710,7 @@ func (m *Manager) resumeFromMeta(ctx context.Context, sb *sandboxState, meta *sn
 	// it empty so a Destroy-before-Resume cannot underflow the registry.
 	sb.baseImagePath = meta.BaseTemplate
 	sb.lazyRestore = true
+	sb.volumes = restoredVols
 	sb.connTracker.Reset()
 	sb.HostIP = slot.HostIP
 	sb.RootfsPath = dmDev.DevicePath
@@ -860,6 +874,15 @@ func (m *Manager) CreateSnapshot(ctx context.Context, sandboxID string, teamID, 
 	sb.lifecycleMu.Lock()
 	defer sb.lifecycleMu.Unlock()
 
+	// A template must be volume-free: CH's snapshot config would otherwise
+	// reference the volume disks, producing a template that cannot launch on a
+	// fresh sandbox. Refuse while any volume is attached. (For a paused sandbox
+	// re-attached across an agent restart sb.volumes may be empty; that case is
+	// caught again from the on-disk meta in snapshotPausedToTemplate.)
+	if len(sb.volumes) > 0 {
+		return 0, fmt.Errorf("%w", ErrVolumesAttached)
+	}
+
 	// Refuse silent overwrites: every snapshot must land in a fresh
 	// templateID. Defends against caller bugs and concurrent CreateSnapshot
 	// races for the same destination. User-facing snapshot-name uniqueness
@@ -1001,6 +1024,11 @@ func (m *Manager) snapshotPausedToTemplate(ctx context.Context, sb *sandboxState
 
 	snapDir := layout.PauseSnapshotDir(m.cfg.WrennDir, sb.ID)
 	meta, err := readSnapshotMeta(snapDir)
+	if err == nil && len(meta.Volumes) > 0 {
+		// A sandbox paused with volumes attached carries them in its snapshot;
+		// promoting it to a template would bake in dangling disk references.
+		return 0, fmt.Errorf("%w", ErrVolumesAttached)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("load pause snapshot meta: %w", err)
 	}
@@ -1197,6 +1225,11 @@ func (m *Manager) FlattenRootfs(ctx context.Context, sandboxID string, teamID, t
 
 	if sb.Status != models.StatusRunning {
 		return 0, fmt.Errorf("%w: %s (status: %s)", ErrNotRunning, sandboxID, sb.Status)
+	}
+
+	// A flattened image template must be volume-free (see CreateSnapshot).
+	if len(sb.volumes) > 0 {
+		return 0, fmt.Errorf("%w", ErrVolumesAttached)
 	}
 
 	dstDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)

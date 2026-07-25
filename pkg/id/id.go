@@ -39,6 +39,7 @@ func NewAdminPermissionID() pgtype.UUID { return newUUID() }
 func NewChannelID() pgtype.UUID         { return newUUID() }
 
 func NewTemplateID() pgtype.UUID { return newUUID() }
+func NewVolumeID() pgtype.UUID   { return newUUID() }
 
 // NewSnapshotName generates a snapshot name: "template-" + 8 hex chars.
 func NewSnapshotName() string {
@@ -78,6 +79,7 @@ const (
 	PrefixBuild           = "bld-"
 	PrefixAdminPermission = "perm-"
 	PrefixChannel         = "ch-"
+	PrefixVolume          = "vol-"
 )
 
 // UUIDToBase36 encodes 16 UUID bytes as a 25-char base36 string (0-9a-z).
@@ -127,6 +129,7 @@ func FormatRefreshTokenID(id pgtype.UUID) string { return formatUUID(PrefixRefre
 func FormatAuditLogID(id pgtype.UUID) string     { return formatUUID(PrefixAuditLog, id) }
 func FormatBuildID(id pgtype.UUID) string        { return formatUUID(PrefixBuild, id) }
 func FormatChannelID(id pgtype.UUID) string      { return formatUUID(PrefixChannel, id) }
+func FormatVolumeID(id pgtype.UUID) string       { return formatUUID(PrefixVolume, id) }
 
 // --- Parsing (prefixed string from API/RPC input → pgtype.UUID) ---
 
@@ -150,6 +153,23 @@ func ParseHostTokenID(s string) (pgtype.UUID, error) { return parseUUID(PrefixHo
 func ParseAuditLogID(s string) (pgtype.UUID, error)  { return parseUUID(PrefixAuditLog, s) }
 func ParseBuildID(s string) (pgtype.UUID, error)     { return parseUUID(PrefixBuild, s) }
 func ParseChannelID(s string) (pgtype.UUID, error)   { return parseUUID(PrefixChannel, s) }
+func ParseVolumeID(s string) (pgtype.UUID, error)    { return parseUUID(PrefixVolume, s) }
+
+// DefaultVolumeMountPath returns the guest path a volume is mounted at when no
+// explicit path is requested. Single source of truth shared by the control
+// plane (which records it) and the host agent (which mounts there).
+func DefaultVolumeMountPath(v pgtype.UUID) string {
+	return "/mnt/" + FormatVolumeID(v)
+}
+
+// VolumeSerial returns a 16-hex-char (64-bit) token derived from a volume ID.
+// It is set as the virtio-blk disk serial in the VM config so the guest can
+// resolve the block device via /sys/block/*/serial regardless of enumeration
+// order, without relying on positional /dev/vdX guessing. Kept well under the
+// virtio-blk serial cap (VIRTIO_BLK_ID_BYTES = 20).
+func VolumeSerial(v pgtype.UUID) string {
+	return hex.EncodeToString(v.Bytes[:8])
+}
 
 // --- Well-known IDs ---
 

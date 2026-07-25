@@ -6,11 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/internal/units"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
 	"git.omukk.dev/wrenn/wrenn/pkg/layout"
 )
@@ -69,37 +68,13 @@ func EnsureImageSizes(wrennDir string, targetMB int) error {
 // ParseSizeToMB parses a human-readable size string into megabytes.
 // Supported suffixes: G, Gi (gibibytes), M, Mi (mebibytes).
 // Examples: "5G" → 5120, "2Gi" → 2048, "1000M" → 1000, "512Mi" → 512.
+//
+// The implementation lives in internal/units so the control plane can share it
+// without importing the host runtime. That package is unimportable from outside
+// this module, so this stays the entry point for external consumers of the
+// sandbox runtime (e.g. the wr CLI).
 func ParseSizeToMB(s string) (int, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, fmt.Errorf("empty size string")
-	}
-
-	// Find where the numeric part ends.
-	i := 0
-	for i < len(s) && (s[i] == '.' || (s[i] >= '0' && s[i] <= '9')) {
-		i++
-	}
-	if i == 0 {
-		return 0, fmt.Errorf("invalid size %q: no numeric value", s)
-	}
-
-	numStr := s[:i]
-	suffix := strings.TrimSpace(s[i:])
-
-	num, err := strconv.ParseFloat(numStr, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid size %q: %w", s, err)
-	}
-
-	switch suffix {
-	case "G", "Gi":
-		return int(num * 1024), nil
-	case "M", "Mi", "":
-		return int(num), nil
-	default:
-		return 0, fmt.Errorf("invalid size %q: unknown suffix %q (use G, Gi, M, or Mi)", s, suffix)
-	}
+	return units.ParseSizeToMB(s)
 }
 
 // ShrinkSystemImages shrinks the built-in system base rootfs images back to

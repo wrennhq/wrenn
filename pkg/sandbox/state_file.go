@@ -67,6 +67,10 @@ type runningState struct {
 	LazyRestore bool              `json:"lazy_restore,omitempty"`
 	CreatedAt   time.Time         `json:"created_at"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	// Volumes records the data volumes attached to this sandbox so a process
+	// re-attaching to the still-live VM (RestoreRunningSandboxes) can rebuild
+	// its in-memory volume state without contacting the control plane.
+	Volumes []*attachedVolume `json:"volumes,omitempty"`
 }
 
 // writeRunningState persists sb's re-attach state next to its CoW file.
@@ -99,6 +103,7 @@ func (m *Manager) writeRunningState(sb *sandboxState) {
 		LazyRestore:        sb.lazyRestore,
 		CreatedAt:          sb.CreatedAt,
 		Metadata:           sb.Metadata,
+		Volumes:            sb.volumes,
 	}
 
 	data, err := json.MarshalIndent(st, "", "  ")

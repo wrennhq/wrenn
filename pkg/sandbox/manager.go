@@ -44,6 +44,13 @@ var (
 	// ErrEnvdNotReady is returned when the VM booted (or resumed) but envd did
 	// not become healthy within the readiness budget.
 	ErrEnvdNotReady = errors.New("envd not ready")
+	// ErrVolumesAttached is returned when an operation (e.g. creating a template
+	// from a capsule) is refused because the sandbox still has volumes attached.
+	ErrVolumesAttached = errors.New("sandbox has volumes attached")
+	// ErrVolumesOnSnapshotTemplate is returned when a create requests volumes on
+	// a sandbox launched from a snapshot template — CH --restore reconstructs
+	// only the snapshot's device set, so a new boot-time disk cannot be added.
+	ErrVolumesOnSnapshotTemplate = errors.New("volumes are not supported when creating from a snapshot template")
 )
 
 // MinTimeoutSec is the minimum inactivity TTL accepted by Create/Resume.
@@ -209,6 +216,12 @@ type sandboxState struct {
 	dmDevice      *devicemapper.SnapshotDevice
 	baseImagePath string // path to the base template rootfs (for loop registry release)
 
+	// volumes holds the external storage volumes attached to this sandbox at
+	// boot. Read under m.mu, mutated only while holding lifecycleMu (like
+	// dmDevice). Persisted into runningState + snapshotMeta so re-attach and
+	// resume can rebuild each disk symlink.
+	volumes []*attachedVolume
+
 	// sandboxDirOverride, when non-empty, pins this sandbox's VMConfig.SandboxDir
 	// to a path other than the default vm.SandboxTmpDir(sb.ID). Set when the
 	// sandbox was launched from a snapshot template — CH's saved config.json
@@ -326,6 +339,7 @@ func (m *Manager) Create(
 	vcpus, memoryMB, timeoutSec, diskSizeMB int,
 	defaultUser string,
 	defaultEnv map[string]string,
+	volumes []VolumeAttachSpec,
 ) (*models.Sandbox, int64, error) {
 	if m.draining.Load() {
 		return nil, 0, ErrDraining
@@ -385,6 +399,12 @@ func (m *Manager) Create(
 	// the restore path with a confusing error downstream.
 	templateDir := layout.TemplateDir(m.cfg.WrennDir, teamID, templateID)
 	if !layout.IsSystemTemplate(teamID, templateID) && layout.IsSnapshotTemplate(templateDir) {
+		// A snapshot-template launch restores CH's saved device topology via
+		// --restore; a boot-time data disk cannot be added on top of it, and we
+		// no longer hot-plug. Refuse rather than silently dropping the volumes.
+		if len(volumes) > 0 {
+			return nil, 0, ErrVolumesOnSnapshotTemplate
+		}
 		return m.createFromSnapshotTemplate(ctx, sandboxID, teamID, templateID,
 			vcpus, memoryMB, timeoutSec, diskSizeMB, defaultUser, defaultEnv)
 	}
@@ -449,6 +469,16 @@ func (m *Manager) Create(
 	}
 	res.slot = slot
 
+	// Provision data volumes (sparse backing files) before boot so they can be
+	// baked into vm.create as extra Raw disks. The files persist across the VM
+	// lifecycle; rollback below tears down the VM but deliberately leaves volume
+	// data intact (volumes are owned by their own lifecycle, never auto-deleted).
+	volumeDisks, attachedVols, err := m.prepareVolumeDisks(volumes)
+	if err != nil {
+		res.rollback()
+		return nil, 0, fmt.Errorf("provision volumes: %w", err)
+	}
+
 	// Boot VM — CH gets the dm device path.
 	vmCfg := vm.VMConfig{
 		SandboxID:        sandboxID,
@@ -465,6 +495,7 @@ func (m *Manager) Create(
 		NetMask:          slot.GuestNetMask,
 		VMMBin:           m.cfg.VMMBin,
 		LogDir:           filepath.Join(m.cfg.WrennDir, "logs"),
+		Volumes:          volumeDisks,
 	}
 
 	if _, err := m.vm.Create(ctx, vmCfg); err != nil {
@@ -496,6 +527,14 @@ func (m *Manager) Create(
 	}
 	initCancel()
 
+	// Format (if empty) and mount each attached volume. A mount failure fails
+	// the whole create — a capsule that was asked for a volume must not come up
+	// without it.
+	if err := m.mountVolumes(ctx, client, attachedVols); err != nil {
+		res.rollback()
+		return nil, 0, fmt.Errorf("mount volumes: %w", err)
+	}
+
 	now := time.Now()
 	sb := &sandboxState{
 		Sandbox: models.Sandbox{
@@ -517,6 +556,7 @@ func (m *Manager) Create(
 		connTracker:   &ConnTracker{},
 		dmDevice:      dmDev,
 		baseImagePath: baseRootfs,
+		volumes:       attachedVols,
 	}
 	sb.client.Store(client)
 
@@ -619,6 +659,10 @@ func (m *Manager) cleanup(ctx context.Context, sb *sandboxState) {
 		}
 	}
 	m.stopSampler(sb)
+	// Flush volumes before killing the VM so buffered guest writes land in the
+	// backing files. Best-effort and only meaningful for a running sandbox
+	// (paused ones were already synced at pause time and have no live envd).
+	m.unmountVolumesBestEffort(sb)
 	if err := m.vm.Destroy(ctx, sb.ID); err != nil {
 		slog.Warn("vm destroy error", "id", sb.ID, "error", err)
 	}

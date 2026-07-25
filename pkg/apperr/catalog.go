@@ -214,6 +214,31 @@ var (
 		Status:  http.StatusNotFound,
 		Message: "User not found.",
 	})
+	VolumeNotFound = register(Def{
+		Code:    "volume_not_found",
+		Status:  http.StatusNotFound,
+		Message: "Volume not found.",
+	})
+	VolumeInUse = register(Def{
+		Code:    "volume_in_use",
+		Status:  http.StatusConflict,
+		Message: "Volume is attached to a capsule. Destroy the capsule before deleting the volume.",
+	})
+	VolumeHostMismatch = register(Def{
+		Code:    "volume_host_mismatch",
+		Status:  http.StatusConflict,
+		Message: "This volume is pinned to a different host than the requested capsule can run on.",
+	})
+	VolumesAttached = register(Def{
+		Code:    "volumes_attached",
+		Status:  http.StatusConflict,
+		Message: "Detach all volumes before creating a template from this capsule.",
+	})
+	VolumeNameTaken = register(Def{
+		Code:    "volume_name_taken",
+		Status:  http.StatusConflict,
+		Message: "A volume with this name already exists.",
+	})
 )
 
 // Lookup returns the catalog Def for a code, or false if unregistered.

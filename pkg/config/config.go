@@ -6,6 +6,8 @@ import (
 	"strconv"
 
 	"github.com/joho/godotenv"
+
+	"git.omukk.dev/wrenn/wrenn/internal/units"
 )
 
 // Config holds the control plane configuration.
@@ -35,6 +37,14 @@ type Config struct {
 	// prevent SSRF against internal services; enable only on self-hosted
 	// deployments that legitimately deliver to internal endpoints.
 	ChannelsAllowPrivateTargets bool // WRENN_CHANNELS_ALLOW_PRIVATE
+
+	// MaxVolumeSizeMB caps how large a single external storage volume may be.
+	// WRENN_MAX_VOLUME_SIZE accepts the same human-readable form as
+	// WRENN_DEFAULT_ROOTFS_SIZE (e.g. "20Gi", "500G", "2048M"). Raise it on
+	// self-hosted deployments with the disk to back it — a volume is a sparse
+	// file, so the cap bounds worst-case growth rather than upfront allocation.
+	// 0 means unset; service.DefaultMaxVolumeSizeMB (20Gi) then applies.
+	MaxVolumeSizeMB int // WRENN_MAX_VOLUME_SIZE
 
 	// SMTP — transactional email. All fields optional; omitting SMTPHost disables email.
 	SMTPHost      string // SMTP_HOST
@@ -68,6 +78,10 @@ func Load() Config {
 		EncryptionKeyHex: os.Getenv("WRENN_ENCRYPTION_KEY"),
 
 		ChannelsAllowPrivateTargets: envOrDefaultBool("WRENN_CHANNELS_ALLOW_PRIVATE", false),
+
+		// 0 means "unset" — service.VolumeService owns the default so the
+		// limit is not declared in two places that can drift apart.
+		MaxVolumeSizeMB: envOrDefaultSizeMB("WRENN_MAX_VOLUME_SIZE", 0),
 
 		SMTPHost:      os.Getenv("SMTP_HOST"),
 		SMTPPort:      envOrDefaultInt("SMTP_PORT", 587),
@@ -103,6 +117,21 @@ func envOrDefaultInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// envOrDefaultSizeMB reads a human-readable size (e.g. "20Gi", "500G", "2048M")
+// and returns it in megabytes, falling back to def when unset or unparseable —
+// matching the fail-soft behaviour of the other envOrDefault helpers.
+func envOrDefaultSizeMB(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	mb, err := units.ParseSizeToMB(v)
+	if err != nil || mb <= 0 {
+		return def
+	}
+	return mb
 }
 
 func envOrDefaultBool(key string, def bool) bool {
