@@ -77,7 +77,7 @@ func (q *Queries) CountVolumesByHost(ctx context.Context, hostID pgtype.UUID) (i
 }
 
 const deleteVolumeRow = `-- name: DeleteVolumeRow :exec
-DELETE FROM volumes WHERE id = $1 AND team_id = $2
+DELETE FROM volumes WHERE id = $1 AND team_id = $2 AND status = 'deleting'
 `
 
 type DeleteVolumeRowParams struct {
@@ -85,6 +85,10 @@ type DeleteVolumeRowParams struct {
 	TeamID pgtype.UUID `json:"team_id"`
 }
 
+// Drop the row only while the delete claim still holds. Without the status
+// guard a delete that lost its claim mid-flight (reaped, or aborted and then
+// re-attached by a racing capsule create) would erase the record of a volume
+// that is once again in use.
 func (q *Queries) DeleteVolumeRow(ctx context.Context, arg DeleteVolumeRowParams) error {
 	_, err := q.db.Exec(ctx, deleteVolumeRow, arg.ID, arg.TeamID)
 	return err
@@ -116,14 +120,18 @@ SET status       = 'detached',
     sandbox_id   = NULL,
     mount_path   = '',
     last_updated = NOW()
-WHERE sandbox_id = $1 AND status = 'attached'
+WHERE sandbox_id = $1 AND status IN ('attached', 'attaching')
 `
 
 // Terminal sweep run when a capsule reaches a terminal state (destroyed,
 // stopped, errored, or reaped): free every volume it held back to detached
 // (data and host pin preserved) so it can be reused or deleted. Keyed on
-// sandbox_id, which is set at attach time. Never deletes the volume — removal
-// is always explicit.
+// sandbox_id, which is stamped on at reservation time. Never deletes the
+// volume — removal is always explicit.
+//
+// 'attaching' is swept alongside 'attached' so a reservation whose promotion
+// never landed (lost RPC response, DB blip) is freed here — on confirmed host
+// state — rather than on a blind timer.
 func (q *Queries) DetachVolumesBySandbox(ctx context.Context, sandboxID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, detachVolumesBySandbox, sandboxID)
 	return err
@@ -135,7 +143,7 @@ SET status       = 'detached',
     sandbox_id   = NULL,
     mount_path   = '',
     last_updated = NOW()
-WHERE sandbox_id = ANY($1::uuid[]) AND status = 'attached'
+WHERE sandbox_id = ANY($1::uuid[]) AND status IN ('attached', 'attaching')
 `
 
 // Bulk variant of DetachVolumesBySandbox for the host monitor, which stops
@@ -196,6 +204,37 @@ func (q *Queries) GetVolumeByTeam(ctx context.Context, arg GetVolumeByTeamParams
 	return i, err
 }
 
+const getVolumeByTeamAndName = `-- name: GetVolumeByTeamAndName :one
+SELECT id, team_id, host_id, name, size_mb, status, sandbox_id, mount_path, created_at, last_attached_at, last_updated FROM volumes WHERE team_id = $1 AND name = $2
+`
+
+type GetVolumeByTeamAndNameParams struct {
+	TeamID pgtype.UUID `json:"team_id"`
+	Name   string      `json:"name"`
+}
+
+// Resolve a volume by its user-facing name. Names are unique per team, so this
+// is the name-based counterpart to GetVolumeByTeam and is what lets the API
+// accept "vl-cache" wherever it accepts "vol-<id>".
+func (q *Queries) GetVolumeByTeamAndName(ctx context.Context, arg GetVolumeByTeamAndNameParams) (Volume, error) {
+	row := q.db.QueryRow(ctx, getVolumeByTeamAndName, arg.TeamID, arg.Name)
+	var i Volume
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.HostID,
+		&i.Name,
+		&i.SizeMb,
+		&i.Status,
+		&i.SandboxID,
+		&i.MountPath,
+		&i.CreatedAt,
+		&i.LastAttachedAt,
+		&i.LastUpdated,
+	)
+	return i, err
+}
+
 const insertVolume = `-- name: InsertVolume :one
 INSERT INTO volumes (id, team_id, name, size_mb, status)
 VALUES ($1, $2, $3, $4, 'detached')
@@ -231,6 +270,28 @@ func (q *Queries) InsertVolume(ctx context.Context, arg InsertVolumeParams) (Vol
 		&i.LastUpdated,
 	)
 	return i, err
+}
+
+const linkVolumeReservation = `-- name: LinkVolumeReservation :exec
+UPDATE volumes
+SET sandbox_id   = $2,
+    last_updated = NOW()
+WHERE id = $1 AND status = 'attaching'
+`
+
+type LinkVolumeReservationParams struct {
+	ID        pgtype.UUID `json:"id"`
+	SandboxID pgtype.UUID `json:"sandbox_id"`
+}
+
+// Stamp the owning sandbox onto a reservation as soon as the sandbox row
+// exists (ReserveVolumeForAttach runs before the insert, so it cannot set the
+// FK itself). This makes every in-flight reservation attributable to a capsule,
+// which is what lets the host monitor decide — against live host state —
+// whether a stuck 'attaching' row is safe to free.
+func (q *Queries) LinkVolumeReservation(ctx context.Context, arg LinkVolumeReservationParams) error {
+	_, err := q.db.Exec(ctx, linkVolumeReservation, arg.ID, arg.SandboxID)
+	return err
 }
 
 const listVolumesBySandbox = `-- name: ListVolumesBySandbox :many
@@ -354,15 +415,25 @@ func (q *Queries) MarkVolumeAttached(ctx context.Context, arg MarkVolumeAttached
 const releaseStaleVolumeReservations = `-- name: ReleaseStaleVolumeReservations :execrows
 UPDATE volumes
 SET status       = 'detached',
-    sandbox_id   = NULL,
     mount_path   = '',
     last_updated = NOW()
-WHERE status IN ('attaching', 'deleting') AND last_updated < $1
+WHERE status IN ('attaching', 'deleting')
+  AND sandbox_id IS NULL
+  AND last_updated < $1
 `
 
-// Free volumes stuck in a transient state (attaching/deleting) whose owning
-// operation died — e.g. the control plane crashed between reserving a volume
-// and the capsule booting, or mid-delete. Run periodically by the volume reaper.
+// Free volumes stuck in a transient state whose owning operation died before it
+// could ever reach a host — the control plane crashed between reserving a
+// volume and inserting the sandbox row, or mid-delete. Run periodically by the
+// volume reaper.
+//
+// Deliberately limited to unattributed rows (sandbox_id IS NULL). A reservation
+// that already carries a sandbox_id may correspond to a capsule that really did
+// boot with the volume mounted — and a timer cannot tell the difference. Those
+// are freed only by the host-monitor sweep, which first confirms against the
+// host that the capsule is gone. Freeing a live volume here would let a second
+// capsule attach the same backing file and corrupt it.
+//
 // The cutoff ($1 = now - grace) MUST exceed the capsule create timeout so a
 // legitimately in-flight attach is never freed out from under a booting capsule.
 func (q *Queries) ReleaseStaleVolumeReservations(ctx context.Context, lastUpdated pgtype.Timestamptz) (int64, error) {
@@ -383,7 +454,9 @@ WHERE id = $1 AND status = 'attaching'
 
 // Roll a reserved volume back to detached when the capsule create fails.
 // host_id is left untouched (a failed create never pins a fresh volume, since
-// MarkVolumeAttached is what sets the pin).
+// MarkVolumeAttached is what sets the pin). Only call this once the host has
+// confirmed the capsule is not running — a volume freed while a VM still has
+// its backing file open can be re-attached elsewhere and corrupted.
 func (q *Queries) ReleaseVolumeReservation(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, releaseVolumeReservation, id)
 	return err

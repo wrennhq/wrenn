@@ -17,6 +17,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"git.omukk.dev/wrenn/wrenn/internal/hostagent"
+	"git.omukk.dev/wrenn/wrenn/internal/units"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/logging"
 	"git.omukk.dev/wrenn/wrenn/pkg/network"
@@ -98,7 +99,7 @@ func main() {
 	// Parse default rootfs size from env (e.g. "5G", "2Gi", "1000M").
 	defaultRootfsSizeMB := sandbox.DefaultDiskSizeMB
 	if sizeStr := os.Getenv("WRENN_DEFAULT_ROOTFS_SIZE"); sizeStr != "" {
-		parsed, err := sandbox.ParseSizeToMB(sizeStr)
+		parsed, err := units.ParseSizeToMB(sizeStr)
 		if err != nil {
 			slog.Error("invalid WRENN_DEFAULT_ROOTFS_SIZE", "value", sizeStr, "error", err)
 			os.Exit(1)

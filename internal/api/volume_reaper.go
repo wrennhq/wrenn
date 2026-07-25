@@ -11,11 +11,17 @@ import (
 )
 
 // VolumeReaper periodically frees volumes stuck in a transient state
-// (attaching/deleting) whose owning operation died — e.g. a control-plane crash
-// between reserving a volume and the capsule booting, or a delete that crashed
-// mid-flight. It is the safety net for the one volume-lifecycle window that no
-// synchronous path can clean up (a reserved volume carries no sandbox_id, so the
-// terminal-status detach can't reach it).
+// (attaching/deleting) whose owning operation died before it could ever reach a
+// host — a control-plane crash between reserving a volume and inserting the
+// sandbox row, or a delete that crashed mid-flight. It is the safety net for
+// the one volume-lifecycle window that no synchronous path can clean up.
+//
+// It deliberately only touches rows with no sandbox_id. Once a reservation
+// names its capsule, it may correspond to a VM that really did boot with the
+// volume mounted, and no timer can tell the difference — freeing it would let a
+// second capsule attach the same backing file and corrupt it. Those rows are
+// resolved by the host monitor instead, which first confirms against the host
+// that the capsule is gone.
 //
 // A volume is released only once it has been stuck longer than staleAfter, which
 // MUST exceed the capsule create timeout so an in-flight attach is never freed

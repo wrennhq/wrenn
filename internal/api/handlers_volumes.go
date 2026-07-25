@@ -2,10 +2,12 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"git.omukk.dev/wrenn/wrenn/internal/units"
 	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
@@ -24,19 +26,40 @@ func newVolumeHandler(svc *service.VolumeService, al *audit.AuditLogger) *volume
 }
 
 type createVolumeRequest struct {
-	Name   string `json:"name"`
+	// Name is optional; omitted, the volume is named after its own ID.
+	Name string `json:"name"`
+	// Size is the human-readable form ("20Gi", "500M"). SizeMB is the plain
+	// megabyte form. Exactly one is needed; Size wins if both are given.
+	Size   string `json:"size"`
 	SizeMB int32  `json:"size_mb"`
 }
 
+// sizeMB resolves the request's size into megabytes, accepting either field.
+func (r createVolumeRequest) sizeMB() (int32, error) {
+	if s := strings.TrimSpace(r.Size); s != "" {
+		mb, err := units.ParseSizeToMB(s)
+		if err != nil {
+			return 0, apperr.InvalidRequest.WrapMsg(err, "Invalid volume size.")
+		}
+		return int32(mb), nil
+	}
+	if r.SizeMB <= 0 {
+		return 0, apperr.InvalidRequest.Msg(`A volume size is required (e.g. "size": "20Gi" or "size_mb": 20480).`)
+	}
+	return r.SizeMB, nil
+}
+
 type volumeResponse struct {
-	ID             string  `json:"id"`
-	TeamID         string  `json:"team_id"`
-	Name           string  `json:"name"`
-	SizeMB         int32   `json:"size_mb"`
-	Status         string  `json:"status"`
-	HostID         *string `json:"host_id,omitempty"`
-	SandboxID      *string `json:"sandbox_id,omitempty"`
-	MountPath      string  `json:"mount_path,omitempty"`
+	ID        string  `json:"id"`
+	TeamID    string  `json:"team_id"`
+	Name      string  `json:"name"`
+	SizeMB    int32   `json:"size_mb"`
+	Status    string  `json:"status"`
+	HostID    *string `json:"host_id,omitempty"`
+	SandboxID *string `json:"sandbox_id,omitempty"`
+	// Always emitted, "" while detached — host_id/sandbox_id above are pointers
+	// because they are genuinely nullable, but mount_path is not.
+	MountPath      string  `json:"mount_path"`
 	CreatedAt      string  `json:"created_at"`
 	LastAttachedAt *string `json:"last_attached_at,omitempty"`
 }
@@ -78,7 +101,13 @@ func (h *volumeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vol, err := h.svc.Create(r.Context(), ac.TeamID, req.Name, req.SizeMB)
+	sizeMB, err := req.sizeMB()
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	vol, err := h.svc.Create(r.Context(), ac.TeamID, req.Name, sizeMB)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -105,17 +134,11 @@ func (h *volumeHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// Get handles GET /v1/volumes/{id}.
+// Get handles GET /v1/volumes/{id}, where {id} is a volume ID or name.
 func (h *volumeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 
-	volumeID, err := id.ParseVolumeID(chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid volume ID."))
-		return
-	}
-
-	vol, err := h.svc.Get(r.Context(), volumeID, ac.TeamID)
+	vol, err := h.svc.Resolve(r.Context(), ac.TeamID, chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -123,21 +146,21 @@ func (h *volumeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, volumeToResponse(vol))
 }
 
-// Delete handles DELETE /v1/volumes/{id}.
+// Delete handles DELETE /v1/volumes/{id}, where {id} is a volume ID or name.
 func (h *volumeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ac := auth.MustFromContext(r.Context())
 
-	volumeID, err := id.ParseVolumeID(chi.URLParam(r, "id"))
+	vol, err := h.svc.Resolve(r.Context(), ac.TeamID, chi.URLParam(r, "id"))
 	if err != nil {
-		writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid volume ID."))
-		return
-	}
-
-	if err := h.svc.Delete(r.Context(), volumeID, ac.TeamID); err != nil {
 		writeErr(w, r, err)
 		return
 	}
 
-	h.audit.LogVolumeDelete(r.Context(), ac, volumeID, nil)
+	if err := h.svc.Delete(r.Context(), vol.ID, ac.TeamID); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	h.audit.LogVolumeDelete(r.Context(), ac, vol.ID, nil)
 	w.WriteHeader(http.StatusNoContent)
 }

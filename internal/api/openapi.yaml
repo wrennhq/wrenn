@@ -1595,6 +1595,10 @@ paths:
         not placed on any host until it is first attached to a capsule (via
         `volume_ids` on capsule create), at which point it is pinned to that
         capsule's host for the rest of its life. Volumes are never auto-deleted.
+
+        Every volume has a `vl-`-prefixed name that is unique within your team
+        and can be used anywhere a volume ID is accepted. Omit `name` and the
+        volume is named after its own ID.
       requestBody:
         required: true
         content:
@@ -1641,11 +1645,11 @@ paths:
       security:
         - apiKeyAuth: []
         - sessionAuth: []
+      description: |
+        Look up a volume by ID (`vol-...`) or by name (`vl-cache`, or plain
+        `cache` — the `vl-` prefix is optional on input).
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
+        - $ref: "#/components/parameters/VolumeRef"
       responses:
         "200":
           description: The volume
@@ -1653,6 +1657,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Volume"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
@@ -1664,15 +1670,14 @@ paths:
         - sessionAuth: []
       description: |
         Delete a volume and its data. The volume must be detached — destroy any
-        capsule using it first.
+        capsule using it first. Accepts an ID or a name.
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
+        - $ref: "#/components/parameters/VolumeRef"
       responses:
         "204":
           description: Volume deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -4033,6 +4038,19 @@ paths:
           $ref: "#/components/responses/NotFound"
 
 components:
+  parameters:
+    VolumeRef:
+      name: id
+      in: path
+      required: true
+      description: >
+        A volume ID (`vol-<base36>`) or name (`vl-cache`). The `vl-` prefix is
+        optional on input, so `cache` resolves the same volume as `vl-cache`.
+        The two namespaces cannot collide — IDs always start with `vol-`.
+      schema:
+        type: string
+        example: vl-cache
+
   responses:
     BadRequest:
       description: Invalid request parameters
@@ -4236,32 +4254,53 @@ components:
           type: array
           items: { type: string }
           nullable: true
+          maxItems: 4
+          example: ["vl-cache", "vol-8f3kq2m1p7x0a9b4c6d8e2f5g"]
           description: >
-            External storage volumes to attach at boot (e.g. "vol-..."). Each is
-            mounted at /mnt/<volume-id> inside the guest. Volumes can only be
-            attached at create time and must be detached and owned by your team.
-            If a volume is already pinned to a host, the capsule is scheduled
-            onto that host; attaching volumes pinned to different hosts fails.
-            Not supported for capsules created from a snapshot template.
+            External storage volumes to attach at boot, each given as a volume
+            ID ("vol-...") or a name ("vl-cache"). Each is mounted at
+            /mnt/<volume-id> inside the guest. At most 4 per capsule. Volumes
+            can only be attached at create time and must be detached and owned
+            by your team. If a volume is already pinned to a host, the capsule is
+            scheduled onto that host; attaching volumes pinned to different hosts
+            fails. Not supported for capsules created from a snapshot template.
 
     CreateVolumeRequest:
       type: object
-      required: [name, size_mb]
+      description: >
+        Supply the size as either `size` or `size_mb`. `name` is optional.
       properties:
         name:
           type: string
+          maxLength: 40
+          example: vl-cache
           description: >
-            Human-readable name, unique within your team. Matches
-            [a-zA-Z0-9][a-zA-Z0-9._-]* .
+            Name for the volume, unique within your team and usable anywhere a
+            volume ID is accepted. Lowercase letters, numbers, and dashes only
+            (no leading, trailing, or repeated dashes), at most 40 characters
+            including the `vl-` prefix. The prefix is added if you omit it, so
+            `cache` and `vl-cache` name the same volume. Omit the field entirely
+            and the volume is named after its own ID.
+        size:
+          type: string
+          example: 20Gi
+          description: >
+            Volume size with a G/Gi/M/Mi suffix; a bare number is read as MB.
+            Fixed at creation. Takes precedence over `size_mb` if both are set.
         size_mb:
           type: integer
           minimum: 100
+          example: 5120
           description: >
-            Volume size in MB. Fixed at creation. The backing storage is
-            allocated lazily on first attach.
+            Volume size in MB, as an alternative to `size`. Fixed at creation.
+            The backing storage is sparse and grows on use, so the size is a
+            ceiling rather than an upfront allocation. The maximum is set per
+            deployment via `WRENN_MAX_VOLUME_SIZE` (default 20Gi); requesting
+            more returns 400.
 
     Volume:
       type: object
+      required: [id, team_id, name, size_mb, status, mount_path, created_at]
       properties:
         id:
           type: string
@@ -4270,14 +4309,20 @@ components:
           type: string
         name:
           type: string
+          description: >
+            The volume's `vl-`-prefixed name, unique within the team. Accepted
+            in place of the ID on any volume route and in `volume_ids`.
+          example: vl-cache
         size_mb:
           type: integer
         status:
           type: string
-          enum: [detached, attaching, attached]
+          enum: [detached, attaching, attached, deleting]
           description: >
             `detached` — free to attach or delete. `attaching` — reserved by a
             capsule that is booting. `attached` — in use by a capsule.
+            `deleting` — a delete is in flight; transient, and reverts to
+            `detached` if the delete fails.
         host_id:
           type: string
           nullable: true

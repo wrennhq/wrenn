@@ -82,7 +82,8 @@ func New(
 	}
 
 	// Shared service layer.
-	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched}
+	volumeSvc := &service.VolumeService{DB: queries, Pool: pool, MaxSizeMB: int32(sctx.Config.MaxVolumeSizeMB)}
+	sandboxSvc := &service.SandboxService{DB: queries, Pool: pool, Scheduler: sched, Volumes: volumeSvc}
 	sandboxSvc.PublishEvent = func(ctx context.Context, event service.SandboxStateEvent) {
 		if evt, ok := serviceEventToCanonical(event); ok {
 			// State-change events are ephemeral UI signals — mirror them to the
@@ -95,7 +96,6 @@ func New(
 		}
 	}
 	apiKeySvc := &service.APIKeyService{DB: queries}
-	volumeSvc := &service.VolumeService{DB: queries, Pool: pool}
 	templateSvc := &service.TemplateService{DB: queries}
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool, Sessions: sessionSvc}
@@ -492,6 +492,14 @@ func serviceEventToCanonical(e service.SandboxStateEvent) (events.Event, bool) {
 	case "sandbox.stopped":
 		eventType = events.CapsuleDestroy
 		outcome = events.OutcomeSuccess
+	case "sandbox.destroy_failed":
+		// The destroy RPC never reached the host, so the capsule stays in
+		// "stopping" holding its volumes until the host monitor re-issues it.
+		// This is the only lifecycle path that reaches no terminal state of its
+		// own, so the event is what tells anyone it is outstanding.
+		eventType = events.CapsuleDestroy
+		outcome = events.OutcomeError
+		metadata = map[string]string{"reason": "destroy_failed"}
 	case "sandbox.pause_failed":
 		// reason must be non-empty or channels.isRedundantSystemFollowup
 		// filters this system-actor event out of webhook delivery.

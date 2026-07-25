@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"git.omukk.dev/wrenn/wrenn/internal/units"
 	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -18,11 +20,13 @@ import (
 	pb "git.omukk.dev/wrenn/wrenn/proto/hostagent/gen"
 )
 
-// Volume size bounds (MB).
-const (
-	MinVolumeSizeMB int32 = 100
-	MaxVolumeSizeMB int32 = 1024 * 1024 // 1 TiB
-)
+// MinVolumeSizeMB is the smallest volume that can be created. Below roughly
+// this size an ext4 filesystem's own metadata dominates the usable space.
+const MinVolumeSizeMB int32 = 100
+
+// DefaultMaxVolumeSizeMB is the per-volume ceiling used when a VolumeService is
+// constructed without one. Deployments override it with WRENN_MAX_VOLUME_SIZE.
+const DefaultMaxVolumeSizeMB int32 = 20 * 1024 // 20 GiB
 
 // VolumeService provides external-storage-volume lifecycle operations. Volume
 // metadata lives entirely in Postgres; the only host interaction is deleting a
@@ -34,26 +38,50 @@ const (
 type VolumeService struct {
 	DB   *db.Queries
 	Pool *lifecycle.HostClientPool
+
+	// MaxSizeMB caps the size of a single volume. Zero means
+	// DefaultMaxVolumeSizeMB.
+	MaxSizeMB int32
+}
+
+func (s *VolumeService) maxSizeMB() int32 {
+	if s.MaxSizeMB > 0 {
+		return s.MaxSizeMB
+	}
+	return DefaultMaxVolumeSizeMB
 }
 
 // Create records a new detached volume. No host is chosen yet — a volume is
 // pinned to a host only when first attached to a capsule.
+//
+// name is optional: an empty name yields "vl-<volume id>", so a caller that
+// does not care about naming still gets a stable, addressable handle. A
+// supplied name is normalized to its "vl-"-prefixed slug form.
 func (s *VolumeService) Create(ctx context.Context, teamID pgtype.UUID, name string, sizeMB int32) (db.Volume, error) {
 	if !teamID.Valid {
 		return db.Volume{}, apperr.InvalidRequest.Msg("A team_id is required.")
 	}
-	if err := validate.SafeName(name); err != nil {
-		return db.Volume{}, apperr.ValidationFailed.Msgf("Invalid volume name: %v.", err)
-	}
 	if sizeMB < MinVolumeSizeMB {
-		return db.Volume{}, apperr.InvalidRequest.Msgf("Volume size must be at least %d MB.", MinVolumeSizeMB)
+		return db.Volume{}, apperr.InvalidRequest.Msgf("Volume size must be at least %s.", units.FormatMB(int(MinVolumeSizeMB)))
 	}
-	if sizeMB > MaxVolumeSizeMB {
-		return db.Volume{}, apperr.InvalidRequest.Msgf("Volume size must not exceed %d MB.", MaxVolumeSizeMB)
+	if max := s.maxSizeMB(); sizeMB > max {
+		return db.Volume{}, apperr.InvalidRequest.Msgf("Volume size must not exceed %s.", units.FormatMB(int(max)))
+	}
+
+	volumeID := id.NewVolumeID()
+	// A nameless volume is named after itself. id.FormatVolumeID carries the
+	// "vol-" ID prefix, so use the bare base36 body to keep the name in the
+	// "vl-" namespace.
+	if strings.TrimSpace(name) == "" {
+		name = validate.VolumeNamePrefix + id.UUIDToBase36(volumeID.Bytes)
+	}
+	name, err := validate.VolumeName(name)
+	if err != nil {
+		return db.Volume{}, apperr.ValidationFailed.Msgf("Invalid volume name: %v.", err)
 	}
 
 	vol, err := s.DB.InsertVolume(ctx, db.InsertVolumeParams{
-		ID:     id.NewVolumeID(),
+		ID:     volumeID,
 		TeamID: teamID,
 		Name:   name,
 		SizeMb: sizeMB,
@@ -61,9 +89,38 @@ func (s *VolumeService) Create(ctx context.Context, teamID pgtype.UUID, name str
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return db.Volume{}, apperr.VolumeNameTaken.New()
+			return db.Volume{}, apperr.VolumeNameTaken.Msgf("A volume named %q already exists in this team.", name)
 		}
 		return db.Volume{}, fmt.Errorf("insert volume: %w", err)
+	}
+	return vol, nil
+}
+
+// Resolve turns a user-supplied reference into the team's volume. A reference
+// is either a volume ID ("vol-<base36>") or a name ("vl-cache", or plain
+// "cache" — the prefix is optional on input). The two namespaces cannot
+// collide: an ID always carries the "vol-" prefix, a name always "vl-".
+func (s *VolumeService) Resolve(ctx context.Context, teamID pgtype.UUID, ref string) (db.Volume, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return db.Volume{}, apperr.InvalidRequest.Msg("A volume ID or name is required.")
+	}
+
+	if strings.HasPrefix(ref, id.PrefixVolume) {
+		volumeID, err := id.ParseVolumeID(ref)
+		if err != nil {
+			return db.Volume{}, apperr.InvalidRequest.WrapMsg(err, "Invalid volume ID.")
+		}
+		return s.Get(ctx, volumeID, teamID)
+	}
+
+	name, err := validate.VolumeName(ref)
+	if err != nil {
+		return db.Volume{}, apperr.InvalidRequest.Msgf("Invalid volume reference: %v.", err)
+	}
+	vol, err := s.DB.GetVolumeByTeamAndName(ctx, db.GetVolumeByTeamAndNameParams{TeamID: teamID, Name: name})
+	if err != nil {
+		return db.Volume{}, apperr.VolumeNotFound.WrapMsg(err, fmt.Sprintf("Volume %q not found.", name))
 	}
 	return vol, nil
 }

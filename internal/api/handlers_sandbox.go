@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/audit"
@@ -31,8 +30,9 @@ type createSandboxRequest struct {
 	MemoryMB   int32             `json:"memory_mb"`
 	TimeoutSec int32             `json:"timeout_sec"`
 	Metadata   map[string]string `json:"metadata"`
-	// VolumeIDs are external storage volumes to attach at boot (e.g. "vol-...").
-	// Each is mounted at /mnt/<volume-id> inside the guest.
+	// VolumeIDs are external storage volumes to attach at boot, each given as
+	// a volume ID ("vol-...") or a name ("vl-cache"). Each is mounted at
+	// /mnt/<volume-id> inside the guest.
 	VolumeIDs []string `json:"volume_ids"`
 }
 
@@ -99,16 +99,6 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	volumeIDs := make([]pgtype.UUID, 0, len(req.VolumeIDs))
-	for _, v := range req.VolumeIDs {
-		volID, err := id.ParseVolumeID(v)
-		if err != nil {
-			writeErr(w, r, apperr.InvalidRequest.WrapMsg(err, "Invalid volume ID."))
-			return
-		}
-		volumeIDs = append(volumeIDs, volID)
-	}
-
 	sb, err := h.svc.Create(r.Context(), service.SandboxCreateParams{
 		TeamID:     ac.TeamID,
 		Template:   req.Template,
@@ -116,7 +106,7 @@ func (h *sandboxHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MemoryMB:   req.MemoryMB,
 		TimeoutSec: req.TimeoutSec,
 		Metadata:   req.Metadata,
-		VolumeIDs:  volumeIDs,
+		VolumeRefs: req.VolumeIDs,
 	})
 	h.audit.LogSandboxCreate(r.Context(), ac, sb.ID, req.Template, err)
 	if err != nil {

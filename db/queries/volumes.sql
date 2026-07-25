@@ -9,6 +9,12 @@ SELECT * FROM volumes WHERE id = $1;
 -- name: GetVolumeByTeam :one
 SELECT * FROM volumes WHERE id = $1 AND team_id = $2;
 
+-- name: GetVolumeByTeamAndName :one
+-- Resolve a volume by its user-facing name. Names are unique per team, so this
+-- is the name-based counterpart to GetVolumeByTeam and is what lets the API
+-- accept "vl-cache" wherever it accepts "vol-<id>".
+SELECT * FROM volumes WHERE team_id = $1 AND name = $2;
+
 -- name: ListVolumesByTeam :many
 SELECT * FROM volumes WHERE team_id = $1 ORDER BY created_at DESC;
 
@@ -46,10 +52,23 @@ SET status           = 'attached',
 WHERE id = $1 AND status = 'attaching'
 RETURNING *;
 
+-- name: LinkVolumeReservation :exec
+-- Stamp the owning sandbox onto a reservation as soon as the sandbox row
+-- exists (ReserveVolumeForAttach runs before the insert, so it cannot set the
+-- FK itself). This makes every in-flight reservation attributable to a capsule,
+-- which is what lets the host monitor decide — against live host state —
+-- whether a stuck 'attaching' row is safe to free.
+UPDATE volumes
+SET sandbox_id   = $2,
+    last_updated = NOW()
+WHERE id = $1 AND status = 'attaching';
+
 -- name: ReleaseVolumeReservation :exec
 -- Roll a reserved volume back to detached when the capsule create fails.
 -- host_id is left untouched (a failed create never pins a fresh volume, since
--- MarkVolumeAttached is what sets the pin).
+-- MarkVolumeAttached is what sets the pin). Only call this once the host has
+-- confirmed the capsule is not running — a volume freed while a VM still has
+-- its backing file open can be re-attached elsewhere and corrupted.
 UPDATE volumes
 SET status       = 'detached',
     sandbox_id   = NULL,
@@ -60,14 +79,18 @@ WHERE id = $1 AND status = 'attaching';
 -- Terminal sweep run when a capsule reaches a terminal state (destroyed,
 -- stopped, errored, or reaped): free every volume it held back to detached
 -- (data and host pin preserved) so it can be reused or deleted. Keyed on
--- sandbox_id, which is set at attach time. Never deletes the volume — removal
--- is always explicit.
+-- sandbox_id, which is stamped on at reservation time. Never deletes the
+-- volume — removal is always explicit.
+--
+-- 'attaching' is swept alongside 'attached' so a reservation whose promotion
+-- never landed (lost RPC response, DB blip) is freed here — on confirmed host
+-- state — rather than on a blind timer.
 UPDATE volumes
 SET status       = 'detached',
     sandbox_id   = NULL,
     mount_path   = '',
     last_updated = NOW()
-WHERE sandbox_id = $1 AND status = 'attached';
+WHERE sandbox_id = $1 AND status IN ('attached', 'attaching');
 
 -- name: DetachVolumesBySandboxIDs :exec
 -- Bulk variant of DetachVolumesBySandbox for the host monitor, which stops
@@ -77,7 +100,7 @@ SET status       = 'detached',
     sandbox_id   = NULL,
     mount_path   = '',
     last_updated = NOW()
-WHERE sandbox_id = ANY($1::uuid[]) AND status = 'attached';
+WHERE sandbox_id = ANY($1::uuid[]) AND status IN ('attached', 'attaching');
 
 -- name: DetachVolumesByHost :exec
 -- Free and un-pin every volume on a host being force-deleted. The host (and its
@@ -115,17 +138,31 @@ SET status       = 'detached',
 WHERE id = $1 AND status = 'deleting';
 
 -- name: ReleaseStaleVolumeReservations :execrows
--- Free volumes stuck in a transient state (attaching/deleting) whose owning
--- operation died — e.g. the control plane crashed between reserving a volume
--- and the capsule booting, or mid-delete. Run periodically by the volume reaper.
+-- Free volumes stuck in a transient state whose owning operation died before it
+-- could ever reach a host — the control plane crashed between reserving a
+-- volume and inserting the sandbox row, or mid-delete. Run periodically by the
+-- volume reaper.
+--
+-- Deliberately limited to unattributed rows (sandbox_id IS NULL). A reservation
+-- that already carries a sandbox_id may correspond to a capsule that really did
+-- boot with the volume mounted — and a timer cannot tell the difference. Those
+-- are freed only by the host-monitor sweep, which first confirms against the
+-- host that the capsule is gone. Freeing a live volume here would let a second
+-- capsule attach the same backing file and corrupt it.
+--
 -- The cutoff ($1 = now - grace) MUST exceed the capsule create timeout so a
 -- legitimately in-flight attach is never freed out from under a booting capsule.
 UPDATE volumes
 SET status       = 'detached',
-    sandbox_id   = NULL,
     mount_path   = '',
     last_updated = NOW()
-WHERE status IN ('attaching', 'deleting') AND last_updated < $1;
+WHERE status IN ('attaching', 'deleting')
+  AND sandbox_id IS NULL
+  AND last_updated < $1;
 
 -- name: DeleteVolumeRow :exec
-DELETE FROM volumes WHERE id = $1 AND team_id = $2;
+-- Drop the row only while the delete claim still holds. Without the status
+-- guard a delete that lost its claim mid-flight (reaped, or aborted and then
+-- re-attached by a racing capsule create) would erase the record of a volume
+-- that is once again in use.
+DELETE FROM volumes WHERE id = $1 AND team_id = $2 AND status = 'deleting';
