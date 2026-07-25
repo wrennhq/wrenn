@@ -12,7 +12,7 @@ source "$(cd "$(dirname "$0")" && pwd)/build-common.sh"
 # tini is AUR-only on Arch (not in core/extra), so it is not installed here —
 # rootfs-from-container.sh injects the static tini binary instead.
 PREP="set -e
-pacman -Sy --noconfirm --needed socat chrony sudo wget curl ca-certificates git iproute2 inetutils gcc make nano vim e2fsprogs
+pacman -Sy --noconfirm --needed socat chrony sudo wget curl ca-certificates git iproute2 inetutils make nano vim e2fsprogs
 useradd -m -s /bin/bash wrenn-user
 ${WRENN_SUDOERS_SETUP}
 pacman -Scc --noconfirm || true"
