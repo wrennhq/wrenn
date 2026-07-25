@@ -10,7 +10,7 @@ source "$(cd "$(dirname "$0")" && pwd)/build-common.sh"
 # Alpine is musl-based: the static envd + static tini run fine. bash is added so
 # wrenn-user has a familiar login shell; wrenn-init itself only needs /bin/sh.
 PREP="set -e
-apk add --no-cache socat chrony sudo wget curl ca-certificates git iproute2 tini bash gcc make nano vim
+apk add --no-cache socat chrony sudo wget curl ca-certificates git iproute2 tini bash gcc make nano vim e2fsprogs util-linux
 adduser -D wrenn-user
 ${WRENN_SUDOERS_SETUP}"
 

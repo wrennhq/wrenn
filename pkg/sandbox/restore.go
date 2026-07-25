@@ -31,7 +31,8 @@ type restoreInputs struct {
 	vcpus      int
 	memoryMB   int
 	slot       *network.Slot
-	sandboxDir string // override for VMConfig.SandboxDir; "" = default
+	sandboxDir string          // override for VMConfig.SandboxDir; "" = default
+	volumes    []vm.VolumeDisk // data volumes to re-symlink so restored disk paths resolve
 }
 
 // buildRestoreVMConfig assembles the VMConfig used to launch a CH process in
@@ -57,6 +58,7 @@ func (m *Manager) buildRestoreVMConfig(in restoreInputs) vm.VMConfig {
 		RestoreFromDir:    in.snapDir,
 		RestoreLazyMemory: true,
 		SandboxDir:        in.sandboxDir,
+		Volumes:           in.volumes,
 	}
 }
 

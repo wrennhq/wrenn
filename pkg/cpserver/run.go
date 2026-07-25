@@ -296,6 +296,12 @@ func Run(opts ...Option) {
 	rollup := api.NewDailyUsageRollup(queries, time.Hour)
 	rollup.Start(ctx)
 
+	// Reap volumes stuck in a transient attaching/deleting state after a crash.
+	// The 30m grace safely exceeds the 10m capsule create timeout, so an
+	// in-flight attach is never freed out from under a booting capsule.
+	volumeReaper := api.NewVolumeReaper(queries, 10*time.Minute, 30*time.Minute)
+	volumeReaper.Start(ctx)
+
 	// Start extension background workers.
 	for _, ext := range o.extensions {
 		for _, worker := range ext.BackgroundWorkers(sctx) {

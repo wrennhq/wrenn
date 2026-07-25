@@ -107,6 +107,9 @@ type chDisk struct {
 	Path      string `json:"path"`
 	Readonly  bool   `json:"readonly,omitempty"`
 	ImageType string `json:"image_type,omitempty"`
+	// Serial is exposed to the guest as the virtio-blk serial so envd can
+	// resolve the device via /sys/block/*/serial. Only set for data volumes.
+	Serial string `json:"serial,omitempty"`
 }
 
 type chNet struct {
@@ -141,6 +144,23 @@ type chCreatePayload struct {
 func (c *chClient) createVM(ctx context.Context, cfg *VMConfig) error {
 	memBytes := uint64(cfg.MemoryMB) * 1024 * 1024
 
+	// Rootfs is always disk 0 (guest /dev/vda, referenced by root=/dev/vda in
+	// the kernel cmdline). Data volumes follow as vdb, vdc, ... — but the guest
+	// resolves each by serial, not by enumeration order.
+	disks := []chDisk{
+		{
+			Path:      cfg.SandboxDir + "/rootfs.ext4",
+			ImageType: "Raw",
+		},
+	}
+	for _, v := range cfg.Volumes {
+		disks = append(disks, chDisk{
+			Path:      cfg.SandboxDir + "/" + v.symlinkName(),
+			ImageType: "Raw",
+			Serial:    v.Serial,
+		})
+	}
+
 	payload := chCreatePayload{
 		Payload: chPayload{
 			Kernel:  cfg.KernelPath,
@@ -155,12 +175,7 @@ func (c *chClient) createVM(ctx context.Context, cfg *VMConfig) error {
 			Shared: true,
 			Thp:    boolPtr(false),
 		},
-		Disks: []chDisk{
-			{
-				Path:      cfg.SandboxDir + "/rootfs.ext4",
-				ImageType: "Raw",
-			},
-		},
+		Disks: disks,
 		Net: []chNet{
 			{
 				Tap: cfg.TapDevice,

@@ -78,12 +78,17 @@ func (s *Server) CreateSandbox(
 		return nil, err
 	}
 
+	volumes, err := volumeSpecsFromProto(msg.Volumes)
+	if err != nil {
+		return nil, apperr.ToConnect(apperr.InvalidRequest.Wrap(err))
+	}
+
 	// disk_size_mb in the request is deprecated and never set by the control
 	// plane; passing 0 lets the manager pick the size (DefaultRootfsSizeMB,
 	// floored at the origin image size).
 	sb, diskSizeBytes, err := s.mgr.Create(ctx, msg.SandboxId, teamID, templateID,
 		int(msg.Vcpus), int(msg.MemoryMb), int(msg.TimeoutSec), 0,
-		msg.DefaultUser, msg.DefaultEnv)
+		msg.DefaultUser, msg.DefaultEnv, volumes)
 	if err != nil {
 		return nil, mapSandboxError(fmt.Errorf("create sandbox: %w", err))
 	}
@@ -182,6 +187,51 @@ func (s *Server) FlattenRootfs(
 	}), nil
 }
 
+// DeleteVolume removes a detached volume's backing file from this host.
+func (s *Server) DeleteVolume(
+	_ context.Context,
+	req *connect.Request[pb.DeleteVolumeRequest],
+) (*connect.Response[pb.DeleteVolumeResponse], error) {
+	teamID, err := parseUUIDString(req.Msg.TeamId)
+	if err != nil {
+		return nil, apperr.ToConnect(apperr.InvalidRequest.Wrap(err))
+	}
+	volumeID, err := parseUUIDString(req.Msg.VolumeId)
+	if err != nil {
+		return nil, apperr.ToConnect(apperr.InvalidRequest.Wrap(err))
+	}
+	if err := s.mgr.DeleteVolumeFile(teamID, volumeID); err != nil {
+		return nil, mapSandboxError(err)
+	}
+	return connect.NewResponse(&pb.DeleteVolumeResponse{}), nil
+}
+
+// volumeSpecsFromProto converts the wire VolumeSpecs on a create request into
+// the sandbox layer's attach specs, parsing the hex UUID fields.
+func volumeSpecsFromProto(pbVols []*pb.VolumeSpec) ([]sandbox.VolumeAttachSpec, error) {
+	if len(pbVols) == 0 {
+		return nil, nil
+	}
+	specs := make([]sandbox.VolumeAttachSpec, 0, len(pbVols))
+	for _, v := range pbVols {
+		volumeID, err := parseUUIDString(v.VolumeId)
+		if err != nil {
+			return nil, fmt.Errorf("volume id: %w", err)
+		}
+		teamID, err := parseUUIDString(v.TeamId)
+		if err != nil {
+			return nil, fmt.Errorf("volume team id: %w", err)
+		}
+		specs = append(specs, sandbox.VolumeAttachSpec{
+			VolumeID:  volumeID,
+			TeamID:    teamID,
+			SizeMB:    int(v.SizeMb),
+			MountPath: v.MountPath,
+		})
+	}
+	return specs, nil
+}
+
 // mapSandboxError translates sandbox.Manager errors to Connect errors
 // carrying an apperr ErrorInfo detail, so the control plane surfaces the
 // precise catalog error instead of guessing from the Connect code. Sentinels
@@ -204,6 +254,10 @@ func mapSandboxError(err error) error {
 		return apperr.ToConnect(apperr.TemplateNotFound.WrapMsg(err, "The template's rootfs image is not available on this host."))
 	case errors.Is(err, sandbox.ErrEnvdNotReady):
 		return apperr.ToConnect(apperr.SandboxUnresponsive.WrapMsg(err, "The sandbox VM started but its agent did not become ready."))
+	case errors.Is(err, sandbox.ErrVolumesAttached):
+		return apperr.ToConnect(apperr.VolumesAttached.Wrap(err))
+	case errors.Is(err, sandbox.ErrVolumesOnSnapshotTemplate):
+		return apperr.ToConnect(apperr.InvalidRequest.WrapMsg(err, "Volumes can only be attached to capsules created from a base template, not a snapshot template."))
 	case errors.Is(err, network.ErrNoFreeSlots):
 		return apperr.ToConnect(apperr.CapacityUnavailable.WrapMsg(err, "This host has no free network slots. Try again shortly."))
 	default:

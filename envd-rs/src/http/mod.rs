@@ -7,6 +7,7 @@ pub mod init;
 pub mod memory;
 pub mod metrics;
 pub mod snapshot;
+pub mod volumes;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,6 +62,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(memory::post_memory_preload_cancel),
         )
         .route("/files", get(files::get_files).put(files::put_files))
+        .route("/volumes/mount", post(volumes::post_mount))
+        .route("/volumes/unmount", post(volumes::post_unmount))
         .layer(cors)
         .with_state(state)
 }

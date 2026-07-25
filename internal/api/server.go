@@ -95,6 +95,7 @@ func New(
 		}
 	}
 	apiKeySvc := &service.APIKeyService{DB: queries}
+	volumeSvc := &service.VolumeService{DB: queries, Pool: pool}
 	templateSvc := &service.TemplateService{DB: queries}
 	hostSvc := &service.HostService{DB: queries, Redis: rdb, JWT: jwtSecret, Pool: pool, CA: ca}
 	teamSvc := &service.TeamService{DB: queries, Pool: pgPool, HostPool: pool, Sessions: sessionSvc}
@@ -116,6 +117,7 @@ func New(
 	authH := newAuthHandler(queries, pgPool, sessionSvc, mailer, rdb, oauthRedirectURL, authHooks)
 	oauthH := newOAuthHandler(queries, pgPool, jwtSecret, sessionSvc, oauthRegistry, oauthRedirectURL, authHooks)
 	apiKeys := newAPIKeyHandler(apiKeySvc, al)
+	volumes := newVolumeHandler(volumeSvc, al)
 	hostH := newHostHandler(hostSvc, queries, al, monitor)
 	teamH := newTeamHandler(teamSvc, al, mailer, sessionSvc)
 	usersH := newUsersHandler(queries, userSvc, al, sessionSvc)
@@ -276,6 +278,16 @@ func New(
 		r.Patch("/{name}/visibility", snapshots.SetVisibility)
 		r.Patch("/{name}", snapshots.Rename)
 		r.Delete("/{name}", snapshots.Delete)
+	})
+
+	// External storage volumes: API key (SDK) or session (browser).
+	r.Route("/v1/volumes", func(r chi.Router) {
+		r.Use(requireSessionOrAPIKey(queries, sessionSvc))
+		r.Use(csrf)
+		r.Post("/", volumes.Create)
+		r.Get("/", volumes.List)
+		r.Get("/{id}", volumes.Get)
+		r.Delete("/{id}", volumes.Delete)
 	})
 
 	// Host management.

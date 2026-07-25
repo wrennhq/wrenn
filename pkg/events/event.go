@@ -90,6 +90,12 @@ const (
 	SnapshotCreate = "template.snapshot.create"
 	SnapshotDelete = "template.snapshot.delete"
 
+	// Durable, subscribable. Volume lifecycle. Attach/detach are not separate
+	// events — a volume attaches only as part of capsule.create and frees on
+	// capsule.destroy.
+	VolumeCreate = "volume.create"
+	VolumeDelete = "volume.delete"
+
 	// Durable, no outcome (binary by name).
 	HostUp   = "host.up"
 	HostDown = "host.down"
@@ -108,6 +114,8 @@ var SubscribableEventTypes = []string{
 	CapsuleDestroy,
 	SnapshotCreate,
 	SnapshotDelete,
+	VolumeCreate,
+	VolumeDelete,
 	HostUp,
 	HostDown,
 }

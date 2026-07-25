@@ -53,6 +53,10 @@ type SandboxCreateParams struct {
 	// Metadata holds user-supplied key/value labels attached at create-time.
 	// Reserved system keys (kernel_version, etc.) are rejected by validation.
 	Metadata map[string]string
+	// VolumeIDs are external storage volumes to attach at boot. All must be
+	// detached and owned by TeamID; if any is pinned to a host, the capsule is
+	// scheduled onto that host. Volumes are only ever attached at create time.
+	VolumeIDs []pgtype.UUID
 }
 
 // MinTimeoutSec mirrors pkg/sandbox.MinTimeoutSec. Sub-minute TTLs race
@@ -106,6 +110,121 @@ func (s *SandboxService) publishEvent(ctx context.Context, event SandboxStateEve
 	}
 }
 
+// reservedVolume is a volume claimed for an in-flight capsule create.
+type reservedVolume struct {
+	ID        pgtype.UUID
+	TeamID    pgtype.UUID
+	SizeMB    int32
+	MountPath string
+}
+
+// reserveVolumesForCreate validates the requested volumes, computes the host
+// they pin the capsule to (if any), and atomically claims each one. On any
+// failure it releases whatever it already claimed so the caller can abort
+// cleanly. The claim records only the 'attaching' status — the owning
+// sandbox_id is set later in markVolumesAttached, because the sandbox row does
+// not exist yet (its FK would reject an early write). Returns the reserved
+// volumes and, when at least one volume is already pinned, that host.
+func (s *SandboxService) reserveVolumesForCreate(ctx context.Context, teamID pgtype.UUID, volumeIDs []pgtype.UUID) ([]reservedVolume, pgtype.UUID, error) {
+	var pinnedHost pgtype.UUID
+	seen := make(map[[16]byte]bool, len(volumeIDs))
+	reserved := make([]reservedVolume, 0, len(volumeIDs))
+
+	release := func() { s.releaseVolumeReservations(ctx, reserved) }
+
+	for _, volID := range volumeIDs {
+		if seen[volID.Bytes] {
+			continue // a volume attaches at most once per capsule
+		}
+		seen[volID.Bytes] = true
+
+		vol, err := s.DB.GetVolumeByTeam(ctx, db.GetVolumeByTeamParams{ID: volID, TeamID: teamID})
+		if err != nil {
+			release()
+			return nil, pgtype.UUID{}, apperr.VolumeNotFound.Msgf("Volume %s not found.", id.FormatVolumeID(volID))
+		}
+		// All pinned volumes must share one host — a capsule runs on a single
+		// host and cannot straddle hosts.
+		if vol.HostID.Valid {
+			if pinnedHost.Valid && pinnedHost.Bytes != vol.HostID.Bytes {
+				release()
+				return nil, pgtype.UUID{}, apperr.VolumeHostMismatch.New()
+			}
+			pinnedHost = vol.HostID
+		}
+
+		if _, err := s.DB.ReserveVolumeForAttach(ctx, volID); err != nil {
+			// CAS missed: the volume is not detached (already attached, or being
+			// claimed by a racing create).
+			release()
+			return nil, pgtype.UUID{}, apperr.VolumeInUse.Msgf("Volume %s is not available to attach.", id.FormatVolumeID(volID))
+		}
+		reserved = append(reserved, reservedVolume{
+			ID:        volID,
+			TeamID:    teamID,
+			SizeMB:    vol.SizeMb,
+			MountPath: id.DefaultVolumeMountPath(volID),
+		})
+	}
+	return reserved, pinnedHost, nil
+}
+
+func (s *SandboxService) releaseVolumeReservations(ctx context.Context, reserved []reservedVolume) {
+	for _, rv := range reserved {
+		if err := s.DB.ReleaseVolumeReservation(ctx, rv.ID); err != nil {
+			slog.Warn("failed to release volume reservation", "volume", id.FormatVolumeID(rv.ID), "error", err)
+		}
+	}
+}
+
+func (s *SandboxService) markVolumesAttached(ctx context.Context, reserved []reservedVolume, hostID, sandboxID pgtype.UUID) {
+	for _, rv := range reserved {
+		if _, err := s.DB.MarkVolumeAttached(ctx, db.MarkVolumeAttachedParams{
+			ID: rv.ID, HostID: hostID, SandboxID: sandboxID, MountPath: rv.MountPath,
+		}); err != nil {
+			slog.Warn("failed to mark volume attached", "volume", id.FormatVolumeID(rv.ID), "error", err)
+		}
+	}
+}
+
+func volumeSpecsToProto(reserved []reservedVolume) []*pb.VolumeSpec {
+	if len(reserved) == 0 {
+		return nil
+	}
+	specs := make([]*pb.VolumeSpec, 0, len(reserved))
+	for _, rv := range reserved {
+		specs = append(specs, &pb.VolumeSpec{
+			VolumeId:  id.UUIDString(rv.ID),
+			TeamId:    id.UUIDString(rv.TeamID),
+			SizeMb:    rv.SizeMB,
+			MountPath: rv.MountPath,
+		})
+	}
+	return specs
+}
+
+// resolvePinnedHost returns the host a set of already-pinned volumes forces the
+// capsule onto, verifying it is online and eligible for the team. It bypasses
+// the scheduler: a pinned volume has exactly one valid host, so there is no
+// placement choice — only a check that the host can still run the capsule.
+func (s *SandboxService) resolvePinnedHost(ctx context.Context, hostID pgtype.UUID, isByoc bool, teamID pgtype.UUID) (db.Host, error) {
+	host, err := s.DB.GetHost(ctx, hostID)
+	if err != nil {
+		return db.Host{}, apperr.VolumeHostMismatch.WrapMsg(err, "The host holding this volume no longer exists.")
+	}
+	if host.Status != "online" {
+		return db.Host{}, apperr.VolumeHostMismatch.Msg("The host holding this volume is not online. Try again once it recovers.")
+	}
+	if isByoc {
+		if host.Type != "byoc" || !host.TeamID.Valid || host.TeamID.Bytes != teamID.Bytes {
+			return db.Host{}, apperr.VolumeHostMismatch.New()
+		}
+	} else if host.Type != "regular" {
+		return db.Host{}, apperr.VolumeHostMismatch.New()
+	}
+	return host, nil
+}
+
 // hostagentClient is a local alias to avoid the full package path in signatures.
 type hostagentClient = interface {
 	CreateSandbox(ctx context.Context, req *connect.Request[pb.CreateSandboxRequest]) (*connect.Response[pb.CreateSandboxResponse], error)
@@ -116,6 +235,7 @@ type hostagentClient = interface {
 	GetSandboxMetrics(ctx context.Context, req *connect.Request[pb.GetSandboxMetricsRequest]) (*connect.Response[pb.GetSandboxMetricsResponse], error)
 	FlushSandboxMetrics(ctx context.Context, req *connect.Request[pb.FlushSandboxMetricsRequest]) (*connect.Response[pb.FlushSandboxMetricsResponse], error)
 	CreateSnapshot(ctx context.Context, req *connect.Request[pb.CreateSnapshotRequest]) (*connect.Response[pb.CreateSnapshotResponse], error)
+	DeleteVolume(ctx context.Context, req *connect.Request[pb.DeleteVolumeRequest]) (*connect.Response[pb.DeleteVolumeResponse], error)
 }
 
 // resolveTemplateRef resolves a parsed template reference to its owning
@@ -207,9 +327,34 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		return db.Sandbox{}, apperr.TeamNotFound.Wrap(err)
 	}
 
-	host, err := s.Scheduler.SelectHost(ctx, p.TeamID, team.IsByoc, p.MemoryMB, 0)
+	sandboxID := id.NewSandboxID()
+
+	// Claim any requested volumes and learn the host they pin the capsule to.
+	// The reservations are released by the deferred cleanup below unless the
+	// create hands them off to the background goroutine (committed = true).
+	reserved, pinnedHost, err := s.reserveVolumesForCreate(ctx, p.TeamID, p.VolumeIDs)
 	if err != nil {
-		return db.Sandbox{}, fmt.Errorf("select host: %w", err)
+		return db.Sandbox{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			s.releaseVolumeReservations(ctx, reserved)
+		}
+	}()
+
+	// A pinned volume forces the host; otherwise the scheduler picks one.
+	var host db.Host
+	if pinnedHost.Valid {
+		host, err = s.resolvePinnedHost(ctx, pinnedHost, team.IsByoc, p.TeamID)
+	} else {
+		host, err = s.Scheduler.SelectHost(ctx, p.TeamID, team.IsByoc, p.MemoryMB, 0)
+		if err != nil {
+			err = fmt.Errorf("select host: %w", err)
+		}
+	}
+	if err != nil {
+		return db.Sandbox{}, err
 	}
 
 	agent, err := s.Pool.GetForHost(host)
@@ -217,7 +362,6 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 		return db.Sandbox{}, fmt.Errorf("get agent client: %w", err)
 	}
 
-	sandboxID := id.NewSandboxID()
 	sandboxIDStr := id.FormatSandboxID(sandboxID)
 	hostIDStr := id.FormatHostID(host.ID)
 
@@ -248,7 +392,10 @@ func (s *SandboxService) Create(ctx context.Context, p SandboxCreateParams) (db.
 
 	teamIDStr := id.FormatTeamID(p.TeamID)
 	s.publishStateChanged(ctx, sandboxIDStr, teamIDStr, hostIDStr, "", "starting")
-	go s.createInBackground(sandboxID, sandboxIDStr, hostIDStr, teamIDStr, agent, p, templateTeamID, templateID, templateDefaultUser, templateDefaultEnv)
+	// The background goroutine now owns the reservations (it marks them attached
+	// on success or releases them on failure).
+	committed = true
+	go s.createInBackground(sandboxID, sandboxIDStr, hostIDStr, teamIDStr, agent, p, templateTeamID, templateID, templateDefaultUser, templateDefaultEnv, reserved, host.ID)
 
 	return sb, nil
 }
@@ -258,6 +405,7 @@ func (s *SandboxService) createInBackground(
 	agent hostagentClient, p SandboxCreateParams,
 	templateTeamID, templateID pgtype.UUID,
 	defaultUser string, defaultEnv map[string]string,
+	reserved []reservedVolume, hostID pgtype.UUID,
 ) {
 	bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -273,11 +421,14 @@ func (s *SandboxService) createInBackground(
 		DiskSizeMb:  0,
 		DefaultUser: defaultUser,
 		DefaultEnv:  defaultEnv,
+		Volumes:     volumeSpecsToProto(reserved),
 	}))
 	if err != nil {
 		slog.Warn("background create failed", "sandbox_id", sandboxIDStr, "error", err)
 		errCtx, errCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer errCancel()
+		// Free the volumes back to detached — the capsule never came up.
+		s.releaseVolumeReservations(errCtx, reserved)
 		if _, dbErr := s.DB.UpdateSandboxStatusIf(errCtx, db.UpdateSandboxStatusIfParams{
 			ID: sandboxID, Status: "starting", Status_2: "error",
 		}); dbErr != nil {
@@ -289,6 +440,11 @@ func (s *SandboxService) createInBackground(
 		})
 		return
 	}
+
+	// The capsule booted with its volumes attached; promote each reservation to
+	// attached, record the owning sandbox, and pin the volume to this host
+	// (COALESCE keeps an existing pin).
+	s.markVolumesAttached(bgCtx, reserved, hostID, sandboxID)
 
 	if resp.Msg.DiskSizeMb > 0 {
 		if err := s.DB.UpdateSandboxDiskSize(bgCtx, db.UpdateSandboxDiskSizeParams{
@@ -718,6 +874,12 @@ func (s *SandboxService) destroyInBackground(sandboxID pgtype.UUID, sandboxIDStr
 		SandboxId: sandboxIDStr,
 	})); err != nil && connect.CodeOf(err) != connect.CodeNotFound {
 		slog.Warn("background destroy failed", "sandbox_id", sandboxIDStr, "error", err)
+	}
+
+	// Free any attached volumes back to detached (data and host pin preserved).
+	// Volumes are never auto-deleted — only an explicit delete removes them.
+	if err := s.DB.DetachVolumesBySandbox(bgCtx, sandboxID); err != nil {
+		slog.Warn("failed to detach volumes on destroy", "sandbox_id", sandboxIDStr, "error", err)
 	}
 
 	if prevStatus == "paused" {

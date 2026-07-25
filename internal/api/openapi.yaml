@@ -1582,6 +1582,106 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /v1/volumes:
+    post:
+      summary: Create a storage volume
+      operationId: createVolume
+      tags: [volumes]
+      security:
+        - apiKeyAuth: []
+        - sessionAuth: []
+      description: |
+        Create an external storage volume. The volume starts detached and is
+        not placed on any host until it is first attached to a capsule (via
+        `volume_ids` on capsule create), at which point it is pinned to that
+        capsule's host for the rest of its life. Volumes are never auto-deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVolumeRequest"
+      responses:
+        "201":
+          description: Volume created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Volume"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: A volume with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      summary: List storage volumes
+      operationId: listVolumes
+      tags: [volumes]
+      security:
+        - apiKeyAuth: []
+        - sessionAuth: []
+      responses:
+        "200":
+          description: List of volumes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Volume"
+
+  /v1/volumes/{id}:
+    get:
+      summary: Get a storage volume
+      operationId: getVolume
+      tags: [volumes]
+      security:
+        - apiKeyAuth: []
+        - sessionAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The volume
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Volume"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a storage volume
+      operationId: deleteVolume
+      tags: [volumes]
+      security:
+        - apiKeyAuth: []
+        - sessionAuth: []
+      description: |
+        Delete a volume and its data. The volume must be detached — destroy any
+        capsule using it first.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Volume deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Volume is attached to a capsule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/snapshots:
     post:
       summary: Create a snapshot template
@@ -4132,6 +4232,70 @@ components:
             are at most 64 characters. Reserved system keys (kernel_version,
             vmm_version, agent_version, envd_version) are rejected. Metadata is
             set at create-time only.
+        volume_ids:
+          type: array
+          items: { type: string }
+          nullable: true
+          description: >
+            External storage volumes to attach at boot (e.g. "vol-..."). Each is
+            mounted at /mnt/<volume-id> inside the guest. Volumes can only be
+            attached at create time and must be detached and owned by your team.
+            If a volume is already pinned to a host, the capsule is scheduled
+            onto that host; attaching volumes pinned to different hosts fails.
+            Not supported for capsules created from a snapshot template.
+
+    CreateVolumeRequest:
+      type: object
+      required: [name, size_mb]
+      properties:
+        name:
+          type: string
+          description: >
+            Human-readable name, unique within your team. Matches
+            [a-zA-Z0-9][a-zA-Z0-9._-]* .
+        size_mb:
+          type: integer
+          minimum: 100
+          description: >
+            Volume size in MB. Fixed at creation. The backing storage is
+            allocated lazily on first attach.
+
+    Volume:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Volume ID (e.g. "vol-...").
+        team_id:
+          type: string
+        name:
+          type: string
+        size_mb:
+          type: integer
+        status:
+          type: string
+          enum: [detached, attaching, attached]
+          description: >
+            `detached` — free to attach or delete. `attaching` — reserved by a
+            capsule that is booting. `attached` — in use by a capsule.
+        host_id:
+          type: string
+          nullable: true
+          description: Host the volume is pinned to; null until first attached.
+        sandbox_id:
+          type: string
+          nullable: true
+          description: Capsule the volume is currently attached to, if any.
+        mount_path:
+          type: string
+          description: Guest mount path while attached (e.g. "/mnt/vol-...").
+        created_at:
+          type: string
+          format: date-time
+        last_attached_at:
+          type: string
+          format: date-time
+          nullable: true
 
     UsageResponse:
       type: object

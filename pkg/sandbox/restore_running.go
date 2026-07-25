@@ -202,6 +202,7 @@ func (m *Manager) reattachRunning(st *runningState) error {
 		baseImagePath:      st.BaseImagePath,
 		sandboxDirOverride: st.SandboxDirOverride,
 		lazyRestore:        st.LazyRestore,
+		volumes:            st.Volumes,
 	}
 	sb.client.Store(envdclient.New(slot.HostIP.String()))
 

@@ -260,7 +260,20 @@ func (c *SandboxEventConsumer) handleAutoPaused(ctx context.Context, sandboxID p
 	}
 }
 
+// detachVolumes frees any volumes still attached to a sandbox that has reached
+// a terminal state. Idempotent (only 'attached' rows change) and keyed on
+// sandbox_id, so it runs safely from every terminal path — the explicit destroy
+// flow, the TTL-reaper fallback, and the crash/failure path — not just
+// SandboxService.Destroy.
+func (c *SandboxEventConsumer) detachVolumes(ctx context.Context, sandboxID pgtype.UUID) {
+	if err := c.db.DetachVolumesBySandbox(ctx, sandboxID); err != nil {
+		slog.Warn("sandbox event consumer: failed to detach volumes", "sandbox_id", id.FormatSandboxID(sandboxID), "error", err)
+	}
+}
+
 func (c *SandboxEventConsumer) handleStopped(ctx context.Context, sandboxID pgtype.UUID) {
+	c.detachVolumes(ctx, sandboxID)
+
 	// stopping → stopped (CP-initiated destroy completed). No audit row here;
 	// the handler that issued the destroy already wrote one.
 	if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
@@ -289,6 +302,8 @@ func (c *SandboxEventConsumer) handleStopped(ctx context.Context, sandboxID pgty
 // audit.Log writes the row only — it does NOT republish an event, which would
 // loop back into this consumer. Do not switch to LogSandboxCreateSystem here.
 func (c *SandboxEventConsumer) handleFailed(ctx context.Context, sandboxID pgtype.UUID, event events.Event) {
+	c.detachVolumes(ctx, sandboxID)
+
 	for _, fromStatus := range []string{"running", "starting", "pausing", "resuming", "snapshotting"} {
 		if _, err := c.db.UpdateSandboxStatusIf(ctx, db.UpdateSandboxStatusIfParams{
 			ID: sandboxID, Status: fromStatus, Status_2: "error",

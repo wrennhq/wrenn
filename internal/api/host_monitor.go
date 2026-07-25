@@ -65,6 +65,19 @@ func NewHostMonitor(queries *db.Queries, pool *lifecycle.HostClientPool, al *aud
 	}
 }
 
+// detachVolumes frees any volumes attached to sandboxes the monitor has just
+// moved to a terminal state, so a volume is never stranded on a capsule that
+// died via host loss or reconciliation rather than an explicit destroy.
+// Idempotent — only 'attached' rows change.
+func (m *HostMonitor) detachVolumes(ctx context.Context, sandboxIDs []pgtype.UUID) {
+	if len(sandboxIDs) == 0 {
+		return
+	}
+	if err := m.db.DetachVolumesBySandboxIDs(ctx, sandboxIDs); err != nil {
+		slog.Warn("host monitor: failed to detach volumes for stopped sandboxes", "error", err)
+	}
+}
+
 // Start runs the monitor loop until the context is cancelled.
 func (m *HostMonitor) Start(ctx context.Context) {
 	go func() {
@@ -229,6 +242,7 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 			}); err != nil {
 				slog.Warn("host monitor: failed to stop missing sandboxes", "host_id", id.FormatHostID(host.ID), "error", err)
 			} else {
+				m.detachVolumes(ctx, ids)
 				for _, sb := range toStop {
 					m.audit.LogSandboxDestroySystem(ctx, sb.TeamID, sb.ID, "orphaned", nil)
 				}
@@ -279,6 +293,7 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 		}); err != nil {
 			slog.Warn("host monitor: failed to mark stopped", "host_id", id.FormatHostID(host.ID), "error", err)
 		} else {
+			m.detachVolumes(ctx, ids)
 			for _, sb := range toStop {
 				m.audit.LogSandboxDestroySystem(ctx, sb.TeamID, sb.ID, "orphaned", nil)
 			}
@@ -427,6 +442,11 @@ func (m *HostMonitor) checkHost(ctx context.Context, host db.Host) {
 			ID: sb.ID, Status: fromStatus, Status_2: finalStatus,
 		}); err == nil {
 			slog.Info("host monitor: resolved transient sandbox", "sandbox_id", sbIDStr, "from", fromStatus, "to", finalStatus)
+			// error/stopped are terminal — free any attached volumes. "paused"
+			// (from pausing) is recoverable, so the volume stays attached.
+			if finalStatus == "error" || finalStatus == "stopped" {
+				m.detachVolumes(ctx, []pgtype.UUID{sb.ID})
+			}
 			inferredErr := errInferredTransientTimeout
 			switch fromStatus {
 			case "starting":

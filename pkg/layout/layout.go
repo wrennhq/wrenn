@@ -169,6 +169,24 @@ func compareSemver(a, b string) int {
 	return 0
 }
 
+// VolumeDir returns the on-disk directory for an external storage volume,
+// mirroring the templates tree but under its own volumes/ root so it can never
+// be touched by sandbox teardown (which only ever removes SandboxDir):
+//
+//	{wrennDir}/volumes/teams/{base36(teamID)}/{base36(volumeID)}
+func VolumeDir(wrennDir string, teamID, volumeID pgtype.UUID) string {
+	return filepath.Join(wrennDir, "volumes", "teams",
+		id.UUIDToBase36(teamID.Bytes),
+		id.UUIDToBase36(volumeID.Bytes))
+}
+
+// VolumeDataPath returns the path to a volume's backing image — a plain sparse
+// file (not a dm-snapshot CoW), formatted with ext4 inside the guest on first
+// use and handed to Cloud Hypervisor as a Raw disk.
+func VolumeDataPath(wrennDir string, teamID, volumeID pgtype.UUID) string {
+	return filepath.Join(VolumeDir(wrennDir, teamID, volumeID), "data.img")
+}
+
 // SlotsDir returns the directory holding network slot claim files. Each
 // allocated slot index is an empty file named after the index, created with
 // O_EXCL so concurrent processes can never claim the same slot.

@@ -15,6 +15,27 @@ func SandboxSocketPath(sandboxID string) string {
 	return fmt.Sprintf("/tmp/ch-%s.sock", sandboxID)
 }
 
+// VolumeDisk is an external storage volume attached to a VM at boot.
+type VolumeDisk struct {
+	// HostPath is the backing sparse file on the host filesystem. It is
+	// visible inside the VMM's private mount namespace (unshare -m isolates
+	// the mount table, not the filesystem tree), so CH can open it via the
+	// stable symlink created in SandboxDir.
+	HostPath string
+	// Serial is the virtio-blk serial (derived from the volume ID) the guest
+	// uses to resolve the block device via /sys/block/*/serial. It also names
+	// the in-namespace symlink so the disk path is stable across restore.
+	Serial string
+}
+
+// symlinkName returns the volume's stable filename inside SandboxDir. CH bakes
+// this path into its snapshot config.json, so it must be reconstructable on
+// every restore — hence keyed by the (deterministic) serial, not enumeration
+// order.
+func (v VolumeDisk) symlinkName() string {
+	return "volume-" + v.Serial + ".img"
+}
+
 // VMConfig holds the configuration for creating a Cloud Hypervisor microVM.
 type VMConfig struct {
 	// SandboxID is the unique identifier for this sandbox (e.g., "cl-a1b2c3d4").
@@ -29,6 +50,12 @@ type VMConfig struct {
 	// RootfsPath is the path to the rootfs block device for this sandbox.
 	// Typically a dm-snapshot device (e.g., /dev/mapper/wrenn-cl-a1b2c3d4).
 	RootfsPath string
+
+	// Volumes are external storage disks attached at boot, after the rootfs.
+	// Each is symlinked into SandboxDir (like the rootfs) so the disk path CH
+	// records in its snapshot config.json stays stable across restore, and is
+	// exposed to the guest as an additional virtio-blk device (vdb, vdc, ...).
+	Volumes []VolumeDisk
 
 	// VCPUs is the number of virtual CPUs to allocate (default: 1).
 	VCPUs int

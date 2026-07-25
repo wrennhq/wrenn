@@ -239,3 +239,17 @@ type UsersTeam struct {
 	Role      string             `json:"role"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
+
+type Volume struct {
+	ID             pgtype.UUID        `json:"id"`
+	TeamID         pgtype.UUID        `json:"team_id"`
+	HostID         pgtype.UUID        `json:"host_id"`
+	Name           string             `json:"name"`
+	SizeMb         int32              `json:"size_mb"`
+	Status         string             `json:"status"`
+	SandboxID      pgtype.UUID        `json:"sandbox_id"`
+	MountPath      string             `json:"mount_path"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	LastAttachedAt pgtype.Timestamptz `json:"last_attached_at"`
+	LastUpdated    pgtype.Timestamptz `json:"last_updated"`
+}

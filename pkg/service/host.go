@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 
+	"git.omukk.dev/wrenn/wrenn/pkg/apperr"
 	"git.omukk.dev/wrenn/wrenn/pkg/auth"
 	"git.omukk.dev/wrenn/wrenn/pkg/db"
 	"git.omukk.dev/wrenn/wrenn/pkg/id"
@@ -510,6 +511,19 @@ func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID pgtype.
 		return &HostHasSandboxesError{SandboxIDs: ids}
 	}
 
+	// Volumes are pinned to a host; deleting it orphans their data. Refuse
+	// unless forced (data on a host being intentionally destroyed is expected
+	// to go with it).
+	if !force {
+		volCount, err := s.DB.CountVolumesByHost(ctx, hostID)
+		if err != nil {
+			return fmt.Errorf("count volumes: %w", err)
+		}
+		if volCount > 0 {
+			return apperr.Conflict.Msgf("This host has %d volume(s) pinned to it. Deleting it will orphan their data. Pass ?force=true to proceed.", volCount)
+		}
+	}
+
 	hostIDStr := id.FormatHostID(hostID)
 
 	// Gracefully destroy running sandboxes and terminate the agent (best-effort).
@@ -550,6 +564,15 @@ func (s *HostService) Delete(ctx context.Context, hostID, userID, teamID pgtype.
 	// Revoke all refresh tokens for this host.
 	if err := s.DB.RevokeHostRefreshTokensByHost(ctx, hostID); err != nil {
 		slog.Warn("delete host: failed to revoke refresh tokens", "host_id", hostIDStr, "error", err)
+	}
+
+	// Free and un-pin any volumes on this host. The host (and its backing files)
+	// are going away, so the volumes reset to a fresh detached, un-pinned state —
+	// the rows survive (volumes are never auto-deleted) and can be re-attached on
+	// a new host. This must also run before DeleteHost so the volumes.host_id FK
+	// does not block the delete.
+	if err := s.DB.DetachVolumesByHost(ctx, hostID); err != nil {
+		return fmt.Errorf("release volumes on host: %w", err)
 	}
 
 	// Evict the client from the pool so no further RPCs are sent.
